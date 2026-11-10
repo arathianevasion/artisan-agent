@@ -152,3 +152,7 @@ _Avoid_: proof, results
 **Lesson**:
 Something a retro keeps from a run so later runs go better.
 _Avoid_: learning, takeaway
+
+**Retro**:
+The step after every run where agents propose lessons from the run and the Artisan decides which to keep and where they go.
+_Avoid_: retrospective (in skills), post-mortem
