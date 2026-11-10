@@ -14,7 +14,7 @@ Version one installs alongside the upstream `mattpocock-skills` plugin and adds 
 
 ## Amendment: how a replacement takes over (2026-11-10)
 
-Our skills can't invoke an upstream skill marked `disable-model-invocation: true`. Where the pipeline must call such a skill automatically, we replace it. Where a person is present anyway, the front door names the command to type. Version one replaces `implement-spec` (with `implement-plan`), `implement`, `to-spec`, `retro`, `triage` and `grill-with-docs`, each under the `watsonsoft` name.
+Our skills can't invoke an upstream skill marked `disable-model-invocation: true`. Where the pipeline must call such a skill automatically, we replace it. Where a person is present anyway, the front door names the command to type. Version one replaces `implement-spec` (with `implement-plan`), `implement`, `to-spec`, `retro`, `triage` and `grill-with-docs`, each under the `artisan-agent` name.
 
 A replaced skill is kept out of use in three ways, all built from one replaced-skill list in the plugin:
 - A `UserPromptExpansion` hook blocks anyone typing it and names our skill instead.

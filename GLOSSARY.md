@@ -1,4 +1,4 @@
-# Watsonsoft Workflow
+# Artisan Agent
 
 A reusable way of delivering software projects where agents do most of the delivery and people set the guardrails and supply product and engineering taste.
 
@@ -6,9 +6,9 @@ A reusable way of delivering software projects where agents do most of the deliv
 
 ### The product
 
-**Watsonsoft Workflow**:
-The product's name. Inside the skills, "workflow" is never a technical term.
-_Avoid_: workflow (as a technical term), factory
+**Artisan Agent**:
+The product's name: a Claude Code plugin (`artisan-agent`) and project template. Inside the skills, "workflow" is never a technical term.
+_Avoid_: watsonsoft (former name), workflow (as a technical term), factory
 
 **Pipeline**:
 The end-to-end path work takes, from a request to merged code and the lessons kept from it.
@@ -19,7 +19,7 @@ One of the four ways work enters the pipeline: Effort, Feature, Small change or 
 _Avoid_: lane, track
 
 **Cockpit**:
-The owner's optional cmux layout that makes the pipeline faster to drive from the terminal. The pipeline never depends on it.
+Agent Development Cockpit, a separate product in its own repo: an optional cmux layout that makes the pipeline faster to drive from the terminal. The pipeline never depends on it.
 _Avoid_: dashboard, UI
 
 ### People
