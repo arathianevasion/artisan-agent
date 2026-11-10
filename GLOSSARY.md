@@ -137,6 +137,10 @@ A guardrail for one product and its repo.
 **Individual guardrail**:
 A guardrail carrying one Artisan's taste, which follows them into every project they work on.
 
+**Area**:
+A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
+_Avoid_: module, zone
+
 **Check**:
 An automated test of the work, such as a test suite, typecheck or lint, which must be shown to fail before anyone trusts it.
 _Avoid_: gate (for automated checks)
