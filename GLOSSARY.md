@@ -25,8 +25,17 @@ A person's product or engineering judgement on a choice where several answers wo
 _Avoid_: preference, style
 
 **Guardrail**:
-A rule kept in a project that limits what agents may do there, usually capturing a past decision of taste.
+A standing rule that limits what agents may do, usually capturing a past decision of taste. It holds at one of three levels: team, product or individual.
 _Avoid_: policy, constraint
+
+**Team guardrail**:
+A guardrail for everyone who works together, across all their products.
+
+**Product guardrail**:
+A guardrail for one product and its repo.
+
+**Individual guardrail**:
+A guardrail carrying one person's taste, which follows them into every project they work on.
 
 ### Packaging
 
