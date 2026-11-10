@@ -106,6 +106,10 @@ _Avoid_: round, phase
 A ticket the Artisan marks to join the current run and start at once, ahead of the queue.
 _Avoid_: hotfix, quick fix
 
+**Backlog review**:
+The Artisan's periodic sort of open tickets into the next plan, closed, or left open. Deferred tickets come back here.
+_Avoid_: sweep (a chat's regular check of runs and gates), grooming
+
 **Finding**:
 A fact a worker turns up during a run that may matter to other work.
 _Avoid_: discovery, note
