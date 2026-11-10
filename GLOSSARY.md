@@ -4,6 +4,48 @@ A reusable way of delivering software projects where agents do most of the deliv
 
 ## Language
 
+### The product
+
+**Watsonsoft Workflow**:
+The product's name. Inside the skills, "workflow" is never a technical term.
+_Avoid_: workflow (as a technical term), factory
+
+**Pipeline**:
+The end-to-end path work takes, from a request to merged code and the lessons kept from it.
+_Avoid_: workflow, process
+
+**Route**:
+One of the four ways work enters the pipeline: Effort, Feature, Small change or Bug, chosen by how clear and how big the work is.
+_Avoid_: lane, track
+
+**Cockpit**:
+The owner's optional cmux layout that makes the pipeline faster to drive from the terminal. The pipeline never depends on it.
+_Avoid_: dashboard, UI
+
+### People
+
+**Artisan**:
+The person who holds the roles in a project and instils taste in how its problems are solved.
+_Avoid_: user, human orchestrator, owner (as a role), craftsman
+
+**Job**:
+A recurring piece of human judgement the pipeline needs done, phrased as an outcome, such as "decide what's in scope" or "approve how work is sliced".
+_Avoid_: task, duty
+
+**Role**:
+A bundle of jobs that one Artisan holds. A role is never a job title.
+_Avoid_: persona, position
+
+**Product role**:
+The role holding the jobs about what to build and why, including design.
+
+**Engineering role**:
+The role holding the jobs about how it's built, including QA.
+
+**Lane**:
+A strand of agent work in the pipeline, such as planning or triage. A lane is not a person or a role.
+_Avoid_: swimlane (except when describing the diagram)
+
 ### Who acts at each step
 
 **Human-led step**:
@@ -18,25 +60,59 @@ _Avoid_: reviewed step, blue box
 A step an agent completes with no person involved. Drawn black.
 _Avoid_: automatic step, black box
 
-### People
+### Sessions and agents
 
-**Job**:
-A recurring piece of human judgement the workflow needs done, phrased as an outcome, such as "decide what's in scope" or "approve how work is sliced".
-_Avoid_: task, duty
+**Chat**:
+An interactive session an Artisan talks to. There are two: the Engineering chat and the Product chat.
+_Avoid_: session (except in Claude Code's technical sense), console
 
-**Role**:
-A bundle of jobs that one person holds. A role is never a job title.
-_Avoid_: persona, position
+**Engineering chat**:
+The chat that drives runs and holds the Engineering role's jobs.
 
-**Product role**:
-The role holding the jobs about what to build and why, including design.
+**Product chat**:
+The chat that runs triage and holds requirements discussion and writing, keeping the Engineering chat's context free for building.
 
-**Engineering role**:
-The role holding the jobs about how it's built, including QA.
+**Orchestrator**:
+A fresh headless session that runs one wave of a run: it dispatches workers, merges their work and records the run's state, then exits.
+_Avoid_: wave runner, dispatcher, scheduler
 
-**Lane**:
-A strand of agent work in the flow, such as planning or triage. A lane is not a person or a role.
-_Avoid_: swimlane (except when describing the diagram)
+**Worker**:
+A headless session that implements one ticket in its own worktree.
+_Avoid_: agent (when a worker is meant), implementer
+
+**Verifier**:
+A short-lived session that checks one ticket's changes against its acceptance criteria.
+_Avoid_: reviewer
+
+**Doorbell**:
+A message from one chat to the other that only names an issue to look at, and carries no content.
+_Avoid_: notification, ping
+
+### Planning and running
+
+**Plan**:
+A chunk of tickets the Artisan has approved to run together.
+_Avoid_: batch, milestone, sprint
+
+**Run**:
+One execution of the pipeline's build stage over a defined set of work: one or more plans, individual tickets, or a mix.
+_Avoid_: session, job, execution
+
+**Wave**:
+A batch of tickets dispatched together within a run, none of which depends on another in the same wave.
+_Avoid_: round, phase
+
+**Urgent ticket**:
+A ticket the Artisan marks to join the current run and start at once, ahead of the queue.
+_Avoid_: hotfix, quick fix
+
+**Finding**:
+A fact a worker turns up during a run that may matter to other work.
+_Avoid_: discovery, note
+
+**State file**:
+The record of a run's plan, progress and evidence that lets any fresh session carry the run on.
+_Avoid_: checkpoint, memory
 
 ### Judgement
 
@@ -55,10 +131,24 @@ A guardrail for everyone who works together, across all their products.
 A guardrail for one product and its repo.
 
 **Individual guardrail**:
-A guardrail carrying one person's taste, which follows them into every project they work on.
+A guardrail carrying one Artisan's taste, which follows them into every project they work on.
 
-### Packaging
+**Check**:
+An automated test of the work, such as a test suite, typecheck or lint, which must be shown to fail before anyone trusts it.
+_Avoid_: gate (for automated checks)
 
-**Cockpit**:
-The owner's optional cmux layout that makes the workflow faster to drive from the terminal. The workflow never depends on it.
-_Avoid_: dashboard, UI
+**Gate**:
+A point where the Artisan reviews work before what depends on it continues: a slice, risk, exception or end gate.
+_Avoid_: checkpoint, approval step, gate (for automated checks)
+
+**Packet**:
+What the Artisan sees at a gate: the decisions agents made, what they were unsure of, and the evidence, framed as problem, solution and verification.
+_Avoid_: report, summary
+
+**Evidence**:
+For each acceptance criterion, what shows it was met, together with what the agent was unsure of and what the work cost.
+_Avoid_: proof, results
+
+**Lesson**:
+Something a retro keeps from a run so later runs go better.
+_Avoid_: learning, takeaway
