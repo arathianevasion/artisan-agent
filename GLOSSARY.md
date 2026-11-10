@@ -28,6 +28,14 @@ _Avoid_: dashboard, UI
 The person who holds the roles in a project and instils taste in how its problems are solved.
 _Avoid_: user, human orchestrator, owner (as a role), craftsman
 
+**Focus**:
+One of the three things an Artisan's attention is for: understanding the problem, finding the best solution, or improving the pipeline. Every human step serves one.
+_Avoid_: priority, concern
+
+**Chore**:
+Something that takes the Artisan's time without serving a focus, such as confirming, relaying or retyping. A chore is automated or removed.
+_Avoid_: toil, admin
+
 **Job**:
 A recurring piece of human judgement the pipeline needs done, phrased as an outcome, such as "decide what's in scope" or "approve how work is sliced".
 _Avoid_: task, duty
