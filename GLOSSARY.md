@@ -18,6 +18,26 @@ _Avoid_: reviewed step, blue box
 A step an agent completes with no person involved. Drawn black.
 _Avoid_: automatic step, black box
 
+### People
+
+**Job**:
+A recurring piece of human judgement the workflow needs done, phrased as an outcome, such as "decide what's in scope" or "approve how work is sliced".
+_Avoid_: task, duty
+
+**Role**:
+A bundle of jobs that one person holds. A role is never a job title.
+_Avoid_: persona, position
+
+**Product role**:
+The role holding the jobs about what to build and why, including design.
+
+**Engineering role**:
+The role holding the jobs about how it's built, including QA.
+
+**Lane**:
+A strand of agent work in the flow, such as planning or triage. A lane is not a person or a role.
+_Avoid_: swimlane (except when describing the diagram)
+
 ### Judgement
 
 **Taste**:
