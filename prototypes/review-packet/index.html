@@ -1,0 +1,297 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Ticket #10 "What does a human review packet contain?"
+  Three structurally different variants of one review-gate packet, switchable via ?variant=A|B|C
+  and the floating bar (or ← →). Each shows the review-gate issue body and how the terminal chat presents it.
+  Sample data is fictional (a timesheet app's "weekly CSV export" slice gate).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review packet prototype</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#5d6675; --line:#dfe3ea; --accent:#2f5fd0;
+          --ok:#1f8a4c; --warn:#b26b00; --bad:#c0392b; --term:#14171c; --termink:#d7dde6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; padding:24px 16px 96px; }
+  .wrap { max-width:1180px; margin:0 auto; display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:20px; align-items:start; }
+  @media (max-width:900px){ .wrap{ grid-template-columns:1fr; } }
+  .pane-title { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .issue { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px 22px; }
+  .issue h1 { font-size:20px; margin:0 0 4px; }
+  .meta { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  .label { display:inline-block; font-size:12px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); margin-right:4px; }
+  .label.gate { background:#eef2ff; border-color:#c9d4ff; color:#2a3f8f; }
+  h2 { font-size:16px; margin:20px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  h3 { font-size:14px; margin:14px 0 6px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; margin:6px 0; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  .ok{color:var(--ok);font-weight:600} .warn{color:var(--warn);font-weight:600} .bad{color:var(--bad);font-weight:600}
+  code, pre { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; }
+  code { background:#f0f2f5; padding:1px 5px; border-radius:4px; }
+  pre { background:#f0f2f5; padding:10px 12px; border-radius:6px; overflow-x:auto; margin:6px 0; }
+  details { margin:6px 0; } summary { cursor:pointer; color:var(--accent); }
+  .callout { border-left:4px solid var(--warn); background:#fff8ec; padding:8px 12px; border-radius:4px; margin:8px 0; }
+  .callout.info { border-color:var(--accent); background:#f1f5ff; }
+  .decision { border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:10px 0; }
+  .decision .head { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .tag { font-size:12px; color:var(--muted); }
+  .pill { font-size:12px; padding:1px 8px; border-radius:999px; background:#f0f2f5; }
+  .pill.taste { background:#fdeefa; color:#8a2a75; } .pill.eng { background:#eef6ff; color:#22508f; }
+  .opts { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .opt { font-size:13px; border:1px solid var(--line); border-radius:6px; padding:3px 9px; background:#fafbfc; }
+  .check { display:grid; grid-template-columns:22px 1fr; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .box { width:16px; height:16px; border:2px solid var(--muted); border-radius:3px; margin-top:3px; }
+  .side { background:#fafbfc; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:14px; }
+  .twocol { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:14px; }
+  @media (max-width:700px){ .twocol{ grid-template-columns:1fr; } }
+  .term { background:var(--term); color:var(--termink); border-radius:10px; padding:14px 16px; font:13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; word-break:break-word; }
+  .term .p { color:#7fd48a; } .term .h { color:#ffd479; font-weight:700; } .term .d { color:#8a93a3; } .term .k { color:#7fb3ff; } .term .w { color:#ffb36b; }
+  .note { margin-top:12px; font-size:13px; color:var(--muted); }
+  .bar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#111; color:#fff; border-radius:999px;
+         box-shadow:0 6px 24px rgba(0,0,0,.35); display:flex; align-items:center; gap:4px; padding:6px; z-index:10; font-size:14px; }
+  .bar button { background:#2b2b2b; color:#fff; border:0; border-radius:999px; width:34px; height:34px; cursor:pointer; font-size:16px; }
+  .bar button:hover { background:#444; }
+  .bar span { padding:0 12px; white-space:nowrap; }
+  .v { display:none; } .v.on { display:contents; }
+</style>
+</head>
+<body>
+
+<!-- ===================================================== VARIANT A: Narrative ===================================================== -->
+<div class="wrap v" data-v="A" data-name="Narrative: Problem → Solution → Verification">
+  <div>
+    <p class="pane-title">review-gate issue (GitHub)</p>
+    <div class="issue">
+      <h1>Review: Weekly CSV export slice</h1>
+      <div class="meta"><span class="label gate">review-gate</span><span class="label">slice gate</span> Engineering role · blocks #44 Email the export, #45 Export settings · run 2026-11-10-a</div>
+
+      <h2>Problem</h2>
+      <p>A user can download one week of time entries as a CSV that opens cleanly in a spreadsheet. From the spec <em>Timesheet export</em>, acceptance criteria:</p>
+      <ol>
+        <li>The export contains every entry in the chosen week, and nothing outside it.</li>
+        <li>The file opens in Numbers and Excel with one row per entry and correct columns.</li>
+        <li>The download button is disabled when the week has no entries.</li>
+      </ol>
+
+      <h2>Solution</h2>
+      <p>Three tickets merged: #41 Export endpoint, #42 CSV formatter, #43 Download button. Along the way the agents decided:</p>
+      <ul>
+        <li><strong>Weeks start on Monday (ISO)</strong>, not the user's locale. <span class="tag">taste · product</span></li>
+        <li><strong>Durations are exact minutes</strong>, not rounded to a quarter hour. <span class="tag">taste · product</span></li>
+        <li><strong>The CSV is built in memory</strong>, capped at 10,000 rows, rather than streamed. <span class="tag">engineering</span></li>
+      </ul>
+      <p>They were unsure about:</p>
+      <ul>
+        <li>An entry that crosses midnight between Sunday and Monday: it's counted in the week it <em>started</em>. No test covers this.</li>
+        <li>Notes containing Windows line endings (<code>\r\n</code>): only <code>\n</code> was tested.</li>
+      </ul>
+      <p>Guardrails applied: <em>no new dependencies without approval</em> (product), so the formatter is hand-written; <em>one PR per slice</em> (individual).</p>
+
+      <h2>Verification</h2>
+      <p>Check these yourself (about 5 minutes):</p>
+      <ol>
+        <li>Run <code>pnpm dev</code>, log three entries this week (one crossing Sunday midnight), click <strong>Export</strong>. Expect three rows; the midnight entry lands in this week.</li>
+        <li>Open the file in Numbers. Expect columns Date, Project, Minutes, Note.</li>
+        <li>Add a note with a comma and a line break, export again. Expect it in one cell.</li>
+      </ol>
+      <details><summary>Evidence already gathered</summary>
+        <table>
+          <tr><th>Criterion</th><th>Evidence</th></tr>
+          <tr><td>1 Every entry in the week</td><td><span class="ok">pass</span> 6 tests in <code>export.test.ts</code></td></tr>
+          <tr><td>2 Opens in spreadsheets</td><td><span class="warn">not automatable</span> RFC 4180 quoting tests pass</td></tr>
+          <tr><td>3 Button disabled when empty</td><td><span class="ok">pass</span> 2 component tests</td></tr>
+        </table>
+        <p>Gates (each proven to fail): typecheck, tests (214 pass), lint. Diff: 9 files, +412 −38. Cost: est. $6.40, actual $7.10 (+11%).</p>
+      </details>
+
+      <h2>Your decision</h2>
+      <p>Reply in a comment or in the chat: <code>approve</code>, <code>redirect: …</code>, <code>bypass</code> or <code>defer</code>. Optionally add <code>why:</code>, <code>guardrail:</code> (team / product / individual), <code>reach:</code> (ticket / area / everywhere), <code>confidence:</code> (firm / provisional).</p>
+    </div>
+  </div>
+  <div>
+    <p class="pane-title">terminal chat</p>
+<div class="term"><span class="d">── wave 2 finished · 3 merged · 0 blocked ──</span>
+
+<span class="h">Review ready: Weekly CSV export slice</span>  (Engineering · blocks 2 tickets)
+
+<span class="k">Problem</span>   Download a week of entries as a CSV that opens cleanly.
+<span class="k">Solution</span>  3 tickets merged. Agents chose: ISO Monday weeks,
+          exact minutes, in-memory build (10k cap).
+          <span class="w">Unsure:</span> entries crossing midnight; \r\n in notes.
+<span class="k">Verify</span>    3 checks, ~5 min. Criterion 2 can't be automated.
+          Gates proven · 214 tests pass · +11% on estimate
+
+Full packet: #46
+
+<span class="p">›</span> approve, why: ISO weeks are what accountants expect,
+  guardrail: product, reach: everywhere
+
+<span class="d">Approved. #44 and #45 unblocked and dispatched.
+Guardrail added (product): "Weeks start on Monday (ISO)".</span></div>
+    <p class="note">A reads like a short report. It follows the agreed three parts literally, and you respond in free text.</p>
+  </div>
+</div>
+
+<!-- ===================================================== VARIANT B: Decisions first ===================================================== -->
+<div class="wrap v" data-v="B" data-name="Decisions first">
+  <div>
+    <p class="pane-title">review-gate issue (GitHub)</p>
+    <div class="issue">
+      <h1>Review: Weekly CSV export slice</h1>
+      <div class="meta"><span class="label gate">review-gate</span><span class="label">slice gate</span> Engineering role · blocks #44, #45</div>
+
+      <div class="callout info"><strong>3 decisions need your judgement · 2 things the agents weren't sure of</strong><br>
+        Problem: download a week of entries as a CSV that opens cleanly · Solution: #41, #42, #43 merged · Verification: 2 of 3 criteria proven by tests</div>
+
+      <h2>Decisions the agents made</h2>
+      <div class="decision">
+        <div class="head"><strong>1. When does a week start?</strong><span class="pill taste">taste · product</span></div>
+        <p>Chose <strong>Monday (ISO 8601)</strong>. The alternative was the user's locale (Sunday in the US). <span class="tag">agent's confidence: medium</span></p>
+        <div class="opts"><span class="opt">✓ keep</span><span class="opt">↺ change: …</span><span class="opt">★ make it a guardrail</span></div>
+      </div>
+      <div class="decision">
+        <div class="head"><strong>2. How precise are durations?</strong><span class="pill taste">taste · product</span></div>
+        <p>Chose <strong>exact minutes</strong>. The alternative was rounding to a quarter hour, as the in-app totals do. <span class="tag">agent's confidence: low, because the app and the export now disagree</span></p>
+        <div class="opts"><span class="opt">✓ keep</span><span class="opt">↺ change: …</span><span class="opt">★ make it a guardrail</span></div>
+      </div>
+      <div class="decision">
+        <div class="head"><strong>3. Stream or build in memory?</strong><span class="pill eng">engineering</span></div>
+        <p>Chose <strong>in memory, capped at 10,000 rows</strong>. A week rarely exceeds 200 entries. <span class="tag">agent's confidence: high</span></p>
+        <div class="opts"><span class="opt">✓ keep</span><span class="opt">↺ change: …</span><span class="opt">★ make it a guardrail</span></div>
+      </div>
+
+      <h2>Where the agents weren't sure</h2>
+      <div class="callout">An entry crossing Sunday midnight counts in the week it started. Untested.</div>
+      <div class="callout">Notes with <code>\r\n</code> line endings are untested; only <code>\n</code> was.</div>
+
+      <h2>Evidence by criterion</h2>
+      <table>
+        <tr><th>Acceptance criterion</th><th>Status</th><th>Evidence</th></tr>
+        <tr><td>Every entry in the week, nothing outside</td><td class="ok">proven</td><td>6 tests, <code>export.test.ts</code></td></tr>
+        <tr><td>Opens in Numbers and Excel</td><td class="warn">needs you</td><td>quoting tests pass; opening a file can't be automated</td></tr>
+        <tr><td>Button disabled when empty</td><td class="ok">proven</td><td>2 component tests</td></tr>
+      </table>
+      <p class="tag">Guardrails applied: no new dependencies (product) · one PR per slice (individual). Gates proven to fail. Cost +11% on estimate.</p>
+
+      <h2>Overall</h2>
+      <div class="opts"><span class="opt">approve</span><span class="opt">redirect</span><span class="opt">bypass</span><span class="opt">defer</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="pane-title">terminal chat</p>
+<div class="term"><span class="h">Review ready: Weekly CSV export slice</span>  (Engineering · blocks 2)
+<span class="w">3 decisions need you · 2 uncertainties · 1 criterion needs you</span>
+
+<span class="k">1</span> Week starts Monday (ISO)            taste   conf: medium
+<span class="k">2</span> Durations in exact minutes          taste   conf: <span class="w">low</span>
+  <span class="d">↳ the app rounds to ¼h; the export doesn't</span>
+<span class="k">3</span> In-memory build, 10k cap            eng     conf: high
+
+Keep all three? Or name one to change.
+
+<span class="p">›</span> keep 1 and 3. Change 2: round to ¼h to match the app,
+  make it a guardrail (product, everywhere)
+
+<span class="d">Rework ticket #47 "Round export durations to ¼h" added
+to this run. #44 waits for it; #45 dispatched.
+Guardrail added (product): "Durations round to ¼h everywhere".</span></div>
+    <p class="note">B leads with the decisions, each with the agent's confidence and its own keep or change, so approval can't be a rubber stamp. Problem, Solution and Verification shrink to a header line.</p>
+  </div>
+</div>
+
+<!-- ===================================================== VARIANT C: Verify-first checklist ===================================================== -->
+<div class="wrap v" data-v="C" data-name="Verify first: checklist">
+  <div>
+    <p class="pane-title">review-gate issue (GitHub)</p>
+    <div class="issue">
+      <h1>Review: Weekly CSV export slice</h1>
+      <div class="meta"><span class="label gate">review-gate</span><span class="label">slice gate</span> Engineering role · blocks #44, #45 · ~5 min</div>
+
+      <div class="twocol">
+        <div>
+          <h2>Try it</h2>
+          <pre>pnpm dev   # then open http://localhost:3000/week</pre>
+          <div class="check"><div class="box"></div><div><strong>Midnight entry</strong>: log an entry from Sun 23:30 to Mon 00:30 and export.<br><span class="tag">Expect: it's in the week it started. The agents were <span class="warn">unsure</span> here; no test covers it.</span></div></div>
+          <div class="check"><div class="box"></div><div><strong>Opens cleanly</strong>: open the CSV in Numbers.<br><span class="tag">Expect: columns Date, Project, Minutes, Note. Criterion 2, which <span class="warn">only you can check</span>.</span></div></div>
+          <div class="check"><div class="box"></div><div><strong>Awkward note</strong>: a note with a comma and a line break.<br><span class="tag">Expect: one cell. <code>\r\n</code> is <span class="warn">untested</span>.</span></div></div>
+          <div class="check"><div class="box"></div><div><strong>Empty week</strong>: go to next week.<br><span class="tag">Expect: Export disabled. <span class="ok">Already proven</span> by 2 tests; optional.</span></div></div>
+
+          <h2>Then decide</h2>
+          <p><code>approve</code> · <code>redirect: …</code> · <code>bypass</code> · <code>defer</code>, with any of <code>why</code> / <code>guardrail</code> / <code>reach</code> / <code>confidence</code>.</p>
+        </div>
+        <div class="side">
+          <h3 style="margin-top:0">Problem</h3>
+          <p>Download one week of entries as a CSV that opens cleanly.</p>
+          <h3>Solution</h3>
+          <p>#41 Endpoint · #42 Formatter · #43 Button</p>
+          <h3>Agents decided</h3>
+          <ul style="padding-left:18px;margin:0">
+            <li>Monday weeks (ISO)</li>
+            <li>Exact minutes</li>
+            <li>In memory, 10k cap</li>
+          </ul>
+          <h3>Guardrails applied</h3>
+          <p>No new deps (product) · one PR per slice (individual)</p>
+          <h3>Gates</h3>
+          <p class="ok">typecheck · 214 tests · lint</p>
+          <p class="tag">all proven to fail</p>
+          <h3>Cost</h3>
+          <p>$7.10 of $6.40 est. (+11%)</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <p class="pane-title">terminal chat</p>
+<div class="term"><span class="h">Review: Weekly CSV export slice</span>  ~5 min · blocks 2
+
+I've started the app at <span class="k">localhost:3000/week</span>.
+Four checks; the first three are where tests can't help:
+
+<span class="k">[ ]</span> 1 Midnight entry lands in its start week   <span class="w">untested</span>
+<span class="k">[ ]</span> 2 CSV opens cleanly in Numbers              <span class="w">only you</span>
+<span class="k">[ ]</span> 3 Note with comma and newline: one cell     <span class="w">\r\n untested</span>
+<span class="k">[✓]</span> 4 Export disabled on an empty week          <span class="d">tests</span>
+
+Tell me how each went.
+
+<span class="p">›</span> 1 ok, 2 ok, 3 broke: the line break split the row
+
+<span class="d">Redirected. Rework ticket #47 "Quote newlines in
+notes" added with your finding; #44 and #45 wait for it.
+Approve once #47 merges? I'll bring back check 3 only.</span></div>
+    <p class="note">C leads with what to try, ordering the checks by where tests can't help. The agents' decisions move to a sidebar, and the chat drives the checks with you.</p>
+  </div>
+</div>
+
+<div class="bar" role="navigation" aria-label="Prototype variant switcher">
+  <button id="prev" aria-label="Previous variant">←</button>
+  <span id="label"></span>
+  <button id="next" aria-label="Next variant">→</button>
+</div>
+
+<script>
+  const variants = [...document.querySelectorAll('.v')];
+  const keys = variants.map(v => v.dataset.v);
+  function current(){ const p = new URLSearchParams(location.search).get('variant'); return keys.includes(p) ? p : 'A'; }
+  function show(k){
+    variants.forEach(v => v.classList.toggle('on', v.dataset.v === k));
+    const v = variants.find(v => v.dataset.v === k);
+    document.getElementById('label').textContent = `${k} (${v.dataset.name})`;
+    const u = new URL(location); u.searchParams.set('variant', k); history.replaceState(null, '', u);
+  }
+  function step(d){ const i = keys.indexOf(current()); show(keys[(i + d + keys.length) % keys.length]); }
+  document.getElementById('prev').onclick = () => step(-1);
+  document.getElementById('next').onclick = () => step(1);
+  addEventListener('keydown', e => {
+    if (e.target.closest('input, textarea, [contenteditable]')) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+  show(current());
+</script>
+</body>
+</html>
