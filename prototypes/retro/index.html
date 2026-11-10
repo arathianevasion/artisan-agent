@@ -1,0 +1,359 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Ticket #19 "What does the retro wrapper add to upstream /retro, and is there one joint retro or two?"
+  Three structurally different variants of the retro after one run, switchable via ?variant=A|B|C and the floating bar (or ← →).
+  Sample data is fictional: the same timesheet app's "Timesheet export" plan used by the review-packet prototype.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retro prototype</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#5d6675; --line:#dfe3ea; --accent:#2f5fd0;
+          --ok:#1f8a4c; --warn:#b26b00; --bad:#c0392b; --term:#14171c; --termink:#d7dde6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; padding:24px 16px 96px; }
+  .intro { max-width:1180px; margin:0 auto 18px; }
+  .intro h1 { font-size:22px; margin:0 0 6px; }
+  .intro p { margin:4px 0; color:var(--muted); }
+  .wrap { max-width:1180px; margin:0 auto; display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:20px; align-items:start; }
+  @media (max-width:900px){ .wrap{ grid-template-columns:1fr; } }
+  .pane-title { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .issue { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin-bottom:16px; }
+  .issue h1 { font-size:20px; margin:0 0 4px; }
+  .meta { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  .label { display:inline-block; font-size:12px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); margin-right:4px; }
+  .label.retro { background:#f3efff; border-color:#d8ccff; color:#4b2f9a; }
+  h2 { font-size:16px; margin:20px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  h3 { font-size:14px; margin:14px 0 6px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; margin:6px 0; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  .ok{color:var(--ok);font-weight:600} .warn{color:var(--warn);font-weight:600} .bad{color:var(--bad);font-weight:600}
+  code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; background:#f0f2f5; padding:1px 5px; border-radius:4px; }
+  details { margin:6px 0; } summary { cursor:pointer; color:var(--accent); }
+  .callout { border-left:4px solid var(--warn); background:#fff8ec; padding:8px 12px; border-radius:4px; margin:8px 0; font-size:14px; }
+  .callout.info { border-color:var(--accent); background:#f1f5ff; }
+  .lesson { border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:10px 0; }
+  .lesson .head { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:baseline; }
+  .lesson .from { font-size:13px; color:var(--muted); margin-top:4px; }
+  .lesson .to { font-size:13px; margin-top:4px; }
+  .pill { font-size:12px; padding:1px 8px; border-radius:999px; background:#f0f2f5; white-space:nowrap; }
+  .pill.prod { background:#fdeefa; color:#8a2a75; } .pill.eng { background:#eef6ff; color:#22508f; } .pill.pipe { background:#eefaf1; color:#1f6b3a; }
+  .pill.gen { background:#fff3d6; color:#7a5200; }
+  .opts { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .opt { font-size:13px; border:1px solid var(--line); border-radius:6px; padding:3px 9px; background:#fafbfc; }
+  .opt.rec { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .term { background:var(--term); color:var(--termink); border-radius:10px; padding:14px 16px; font:13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; word-break:break-word; margin-bottom:16px; }
+  .term .p { color:#7fd48a; } .term .h { color:#ffd479; font-weight:700; } .term .d { color:#8a93a3; } .term .k { color:#7fb3ff; } .term .w { color:#ffb36b; }
+  .note { margin-top:12px; font-size:13px; color:var(--muted); }
+  .q { background:#fffdf3; border:1px dashed #d9c47a; border-radius:8px; padding:10px 14px; font-size:14px; }
+  .q ol { margin:6px 0 0; padding-left:20px; }
+  .bar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:#111; color:#fff; border-radius:999px;
+         box-shadow:0 6px 24px rgba(0,0,0,.35); display:flex; align-items:center; gap:4px; padding:6px; z-index:10; font-size:14px; max-width:calc(100% - 32px); }
+  .bar button { background:#2b2b2b; color:#fff; border:0; border-radius:999px; width:34px; height:34px; cursor:pointer; font-size:16px; flex:none; }
+  .bar button:hover { background:#444; }
+  .bar span { padding:0 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .v { display:none; } .v.on { display:grid; }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Retro after a run: what the wrapper adds, and one retro or two?</h1>
+  <p><strong>Sample run:</strong> plan "Timesheet export", 5 tickets in 3 waves, 2 gates, est. $14.00, actual $16.90 (+21%). The same fictional app as the review-packet prototype.</p>
+  <p><strong>Upstream <code>/retro</code></strong> reads one session's log and proposes navigation pointers, checks, coding standards, tool economy and information access. <strong>The wrapper adds:</strong> it reads the whole run (state file, gate actions, redirects, bypasses, overruns, findings); sorts each lesson into one of the eight homes; marks each "this project" or "generalises"; records its origin; checks the health of existing guardrails; asks about the Artisan's experience; and delivers the result (one PR, individual commits, pipeline tickets).</p>
+  <p>All three variants hold the same lessons. They differ in <strong>how many retros there are, when they happen, and whether you act on a packet or answer questions in a chat</strong>.</p>
+</div>
+
+<!-- ===================================================== VARIANT A: One joint retro packet ===================================================== -->
+<div class="wrap v" data-v="A" data-name="One joint retro packet per run">
+  <div>
+    <p class="pane-title">retro issue (GitHub), written by a fresh headless session after the end gate</p>
+    <div class="issue">
+      <h1>Retro: Timesheet export run</h1>
+      <div class="meta"><span class="label retro">retro</span> Product + Engineering · run 2026-11-10-a · 10 lessons · nothing changes until you act</div>
+
+      <table>
+        <tr><th>Run</th><th></th></tr>
+        <tr><td>Tickets</td><td>5 merged, 1 needed a 2nd attempt, 0 gave up</td></tr>
+        <tr><td>Gates</td><td>2 approved, 1 redirected, 1 bypass (one PR per slice)</td></tr>
+        <tr><td>Cost</td><td>est. $14.00 · actual $16.90 · <span class="warn">+21%</span> (UI tickets +30%, others +4%)</td></tr>
+        <tr><td>Read</td><td>state file, 2 packets, 7 worker exit records, 5 verifier results, findings.jsonl, Engineering chat log</td></tr>
+      </table>
+
+      <h2>Already captured at a gate (1)</h2>
+      <p style="font-size:14px">"Weeks start on Monday (ISO)" became a product guardrail when you approved the slice gate. Listed so you can see it landed; no action.</p>
+
+      <h2>Product (3)</h2>
+      <div class="lesson">
+        <div class="head"><strong>Extend an existing page before adding a new surface</strong><span><span class="pill prod">product taste</span> <span class="pill gen">generalises?</span></span></div>
+        <div class="from">From: you redirected #45 Export settings: "put it on Preferences, not a new modal". Attempt 2 merged.</div>
+        <div class="to">→ <code>PRODUCT_STANDARDS.md</code>, and promote to your individual standards</div>
+        <div class="opts"><span class="opt rec">accept</span><span class="opt">this project only</span><span class="opt">change</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong>"Time entry" is the term; avoid "log" and "record"</strong><span class="pill prod">domain</span></div>
+        <div class="from">From: three tickets used three words for the same thing; verifier on #43 flagged a mismatched label.</div>
+        <div class="to">→ <code>GLOSSARY.md</code></div>
+        <div class="opts"><span class="opt rec">accept</span><span class="opt">change</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong>Does export achieve its purpose?</strong><span class="pill prod">outcome</span></div>
+        <div class="from">Too early to tell: shipped today.</div>
+        <div class="to">→ a reminder in 2 weeks to check whether people export weekly (job 20)</div>
+        <div class="opts"><span class="opt rec">set reminder</span><span class="opt">skip</span></div>
+      </div>
+
+      <h2>Engineering (4)</h2>
+      <div class="lesson">
+        <div class="head"><strong>Fail CI when a dependency is added without the <code>dep-approved</code> label</strong><span class="pill eng">check</span></div>
+        <div class="from">From: #42 attempt 1 added <code>papaparse</code> against the guardrail "no new dependencies without approval"; the verifier caught it, costing a full retry ($2.10).</div>
+        <div class="to">→ a CI job in this repo; generalises as a check in your individual repo</div>
+        <div class="opts"><span class="opt rec">accept</span><span class="opt">this project only</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong>Errors are thrown, not returned</strong><span class="pill eng">coding standard</span></div>
+        <div class="from">From: #42's formatter returns <code>{ error }</code>; no verifier objected. The rest of the codebase throws.</div>
+        <div class="to">→ <code>CODING_STANDARDS.md</code></div>
+        <div class="opts"><span class="opt rec">accept</span><span class="opt">change</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong>Point from <code>src/time/README.md</code> to the date helpers</strong><span class="pill eng">navigation</span></div>
+        <div class="from">From: the #41 worker took 14 tool calls to find <code>startOfIsoWeek</code>.</div>
+        <div class="to">→ a navigation pointer</div>
+        <div class="opts"><span class="opt rec">accept</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong>Estimate UI tickets 30% higher</strong><span class="pill eng">calibration</span></div>
+        <div class="from">From: both UI tickets ran +30%; the three non-UI tickets ran +4%. Only 2 data points.</div>
+        <div class="to">→ workflow config: <code>estimate.multiplier.ui = 1.3</code></div>
+        <div class="opts"><span class="opt">accept</span><span class="opt rec">wait for more runs</span><span class="opt">discard</span></div>
+      </div>
+
+      <h2>The pipeline and upstream (2)</h2>
+      <div class="lesson">
+        <div class="head"><strong>Orchestrator missed an overlap on a file both tickets would create</strong><span class="pill pipe">pipeline</span></div>
+        <div class="from">From: #44 and #45 ran in the same wave; both created <code>src/settings/export.ts</code>; merge conflict resolved by <code>/resolving-merge-conflicts</code>.</div>
+        <div class="to">→ a ticket in watsonsoft-workflow</div>
+        <div class="opts"><span class="opt rec">file ticket</span><span class="opt">discard</span></div>
+      </div>
+      <div class="lesson">
+        <div class="head"><strong><code>/implement</code> re-read the whole spec on each review pass</strong><span class="pill pipe">upstream</span></div>
+        <div class="from">From: ~18k tokens per ticket across 5 tickets.</div>
+        <div class="to">→ the upstream-updates check; optionally an issue on mattpocock/skills</div>
+        <div class="opts"><span class="opt rec">note it</span><span class="opt">also file upstream</span><span class="opt">discard</span></div>
+      </div>
+
+      <h2>Guardrail health</h2>
+      <table>
+        <tr><th>Guardrail</th><th>Level</th><th>This run</th><th>Suggestion</th></tr>
+        <tr><td>One PR per slice</td><td>individual</td><td>bypassed 1×; 3× in last 4 runs</td><td class="warn">loosen? (your bypass reasons: "slices too small to review alone")</td></tr>
+        <tr><td>No new dependencies without approval</td><td>product</td><td>fired 1×, held</td><td>keep; make it a check (above)</td></tr>
+        <tr><td>Prefer server components</td><td>individual</td><td>never fired in 6 runs</td><td>question: still needed? origin: claudia-kerman 2026-09</td></tr>
+      </table>
+
+      <h2>How was it for you? (3 quick questions)</h2>
+      <p style="font-size:14px">1. Did you decide the things that mattered? 2. Did you learn or practise anything? 3. Did the work feel worth doing? <em>(1–5 and a sentence; what's asked and why is for the satisfaction ticket)</em></p>
+
+      <h2>When you've acted, agents deliver</h2>
+      <ul style="font-size:14px">
+        <li><strong>One PR to this repo</strong>: product and coding standards, glossary, CI check, pointer, config. Merging it is the approval.</li>
+        <li><strong>Commits to <code>~/.claude/watsonsoft/</code></strong>: each lesson you marked "generalises", with its origin.</li>
+        <li><strong>One ticket</strong> in watsonsoft-workflow; one note in the upstream check.</li>
+      </ul>
+    </div>
+  </div>
+  <div>
+    <p class="pane-title">Engineering chat</p>
+<div class="term"><span class="d">── end gate approved · run 2026-11-10-a complete ──</span>
+
+<span class="h">Retro ready: Timesheet export run</span>  (#52)
+10 lessons · 3 product · 4 engineering · 2 pipeline/upstream
+Guardrail health: <span class="w">"One PR per slice" bypassed 3× in 4 runs</span>
++21% on estimate, mostly UI tickets
+
+<span class="p">›</span> accept all recommended; 1 generalises;
+  loosen one-PR-per-slice to "one PR per plan"
+  satisfaction 4 4 5, "the gate on the redirect was
+  the best 2 minutes of the day"
+
+<span class="d">PR #53 opened (6 files). 2 commits to ~/.claude/watsonsoft.
+Ticket filed: "Orchestrator misses overlap on files
+tickets would create". Reminder set: 24 Nov, export usage.</span></div>
+    <p class="note"><strong>A</strong>: one retro per run, in one packet, read in the Engineering chat. Lessons are grouped by role so a pair could split them. Product and engineering lessons land in one PR. Retro cost: one headless session to prepare (~$0.60) plus a few minutes of your time.</p>
+    <div class="q"><strong>Open in A</strong><ol>
+      <li>The Product chat never sees its own lessons. Does the Product role mind?</li>
+      <li>Outcome (job 20) can't be judged on the day, so it's only a reminder here.</li>
+      <li>Does a smooth run still get a retro, or does it close with "nothing to learn"?</li>
+    </ol></div>
+  </div>
+</div>
+
+<!-- ===================================================== VARIANT B: Two retros, by role and by time ===================================================== -->
+<div class="wrap v" data-v="B" data-name="Two retros: Engineering per run, Product per release">
+  <div>
+    <p class="pane-title">1 · Engineering retro: right after each run, in the Engineering chat</p>
+    <div class="issue">
+      <h1>Engineering retro: Timesheet export run</h1>
+      <div class="meta"><span class="label retro">retro</span><span class="label">engineering</span> run 2026-11-10-a · upstream <code>/retro</code> categories + calibration + pipeline + upstream</div>
+      <table>
+        <tr><th>Lesson</th><th>Home</th><th>From</th></tr>
+        <tr><td>Fail CI when a dependency is added without <code>dep-approved</code></td><td>check</td><td>#42 attempt 1</td></tr>
+        <tr><td>Errors are thrown, not returned</td><td><code>CODING_STANDARDS.md</code></td><td>#42 formatter</td></tr>
+        <tr><td>Pointer to the date helpers</td><td>navigation</td><td>#41, 14 tool calls</td></tr>
+        <tr><td>UI tickets +30% <span class="tag">(wait for more runs)</span></td><td>config</td><td>2 UI tickets</td></tr>
+        <tr><td>Orchestrator missed a created-file overlap</td><td>pipeline ticket</td><td>#44/#45 conflict</td></tr>
+        <tr><td><code>/implement</code> re-reads the spec</td><td>upstream check</td><td>5 tickets</td></tr>
+      </table>
+      <p style="font-size:14px">Guardrail health (engineering guardrails only): "One PR per slice" bypassed 3× in 4 runs, so loosen?</p>
+      <div class="callout">The redirect on #45 ("Preferences, not a new modal") is product taste. This retro can't file it. It's passed to the Product retro by doorbell.</div>
+      <p style="font-size:14px">→ one PR (engineering files only), individual commits, one pipeline ticket.</p>
+    </div>
+
+    <p class="pane-title">2 · Product retro: after a release has been used for a while, in the Product chat</p>
+    <div class="issue">
+      <h1>Product retro: Timesheet export (released 10 Nov)</h1>
+      <div class="meta"><span class="label retro">retro</span><span class="label">product</span> covers runs 2026-11-10-a and 2026-11-12-a · held 24 Nov</div>
+      <h2>Did it achieve its purpose? (job 20)</h2>
+      <p style="font-size:14px">Purpose from the spec: "accountants get a week's hours without asking". Signals: 31 exports in 2 weeks, 2 support emails about Sunday-night entries. <strong>Partly.</strong></p>
+      <h2>Product lessons (3)</h2>
+      <table>
+        <tr><th>Lesson</th><th>Home</th><th>Level</th></tr>
+        <tr><td>Extend an existing page before adding a new surface</td><td><code>PRODUCT_STANDARDS.md</code></td><td>generalises?</td></tr>
+        <tr><td>"Time entry" is the term</td><td><code>GLOSSARY.md</code></td><td>this project</td></tr>
+        <tr><td>Entries crossing midnight belong to the day they start, and say so in the UI</td><td><code>PRODUCT_STANDARDS.md</code></td><td>this project</td></tr>
+      </table>
+      <p style="font-size:14px">The third lesson comes from real users. The run couldn't have produced it: the packet only marked it as an uncertainty.</p>
+      <h2>Product guardrail health</h2>
+      <p style="font-size:14px">"Weeks start on Monday (ISO)": no complaints. Keep.</p>
+      <h2>How was it for you, wearing the Product role?</h2>
+      <p style="font-size:14px">Same 3 questions, asked of product work.</p>
+      <p style="font-size:14px">→ a second PR (product files only), plus new tickets for the follow-up on midnight entries.</p>
+    </div>
+  </div>
+  <div>
+    <p class="pane-title">Engineering chat · 10 Nov</p>
+<div class="term"><span class="h">Engineering retro ready</span> (#52) · 6 lessons
+<span class="d">1 product lesson passed to the Product chat.</span>
+
+<span class="p">›</span> accept recommended; loosen one-PR-per-slice
+
+<span class="d">PR #53 (4 files) · 1 pipeline ticket filed.</span></div>
+    <p class="pane-title">Product chat · 24 Nov</p>
+<div class="term"><span class="h">Product retro due:</span> Timesheet export, released 14 days ago
+Outcome: <span class="w">partly</span> (Sunday-night entries confuse users)
+3 lessons, 1 from the run's redirect, 1 from users
+
+<span class="p">›</span> accept; the midnight one is a new ticket, not a
+  standard. Extend-existing-page generalises.
+
+<span class="d">PR #61 (2 files) · ticket #62 filed for triage ·
+1 commit to ~/.claude/watsonsoft.</span></div>
+    <p class="note"><strong>B</strong>: two retros on two clocks. Engineering learns from the run while the run is fresh. Product learns from the release once people have used it, which is the only time job 20 can be answered. It costs two sittings, two PRs, and a handoff for product taste found during runs.</p>
+    <div class="q"><strong>Open in B</strong><ol>
+      <li>What starts the Product retro: a time after release, a number of runs, or you?</li>
+      <li>A redirect waits two weeks to become a standard, so the next run could repeat it. Should gate redirects land at once instead?</li>
+      <li>For a solo Artisan, is a second sitting worth it, or is it ceremony?</li>
+    </ol></div>
+  </div>
+</div>
+
+<!-- ===================================================== VARIANT C: Joint retro as a chat round, PR as the record ===================================================== -->
+<div class="wrap v" data-v="C" data-name="Joint retro as a chat round; the PR is the record">
+  <div>
+    <p class="pane-title">Engineering chat: the retro is asked, not read</p>
+<div class="term"><span class="d">── end gate approved · run 2026-11-10-a complete ──</span>
+
+<span class="h">Retro: Timesheet export run</span>. 10 lessons found. 6 have an
+obvious home and need only a yes. 4 need your judgement:
+
+<span class="k">❓ Q1 · Generalise "extend an existing page before adding a
+   new surface"?</span> From your redirect on #45.
+<span class="p">➡️</span> Yes: PRODUCT_STANDARDS.md here and in your individual
+   standards. It matches 2 redirects on claudia-kerman.
+
+<span class="k">❓ Q2 · Loosen "one PR per slice"?</span> Bypassed 3× in 4 runs;
+   your reasons were all "slices too small to review alone".
+<span class="p">➡️</span> Yes: change it to "one PR per plan, split if over 600 lines".
+
+<span class="k">❓ Q3 · Estimate UI tickets 30% higher?</span> Only 2 data points.
+<span class="p">➡️</span> No: wait. I'll raise it again after 2 more UI runs.
+
+<span class="k">❓ Q4 · "Prefer server components" hasn't fired in 6 runs.
+   Retire it?</span> Origin: claudia-kerman, Sept, "client bundles too big".
+<span class="p">➡️</span> No: keep it; this app has had no new pages.
+
+<span class="d">The 6 with obvious homes (in the PR, "yes" to all): dependency
+check · errors are thrown · "time entry" in glossary · date-helper
+pointer · pipeline ticket on created-file overlap · upstream note.</span>
+
+<span class="k">❓ Q5 · How was it?</span> Decided what mattered / learned / worth it, 1–5.
+
+<span class="p">›</span> yes to all. Q5: 4 4 5
+
+<span class="d">PR #53 opened: the retro's record. 2 commits to ~/.claude/watsonsoft.
+1 ticket filed. Product chat told: "PRODUCT_STANDARDS.md changes
+in PR #53, applies from the next wave".</span></div>
+  </div>
+  <div>
+    <p class="pane-title">PR #53 (GitHub): the only written record</p>
+    <div class="issue">
+      <h1>Retro: Timesheet export run</h1>
+      <div class="meta"><span class="label retro">retro</span> run 2026-11-10-a · 6 files · merging it is the approval</div>
+      <table>
+        <tr><th>File</th><th>Change</th><th>Origin</th></tr>
+        <tr><td><code>PRODUCT_STANDARDS.md</code></td><td>+ Extend an existing page first</td><td>#45 redirect</td></tr>
+        <tr><td><code>CODING_STANDARDS.md</code></td><td>+ Errors are thrown</td><td>#42</td></tr>
+        <tr><td><code>GLOSSARY.md</code></td><td>+ Time entry</td><td>#41–43</td></tr>
+        <tr><td><code>.github/workflows/deps.yml</code></td><td>+ dependency check (proven to fail)</td><td>#42 attempt 1</td></tr>
+        <tr><td><code>src/time/README.md</code></td><td>+ pointer</td><td>#41</td></tr>
+        <tr><td><code>.workflow/config.yml</code></td><td>no change (UI multiplier deferred)</td><td>n/a</td></tr>
+      </table>
+      <h3>Not in this PR</h3>
+      <ul style="font-size:14px">
+        <li>Individual: "extend an existing page", "one PR per plan" → <code>~/.claude/watsonsoft/</code></li>
+        <li>Pipeline: "Orchestrator misses overlap on files tickets would create" → watsonsoft-workflow</li>
+        <li>Upstream: <code>/implement</code> spec re-reads → upstream check</li>
+        <li>Satisfaction: 4 4 5 → the satisfaction record</li>
+        <li>Deferred: UI multiplier, ask again after 2 UI runs</li>
+      </ul>
+    </div>
+    <p class="note"><strong>C</strong>: one joint retro, but no packet to read. It runs in the chat in the grilling format: obvious lessons are batched for one "yes", and only judgement calls get a question. The PR is the record, so nothing extra sits in the tracker. Outcome (job 20) is left to a later Product-chat check, as in B.</p>
+    <div class="q"><strong>Open in C</strong><ol>
+      <li>Is a batched "yes" to 6 lessons a rubber stamp? (They're still in the PR diff.)</li>
+      <li>A retro that runs in the chat costs Engineering-chat context. Fine, given the chat compacts out of sight?</li>
+      <li>Without a retro issue, where does a pair split product and engineering lessons?</li>
+    </ol></div>
+  </div>
+</div>
+
+<div class="bar" role="navigation" aria-label="Prototype variant switcher">
+  <button id="prev" aria-label="Previous variant">←</button>
+  <span id="label"></span>
+  <button id="next" aria-label="Next variant">→</button>
+</div>
+
+<script>
+  const variants = [...document.querySelectorAll('.v')];
+  const keys = variants.map(v => v.dataset.v);
+  function current(){ const p = new URLSearchParams(location.search).get('variant'); return keys.includes(p) ? p : 'A'; }
+  function show(k){
+    variants.forEach(v => v.classList.toggle('on', v.dataset.v === k));
+    const v = variants.find(v => v.dataset.v === k);
+    document.getElementById('label').textContent = `${k} (${v.dataset.name})`;
+    const u = new URL(location); u.searchParams.set('variant', k); history.replaceState(null, '', u);
+  }
+  function step(d){ const i = keys.indexOf(current()); show(keys[(i + d + keys.length) % keys.length]); }
+  document.getElementById('prev').onclick = () => step(-1);
+  document.getElementById('next').onclick = () => step(1);
+  addEventListener('keydown', e => {
+    if (e.target.closest('input, textarea, [contenteditable]')) return;
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
+  });
+  show(current());
+</script>
+</body>
+</html>
