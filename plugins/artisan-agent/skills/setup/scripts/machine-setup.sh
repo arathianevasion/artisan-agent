@@ -4,6 +4,7 @@
 #   machine-setup.sh init           create the individual home, set marketplace auto-update
 #   machine-setup.sh scan           list removal offers, one per line: ID<TAB>KIND<TAB>description
 #   machine-setup.sh remove ID...   apply only the offers the Artisan said yes to
+#   machine-setup.sh check          report any missing tool the pipeline's scripts need (jq, perl)
 #
 # Everything lives under CLAUDE_CONFIG_DIR (default $HOME/.claude). Nothing is deleted:
 # skill copies move to $CFG/skills/.trash. ARTISAN_CLAUDE_BIN overrides the claude binary.
@@ -31,12 +32,29 @@ upstream_names() {
   } | sort -u
 }
 
+# jq: classify-worker.sh reads worker output with it. perl: macOS has no setsid, so the worker
+# runner detaches with perl. Prints one "missing:" line per absent tool; non-zero if any.
+cmd_check() {
+  local missing=0
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "missing: jq - needed by scripts/classify-worker.sh to read worker output; install it (macOS: brew install jq; Debian/Ubuntu: apt install jq)"
+    missing=1
+  fi
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "missing: perl - needed on macOS to detach workers (macOS has no setsid); install it (Debian/Ubuntu: apt install perl; macOS ships it, so check PATH)"
+    missing=1
+  fi
+  [ "$missing" = 1 ] || echo "ok: jq and perl are available"
+  return "$missing"
+}
+
 standards_file() { # title
   printf '# %s\n\nIndividual level: these follow the Artisan into every project. Product and team standards win a contradiction.\n\n## Always ask\n\nThings that must always come back to the Artisan.\n' "$1"
 }
 
 cmd_init() {
-  local f path paths="" ident="" did=0
+  local f path paths="" ident="" did=0 tools_rc=0
+  cmd_check || tools_rc=1   # report now, still set up; the exit status stays non-zero at the end
   mkdir -p "$HOME_DIR"
   for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md satisfaction.jsonl; do
     path=$HOME_DIR/$f
@@ -65,6 +83,8 @@ cmd_init() {
   fi
   [ "$did" = 1 ] || echo "unchanged: individual home $HOME_DIR"
   json autoupdate "$CFG"
+  [ "$tools_rc" = 0 ] || echo "setup finished, but jq or perl is missing (see above); install it before running workers" >&2
+  return "$tools_rc"
 }
 
 cmd_scan() {
@@ -156,7 +176,8 @@ cmd_remove() {
 
 case ${1:-} in
   init) cmd_init ;;
+  check) cmd_check ;;
   scan) cmd_scan ;;
   remove) shift; cmd_remove "$@" ;;
-  *) echo "usage: machine-setup.sh init|scan|remove ID..." >&2; exit 2 ;;
+  *) echo "usage: machine-setup.sh init|check|scan|remove ID..." >&2; exit 2 ;;
 esac

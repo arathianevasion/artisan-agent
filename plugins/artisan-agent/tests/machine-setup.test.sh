@@ -147,3 +147,41 @@ test_remove_keeps_recreated_folder_that_the_uninstall_filled_and_reports_failure
   if "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE" >/dev/null 2>&1; then fail "a failing uninstall must fail"; fi
   [ ! -e "$GONE" ] || fail "folder left behind after a failed uninstall"
 }
+
+# A directory holding only the named tools (as stubs), to stand in for PATH.
+path_with() { # dir tool...
+  local d=$1 t; shift; mkdir -p "$d"
+  for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$d/$t"; chmod +x "$d/$t"; done
+}
+
+test_check_passes_when_jq_and_perl_are_present() {
+  path_with "$TEST_TMPDIR/bin" jq perl
+  out=$(PATH="$TEST_TMPDIR/bin" /bin/bash "$SCRIPT" check) || fail "check failed with both present"
+  assert_contains "$out" "ok: jq and perl"
+}
+
+test_check_reports_each_missing_tool_clearly() {
+  path_with "$TEST_TMPDIR/nojq" perl
+  rc=0; out=$(PATH="$TEST_TMPDIR/nojq" /bin/bash "$SCRIPT" check) || rc=$?
+  assert_eq 1 "$rc" "exit status"
+  assert_contains "$out" "missing: jq"
+  case $out in *"missing: perl"*) fail "perl is present" ;; esac
+  path_with "$TEST_TMPDIR/noperl" jq
+  rc=0; out=$(PATH="$TEST_TMPDIR/noperl" /bin/bash "$SCRIPT" check) || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$out" "missing: perl"
+  mkdir -p "$TEST_TMPDIR/empty"
+  out=$(PATH="$TEST_TMPDIR/empty" /bin/bash "$SCRIPT" check) || true
+  assert_contains "$out" "missing: jq"
+  assert_contains "$out" "missing: perl"
+}
+
+test_init_still_sets_up_but_exits_non_zero_when_a_tool_is_missing() {
+  seed_machine
+  path_with "$TEST_TMPDIR/nojq" perl git python3
+  for t in mkdir dirname cat tr sort grep date mv basename; do ln -s "$(command -v $t)" "$TEST_TMPDIR/nojq/$t"; done
+  rc=0; out=$(PATH="$TEST_TMPDIR/nojq" /bin/bash "$SCRIPT" init 2>&1) || rc=$?
+  assert_contains "$out" "missing: jq"
+  [ "$rc" != 0 ] || fail "init must exit non-zero when jq is missing"
+  [ -f "$CLAUDE_CONFIG_DIR/artisan-agent/CODING_STANDARDS.md" ] || fail "init must still create the individual home"
+}

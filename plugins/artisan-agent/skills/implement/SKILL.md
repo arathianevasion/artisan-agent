@@ -26,7 +26,7 @@ Take these from the prompt that invoked you:
 - **Commit early and often**, with honest messages saying what is and isn't done. A crash, timeout or budget cap can come at any moment; uncommitted work is unverifiable and lost.
 - **Never skip a step to save budget.** `tdd` and the full two-axis `mattpocock-skills:code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
 - **Keep to the ticket.** Missing work you find goes in the record's `findings` list, not into your diff. Adding scope is controversy criterion 2.
-- **Design never goes between workers.** If the ticket can't be built without changing an interface another ticket owns, stop: record the question and finish with status `blocked`.
+- **Design never goes between workers.** Stop only when the ticket can't be built without changing the design or interface of something another ticket owns: record the question and finish with status `blocked`. An interface *you* introduce is not that. It is a new seam: carry on and record it as a decision card (step 2).
 
 ## 1. Read before you build
 
@@ -43,8 +43,8 @@ Before writing the first test, call the Skill tool with `mattpocock-skills:tdd` 
 
 When the work needs a test at a public boundary the ticket does not name (a new module, a new public function or type other code calls, a new boundary between modules), that is a **new seam**, and choosing it is a decision you are making alone:
 
-- If the seam changes an interface another ticket owns, or a schema or stored data, or the ticket or an "Always ask" item says to ask, don't choose it. Stop, record the question with your recommendation, and finish with status `blocked`.
-- Otherwise build it test-first like a named seam, and record a decision card for it (step 3). A seam is engineering taste unless a guardrail covers it. If it's a public interface other code will come to depend on, say so in the card and name controversy criterion 3, so the Artisan sees it at the gate.
+- If the seam changes the design or interface of something another ticket owns, or the ticket or an "Always ask" item says to ask, don't choose it. Stop, record the question with your recommendation, and finish with status `blocked`.
+- Otherwise, including when it is a new public interface, a new module or a new boundary that only your ticket introduces, **carry on**: build it test-first like a named seam and record a decision card for it (step 3). Don't stop for it, even though it is hard to reverse. Name controversy criterion 3 in the card when other code will come to depend on it; the card is what makes the Artisan see it, and a later risk gate fires on it (the orchestrator's job, not yours). Where no criterion applies, it is engineering taste.
 
 Run typechecks and single test files as you go, and the full suite once the ticket is built. Commit.
 
@@ -54,7 +54,7 @@ A notable decision is one the Artisan might have made differently: every new sea
 
 Record each one as in `${CLAUDE_PLUGIN_ROOT}/references/decision-record.md`, with the decision-card fields `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md` adds: the question, the alternative you rejected, its kind (product taste, engineering taste or engineering) and the controversy criterion it meets.
 
-A decision that is controversial and **not** easy-to-reverse taste is not yours to make. Stop and finish with status `blocked`, with the question and your recommendation in the record.
+A decision that is controversial and **not** easy-to-reverse taste is not yours to make, with one exception: a new seam you introduce (step 2), which you build and record, naming criterion 3 where it applies. Everything else, such as changing something another ticket owns or an "Always ask" item, is a stop: finish with status `blocked`, with the question and your recommendation in the record.
 
 ## 4. Review, then act on the remarks
 
