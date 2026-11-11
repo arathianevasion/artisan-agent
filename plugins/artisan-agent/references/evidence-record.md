@@ -1,6 +1,6 @@
 # Evidence record
 
-The result file a worker writes when it finishes a ticket: each acceptance criterion with its evidence, what the worker was unsure of, the decisions it made alone, and the review it ran. The orchestrator reads it into the state file and onto the ticket, the verifier checks it against the diff, and the packet is built from it. None of them read the worker's transcript.
+The result file a worker writes when it finishes a ticket: each acceptance criterion with its evidence, what the worker was unsure of, the decisions it made alone, and the review it ran. The verifier checks it against the diff, and the evidence contract built from both goes into the state file and onto the ticket (`references/evidence-contract.md`); the packet is built from it. None of them read the worker's transcript.
 
 Skills cite this file rather than copying it: "write the evidence record as in `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md`".
 

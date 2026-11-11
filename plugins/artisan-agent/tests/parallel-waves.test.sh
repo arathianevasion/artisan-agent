@@ -47,6 +47,7 @@ setup_waves() {
   PATH="$TESTS_DIR/fixtures/fake-claude:$TESTS_DIR/fixtures/fake-gh:$PATH"
   export PATH FAKE_CLAUDE_MODE=script FAKE_CLAUDE_LOG="$TEST_TMPDIR/fake-claude.log" SCRIPTS
   write_worker
+  write_verifier
   write_orchestrator
   CHAT=$(start_worker)
   export ARTISAN_WRITER_PID=$CHAT
@@ -97,6 +98,25 @@ echo "$t.$n done" >>"$WAVES/worker.log"
 EOF
 }
 
+# The verifier (#57): every criterion verify.sh gave it, met.
+write_verifier() {
+  export FAKE_CLAUDE_SCRIPT_VERIFIER="$TEST_TMPDIR/verifier.sh"
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF'
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+jq '{verdict: "pass", acceptance: [.[] | {criterion: ., met: true, evidence: {checks: [{command: "sh check.sh", result: "suite ok"}]}}]}' \
+  "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+EOF
+}
+
+# verify_ticket ticket: what the orchestrator does before a merge, by hand.
+verify_ticket() {
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" "$1" >/dev/null
+  local v
+  v=$(state_get ".tickets[\"$1\"].verifications | length")
+  wait_for "$RUN_DIR/results/verify-$1.$v.exit.json"
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" "$1" >/dev/null
+}
+
 # The orchestrator, as references/orchestrator.md and parallel-waves.md tell
 # the real one: pick the wave, dispatch, wait and sweep, retry a failed
 # attempt with a fresh worker, merge one ticket at a time, give a conflict
@@ -109,6 +129,19 @@ write_orchestrator() {
 set -uo pipefail
 S="$SCRIPTS" R="$ARTISAN_RUN_DIR"
 st() { jq -r "$@" "$R/state.json"; }
+verify() { # a fresh verifier; only its one-line verdict is read (6: failed attempt or blocked)
+  local rc
+  "$S/verify.sh" start "$R" "$1" >/dev/null || return $?
+  while :; do
+    rc=0
+    "$S/verify.sh" judge "$R" "$1" >>"$WAVES/verdicts" 2>/dev/null || rc=$?
+    case $rc in
+      8) sleep 0.2 ;;
+      14) "$S/verify.sh" start "$R" "$1" >/dev/null || return $? ;;
+      *) return $rc ;;
+    esac
+  done
+}
 resolve_conflicts() { # the stand-in for /artisan-agent:resolve-conflicts
   echo "$1" >>"$WAVES/skill-calls"
   case "${RESOLVE_MODE:-both}" in
@@ -148,6 +181,8 @@ while :; do
     n=$(st --arg t "$t" '.tickets[$t].attempts')
     while [ "$("$S/classify-worker.sh" "$R" "$t" "$n")" = "running -" ]; do sleep 0.2; done
     rc=0
+    verify "$t" 2>>"$WAVES/merge.err" || rc=$?
+    [ "$rc" -eq 0 ] || continue
     "$S/wave.sh" merge "$R" "$t" >/dev/null 2>>"$WAVES/merge.err" || rc=$?
     if [ "$rc" -eq 11 ]; then rc=0; resolve_conflicts "$t" >/dev/null 2>>"$WAVES/merge.err" || rc=$?; fi
     [ "$rc" -ne 0 ] || "$S/wave.sh" close "$R" "$t" >/dev/null
@@ -349,6 +384,7 @@ test_a_resolution_that_never_came_back_is_abandoned_before_the_next_merge() {
   for t in 1 2 3; do "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" "$t" >/dev/null; done
   for t in 1 2 3; do wait_for "$RUN_DIR/results/$t.1.exit.json"; done
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  for t in 1 2 3; do verify_ticket "$t"; done
   "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null
   assert_status 11 "$SCRIPTS/wave.sh" merge "$RUN_DIR" 2
   git -C "$INTEGRATION" rev-parse -q --verify MERGE_HEAD >/dev/null || fail "the conflict is not left in progress"

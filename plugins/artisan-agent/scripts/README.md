@@ -4,9 +4,10 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 
 | Script | Does | Returns |
 |---|---|---|
-| `run-ticket.sh` | Launches one capped headless worker (or, with `--role orchestrator`, a wave's orchestrator) detached; always leaves an exit record. Refuses to launch into a run folder with no state file (exit 4) | the runner's PID, at once |
+| `run-ticket.sh` | Launches one capped headless worker (or, with `--role orchestrator`, a wave's orchestrator; with `--role verifier`, a ticket's verifier) detached; always leaves an exit record. Refuses to launch into a run folder with no state file (exit 4) | the runner's PID, at once |
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
+| `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 
 Each script's header has its full usage.
 
@@ -22,6 +23,9 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `workers/<t>.<n>/runner.pid` | runner | the runner's PID, for the sweep |
 | `workers/<t>.<n>/output.json` | `claude --output-format json` | the session's JSON output, including its result text |
 | `workers/<t>.<n>/prompt.md`, `stderr.log`, `runner.log` | runner | the full prompt as sent, and logs |
+| `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
+| `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
+| `verify/<t>.<n>.evidence.json`, `.comment.md` | `verify.sh judge` | the evidence contract as built (also in the state file), and the comment posted on a fail |
 | `.wait-any.seen` | `wait-any.sh` | what the waiting caller has already seen |
 
 `wait-any.sh` watches only `results/`. Anything starting with a dot is a write in progress and is skipped.
@@ -163,11 +167,11 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `wave.sh launch <run-dir> [--resume]` | Engineering chat | refuses while the run is halted (12) unless `--resume` records the Artisan's decision to carry on; launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs |
 | `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `blocked`, `done`), with a ticket table | 0 |
 | `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9) and its expected files overlap nothing in flight or in this wave (10); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10 |
-| `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip; an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try |
+| `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try, 13 not verified |
 | `wave.sh resolved <run-dir> <ticket> [--gave-up WHY]` | orchestrator | after `/artisan-agent:resolve-conflicts`: aborts and blocks if anything is still conflicted, marked or unstaged (or it gave up), else commits the merge and runs the suite as `merge` does | 0, 6, 7 |
 | `wave-width.sh pick <run-dir>` / `check <run-dir> <ticket>` | orchestrator | the tickets to dispatch now: the smallest of Max Agents less those in flight, the frontier, and tickets with non-overlapping `expected_files`; `check` is dispatch's overlap refusal | 0, 10 |
 | `wave.sh block <run-dir> <ticket> <reason>` | orchestrator | blocks a returned ticket it won't merge (the diff misses its expected output): an exception decision for the Artisan and a `blocked` event | 0, 4 |
-| `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence, ticks met criteria (`lib/tick-criteria.py`), closes the ticket | 0, 1 |
+| `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence contract (`evidence.sh comment`), ticks the criteria the verifier found met (`lib/criteria.py tick`), closes the ticket | 0, 1 |
 | `wave.sh report <run-dir>` | orchestrator | halts the run if every ticket dispatched in the wave ended blocked, then the wave report, JSON, for its result file | 0 |
 
 Wave width, serial merges, the one conflict try, two attempts and the halt are described in `skills/implement-plan/references/parallel-waves.md` and tested end to end in `tests/parallel-waves.test.sh`, with a scripted orchestrator that follows that page and a stand-in for the resolve skill.
@@ -177,6 +181,41 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 **The lock passes with the work.** The chat holds the state lock between waves with its own session's pid. `wave.sh launch` records the orchestrator, then `run-ticket.sh --lock-from` makes the orchestrator's runner take the lock over before its session starts and export its pid to the session as `ARTISAN_WRITER_PID`. When the orchestrator exits, the lock is stale, and `wave.sh status` takes it back for the chat. A worker never gets a writer pid.
 
 **Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir … --setting-sources project,local --no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`.
+
+## Exit status
+
+Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
+
+| Code | Means | From | Do |
+| :- | :- | :- | :- |
+| 0 | done | all | carry on |
+| 1 | error (a missing file, a bad state, a tracker that can't be read) | all | read the one-line message |
+| 2 | bad usage | all | fix the call |
+| 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, any write | wait |
+| 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
+| 5 | a blocker is not merged into the integration branch | `dispatch` | leave it for a later wave |
+| 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left) | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan |
+| 7 | the suite went red after the merge (undone, blocked) | `merge`, `resolved` | carry on with the rest |
+| 8 | a worker or verifier is still running or ending | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
+| 9 | no free slot under Max Agents | `dispatch` | wait for a ticket to finish |
+| 10 | its expected files overlap a ticket in flight or in this wave | `dispatch`, `wave-width.sh check` | leave it for a later wave |
+| 11 | a merge conflict, left in progress for its one try | `merge` | `/artisan-agent:resolve-conflicts`, then `wave.sh resolved` |
+| 12 | the run is halted | `launch` | the Artisan decides; `launch --resume` |
+| 13 | not verified: no passing verdict for this attempt at this commit | `merge` | `verify.sh start`, then `judge` |
+| 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
+
+# Verification and evidence
+
+A fresh verifier per returned ticket, and the evidence contract it produces: in the state file, on the ticket, and in the chat's wave digest. The flow, the verdict and the contract: `references/evidence-contract.md`; the verifier's brief: `skills/implement-plan/references/verifier.md`. Tested in `tests/verify.test.sh` (and end to end in `tests/wave.test.sh` and `tests/parallel-waves.test.sh`), with the fake `claude` scripting the verifier (`FAKE_CLAUDE_SCRIPT_VERIFIER`).
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `verify.sh start <run-dir> <ticket>` | orchestrator | for a returned ticket whose attempt completed and whose record names its branch tip (the same check as `wave.sh merge`, in `lib/wave-lib.sh`): reads its criteria (`lib/criteria.py extract` over the tracker body, or `ticket_path`), checks out the worker's commit in a detached worktree, `<repo>-wt/<run-id>-verify-<t>.<v>`, and launches the verifier there (`run-ticket.sh --role verifier`, id `verify-<t>`) | 0, 1, 4, 6, 8 |
+| `verify.sh judge <run-dir> <ticket>` | orchestrator | once the verifier has ended: lines its verdict up with the criteria (`lib/criteria.py align`), builds the evidence contract and writes it (`tickets.<t>.evidence`, event `verified`), logs the worker's and verifier's cost, removes the verifier's worktree. A fail is a failed attempt (retried with the verifier's findings, or blocked after the last) and posts the contract on the ticket. Prints one line: `pass m/n`, `fail m/n retry: <first unmet>`, `fail m/n blocked: <first unmet>` or `error <reason>`. Judging again repeats the line and writes nothing | 0, 1, 6, 8, 14 |
+| `evidence.sh comment <run-dir> <ticket>` | orchestrator (via `wave.sh close`, `verify.sh judge`) | the ticket's evidence comment, from the state file's contract, ending in the contract as JSON | 0, 1 no contract |
+| `evidence.sh digest <run-dir> [--wave N \| --all]` | Engineering chat | the wave digest: one table row per ticket dispatched in the wave (default the last), then cost against the budget | 0 |
+
+`run-ticket.sh --role verifier` launches like a worker (detached, capped, always an exit record) but needs an id starting `verify-`, skips the scope check and never gets a writer pid. A verifier is not a ticket and takes no slot under Max Agents.
 
 ## Guardrails
 

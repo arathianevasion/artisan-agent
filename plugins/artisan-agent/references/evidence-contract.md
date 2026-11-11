@@ -11,18 +11,19 @@ Skills cite this file rather than copying it.
 | A worker's attempt returns | orchestrator | `sweep.sh` | the result and exit records | `returned` |
 | Start a verifier | orchestrator | `verify.sh start <run> <t>` | the ticket's criteria (tracker or `ticket_path`) | a detached worktree at the worker's commit; a verifier session (`run-ticket.sh --role verifier`); event `verify` |
 | Wait | orchestrator | `wait-any.sh` | the verifier's exit record | |
-| Judge | orchestrator | `verify.sh judge <run> <t>` | the verdict file | the evidence contract in `tickets.<t>.evidence`; costs; event `verified`; a fail blocks the ticket with an exception decision |
-| Merge | orchestrator | `wave.sh merge` | `tickets.<t>.evidence` | refuses (10) without a `pass` for this attempt at the branch tip |
+| Judge | orchestrator | `verify.sh judge <run> <t>` | the verdict file | the evidence contract in `tickets.<t>.evidence`; costs; event `verified`; a fail is a failed attempt (retried with the verifier's findings, or blocked after the last) and its contract is posted on the ticket |
+| Merge | orchestrator | `wave.sh merge` | `tickets.<t>.evidence` | refuses (13) without a `pass` for this attempt at the branch tip; then the serial merge and the suite, as `skills/implement-plan/references/parallel-waves.md` says |
 | Close | orchestrator | `wave.sh close` | `tickets.<t>.evidence` | the comment (`evidence.sh comment`), ticked criteria, closed |
 | Report | chat | `evidence.sh digest <run>` | the state file | the wave digest |
 
-A ticket that misses a criterion is never merged. `judge` prints one line, which is all the orchestrator reads:
+A ticket that misses a criterion is never merged; it is a failed attempt like any other (two at most). A fail's evidence comment is posted on the ticket, which stays open. `judge` prints one line, which is all the orchestrator reads:
 
 | Line | Exit | Means |
 |---|---|---|
 | `pass <met>/<total>` | 0 | every criterion met: merge it |
-| `fail <met>/<total> <first unmet>` | 6 | blocked, with an exception decision for the Artisan; the evidence comment is posted on the ticket, which stays open |
-| `error <reason>` | 10 | the verifier failed (crashed, ran out of budget, wrote no verdict): start it again |
+| `fail <met>/<total> retry: <first unmet>` | 6 | a failed attempt with attempts left: the ticket is `queued`; dispatch it again and the fresh worker's failure evidence lists what the verifier found unmet |
+| `fail <met>/<total> blocked: <first unmet>` | 6 | a failed attempt, the last: blocked, with an exception decision for the Artisan |
+| `error <reason>` | 14 | the verifier failed (crashed, ran out of budget, wrote no verdict): start it again; no attempt is used up |
 | `error <reason>` | 6 | the verifier failed twice for this attempt: blocked |
 | | 8 | the verifier is still running |
 
@@ -39,7 +40,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
 
-`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
+`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
 
 ## The evidence contract
 

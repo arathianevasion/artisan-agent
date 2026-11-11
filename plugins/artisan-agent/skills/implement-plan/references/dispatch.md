@@ -70,7 +70,7 @@ Two launcher failures look like a worker that died instantly, which is why the r
 
 `wave.sh merge <run folder> <ticket>`, one ticket at a time, so a break is attributable:
 
-1. Refuses unless the ticket is `returned`, the attempt `completed`, and the evidence record's `commit` is the branch tip.
+1. Refuses unless the ticket is `returned`, the attempt `completed`, the evidence record's `commit` is the branch tip, and a fresh verifier passed that attempt at that commit (`verify.sh`; exit 13 otherwise). A ticket that misses a criterion is never merged: `verify.sh judge` counts it a failed attempt, retried by a fresh worker given the verifier's findings, or blocked after the last. The flow is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`.
 2. `git merge --no-ff` in the integration worktree. Always `--no-ff`: the reconciler finds merged tickets by merge commits on the integration branch's first-parent line, so a fast-forward looks as if nothing merged.
 3. Runs the plan's `suite_command` there; its output goes to `merges/<ticket>.<n>.suite.log`.
 4. Green: records the merge (an event in the state file) and removes the worker's worktree. The branch stays, so the reconciler can still find the merge.
@@ -80,7 +80,7 @@ When several tickets returned in one wave, measure before choosing the order: li
 
 ## Closing and findings
 
-Closing is the orchestrator's alone, and only on merged work. `wave.sh close` posts the evidence on the ticket (a table of criteria, met or not, with their evidence; the suite line; counts of decisions and remarks), ticks the criteria the record says were met, and closes it. An open criterion on a closed ticket makes the audit trail lie, so an unmet one stays unticked and shows "no" in the comment.
+Closing is the orchestrator's alone, and only on merged work. `wave.sh close` posts the evidence contract on the ticket (`evidence.sh comment`: each criterion with the verifier's evidence, the suite, diff stats, cost against the estimate, what the worker was unsure of, its decisions made alone, and the contract as JSON, exactly as in the state file), ticks the criteria the verifier found met, and closes it. An open criterion on a closed ticket makes the audit trail lie, so an unmet one stays unticked and shows "no" in the comment.
 
 Findings are filed for triage by the Engineering chat between waves (`SKILL.md`, step 7), never by a worker or the orchestrator, and never straight into a wave.
 

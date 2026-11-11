@@ -121,6 +121,8 @@ If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline),
 
 Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
 
+The wave digest gives the table and the cost line: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (each ticket's verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`). Show it as printed.
+
 ### 7. Findings filed for triage
 
 A finding is a fact a worker turned up that may matter to other work (its evidence record's `findings`, logged by the sweep). Between waves, file each finding that names missing work as a new ticket on the tracker, citing the ticket that found it, **off the frontier**: no blocking edges, no wave. Then run `/artisan-agent:triage` on it before it can join any run. A ticket a worker invented mid-run hasn't been grilled, sized or checked, and an untriaged finding entering the dispatch queue is how one worker's guess becomes three more workers' work. Only once triage admits it does it get edges, and it joins a run only through its own plan step and approval. If that changes the waves, show what moved before continuing.

@@ -17,8 +17,9 @@ The state file is the record of a run's plan, progress and evidence that lets an
         orchestrator-w<w>.<n>.*    the same two files for wave w's orchestrator; its result file is the wave report
         findings/<ticket>.jsonl    the worker's findings, one JSON object per line
       workers/<id>.<n>/            per session: runner.pid, prompt.md, output.json, logs (scripts/README.md)
-      prompts/<id>.<n>.md          the prompt wave.sh wrote for each session
+      prompts/<id>.<n>.md          the prompt wave.sh or verify.sh wrote for each session (verify-<t>.<v>.criteria.json: a verifier's criteria)
       prompts/<ticket>.<n>.failure.md  a retry's failure evidence from attempt n-1, also in its prompt
+      verify/<ticket>.<n>.evidence.json  the evidence contract verify.sh judge built for attempt n; <ticket>.<n>.comment.md, posted on a fail
       merges/<ticket>.<n>.suite.log  the full suite's output after merging; <ticket>.comment.md, the evidence posted
 ```
 
@@ -42,7 +43,9 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | wave starts | `wave-start <run-dir> <wave> <plugin-version> <team> <product> <individual>` (called by `scripts/guardrails.sh wave-start`, which fetches the sources) | records the wave's plugin version and guardrail source commits (`-` for a level with no source) |
 | dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). Attempt n's files are named `<ticket>.<n>.*`, with n the ticket's `attempts` after dispatch, so a retry never reads an earlier attempt's files |
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
-| verified | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
+| verifier started | `verify.sh start <run-dir> <ticket>` | appends to `verifications`; event `verify` (`ticket`, `attempt`, `verifier`) |
+| verified | `verify.sh judge <run-dir> <ticket>` | stores the evidence contract in `evidence` (`references/evidence-contract.md`), logs both sessions' cost; event `verified` (`ticket`, `attempt`, `verifier`, `verdict`, and `met`, `total` or `reason`) |
+| evidence stored directly | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
 | closed on the tracker | `closed <run-dir> <ticket>` | `tracker_closed` set |
 | any other event | `event <run-dir> <json>` | logged in `events` |
@@ -100,21 +103,22 @@ Top level:
 | `branch` | the ticket's branch |
 | `dispatched_at`, `deadline_at` | epoch seconds of the last dispatch and its wall-clock deadline |
 | `result` | from the current attempt's result file: `{status, commit, notes, file}` |
-| `evidence` | the ticket's evidence, written after verification |
+| `evidence` | the ticket's evidence contract, written by `verify.sh judge` (`references/evidence-contract.md`); `wave.sh merge` needs its `verdict` to be `pass` for the current attempt and commit |
+| `verifications` | `[{attempt, worker_attempt, commit, base, model, worktree, started_at, verdict, reason?}]`, one per verifier started; `verdict` is `null` until judged, then `pass`, `fail` or `error` |
 | `merge_commit` | the merge commit on the integration branch |
-| `cost_usd` | the sum of `attempt_costs`: per attempt, from the result file's `cost_usd`, else the session's `total_cost_usd` in its JSON output (recorded by the sweep, and again by `wave.sh merge` once the session has ended) |
+| `cost_usd` | the sum of `attempt_costs`: per attempt, from the result file's `cost_usd`, else the session's `total_cost_usd` in its JSON output (recorded by the sweep, and again by `verify.sh judge` and `wave.sh merge` once the session has ended); verifiers included |
 | `failures` | `[{attempt, reason, at}]`, one per failed attempt |
-| `attempt_costs` | `{"<attempt>": usd}`, each attempt's session cost, failed attempts included |
+| `attempt_costs` | `{"<attempt>": usd, "verify.<v>": usd}`, each attempt's session cost, failed attempts included, and each verifier's |
 | `worktree`, `base` | the current attempt's worktree and the integration commit it branched from (`wave.sh dispatch`) |
 | `suite` | `{command, passed, log}` from the last merge attempt |
 | `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |
 | `wave` | the wave its last dispatch belonged to (the last orchestrator's wave; 0 before any) |
 | `resolve` | its one conflict-resolution try: `{attempt, paths, pre, outcome, why?, at}`, `outcome` `pending` (the merge left in progress), `resolved`, `unresolved` or `abandoned` |
-| `blocked_reason` | why `wave.sh` blocked it (a conflict, a red suite, an attempt that did not complete) |
+| `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
 ## The event log
 
-Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, merge, closed, in that order.
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
 
 ## The sweep
 

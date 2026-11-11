@@ -20,9 +20,10 @@
 #      exits after writing state
 #   3. a second chat, with no messages or notices, learns of completion from
 #      the exit record and the sweep (wave.sh status)
-#   4. the ticket's commit is merged --no-ff into the integration branch, the
-#      suite is green there, the ticket is closed, the events are in order,
-#      and the main checkout never changed
+#   4. a fresh verifier passed the ticket; its commit is merged --no-ff into
+#      the integration branch, the suite is green there, the ticket is closed
+#      with the state file's evidence contract, the events are in order, and
+#      the main checkout never changed
 #
 # Portable to bash 3.2 (macOS). Needs git, jq, python3, perl.
 
@@ -162,8 +163,15 @@ check "the suite is green on the integration branch" sh -c "cd '$WD/sample-wt/ru
 check "shout() exists on the integration branch" sh -c "cd '$WD/sample-wt/run-live1' && python3 -c 'from greet import shout; assert shout(\"ada\") == \"HELLO, ADA!\"'"
 check "the ticket is closed on the tracker" jq -e '.state == "closed"' "$FAKE_GH_DIR/issue-1.json"
 check "the evidence was posted on the ticket" grep -q '| Criterion | Met | Evidence |' "$FAKE_GH_DIR/comments-1.md"
-check "events in order: dispatch, result, merge, closed" \
-  jq -e '[.events[].event | select(. == "dispatch" or . == "result" or . == "merge" or . == "closed")] == ["dispatch","result","merge","closed"]' "$RUN/state.json"
+check "events in order: dispatch, result, verify, verified, merge, closed" \
+  jq -e '[.events[].event | select(. == "dispatch" or . == "result" or . == "verify" or . == "verified" or . == "merge" or . == "closed")] == ["dispatch","result","verify","verified","merge","closed"]' "$RUN/state.json"
+check "a fresh verifier passed the ticket before the merge" \
+  jq -e '.tickets["1"].evidence.verdict == "pass" and (.tickets["1"].verifications | length) >= 1' "$RUN/state.json"
+contract_posted() { # the JSON folded into the comment is the state file's contract
+  awk '/^```json$/ {on = 1; next} /^```$/ {on = 0} on' "$FAKE_GH_DIR/comments-1.md" | jq -cS . >"$WD/posted.json" \
+    && jq -cS '.tickets["1"].evidence' "$RUN/state.json" | cmp -s - "$WD/posted.json"
+}
+check "the evidence comment carries the state file's contract" contract_posted
 check "the main checkout never moved and is clean" \
   sh -c "[ \"\$(git -C '$REPO' rev-parse HEAD)\" = '$MAIN_HEAD' ] && [ -z \"\$(git -C '$REPO' status --porcelain)\" ]"
 check "the worker's and orchestrator's costs are in the state file" \
@@ -171,7 +179,7 @@ check "the worker's and orchestrator's costs are in the state file" \
 check "the tracker was only ever the fake one" test -s "$FAKE_GH_DIR/calls"
 
 # Costs, from each session's own JSON output.
-for f in "$WD/chat.json" "$RUN/workers/orchestrator-w1.1/output.json" "$RUN/workers/1.1/output.json" "$WD/status-chat.json"; do
+for f in "$WD/chat.json" "$RUN/workers/orchestrator-w1.1/output.json" "$RUN/workers/1.1/output.json" "$RUN"/workers/verify-1.*/output.json "$WD/status-chat.json"; do
   printf 'cost %s: %s\n' "$(basename "$(dirname "$f")")/$(basename "$f")" "$(jq -r '.total_cost_usd // "unknown (killed)"' "$f" 2>/dev/null || echo unknown)"
 done
 

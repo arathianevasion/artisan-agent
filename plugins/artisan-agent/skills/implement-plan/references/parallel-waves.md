@@ -22,7 +22,7 @@ Expected files are a forecast. A worker that strays outside its set can still co
 
 ## Merges
 
-One ticket at a time, into the integration branch, in the integration worktree: `wave.sh merge`, a `--no-ff` merge followed by the plan's full `suite_command`. The suite runs after **every** merge, on the integration branch exactly as that merge left it, so a break is always attributable to one ticket. Never start a merge while another is unfinished.
+Only verified work merges: a fresh verifier's `pass` for the ticket's current attempt at its branch tip (`verify.sh`; the verifiers for a wave's returned tickets run in parallel, before the merges). Then one ticket at a time, into the integration branch, in the integration worktree: `wave.sh merge`, a `--no-ff` merge followed by the plan's full `suite_command`. The suite runs after **every** merge, on the integration branch exactly as that merge left it, so a break is always attributable to one ticket. Never start a merge while another is unfinished.
 
 | `wave.sh merge` exit | Means | Do |
 |---|---|---|
@@ -31,6 +31,7 @@ One ticket at a time, into the integration branch, in the integration worktree: 
 | 11 | a conflict, left in progress | the one resolution try, below |
 | 6 | refused, or a conflict whose try is used | nothing: blocked. If the ticket is `queued` again instead, its attempt didn't complete and it is retried (below) |
 | 8 | its worker is still ending | wait, then merge again |
+| 13 | not verified: no passing verdict for this attempt at this commit | `verify.sh start`, then `judge` (`references/evidence-contract.md`); nothing changed |
 
 ## A conflict: one try, then the Artisan
 
@@ -45,9 +46,9 @@ On exit 11 the merge is stopped halfway in the integration worktree, conflicts i
 
 ## Two attempts
 
-Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fails when the worker reports `failed`, exits without a result, passes its deadline, vanishes, or ends without completing (no completion line, a cap hit); the sweep, or `wave.sh merge` for an attempt that returned but didn't complete, counts it.
+Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fails when the worker reports `failed`, exits without a result, passes its deadline, vanishes, ends without completing (no completion line, a cap hit), or its verifier finds a criterion unmet; the sweep, `verify.sh` or `wave.sh merge` counts it. A verifier that itself fails (crashes, writes no verdict) uses up no attempt: it is started once more, then the ticket is blocked.
 
-- **First failure:** the ticket goes back to `queued`. Dispatch it again in the same wave with `wave.sh dispatch`. That is a **fresh worker**: a new session in a new worktree on the same branch, so the first attempt's commits are there to build on, and its prompt carries the failure evidence (`prompts/<t>.<n>.failure.md`): why the attempt counted as failed, how it ended, what its evidence record said (unmet criteria, what it was unsure of, its notes), its commits, and the end of its last reply and its stderr. Exit 8 means the failed session is still ending: wait and dispatch again.
+- **First failure:** the ticket goes back to `queued`. Dispatch it again in the same wave with `wave.sh dispatch`. That is a **fresh worker**: a new session in a new worktree on the same branch, so the first attempt's commits are there to build on, and its prompt carries the failure evidence (`prompts/<t>.<n>.failure.md`): why the attempt counted as failed, how it ended, what its evidence record said (unmet criteria, what it was unsure of, its notes), what the verifier found unmet, if it got that far, its commits, and the end of its last reply and its stderr. Exit 8 means the failed session is still ending: wait and dispatch again.
 - **Second failure:** the ticket is blocked with an exception decision for the Artisan. Never dispatch it a third time.
 
 A conflict the try couldn't resolve, a red suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan.
