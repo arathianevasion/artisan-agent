@@ -33,6 +33,7 @@ Stop and tell the Artisan which is missing rather than working around it:
 - `/setup-matt-pocock-skills` has run for this repo.
 - **No other run holds the run lock.** Before anything else, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-lock.sh check`. Exit 3 means another run holds this repo's lock (it prints the run id and pid): do not start. Leave the request as a `plan` issue (`${CLAUDE_PLUGIN_ROOT}/guard/queue-plan.sh "<request>"`), tell the Artisan which run holds the lock, and stop. A repo has one run at a time; the rule is in `${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md`.
 - **No session edits the main checkout.** You may sit in it, but you change nothing tracked there: the run's files go in its run folder (`.artisan-agent/runs/<run-id>/`, git-ignored), merges happen only in the run's own integration worktree, and workers work in their own worktrees. `${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md` has the rule.
+- **On the always-on host, the login outlasts the run.** `wave.sh launch` runs `${CLAUDE_PLUGIN_ROOT}/scripts/login-check.sh` before each wave launch and refuses (exit 15) when the claude.ai login would expire mid-run; tell the Artisan to log in again and `login-check.sh stamp`. To move a run between the host and the laptop (`implement-plan move`), follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/host-and-move.md`.
 - `git worktree` is available, and `jq`, `python3`, `perl` (macOS) and `gh` are on PATH.
 - **Every check the workers will report on has been proven capable of failing.** Run each one (test suite, typecheck, lint) against a deliberately broken file in a scratch worktree and confirm a non-zero exit, then throw the worktree away. A check that can't fail turns every worker's evidence into noise for the length of the run, and nothing downstream reveals it: the results all say "clean", the merges all stay green. In one real run, `npm run typecheck` was `tsc --noEmit` against a root `tsconfig.json` with `"files": []`; it compiled an empty program and exited 0, so thirty tickets reported "typecheck clean" and every claim was vacuous. Say in the plan what each check actually covers, and say what the workers can't verify.
 
@@ -71,6 +72,8 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 **Expected output.** What "done" looks like for this ticket in one or two lines, from its acceptance criteria. The orchestrator checks the worker's diff against it before merging. If you can't write a concrete one, the ticket is underspecified and goes back to `/to-tickets`.
 
 ### 3. Get the plan approved
+
+Open with the ADR and guardrail check, as `${CLAUDE_PLUGIN_ROOT}/references/adr-check.md` describes it: it is part of this approval, and it is run here when the route skipped `/artisan-agent:to-plan` (a Small change, a Bug, or a Feature without chunks), including a one-ticket run. It also holds the ADR adjustment loop.
 
 The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11); the rest is the Artisan's to approve or change.
 
