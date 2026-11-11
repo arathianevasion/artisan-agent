@@ -1,11 +1,14 @@
 ---
 name: setup
-description: Set up Artisan Agent. Machine-level setup, done once per machine - creates the Artisan's individual home (a git repo holding individual standards and the satisfaction record), sets plugin auto-update (off for claude-plugins-official, on for artisan-agent), and offers to clean up stray project-scope installs, stale personal copies of upstream skills, hiding skillOverrides and the personal implement-plan and debate-me. Use when the Artisan says "set up Artisan Agent", "setup", or runs /artisan-agent:setup on a new machine.
+description: Set up Artisan Agent. Machine-level setup, done once per machine - creates the Artisan's individual home (a git repo holding individual standards, motivations and the satisfaction record), sets plugin auto-update (off for claude-plugins-official, on for artisan-agent), and offers to clean up stray project-scope installs, stale personal copies of upstream skills, hiding skillOverrides and the personal implement-plan and debate-me. Project-level setup, per repo - asks five questions, proves each chosen check fails, and lands settings, deny rules, config, standards, labels and the front-door pointer as one PR, never overwriting. Use when the Artisan says "set up Artisan Agent", "setup", "set up this project", or runs /artisan-agent:setup.
 ---
 
 Wherever you put something in front of the Artisan, follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`.
 
-This skill is rerunnable and never overwrites. This file covers the **machine-level** part, done once per machine so later projects skip it. Project-level setup is added to this skill by its own ticket; if the individual home already exists and the scan below offers nothing, machine-level setup is already done: say so in one line and move on.
+This skill is rerunnable and never overwrites. It has two parts, run in this order:
+
+- **Machine-level** (this file), done once per machine so later projects skip it. If the individual home already exists and the scan below offers nothing, it is already done: say so in one line and move on.
+- **Project-level**, when run inside a project repo: follow `${CLAUDE_PLUGIN_ROOT}/skills/setup/PROJECT.md` (five questions, proving checks fail, one PR).
 
 The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/machine-setup.sh`. It works under `CLAUDE_CONFIG_DIR` (default `~/.claude`), never deletes (skill copies move to `<config>/skills/.trash`), and never removes anything unless you pass it that offer's id. Run it with `bash`.
 

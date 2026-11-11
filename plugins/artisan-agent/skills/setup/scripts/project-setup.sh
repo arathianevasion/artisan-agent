@@ -248,7 +248,9 @@ cmd_apply() {
       cp "$tmp/hook.sh" "$wt/$HOOK_FILE"; chmod +x "$wt/$HOOK_FILE"
       echo "changed: wrote $HOOK_FILE"
     fi
-    "$GUARD/guard.sh" settings-json --hook-command "\"\$CLAUDE_PROJECT_DIR\"/$HOOK_FILE" >"$tmp/hook.json"
+    # guard.sh prints --hook-command into JSON unescaped, so set the quoted path with jq.
+    "$GUARD/guard.sh" settings-json --hook-command HOOK \
+      | jq --arg c "\"\$CLAUDE_PROJECT_DIR\"/$HOOK_FILE" '.hooks.UserPromptExpansion[].hooks[].command = $c' >"$tmp/hook.json"
     edit settings "$wt/.claude/settings.json" "$tmp/deny.json" "$tmp/hook.json"
   else
     edit settings "$wt/.claude/settings.json" "$tmp/deny.json"
