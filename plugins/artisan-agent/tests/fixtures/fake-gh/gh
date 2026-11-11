@@ -31,12 +31,16 @@ set_field() { # n jq-filter [args]
   jq "$@" "$f" >"$f.tmp" && mv "$f.tmp" "$f"
 }
 
+# A repo must look like owner/name, as on GitHub.
+bad_repo() { echo "gh: expected the \"[HOST/]OWNER/REPO\" format, got \"$1\"" >&2; exit 1; }
+check_repo() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || bad_repo "$1"; }
+
 # Common flags after the subcommand: -R, --json, -q/--jq, bodies.
 n= json= filter= body= body_set= comments= state=open
 parse() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      -R|--repo) shift 2 ;;
+      -R|--repo) check_repo "$2"; shift 2 ;;
       --json) json=$2; shift 2 ;;
       -q|--jq) filter=$2; shift 2 ;;
       --body|-b|--comment|-c) body=$2; body_set=1; shift 2 ;;
@@ -56,6 +60,8 @@ emit() { # json-object-or-array
 case "${1:-} ${2:-}" in
   "api "*)
     path=$2
+    r=${path#repos/}; r=${r%%/issues/*}
+    case "$path" in repos/*/issues/*) check_repo "$r" ;; esac
     case "$path" in
       repos/*/issues/*/dependencies/blocked_by)
         n=${path%/dependencies/blocked_by}; n=${n##*/}

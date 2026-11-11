@@ -141,6 +141,8 @@ cmd_start() {
     esac
   done
   ib=$(integration_branch)
+  get '.repo' | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
+    || die "the plan's repo must be owner/name on the tracker (as docs/agents/issue-tracker.md names it), not $(get .repo)"
   if [ -z "$base" ]; then
     base=$(git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || git -C "$MAIN" rev-parse HEAD)
   fi
@@ -274,6 +276,19 @@ ticket_table() {
              else "" end) + " |" )' "$FILE"
 }
 
+# An ended orchestrator's spend, from its session's output, counted once.
+record_orchestrator_cost() { # id attempt
+  local usd
+  usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true)
+  [ -n "$usd" ] || return 0
+  apply '(.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+    | if $i == null or .orchestrators[$i].cost_usd != null then .
+      else .orchestrators[$i].cost_usd = $usd
+        | .costs.orchestrator_usd += $usd
+        | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd) end' \
+    --arg id "$1" --argjson a "$2" --argjson usd "$usd"
+}
+
 cmd_status() {
   open_run "${1:-}"
   local last id attempt wave pid cls next reconciled=1 waiting
@@ -294,6 +309,7 @@ cmd_status() {
       if [ -n "${ARTISAN_WRITER_PID:-}" ]; then
         state_lock "$RUN_DIR" "$ARTISAN_WRITER_PID" || exit 3
       fi
+      [ -z "${id:-}" ] || record_orchestrator_cost "$id" "$attempt"
       "$SCRIPT_DIR/reconcile.sh" "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.status.err" || {
         reconciled=0
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
@@ -435,6 +451,17 @@ EOF
 
 # ------------------------------------------------------------------- merge
 
+# The sweep can record a result before the session has written its JSON
+# output; once the attempt has ended, take its cost from there.
+record_session_cost() { # ticket attempt
+  local usd
+  usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true)
+  [ -n "$usd" ] || return 0
+  apply '.tickets[$t].cost_usd = $usd
+    | .costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
+    | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' --arg t "$1" --argjson usd "$usd"
+}
+
 cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
@@ -480,6 +507,7 @@ cmd_merge() {
   fi
   sha=$(git -C "$wt" rev-parse HEAD)
   "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$sha"
+  record_session_cost "$t" "$n"
   apply '.tickets[$t].suite = {command: $c, passed: true, log: $l}' --arg t "$t" --arg c "$suite" --arg l "merges/$t.$n.suite.log"
   worker_wt=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   if [ -n "$worker_wt" ] && [ -d "$worker_wt" ]; then

@@ -276,3 +276,24 @@ test_tick_criteria_ticks_only_met_criteria() {
 - [ ] Other
 - [ ] Unrelated" "$out"
 }
+
+test_costs_come_from_each_session_once_it_has_ended() {
+  setup_wave
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
+  # The fake claude reports $0.01 per session: one worker, one orchestrator.
+  assert_eq 0.01 "$(state_get '.tickets["1"].cost_usd')"
+  assert_eq 0.01 "$(state_get '.costs.orchestrator_usd')"
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
+  assert_eq 0.02 "$(state_get '.costs.total_usd')" "counted once"
+}
+
+test_a_repo_that_is_not_owner_and_name_is_refused_at_start() {
+  setup_wave
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "/tmp/sample"'
+  local status=0
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "must be owner/name"
+}
