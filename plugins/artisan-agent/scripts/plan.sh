@@ -25,6 +25,10 @@
 #             (the model's own, else "all", else 1)
 #   price     otherwise: the model's price (--prices, default
 #             references/model-prices.json) x the ticket's expected tokens
+# Floor: an estimate below minimum_estimates (the model's own, else "all", else
+# none; config, overridable with --set minimum_estimates.<model>=N) is raised to
+# it before caps and totals are derived. estimate_basis then has mode "minimum",
+# the minimum, the estimate it replaced and that estimate's own basis.
 # Caps follow run-ticket.sh: budget twice the estimate, 40 turns per
 # estimated dollar (at least 20), deadline twice the expected minutes.
 #
@@ -138,6 +142,11 @@ cmd_build() {
                 basis: {mode: "price", input_per_mtok: $p.input_per_mtok, output_per_mtok: $p.output_per_mtok,
                         input_tokens: $x.input_tokens, output_tokens: $x.output_tokens}}
            end) as $e
+        | (.config.minimum_estimates[$m] // .config.minimum_estimates.all // 0) as $min
+        | (if ($e.usd | round2) < $min
+           then {usd: $min, basis: {mode: "minimum", model: $m, minimum_usd: $min,
+                                    estimated_usd: ($e.usd | round2), was: $e.basis}}
+           else $e end) as $e
         | ([$e.usd | round2, 0.01] | max) as $usd
         | .tickets[$t] = ($tk + {
             estimate_usd: $usd,
@@ -179,7 +188,9 @@ cmd_render() {
           "|---|---|---|---|---|---|",
           ( .value[] as $t | $p.tickets[$t] as $tk
             | "| \(ticket($t)) (\($tk.title // "untitled")) | \($w) | \($tk.model) | \($tk.estimate_usd | money) | "
-              + (if $tk.estimate_basis.mode == "history"
+              + (if $tk.estimate_basis.mode == "minimum"
+                 then "minimum for \($tk.estimate_basis.model) (estimated \($tk.estimate_basis.estimated_usd | money))"
+                 elif $tk.estimate_basis.mode == "history"
                  then "history: \($tk.estimate_basis.tickets) merged ticket(s), mean \($tk.estimate_basis.mean_usd | money) x \($tk.estimate_basis.multiplier)"
                  else "price: \($tk.estimate_basis.input_tokens) in / \($tk.estimate_basis.output_tokens) out tokens" end)
               + " | \($tk.expected_output // "") |" ),
