@@ -21,3 +21,12 @@ The replaced skills are typed-only upstream, so Claude cannot call them anyway; 
 2. Start `claude` and ask: `Call the Skill tool with skill "mattpocock-skills:implement" and quote the result verbatim.` Record the result text: a `disable-model-invocation` refusal (flag wins, no permission check) or `Skill execution blocked by permission rules`.
 3. If upstream has meanwhile made a replaced skill model-invocable, use that one: expect `Skill execution blocked by permission rules`, and that the skill still shows in Claude's listing (research: deny rules do not hide it).
 4. Outcome: if the deny rule blocks the call, prerequisite 3 is met. If Claude can still call a replaced skill, rely on the fallback: typed-only flag plus the flag watch (`guard.sh flag-watch`), and note it in the guard README.
+
+## Prerequisite 5: main-checkout and run-lock hooks (interactive half; headless half is proven in the guard README)
+
+In a throwaway git repo with a committed `.artisan-agent/config.yml`, in an interactive `claude` with the plugin installed, and `gh` logged in to a throwaway or test repo (or a stub `gh` first on PATH).
+
+1. **Edit refused.** Ask Claude to edit a tracked file in the repo. Expect the tool call denied with `Blocked by the artisan-agent main-checkout guard` naming `doc-change.sh`. Note how the denial shows in the UI, and whether Claude then offers the worktree route.
+2. **Worktree is fine.** `git worktree add ../wt -b t`, start Claude in `../wt`, and ask for the same edit: it must go through.
+3. **Run lock.** `mkdir -p .artisan-agent/runs/r1 && sleep 600 & ln -s $! .artisan-agent/runs/r1/state.lock`. Type `/artisan-agent:implement-plan do the thing`. Expect the block line, no model reply, and a `plan` issue created. Then ask Claude (not typed) to "run implement-plan"; expect the Skill call denied. Kill the sleep, retry: it must start normally.
+4. Record the event field names if the issue title came out `Plan: (no details given)` (the hook reads `command_args`, then `prompt`).
