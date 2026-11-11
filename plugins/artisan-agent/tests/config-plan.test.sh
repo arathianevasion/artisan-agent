@@ -285,3 +285,80 @@ test_run_ticket_never_launches_a_worker_outside_the_approved_scope() {
   [ ! -e "$RUN_DIR/workers/99.1" ] || fail "a worker folder was created"
   [ ! -e "$TEST_TMPDIR/claude-ran" ] || fail "claude ran"
 }
+
+# ---------------------------------------------- the suite from recorded checks (#98)
+
+# record_checks: CODING_STANDARDS.md as setup leaves it, with two proven checks.
+record_checks() {
+  cat >"$PROJECT/CODING_STANDARDS.md" <<'MD'
+# Coding standards
+
+## Always ask
+
+- New dependencies
+
+## Checks
+
+- `sh test.sh`: proven to fail on 2026-11-01, breaking: flipped an assertion
+- `sh lint.sh`: proven to fail on 2026-11-01, breaking: added an unused variable
+MD
+}
+
+test_with_checks_recorded_the_suite_runs_them_and_the_approval_shows_it() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq "( sh test.sh ) && ( sh lint.sh )" "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"
+  assert_eq recorded "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_eq '["sh test.sh","sh lint.sh"]' "$(jq -c .checks.commands "$TEST_TMPDIR/plan.json")"
+  local view
+  view=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$view" "### Suite command"
+  assert_contains "$view" '`( sh test.sh ) && ( sh lint.sh )`: the recorded checks (`sh test.sh`, `sh lint.sh`'
+  # The suite really runs them: red when one is.
+  printf 'exit 0\n' >"$PROJECT/test.sh"; printf 'exit 1\n' >"$PROJECT/lint.sh"
+  if (cd "$PROJECT" && sh -c "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"); then fail "the suite ignored a red check"; fi
+  # It reaches the state file, where wave.sh merge reads it.
+  "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
+  assert_eq "( sh test.sh ) && ( sh lint.sh )" "$(jq -r .plan.suite_command "$RUN_DIR/state.json")"
+  assert_eq recorded "$(jq -r .plan.suite_source "$RUN_DIR/state.json")"
+}
+
+test_a_different_suite_command_is_shown_as_a_change_to_approve() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.suite_command = "make everything"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq "make everything" "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"
+  assert_eq changed "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" \
+    '**Changed from the recorded checks:** this run'"'"'s suite is `make everything`; the recorded checks (`sh test.sh`, `sh lint.sh`) run `( sh test.sh ) && ( sh lint.sh )`. Approve the change'
+  # Naming the recorded suite itself is no change.
+  jq '.suite_command = "( sh test.sh ) && ( sh lint.sh )"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d3.json"
+  assert_eq recorded "$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d3.json" | jq -r .suite_source)"
+}
+
+test_with_no_checks_recorded_the_plan_says_it_fell_back_and_names_what_was_found() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.suite_command = "npm test" | .suite_found = "package.json scripts.test"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq discovered "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_eq false "$(jq -r .checks.recorded "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" \
+    'No recorded checks (no CODING_STANDARDS.md): found `npm test` in package.json scripts.test.'
+  # And with nothing found either, the approval says so rather than staying quiet.
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan2.json"
+  assert_eq none "$(jq -r .suite_source "$TEST_TMPDIR/plan2.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "**None.** No recorded checks (no CODING_STANDARDS.md)"
+}
+
+test_standards_names_the_file_the_checks_are_read_from() {
+  make_project
+  record_checks
+  mv "$PROJECT/CODING_STANDARDS.md" "$TEST_TMPDIR/standards.md"
+  write_draft "$TEST_TMPDIR/draft.json"
+  assert_eq recorded "$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --standards "$TEST_TMPDIR/standards.md" | jq -r .suite_source)"
+}

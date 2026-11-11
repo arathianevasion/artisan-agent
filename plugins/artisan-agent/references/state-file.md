@@ -96,6 +96,8 @@ Top level:
 | `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml` |
 | `overrides` | `{<key>: {value, project}}`, one per number overridden for this run, with the project's value it replaced |
 | `suite_command` | the full suite, run with `sh -c` in the integration worktree after every merge |
+| `suite_source` | where the suite came from (`plan.sh build`): `recorded` (the project's recorded checks), `changed` (the Artisan approved another command), `discovered` (no recorded checks; found by the chat) or `none` |
+| `checks` | the recorded checks at plan time (`checks.sh json`): `{recorded, file, commands, suite}`, or `{recorded: false, reason}`; `references/checks.md` |
 | `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, $1, the longest ticket deadline plus 30 minutes) |
 
 `tickets.<n>`:
