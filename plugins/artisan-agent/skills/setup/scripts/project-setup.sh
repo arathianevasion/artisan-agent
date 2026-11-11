@@ -19,7 +19,8 @@
 #   project-setup.sh finish WT             push the branch and open (or reuse) the PR; with no new
 #                                          commits, remove the worktree and branch: "unchanged"
 #
-# The individual home is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent (machine-level setup).
+# The individual home is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent (machine-level setup);
+# ARTISAN_INDIVIDUAL_HOME overrides it.
 # GH_BIN and ARTISAN_CLAUDE_BIN override gh and claude (tests use stubs). Portable to bash 3.2.
 set -euo pipefail
 
@@ -27,7 +28,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 GUARD=$ROOT/guard
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
-HOME_DIR=$CFG/artisan-agent
+HOME_DIR=${ARTISAN_INDIVIDUAL_HOME:-$CFG/artisan-agent}
 GH=${GH_BIN:-gh}
 CLAUDE_BIN=${ARTISAN_CLAUDE_BIN:-claude}
 BRANCH=artisan-agent/setup
