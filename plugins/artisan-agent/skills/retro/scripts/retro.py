@@ -89,6 +89,12 @@ def job_focuses(jobs_md):
     return table
 
 
+def num(x):
+    """A number rounded to two places, whole when it is whole."""
+    x = round(float(x), 2)
+    return int(x) if x == int(x) else x
+
+
 def is_agent(by):
     by = (by or "").lower()
     return by in ("", "agent") or by.startswith(("orchestrator", "worker", "verifier", "agent"))
@@ -122,7 +128,7 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     ends = [e["at"] for e in events if e.get("event") == "merge" and "at" in e]
     hours = None
     if starts and ends and max(ends) > min(starts):
-        hours = round((max(ends) - min(starts)) / 3600.0, 2)
+        hours = num((max(ends) - min(starts)) / 3600.0)
 
     costs = s.get("costs") or {}
     total = costs.get("total_usd")
@@ -135,7 +141,7 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         row = {"ticket": n, "status": t.get("status"), "estimate_usd": est, "cost_usd": act,
                "attempts": t.get("attempts", 0)}
         if est and act is not None:
-            row["ratio"] = round(float(act) / float(est), 2)
+            row["ratio"] = num(float(act) / float(est))
         per_ticket.append(row)
 
     # The Artisan's actions: decisions a person made, triage reversals, and
@@ -169,10 +175,10 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "run_id": s.get("run_id"), "repo": s.get("repo"),
         "tickets": len(plan.get("scope") or tickets), "by_status": by_status,
         "merged": len(merged), "hours": hours,
-        "throughput_per_hour": (round(len(merged) / hours, 2) if hours else None),
+        "throughput_per_hour": (num(len(merged) / hours) if hours else None),
         "cost_usd": round(float(total), 2),
         "estimate_usd": plan.get("estimate_usd"), "budget_usd": plan.get("budget_usd"),
-        "cost_per_merged_usd": (round(float(total) / len(merged), 2) if merged else None),
+        "cost_per_merged_usd": (num(float(total) / len(merged)) if merged else None),
         "per_ticket": per_ticket,
         "failed_attempts": sum(len(t.get("failures") or []) for t in tickets.values()),
         "findings": len(s.get("findings") or []),
@@ -232,7 +238,7 @@ def check(lessons_path, threshold):
             l["ticket"] = t
         # Only judgement calls are questions.
         reasons = []
-        if l.get("scope") == "generalises":
+        if l.get("scope") == "generalises" and l["delivery"] == "project":
             reasons.append("does it generalise beyond this project?")
         if l.get("move") in ("loosen", "tighten", "retire"):
             reasons.append("%s a guardrail" % l["move"])
@@ -301,7 +307,7 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
         out += ["### Lessons to keep: one \"yes\" keeps them all", "",
                 "| # | Lesson | Home | Role | Reach | Why |", "|---|---|---|---|---|---|"]
         for l in batch:
-            home = l["home"] + (" (a %s lesson a machine can check)" % l["rehomed_from"] if l.get("rehomed_from") else "")
+            home = l["home"] + (" (taste a machine can check: was %s)" % l["rehomed_from"].replace("-", " ") if l.get("rehomed_from") else "")
             out.append("| %s | %s | %s | %s | %s | %s |" % (l["id"], cell(l["lesson"]), cell(home), l["role"],
                                                        l["scope"], cell(l["why"])))
         out += ["", "Recommend: yes to all. Say which to drop, if any.", ""]

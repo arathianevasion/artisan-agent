@@ -312,7 +312,7 @@ cmd_deliver() {
     if [ "$dec" = yes ] && [ "$gen" = generalises ] && [ "$(jq -r .delivery "$lf")" = project ] && ! delivered "$id" promoted; then
       need_home
       f=$(home_file_for "$kind")
-      py promote "$HOME_DIR/$f" "- $(jq -r .lesson "$lf") ($(origin_line "$lf" | sed 's/^Origin: /from run /'))"
+      py promote "$HOME_DIR/$f" "- $(jq -r .lesson "$lf") ($(origin_line "$lf" | sed 's/^Origin: /from /'))"
       commit_in "$HOME_DIR" "$(printf 'Promote retro lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" "$f"
       mark "$id" promoted "$HOME_DIR/$f"; printf 'promoted\t%s\t%s\n' "$id" "$HOME_DIR/$f"
     fi
