@@ -23,17 +23,18 @@ Each session is capped at `--max-budget-usd 0.50` on `claude-sonnet-5-5`, loads 
 
 ## Runs on 2026-11-10
 
-The first two rounds found defects in the skill, which were fixed before the third:
+Each change to the skill was followed by another run of the samples. The early runs found these defects in the skill, which are now fixed:
 
 - `code-review` resolved to Claude Code's built-in review, not upstream's two-axis one, and the worker never loaded `tdd`. The skill now names `mattpocock-skills:tdd` and `mattpocock-skills:code-review`.
 - Workers skipped `tdd` and the review, or ran the review without its sub-agents, "to save budget" with under $0.20 spent. The skill now says never to skip a step to save budget.
+- The first `unnamed-seam` ticket could be met without any new seam (the worker tested through `cli.main` and carded *not* extracting one). The ticket now needs the CSV produced outside the command line, and `verify` checks a public function was added and carded as job 3.
 
-Third round, all three samples, every check passing:
+The last run, after the code-review fixes, passed every check on all three samples:
 
 | Sample | Cost | Decision cards |
 |---|---|---|
-| `named-seam` | $0.26 | Unicode or ASCII "letters" (product taste); leave the slug regex inline (a Mysterious Name finding) |
-| `unnamed-seam` | $0.31 | test the export through `cli.main` rather than extracting a new `export_csv` seam; keep LF line endings |
-| `review-seeds` | $0.29 | leave the `street, city, postcode` clump; leave the names `shipping` and the address functions where the ticket put them; no whitespace stripping in `delivery_label` |
+| `named-seam` | $0.28 | ASCII-only "letters" (product taste) |
+| `unnamed-seam` | $0.30 | new seam `export.to_csv(invoices)` (job 3); LF line endings; three review smells left as is (command table, `Invoice` type, fixture rows in tests) |
+| `review-seeds` | $0.30 | leave the `street, city, postcode` clump; keep the name `check_address` |
 
-In `review-seeds` the worker caught the boundary bug and the `print()` while building test-first, before `code-review` ran, and recorded both as fixed findings.
+In `review-seeds` the `print()` violation was fixed after `code-review` reported it. The boundary bug breaks an acceptance criterion, so the worker caught it test-first and committed the fix before the review ran. The review reported it again and the record lists it as fixed. A seed only a review could find would need to sit outside every criterion.
