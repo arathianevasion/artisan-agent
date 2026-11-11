@@ -290,7 +290,7 @@ EOT
     if [ "$proven" = 1 ]; then
       set -- "$@" "- \`$check\`: proven to fail on $(date +%Y-%m-%d), breaking: $break_desc"
     fi
-    printf '%s\n' "$outcome" | head -n 1
+    printf '%s\n' "${outcome%%$'\n'*}"
   done <<EOT
 $(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_cmd // ""), (.prepare // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$answers")
 EOT
@@ -340,7 +340,10 @@ cmd_labels() {
   [ "$(tracker_kind "$wt")" = github ] || { echo "skipped: the tracker is not GitHub; the labels are recorded in docs/agents/triage-labels.md only"; return 0; }
   have=$(cd "$wt" && "$GH" label list --limit 500 --json name --jq '.[].name') || die "gh label list failed"
   edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '1,/^labels:$/d' | while IFS=$'\t' read -r name desc; do
-    if printf '%s\n' "$have" | grep -qxF "$name"; then continue; fi
+    if grep -qxF "$name" <<EOH
+$have
+EOH
+    then continue; fi
     case "$name" in
       review-gate) color=5319e7 ;; plan) color=0e8a16 ;; in-run) color=fbca04 ;;
       urgent) color=b60205 ;; deferred) color=c5def5 ;; *) color=ededed ;;
@@ -360,7 +363,9 @@ cmd_pre_commit() {
 cmd_hook_probe() {
   local m name out
   m=$(main_of "${1:-.}")
-  name=$("$GUARD/guard.sh" flag-watch | head -n 1)
+  # Capture first, then take line one: an early-closing reader would SIGPIPE guard.sh under pipefail.
+  name=$("$GUARD/guard.sh" flag-watch)
+  name=${name%%$'\n'*}
   out=$(cd "$m" && "$CLAUDE_BIN" -p --output-format json --max-turns 1 --max-budget-usd 0.05 "/$name probe" 2>&1 || true)
   case "$out" in *"$MARKER"*) echo fires ;; *) echo silent ;; esac
 }

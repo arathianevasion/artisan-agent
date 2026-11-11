@@ -8,7 +8,10 @@ request=${1:-}
 [ -n "$request" ] || request="(no details given)"
 title="Plan: $(printf '%s' "$request" | head -n 1 | cut -c1-80)"
 existing=$(gh issue list --state open --label plan --json title --jq '.[].title' 2>/dev/null || true)
-if printf '%s\n' "$existing" | grep -qxF -- "$title"; then
+if grep -qxF -- "$title" <<EOH
+$existing
+EOH
+then
   printf '%s\n' "$title (already queued)"; exit 0
 fi
 body="A run was requested while another run held the run lock, so it waits here.
