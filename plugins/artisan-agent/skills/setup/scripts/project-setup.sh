@@ -409,6 +409,12 @@ cmd_prove_check() {
 
 need_home() { [ -d "$HOME_DIR/.git" ] || die "no individual home at $HOME_DIR; run machine-level setup first (machine-setup.sh init)"; }
 
+write_motivation() { # file id text: the motivation record, staged in the individual home
+  mkdir -p "$(dirname "$1")"
+  printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$2" "$2" "$(date +%Y-%m-%d)" "$3" >"$1"
+  git -C "$HOME_DIR" add -- "$1"
+}
+
 cmd_motivation() {
   local sub=${1:-} f text id
   [ $# -gt 0 ] && shift
@@ -420,9 +426,7 @@ cmd_motivation() {
       [ ! -s "$f" ] || die "a motivation is already recorded for $id ($f); setup never overwrites it"
       text=$(cat)
       [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing recorded (skipping is fine)"
-      mkdir -p "$(dirname "$f")"
-      printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$id" "$id" "$(date +%Y-%m-%d)" "$text" >"$f"
-      git -C "$HOME_DIR" add -- "$f"
+      write_motivation "$f" "$id" "$text"
       git_commit "$HOME_DIR" "Motivation for $id" -- "$f"
       echo "changed: motivation for $id recorded in the individual home"
       ;;
@@ -430,9 +434,7 @@ cmd_motivation() {
       need_home
       text=$(cat)
       [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing changed"
-      mkdir -p "$(dirname "$f")"
-      printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$id" "$id" "$(date +%Y-%m-%d)" "$text" >"$f"
-      git -C "$HOME_DIR" add -- "$f"
+      write_motivation "$f" "$id" "$text"
       if git -C "$HOME_DIR" diff --cached --quiet -- "$f"; then echo "unchanged: motivation for $id"; exit 0; fi
       git_commit "$HOME_DIR" "Motivation for $id updated${ARTISAN_RUN_ID:+ at the retro of run $ARTISAN_RUN_ID}" -- "$f"
       echo "changed: motivation for $id updated in the individual home"

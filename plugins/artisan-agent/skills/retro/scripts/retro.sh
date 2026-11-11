@@ -192,7 +192,7 @@ cmd_prepare() {
     printf -- '- Run folder: `%s` (state file `state.json`; `results/`, `workers/`, `verify/`, `merges/`, `prompts/`)\n' "$rd"
     printf -- '- Facts and signals already computed: `%s`\n' "$rd/retro/facts.json"
     printf -- '- Triage misses since the last retro: `%s`\n' "$rd/retro/misses.jsonl"
-    printf -- '- Chat log: %s\n' "${chat:+\`$chat\`}${chat:-none given}"
+    if [ -n "$chat" ]; then printf -- '- Chat log: `%s`\n' "$chat"; else printf -- '- Chat log: none given\n'; fi
     printf -- '- Project checkout (read only): `%s`; the plugin: `%s`\n' "$main" "$PLUGIN_ROOT"
     printf -- '- Evidence threshold: %s\n' "$(jq -r '.plan.config.evidence_threshold // 3' "$rd/state.json")"
     printf -- '- Write the lessons to `%s` and the Artisan'"'"'s actions to `%s`.\n' "$rd/retro/lessons.json" "$rd/retro/actions.jsonl"
@@ -262,12 +262,16 @@ project_lessons() { # worktree-making, one commit per lesson, one PR
   fi
 }
 
-home_file_for() { # kind -> the individual standards file a generalising lesson is promoted to
-  case "$1" in product-taste) echo PRODUCT_STANDARDS.md ;; *) echo CODING_STANDARDS.md ;; esac
+home_file_for() { # kind -> the individual standards file and section a generalising lesson is promoted to
+  case "$1" in
+    product-taste) echo "PRODUCT_STANDARDS.md|## Lessons" ;;
+    mechanical) echo "CODING_STANDARDS.md|## Checks" ;;
+    *) echo "CODING_STANDARDS.md|## Lessons" ;;
+  esac
 }
 
 cmd_deliver() {
-  local pr=0 decisions ids_project="" id kind dec gen lf f
+  local pr=0 decisions ids_project="" id kind dec lf f
   RD=$(run_dir "$1"); decisions=$2; shift 2
   [ "${1:-}" = --pr ] && pr=1
   [ -f "$decisions" ] || die "no decisions file: nothing changes until the Artisan answers"
@@ -279,7 +283,6 @@ cmd_deliver() {
     if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
     case "$dec" in yes|this-project) ;; *) continue ;; esac
     kind=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .kind' "$CHECKED")
-    gen=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .scope' "$CHECKED")
     lf="$RD/retro/.lesson-$id.json"
     jq --arg id "$id" '.lessons[] | select(.id == $id)' "$CHECKED" >"$lf"
     case "$kind" in
@@ -312,20 +315,21 @@ cmd_deliver() {
       *) ids_project="$ids_project $id" ;;
     esac
     # A generalising lesson the Artisan confirmed is promoted to the individual level.
-    if [ "$dec" = yes ] && [ "$gen" = generalises ] && [ "$(jq -r .delivery "$lf")" = project ] && ! delivered "$id" promoted; then
+    if [ "$dec" = yes ] && [ "$(jq -r '.promotable // false' "$lf")" = true ] && ! delivered "$id" promoted; then
       need_home
-      f=$(home_file_for "$kind")
-      py promote "$HOME_DIR/$f" "- $(jq -r .lesson "$lf") ($(origin_line "$lf" | sed 's/^Origin: /from /'))"
+      f=$(home_file_for "$kind"); local section=${f#*|}; f=${f%%|*}
+      local what; what=$(jq -r 'if .kind == "mechanical" then "\(.lesson) [check: \(.change.path)]" else .lesson end' "$lf")
+      py promote "$HOME_DIR/$f" "$section" "- $what ($(origin_line "$lf" | sed 's/^Origin: /from /'))"
       commit_in "$HOME_DIR" "$(printf 'Promote retro lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" "$f"
       mark "$id" promoted "$HOME_DIR/$f"; printf 'promoted\t%s\t%s\n' "$id" "$HOME_DIR/$f"
     fi
     rm -f "$lf"
   done
   project_lessons "$(echo $ids_project)" "$pr"
+  [ "$failed" = 0 ] || return 1   # the next retro reads this one's misses again
   mkdir -p "$MAIN/.artisan-agent/retro"
   [ -e "$MAIN/.artisan-agent/retro/.gitignore" ] || printf '*\n' >"$MAIN/.artisan-agent/retro/.gitignore"
   date -u +%Y-%m-%dT%H:%M:%SZ >"$MAIN/.artisan-agent/retro/last"
-  return $failed
 }
 
 [ $# -ge 1 ] || usage

@@ -337,7 +337,8 @@ STUB
   assert_contains "$args" "[-p]"
   assert_contains "$args" "[--max-budget-usd]
 [0.50]"
-  assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "$TEST_TMPDIR/chat.jsonl"
+  assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "- Chat log: \`$TEST_TMPDIR/chat.jsonl\`
+"
   assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "Prepare the retro"
   assert_contains "$(cat "$RUN_DIR/retro/env")" "ROLE=retro"
   assert_eq 5 "$(jq .actions.total "$RUN_DIR/retro/facts.json")" "the chat's action counted with the decisions and the miss"
@@ -358,4 +359,37 @@ test_the_retro_reads_only_misses_newer_than_the_last_retro() {
   [ -f "$PROJECT/.artisan-agent/retro/last" ] || fail "no last-retro mark"
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "the mark is not ignored"
   assert_eq 0 "$(jq .triage_misses <<<"$("$RETRO" facts "$RUN_DIR")")" "an old miss read again"
+}
+
+test_a_gate_decided_against_is_not_a_rubber_stamp() {
+  sample_run
+  jq '.decisions += [{id: "d5", kind: "gate", status: "decided", choice: "reject: wrong table", by: "Andrew"}]' \
+    "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  assert_eq '3 2 67' "$(jq -r '.rubber_stamp | "\(.gates) \(.unchanged) \(.rate)"' <<<"$("$RETRO" facts "$RUN_DIR")")"
+}
+
+test_a_generalising_check_is_promoted_as_a_check_and_domain_stays_with_the_project() {
+  sample_run; mkdir -p "$RUN_DIR/retro"
+  jq -n '{lessons: [
+    {id: "C", kind: "mechanical", lesson: "CSV exports start with a header row", role: "engineering", scope: "generalises", why: "#12",
+     change: {path: "tests/test_header.sh", text: "#!/bin/sh\nhead -1 out.csv | grep -q ,", replace: true}},
+    {id: "D", kind: "domain", lesson: "Export means a file", role: "product", scope: "generalises", why: "#10",
+     change: {path: "GLOSSARY.md", text: "**Export**: a file."}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_eq 'question batch' "$(jq -r '[.lessons[].ask] | join(" ")' "$RUN_DIR/retro/checked.json")"
+  echo '{"C":"yes","D":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_contains "$(cat "$ARTISAN_HOME/CODING_STANDARDS.md")" "## Checks
+
+- CSV exports start with a header row [check: tests/test_header.sh] (from run r1"
+  case "$(cat "$ARTISAN_HOME/CODING_STANDARDS.md")" in *"Export means"*) fail "a domain lesson promoted" ;; esac
+}
+
+test_a_failed_delivery_leaves_the_misses_for_the_next_retro() {
+  sample_run; seed_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"L3":"yes"}' >"$TEST_TMPDIR/d.json"
+  printf '#!/bin/sh\nexit 1\n' >"$TEST_TMPDIR/bin/gh"
+  assert_status 1 "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json"
+  [ ! -f "$PROJECT/.artisan-agent/retro/last" ] || fail "marked done after a failure"
 }

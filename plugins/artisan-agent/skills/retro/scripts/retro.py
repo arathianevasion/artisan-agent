@@ -19,8 +19,8 @@ Usage (python3 -I retro.py <command> ...):
   apply <worktree> <lesson.json>
       makes a kept lesson's change in a checkout: text under a section of a
       file (the file and section made if missing), or a config number set
-  promote <file> <line>
-      adds LINE under "## Lessons" in an individual standards file
+  promote <file> <section> <line>
+      adds LINE under SECTION in an individual standards file
 
 Standard-library Python 3.
 """
@@ -41,6 +41,8 @@ HOMES = {
     "experience": ("the satisfaction record", "individual"),
 }
 TASTE = ("engineering-taste", "product-taste", "domain")
+PROMOTABLE = ("mechanical", "engineering-taste", "product-taste")
+APPROVALS = re.compile(r"^\s*(approve|approved|clear|cleared|pass|passed|yes|ok|accept|accepted)\b", re.I)
 # Where prose lessons live; a check is never only a line in one of these.
 PROSE_HOMES = r"^(CODING_STANDARDS\.md|PRODUCT_STANDARDS\.md|GLOSSARY\.md|docs/adr/)"
 ROLES = ("product", "engineering", "both")
@@ -169,7 +171,8 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     shares = dict((f, (round(100.0 * c / n) if n else None)) for f, c in counts.items())
 
     gates = [a for a in actions if a.get("kind") in GATE_KINDS or a.get("job") == 13 or a.get("gate")]
-    stamped = [g for g in gates if not g.get("redirect") and not g.get("changed")]
+    stamped = [g for g in gates if not g.get("redirect") and not g.get("changed")
+               and APPROVALS.match(str(g.get("choice") or ""))]
     rubber = {"gates": len(gates), "unchanged": len(stamped),
               "rate": (round(100.0 * len(stamped) / len(gates)) if gates else None)}
 
@@ -243,7 +246,10 @@ def check(lessons_path, threshold):
             l["ticket"] = t
         # Only judgement calls are questions.
         reasons = []
-        if l.get("scope") == "generalises" and l["delivery"] == "project":
+        # Taste and checks are promoted to the individual level; pipeline lessons
+        # generalise as tickets; domain and calibration stay with the project.
+        l["promotable"] = l.get("scope") == "generalises" and kind in PROMOTABLE
+        if l["promotable"]:
             reasons.append("does it generalise beyond this project?")
         if l.get("move") in ("loosen", "tighten", "retire"):
             reasons.append("%s a guardrail" % l["move"])
@@ -337,7 +343,7 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
         text = "\n".join(body[at + 1:] if at is not None else body).strip()
         out += ["Why this product matters to you, as you put it:", ""]
         out += ["> " + ln for ln in text.splitlines()]
-        out += ["", "Read the first two scores against that. If it has changed, say so and I'll update it.", ""]
+        out += ["", "Read the first two scores against that.", ""]
     for i, q in enumerate(qs, 1):
         hint = "free text" if i == len(qs) else "1–5, an optional sentence, or \"skip\""
         out.append("%d. %s (%s)" % (i, q, hint))
@@ -408,11 +414,11 @@ def record(answers_path, facts_path, history_path, project, run, date):
         if s <= 2:
             why.append({"question": q, "reason": "scored %d" % s})
             continue
-        # A fall of 1 or more over three runs: this run against the one two before it.
-        prev = [score_of((h.get("scores") or {}).get(q)) for h in past]
-        prev = [p for p in prev if isinstance(p, int)]
-        if len(prev) >= 2 and prev[-2] - s >= 1:
-            why.append({"question": q, "reason": "fell from %d to %d over three runs" % (prev[-2], s)})
+        # A fall of 1 or more over three runs: this run against the one two before it
+        # (a skip there means no comparison).
+        first = score_of((past[-2].get("scores") or {}).get(q)) if len(past) >= 2 else None
+        if isinstance(first, int) and first - s >= 1:
+            why.append({"question": q, "reason": "fell from %d to %d over three runs" % (first, s)})
     print(json.dumps(rec, separators=(",", ":")))
     print(json.dumps({"why": why, "chores": chores}))
     return 0
@@ -520,13 +526,13 @@ def apply(worktree, lesson_path):
     return 0
 
 
-def promote(path, line):
+def promote(path, section, line):
     text = ""
     if os.path.isfile(path):
         with open(path) as fh:
             text = fh.read()
     with open(path, "w") as fh:
-        fh.write(under_section(text, "## Lessons", line))
+        fh.write(under_section(text, section, line))
     return 0
 
 
@@ -548,7 +554,7 @@ def main(argv):
         return record(*args)
     if cmd == "apply" and len(args) == 2:
         return apply(*args)
-    if cmd == "promote" and len(args) == 2:
+    if cmd == "promote" and len(args) == 3:
         return promote(*args)
     print(__doc__, file=sys.stderr)
     return 2
