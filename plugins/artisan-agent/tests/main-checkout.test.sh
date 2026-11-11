@@ -297,3 +297,23 @@ test_doc_change_finish_says_so_when_git_has_no_identity() {
   assert_contains "$err" "no committer identity"
   [ -d "$wt" ] || fail "worktree must stay"
 }
+
+# #59: resuming the open run is not a second run. A bare call, "resume" or
+# the run's id passes, typed or called by Claude, and files nothing; anything
+# else is still refused.
+test_resuming_the_open_run_passes_the_run_lock() {
+  make_repo; stub_gh; hold_lock
+  local args
+  for args in "" "  " resume r1 "resume r1"; do
+    assert_eq "" "$(jq -cn --arg c "$REPO" --arg a "$args" \
+      '{hook_event_name:"UserPromptExpansion",command_name:"artisan-agent:implement-plan",command_args:$a,cwd:$c}' \
+      | "$PROTECT" run-start)" "typed [$args]"
+    assert_eq "" "$(jq -cn --arg c "$REPO" --arg a "$args" \
+      '{hook_event_name:"PreToolUse",tool_name:"Skill",cwd:$c,tool_input:{skill:"artisan-agent:implement-plan",args:$a}}' \
+      | "$PROTECT" run-start)" "called [$args]"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")"
+  assert_contains "$(jq -cn --arg c "$REPO" \
+    '{hook_event_name:"UserPromptExpansion",command_name:"implement-plan",command_args:"resume r2",cwd:$c}' \
+    | "$PROTECT" run-start)" '"decision":"block"'
+}

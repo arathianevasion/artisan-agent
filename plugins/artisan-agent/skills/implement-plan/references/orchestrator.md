@@ -12,6 +12,7 @@ Your prompt gives you the run folder (`$RUN`, below), the integration worktree y
 - **Write state after every event.** The scripts do it for you, one rewrite per event; never edit `state.json` by hand.
 - **Leave nothing running** that you started yourself. Workers are detached on purpose and are not yours to wait on past their deadline: the sweep stops them.
 - Keep your own context small: one line of output per call is usually enough (`| tail -3`).
+- **Never compact: hand off.** After every event, run `$S/drain.sh check $RUN` and read `context-drain.md`, beside this file, once, the first time it says anything but `dispatch`. In short: `process` means dispatch nothing new (retries included) and keep processing; `handoff` means finish your step, `$S/drain.sh handoff $RUN`, and exit (no wave report: it wrote your result file); `risk-gate` means `$S/drain.sh gate $RUN <ticket> <percent>` after each merge, before `close`.
 
 ## The wave
 

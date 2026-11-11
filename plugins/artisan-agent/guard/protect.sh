@@ -60,6 +60,12 @@ case "$mode" in
     holder=$("$SCRIPTS/run-lock.sh" check "$cwd" 2>/dev/null) && exit 0
     [ -n "$holder" ] || exit 0          # not a repo, or the check itself failed: do not block
     run_id=${holder% *}; pid=${holder#* }
+    # Resuming the open run is not a second run: a bare call, "resume" or the
+    # run's id opens with its digest (skills/implement-plan/references/context-drain.md).
+    resume=$(printf '%s' "$request" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+    case "$resume" in
+      "" | resume | "$run_id" | "resume $run_id") exit 0 ;;
+    esac
     msg="Blocked by the artisan-agent run lock: run $run_id (pid $pid) holds the lock, and a repo has one run at a time."
     if (cd "$cwd" && "$HERE/queue-plan.sh" "$request") >/dev/null 2>&1; then
       msg="$msg Your request is left as a \`plan\` issue on the tracker; it runs after the current run."

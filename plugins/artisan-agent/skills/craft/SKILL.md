@@ -12,7 +12,7 @@ Wherever you put something in front of the Artisan, follow `${CLAUDE_PLUGIN_ROOT
 
 ## 1. Check for an open run first
 
-Look for a run that is open in this repo: a run folder under `.artisan-agent/runs/` that isn't finished, or an open `plan` issue the Artisan has approved. If one exists, tell the Artisan in one line ("run <id> is open: <where it is>") and ask whether this request is about that run or new work. For the run, hand over to `/artisan-agent:implement-plan`, which owns resume and the digest; don't summarize its state yourself. A new request then continues below, and an approved small item may be added to that run (section 4).
+Look for a run that is open in this repo: a run folder under `.artisan-agent/runs/` that isn't finished, or an open `plan` issue the Artisan has approved. If one exists, tell the Artisan in one line (`${CLAUDE_PLUGIN_ROOT}/scripts/run-digest.sh --line` prints it) and ask whether this request is about that run or new work. For the run, hand over to `/artisan-agent:implement-plan` with no arguments (that resumes the run), which owns resume and opens with the digest; don't summarize its state yourself. A new request then continues below, and an approved small item may be added to that run (section 4).
 
 ## 2. Propose a route by the route test
 

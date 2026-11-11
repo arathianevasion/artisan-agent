@@ -42,6 +42,8 @@ This skill is Claude-callable, so another pipeline step can hand it work. Dispat
 
 ## Process
 
+**An open run first.** Before step 1, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-digest.sh`. If it prints a digest, a run is open in this repo: open with the digest as printed and carry that run on from step 6; plan nothing new until the Artisan asks. Neither tier ever stops to compact: before each launch and whenever woken, check your context with `drain.sh check <run folder> --tier chat`, as `references/context-drain.md` says.
+
 ### 1. Read the queue and build the graph
 
 If the Artisan named a plan issue (labelled `plan`), several, or plans mixed with tickets, resolve them to tickets first: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/plan-issues.md`, using `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-scope.sh`.
