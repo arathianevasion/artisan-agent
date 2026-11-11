@@ -1,16 +1,44 @@
 # Upstream (mattpocock-skills) skill names a personal copy may shadow. Used when the
 # plugin cache can't be read; scan also adds every skill found in the cache.
-codebase-design
+# Kept equal to the newest installed cache by tests/upstream-skills.test.sh (when a cache
+# is present). Includes the skills we replace (implement, triage, to-spec, ...): the scan
+# looks for a personal copy of the *upstream* skill, and a stale copy of a replaced one
+# is just as stale; our replacements are namespaced in the plugin, so they never collide.
+ask-matt
+chief-of-staff
+claude-handoff
 code-review
+codebase-design
 diagnosing-bugs
 domain-modeling
+git-guardrails-claude-code
+grill-me
+grill-with-docs
 grilling
+handoff
 implement
+implement-spec
+improve-codebase-architecture
+loop-me
+migrate-to-shoehorn
 pr
 prototype
 research
+retro
+scaffold-exercises
+setup-matt-pocock-skills
+setup-pre-commit
+setup-ts-deep-modules
 tdd
-triage
+teach
+to-questionnaire
 to-spec
+to-tickets
+triage
+wait-what
+wayfinder
 wizard
+writing-beats
 writing-for-agents
+writing-fragments
+writing-shape
