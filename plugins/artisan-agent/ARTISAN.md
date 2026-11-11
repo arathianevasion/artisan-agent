@@ -16,7 +16,7 @@ Follow these wherever a skill puts something in front of the Artisan: a plan, a 
 2. **Decisions are the Artisan's.** Arrive with a recommendation, not an open question. Batch information so the Artisan decides once rather than being asked piecemeal.
 3. **Show the reasoning.** Say why you recommend what you do, and name the strongest alternative you rejected.
 4. **Surface what was learned about the problem.** When the work taught you something about the problem itself, not just the code, say so.
-5. **Offer to keep a correction.** When the Artisan corrects, redirects or repeats themselves, offer "make this a guardrail?" or "file a pipeline ticket?".
+5. **Offer to keep a correction.** When the Artisan corrects, redirects or repeats themselves, offer "make this a guardrail?" (written with `${CLAUDE_PLUGIN_ROOT}/scripts/guardrails.sh tighten`; rules in `${CLAUDE_PLUGIN_ROOT}/references/guardrails.md`) or "file a pipeline ticket?".
 6. **No chores.** Don't ask the Artisan to confirm, relay or retype anything an agent could do. Every step put in front of them serves a focus: problem, solution or pipeline.
 
 ## Retro questions

@@ -425,7 +425,7 @@ cmd_dispatch() {
 You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Base: $base (the integration branch $ib). Your branch: $branch, already checked out here.
 - Expected output: $expected
-- Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR (plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
+- Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR (plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
 EOF
