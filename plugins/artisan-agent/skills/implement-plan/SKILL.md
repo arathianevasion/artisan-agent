@@ -83,7 +83,7 @@ The approved scope is the run's scope, exactly: `state.sh dispatch` and `run-tic
 
 ### 5. Launch a wave and yield
 
-`ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh launch <run folder>` launches the next wave's orchestrator, detached, in the integration worktree, with `references/orchestrator.md` as its brief. It hands the state lock to the orchestrator for the wave and prints `orchestrator-w<wave> <attempt> <pid>`.
+`ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh launch <run folder>` launches the next wave's orchestrator, detached, in the integration worktree, with `references/orchestrator.md` as its brief. It hands the state lock to the orchestrator for the wave and prints `orchestrator-w<wave> <attempt> <pid>`. Launching also reads the guardrail levels afresh and records their commits for the wave; the rules are in `${CLAUDE_PLUGIN_ROOT}/references/guardrails.md`, and the packet's guardrails table comes from `scripts/guardrails.sh table --run-dir <run folder>`.
 
 Then tell the Artisan in two or three lines what is running and that you'll report when the wave ends, and **end your turn**. Don't poll, sleep, wait on the orchestrator or start a monitor: the wave runs without you, and a chat that waits spends its context on nothing.
 

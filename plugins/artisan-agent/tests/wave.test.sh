@@ -117,6 +117,10 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   # The orchestrator completed and wrote its wave report.
   assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" orchestrator-w1 1)"
   assert_eq merged "$(jq -r '.tickets[0].status' "$RUN_DIR/results/orchestrator-w1.1.result.json")"
+  # Launching read the guardrail sources: main's commit and the plugin version are recorded.
+  assert_eq "$MAIN_HEAD" "$(state_get '.waves[0].guardrails.product')"
+  assert_eq "$(jq -r .version "$PLUGIN_ROOT/.claude-plugin/plugin.json")" "$(state_get '.waves[0].plugin_version')"
+  assert_contains "$(cat "$RUN_DIR/prompts/1.1.md")" "guardrails.sh resolve --run-dir"
   # Merged --no-ff: the merge commit's second parent is the worker's tip.
   tip=$(git -C "$PROJECT" rev-parse run/r1)
   assert_eq "$(git -C "$PROJECT" rev-parse agent/1)" "$(git -C "$PROJECT" rev-parse "$tip^2")"

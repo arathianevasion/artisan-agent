@@ -197,7 +197,7 @@ cmd_launch() {
       *) usage ;;
     esac
   done
-  local wt last id attempt wave pid cls me deadline minutes prompt runner version tip
+  local wt last id attempt wave pid cls me deadline minutes prompt runner
   wt=$(integration_worktree)
   wave=1 attempt=1
   last=$(last_orchestrator)
@@ -237,9 +237,11 @@ You are the orchestrator for wave $wave of run $RUN_ID. Follow $PLUGIN_DIR/skill
 - Your state-writer pid is already exported as ARTISAN_WRITER_PID, and you hold the state lock.
 EOF
 
-  version=$(jq -r '.version // "unknown"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo unknown)
-  tip=$(git -C "$wt" rev-parse HEAD)
-  "$SCRIPT_DIR/state.sh" wave-start "$RUN_DIR" "$wave" "$version" - "$tip" - >/dev/null
+  # Guardrails are read at the point of use: fetch the team, product and
+  # individual sources, bring main in if a product guardrail changed, record
+  # each commit and the plugin version for this wave (references/guardrails.md).
+  "$SCRIPT_DIR/guardrails.sh" wave-start "$RUN_DIR" "$wave" >/dev/null \
+    || die "could not read the guardrails for wave $wave (guardrails.sh wave-start failed)"
 
   apply '
     .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, launched_at: $now}])
@@ -423,6 +425,7 @@ cmd_dispatch() {
 You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Base: $base (the integration branch $ib). Your branch: $branch, already checked out here.
 - Expected output: $expected
+- Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR (plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
 EOF
