@@ -172,6 +172,35 @@ test_v_two_starts_at_once_launch_one_verifier() {
   [ ! -e "$RUN_DIR/workers/verify-1.2" ] || fail "a second verifier was launched"
 }
 
+test_v_a_start_that_fails_before_launching_does_not_wedge_the_attempt() {
+  setup_wave
+  returned_ticket
+  # The first start dies before recording a verifier: its claim is cleared.
+  mkdir -p "$TEST_TMPDIR/project-wt/r1-verify-1.1"
+  assert_status 1 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1
+  [ ! -e "$RUN_DIR/verify/claims/1.1" ] || fail "a failed start left its claim"
+  rmdir "$TEST_TMPDIR/project-wt/r1-verify-1.1"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+}
+
+test_v_a_claim_whose_start_was_killed_is_cleared() {
+  setup_wave
+  returned_ticket
+  # A start killed (no trap ran) between claiming and recording.
+  local dead
+  sh -c 'exit 0' & dead=$!; wait "$dead"
+  mkdir -p "$RUN_DIR/verify/claims/1.1"
+  echo "$dead" >"$RUN_DIR/verify/claims/1.1/pid"
+  assert_status 8 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1
+  [ ! -e "$RUN_DIR/verify/claims/1.1" ] || fail "the dead start's claim was kept"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')"
+}
+
 test_v_the_ticket_comment_is_the_contract_in_the_state_file() {
   setup_wave
   start_and_launch

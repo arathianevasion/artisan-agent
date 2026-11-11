@@ -17,7 +17,7 @@
 #       another call is starting one), it launches nothing and prints that
 #       verifier's pid; only after an error (judge's 14) does it start the
 #       next. 8: the worker (or a verifier left from an earlier attempt) is
-#       still running. 6: the attempt did not complete (a failed attempt, as
+#       still running, or another call's verifier did not come up: call again. 6: the attempt did not complete (a failed attempt, as
 #       wave.sh merge counts it) or the result does not describe the branch
 #       tip (blocked).
 #   verify.sh judge <run-dir> <ticket>
@@ -95,12 +95,22 @@ remove_worktree() { # path: a throwaway detached checkout of a committed sha
 # ------------------------------------------------------------------- start
 
 # The runner pid of verifier v, once it is up (up to 10s, as run-ticket.sh
-# waits). 8 if it never comes up: call again, or judge it.
+# waits). 8 when it will not come up: its launch failed, or the start that
+# claimed it ended before recording it (its claim is then cleared). Call again.
 started_pid() { # ticket v
-  local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" i=0
+  local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" claim="$RUN_DIR/verify/claims/$1.$2" i=0 rec owner
   while [ ! -s "$f" ]; do
+    rec=$(get --arg t "$1" --argjson v "$2" '[(.tickets[$t].verifications // [])[] | select(.attempt == $v)] | last | if . == null then "none" else (.verdict // "-") end')
+    [ "$rec" != error ] || state_die 8 "verify.sh: #$1's verifier $2 could not launch; start again"
+    if [ "$rec" = none ]; then
+      owner=$(cat "$claim/pid" 2>/dev/null || true)
+      if [ ! -d "$claim" ] || { [ -n "$owner" ] && ! state_pid_alive "$owner"; }; then
+        rm -rf "$claim"
+        state_die 8 "verify.sh: the start that claimed #$1's verifier $2 ended without launching it; start again"
+      fi
+    fi
     i=$((i + 1))
-    [ "$i" -le 100 ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet"
+    [ "$i" -le 100 ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet; start again, or judge it"
     sleep 0.1
   done
   cat "$f"
@@ -127,14 +137,14 @@ cmd_start() {
     case "$3" in
       -|pass)
         if [ "$2" = "$n" ]; then
-          echo "verify.sh: #$t attempt $n already has verifier $1 ($( [ "$3" = pass ] && echo "passed; merge it" || echo "judge it")); not starting another" >&2
+          echo "verify.sh: #$t attempt $n already has verifier $1 (verdict $3); not starting another" >&2
           started_pid "$t" "$1"
           return 0
         fi
-        # A verifier left over from an earlier attempt (not judged).
-        [ "$3" = pass ] || [ "$(classify "verify-$t" "$1")" != "running -" ] \
-          || state_die 8 "verify.sh: #$t's verifier $1 is still running"
-        [ "$3" = pass ] || die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
+        if [ "$3" = - ]; then # left over from an earlier attempt, not judged
+          [ "$(classify "verify-$t" "$1")" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
+          die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
+        fi
         ;;
     esac
     v=$(($1 + 1))
@@ -142,12 +152,17 @@ cmd_start() {
   # Two starts at once (an orchestrator's parallel Bash calls share one
   # writer pid, so the state lock does not part them): the first to claim
   # this verifier launches it; the other waits for its pid.
+  # The claim holds the claimer's pid and is cleared if it ends before the
+  # verifier is recorded; once recorded, the state file answers instead.
+  local claim="$RUN_DIR/verify/claims/$t.$v"
   mkdir -p "$RUN_DIR/verify/claims"
-  if ! mkdir "$RUN_DIR/verify/claims/$t.$v" 2>/dev/null; then
+  if ! mkdir "$claim" 2>/dev/null; then
     echo "verify.sh: #$t's verifier $v is being started by another call; not starting another" >&2
     started_pid "$t" "$v"
     return 0
   fi
+  echo $$ >"$claim/pid"
+  trap 'rm -rf "'"$claim"'"' EXIT
 
   local criteria base ib wt id prompt cfile repo title path expected result model estimate minutes ref suite
   criteria=$(read_criteria "$t")
@@ -193,6 +208,7 @@ cmd_start() {
       + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt"
+  trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid
   read_extra_args
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
