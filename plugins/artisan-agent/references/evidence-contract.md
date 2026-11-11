@@ -53,6 +53,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `criteria_met`, `criteria_total` | the counts |
 | `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
 | `tests` | the worker's full-suite run: `{suite_passed, command, summary}` |
+| `checks` | the checks the verifier ran through `checks.sh run`: the recorded checks with their results, or `{recorded: false, fallback: "no recorded checks (…): found …"}`. A red recorded check makes each criterion that cites it unmet (all of them when none does); `references/checks.md` |
 | `diff` | `summary` (`git diff --shortstat`) and `files` (`<path> +<added> -<deleted>`, comma-separated), base to commit |
 | `unsure` | what the worker was unsure of |
 | `decisions` | the decisions the worker made alone: its decision cards, as in `evidence-record.md` |

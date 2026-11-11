@@ -8,6 +8,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
+| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 | `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
@@ -29,6 +30,7 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
 | `verify/claims/<t>.<v>/` | `verify.sh start` | the claim on verifier `<v>`: one start launches it, however many run at once |
+| `verify/checks/<t>.<v>.json`, `.logs/` | the verifier, through `checks.sh run --out` | the checks it ran (recorded, or its fallback) and their full output |
 | `verify/<t>.<n>.evidence.json`, `.comment.md` | `verify.sh judge` | the evidence contract as built (also in the state file), and the comment posted on a fail |
 | `.wait-any.seen` | `wait-any.sh` | what the waiting caller has already seen |
 
@@ -89,7 +91,7 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
-| `plan.sh render` | Prints the one approval: waves, model and estimate per ticket, total, Max Agents and every config number | Markdown |
+| `plan.sh render` | Prints the one approval: waves, model and estimate per ticket, total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
 ## The project config
 
@@ -208,6 +210,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 13 | not verified: no passing verdict for this attempt at this commit | `merge` | `verify.sh start`, then `judge` |
 | 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
 | 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a wave launch, on a host) | log in again, `login-check.sh stamp` |
+| 16 | no checks recorded (`list`, `suite`), or nothing to run (`run`) | `checks.sh` | fall back to discovery and say so (`references/checks.md`) |
 
 # Verification and evidence
 

@@ -16,7 +16,7 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/project-setup.sh` (run
 | Config with every default | `.artisan-agent/config.yml` | a copy of `${CLAUDE_PLUGIN_ROOT}/templates/config.yml`; question 3 fills `team_guardrails_repo` only in a new copy. `.artisan-agent/runs/` is added to `.gitignore`. |
 | Product and coding standards | `PRODUCT_STANDARDS.md`, `CODING_STANDARDS.md` | created if missing; each gets an `## Always ask` section, seeded from question 2 |
 | PR boundaries guardrail | `CODING_STANDARDS.md` `## Guardrails`, line `` - `pr-boundaries`: one PR per <slice\|plan\|ticket> `` | product level; see question 1 for the other levels |
-| The project's checks | `CODING_STANDARDS.md` `## Checks` | only checks proven to fail, with the date and the break used |
+| The project's checks | `CODING_STANDARDS.md` `## Checks` | only checks proven to fail, with the date and the break used; the worker, verifier and plan step read them through `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh` (`references/checks.md`) |
 | The ten labels | the tracker, and `docs/agents/triage-labels.md` | upstream's five (the strings the doc maps them to) plus `review-gate`, `plan`, `in-run`, `urgent`, `deferred` |
 | Who the Artisan is; agent tickets carry `needs-triage` | `docs/agents/issue-tracker.md` `## Conventions` | GitHub: `gh api user --jq .login` and the login at setup; local markdown: `git config user.name`, no `gh` call; GitLab: `glab api user` |
 | Front-door pointer | `CLAUDE.md` (or `AGENTS.md` if only that exists) | "Start with `/artisan-agent:craft`." |
