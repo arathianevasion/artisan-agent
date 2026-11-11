@@ -4,7 +4,8 @@
 #   Return condition: date YYYY-MM-DD
 #   Return condition: next review on YYYY-MM-DD
 #   Return condition: blocked-by #12 #15      (due once every listed ticket is closed)
-# Prints one "#N title: why" line per due ticket, or "none due". Read-only.
+# Prints one "#N title: why" line per due ticket, a "gap" line for a deferred ticket
+# with no readable condition, and "none due" when nothing is due. Read-only.
 # ARTISAN_TODAY (YYYY-MM-DD) overrides today's date. Portable to bash 3.2.
 set -euo pipefail
 
@@ -19,7 +20,7 @@ while IFS=$'\t' read -r num title body; do
   # @tsv escapes newlines as the two characters \n; take the condition line.
   cond=$(printf '%s' "$body" | sed 's/\\n/\
 /g' | sed -n 's/.*Return condition:[[:space:]]*//p' | tail -n 1)
-  [ -n "$cond" ] || continue
+  if [ -z "$cond" ]; then printf '#%s %s: gap, no readable "Return condition:" line\n' "$num" "$title"; continue; fi
   why=
   case "$cond" in
     blocked-by*)

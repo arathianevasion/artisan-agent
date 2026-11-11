@@ -59,7 +59,8 @@ test_deferred_due_surfaces_passed_date_and_closed_blocker() {
   out=$(PATH="$TEST_TMPDIR/bin:$PATH" ARTISAN_TODAY=2026-11-10 "$SCRIPTS/deferred-due.sh")
   assert_contains "$out" '#10 Old date: date 2026-10-01 has passed'
   assert_contains "$out" '#12 Event closed: blocking event closed (#20)'
-  case "$out" in *'#11'*|*'#13'*|*'#14'*) fail "not-due ticket listed: $out" ;; esac
+  assert_contains "$out" '#14 No condition: gap'
+  case "$out" in *'#11'*|*'#13'*) fail "not-due ticket listed: $out" ;; esac
 }
 
 test_deferred_due_does_not_list_a_date_that_has_not_come() {
