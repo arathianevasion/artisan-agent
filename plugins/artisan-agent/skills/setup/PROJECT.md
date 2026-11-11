@@ -61,7 +61,7 @@ Ask exactly these five. Recommend an answer for each (ARTISAN.md rule 2).
 bash project-setup.sh prove-check [--prepare "npm ci"] --break "<shell edit>" -- <check command>
 ```
 
-It makes a throwaway detached worktree, runs the check (it must pass first), runs the break, and runs the check again. Pick a break that the check exists to catch:
+It makes a throwaway detached worktree, runs the check (it must pass first), runs the break, and runs the check again. Pick a break that the check exists to catch, in the code the check covers. Never edit the check's own definition (the `Makefile` target, the `package.json` script, the CI file, the linter's config): a check that fails because its command was rewritten proves nothing. The live run of this skill did exactly that once for `make lint` (defined as `true`), caught it, and re-proved it honestly as `cannot-fail`.
 
 | Check kind | Deliberate break |
 |---|---|
