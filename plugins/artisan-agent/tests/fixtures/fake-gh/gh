@@ -16,6 +16,13 @@
 #   gh issue comment <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue edit <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue close <n> [-R repo] [--comment|-c TEXT]
+#   gh issue create [-R repo] --title T --body B [--label L]...   prints the new issue's URL;
+#                         numbers continue after the highest issue; id is 1000 + number
+#   gh api repos/<o>/<r>/issues/<n>/sub_issues                    the plan's sub-issues (sub_issues-<n>.json,
+#                         a list of numbers); POST --method with -F sub_issue_id=<id> adds one, failing
+#                         like GitHub when the child already has a parent (parent-<child>) unless
+#                         -F replace_parent=true
+#   gh api --method POST repos/<o>/<r>/issues/<n>/dependencies/blocked_by -F issue_id=<id>
 # Anything else fails with exit 1. Needs jq.
 
 set -euo pipefail
@@ -57,12 +64,67 @@ emit() { # json-object-or-array
   if [ -n "$filter" ]; then printf '%s' "$1" | jq -r "$filter"; else printf '%s\n' "$1"; fi
 }
 
+api_method=GET api_fields=
+if [ "${1:-}" = api ]; then
+  shift
+  api_args=("$@")
+  path=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --method|-X) api_method=$2; shift 2 ;;
+      -F|-f|--field|--raw-field) api_fields="$api_fields $2"; shift 2 ;;
+      -*) shift ;;
+      *) path=$1; shift ;;
+    esac
+  done
+  set -- api "$path"
+fi
+
 case "${1:-} ${2:-}" in
   "api "*)
     path=$2
+    if [ "$api_method" = POST ]; then
+      field() { for kv in $api_fields; do case "$kv" in "$1="*) printf '%s' "${kv#*=}" ;; esac; done; }
+      n=${path#repos/*/issues/}; n=${n%%/*}
+      need_issue "$n"
+      by_id() { for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] && jq -r --argjson id "$1" 'select((.id // (1000 + .number)) == $id) | .number' "$f"; done; }
+      case "$path" in
+        */sub_issues)
+          child=$(by_id "$(field sub_issue_id)")
+          [ -n "$child" ] || { echo "gh: sub-issue not found (HTTP 404)" >&2; exit 1; }
+          if [ -f "$FAKE_GH_DIR/parent-$child" ] && [ "$(field replace_parent)" != true ]; then
+            echo "gh: Parent issue already exists for this sub-issue (HTTP 422)" >&2; exit 1
+          fi
+          old=$(cat "$FAKE_GH_DIR/parent-$child" 2>/dev/null || true)
+          if [ -n "$old" ] && [ -f "$FAKE_GH_DIR/sub_issues-$old.json" ]; then
+            jq -c --argjson c "$child" 'map(select(. != $c))' "$FAKE_GH_DIR/sub_issues-$old.json" >"$FAKE_GH_DIR/s.tmp" \
+              && mv "$FAKE_GH_DIR/s.tmp" "$FAKE_GH_DIR/sub_issues-$old.json"
+          fi
+          cur='[]'; [ -f "$FAKE_GH_DIR/sub_issues-$n.json" ] && cur=$(cat "$FAKE_GH_DIR/sub_issues-$n.json")
+          printf '%s' "$cur" | jq -c --argjson c "$child" '. + [$c]' >"$FAKE_GH_DIR/sub_issues-$n.json"
+          printf '%s' "$n" >"$FAKE_GH_DIR/parent-$child"
+          echo '{}' ;;
+        */dependencies/blocked_by)
+          blocker=$(by_id "$(field issue_id)")
+          [ -n "$blocker" ] || { echo "gh: blocking issue not found (HTTP 404)" >&2; exit 1; }
+          cur='[]'; [ -f "$FAKE_GH_DIR/blocked_by-$n.json" ] && cur=$(cat "$FAKE_GH_DIR/blocked_by-$n.json")
+          printf '%s' "$cur" | jq -e --argjson b "$blocker" 'index($b)' >/dev/null 2>&1 \
+            && { echo "gh: already blocked (HTTP 422)" >&2; exit 1; }
+          printf '%s' "$cur" | jq -c --argjson b "$blocker" '. + [$b]' >"$FAKE_GH_DIR/blocked_by-$n.json"
+          echo '{}' ;;
+        *) echo "gh: unsupported api POST path: $path" >&2; exit 1 ;;
+      esac
+      exit 0
+    fi
     r=${path#repos/}; r=${r%%/issues/*}
     case "$path" in repos/*/issues/*) check_repo "$r" ;; esac
     case "$path" in
+      repos/*/issues/*/sub_issues)
+        n=${path%/sub_issues}; n=${n##*/}
+        need_issue "$n"
+        list='[]'
+        [ -f "$FAKE_GH_DIR/sub_issues-$n.json" ] && list=$(cat "$FAKE_GH_DIR/sub_issues-$n.json")
+        for b in $(printf '%s' "$list" | jq -r '.[]'); do jq -c '{number, title, state, labels}' "$(issue_file "$b")"; done | jq -s . ;;
       repos/*/issues/*/dependencies/blocked_by)
         n=${path%/dependencies/blocked_by}; n=${n##*/}
         need_issue "$n"
@@ -75,7 +137,7 @@ case "${1:-} ${2:-}" in
       repos/*/issues/*)
         n=${path##*/}
         need_issue "$n"
-        cat "$(issue_file "$n")" ;;
+        jq '. + {id: (.id // (1000 + .number))}' "$(issue_file "$n")" ;;
       *) echo "gh: unsupported api path: $path" >&2; exit 1 ;;
     esac ;;
   "issue view")
@@ -97,6 +159,28 @@ case "${1:-} ${2:-}" in
       'map(select($s == "all" or .state == $s)) | sort_by(.number)')
     if [ -n "$json" ]; then emit "$all"
     else printf '%s' "$all" | jq -r '.[] | "\(.number)\t\(.state | ascii_upcase)\t\(.title)"'; fi ;;
+  "issue create")
+    shift 2
+    title= body= labels='[]'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --title|-t) title=$2; shift 2 ;;
+        --body|-b) body=$2; shift 2 ;;
+        --label|-l) labels=$(printf '%s' "$labels" | jq -c --arg l "$2" '. + [{name: $l}]'); shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$title" ] || { echo "gh: a title is required" >&2; exit 1; }
+    last=0
+    for f in "$FAKE_GH_DIR"/issue-*.json; do
+      [ -f "$f" ] || continue
+      k=$(jq -r .number "$f"); [ "$k" -le "$last" ] || last=$k
+    done
+    num=$((last + 1))
+    jq -n --argjson n "$num" --arg t "$title" --arg b "$body" --argjson l "$labels" \
+      '{number: $n, id: (1000 + $n), title: $t, body: $b, state: "open", labels: $l}' >"$(issue_file "$num")"
+    echo "https://github.com/${FAKE_GH_REPO:-local/sample}/issues/$num" ;;
   "issue comment")
     shift 2; parse "$@"; need_issue "$n"
     [ -n "$body_set" ] || { echo "gh: a comment needs --body or --body-file" >&2; exit 1; }

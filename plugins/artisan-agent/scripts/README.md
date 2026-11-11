@@ -131,6 +131,28 @@ The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <t
 
 The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `guard/README.md`. Tests: `tests/main-checkout.test.sh`.
 
+# Plans: `/artisan-agent:to-plan` and plan issues
+
+`to-plan.sh` is the arithmetic and the tracker calls behind `skills/to-plan/SKILL.md`; `resolve-scope.sh` is how `implement-plan` reads plan issues back. Tested in `tests/to-plan.test.sh`, with the fake `gh` (which also answers `issue create`, sub-issue and blocked-by writes).
+
+| Command | Does | Exit status |
+| :- | :- | :- |
+| `to-plan.sh graph --repo <o/n> <ticket>...` | reads the tickets: title, acceptance criteria (the checkboxes under `## Acceptance criteria`), blockers within the set, open blockers outside it as `external_blockers` | 0, 1 |
+| `to-plan.sh propose --graph F --budget USD` | proposes plans (JSON) | 0, 1 |
+| `to-plan.sh split\|merge\|reorder\|move <plans> --graph F ...` | edits the plans file in place, renumbering; refused, file untouched, when a blocker would follow its dependent | 0, 1 |
+| `to-plan.sh check <plans> --graph F` | every ticket in exactly one plan, no blocker in a later plan | 0, 1 |
+| `to-plan.sh render <plans> --graph F` | the approval view: a table of plans, then each plan's tickets with blockers, estimates and acceptance criteria, then warnings | 0, 1 |
+| `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent]` | creates the `plan` issues, sub-issues and blocking | 0, 1 |
+| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out | 0, 1, 2, 3 |
+
+**The graph** is a JSON file the chat completes after `graph`: per ticket `slice` (what reviewable thing it helps make; none means its own slice) and an estimate, either `estimate_usd` or `model` with `expected.input_tokens` and `expected.output_tokens` priced from `references/model-prices.json` (the plan step's method). No estimate is refused; there are no defaults. The budget has no default either.
+
+**How a proposal is cut.** Tickets are grouped by slice; slices that block each other both ways become one unit; units are put in order, blockers first (ties by lowest ticket number); then packed in that order, starting a new plan when the next unit would take the plan over the budget. So a plan boundary is only ever between slices, every blocker is in the same or an earlier plan, and a single slice bigger than the budget gets a plan of its own, flagged in the view. A cycle in the tickets is refused with the cycle named. Edits may split a slice (the Artisan's call); the view then warns that neither plan ends at a slice reviewable end to end.
+
+**Plans file** (`plans.json`): `{"schema_version": 1, "budget_usd": 6, "plans": [{"slice": "...", "tickets": ["1", "2"], "issue": 71}]}`. A plan's number is its position. `issue` appears once published; published plans refuse edits, and a repeat `publish` skips plans that already have an issue, so a failed publish resumes without duplicates.
+
+**Plan issues.** Labelled `plan`, titled `Plan <n>: <slice>`, the body listing its tickets as a task list. Each ticket is added as a sub-issue (`POST issues/<plan>/sub_issues`); a plan depending on earlier plans (through its tickets' blockers, with implied dependencies removed) is blocked natively by them (`dependencies/blocked_by`). GitHub allows one parent per issue: a ticket already under its spec is kept there, with a notice, unless `--replace-parent` is given, and stays in its plan's body either way. `resolve-scope.sh` reads sub-issues first and the body's task list second.
+
 # Waves: the two-tier run
 
 `wave.sh` is the run's own steps, split by tier as `skills/implement-plan/SKILL.md` describes. Tested in `tests/wave.test.sh`, end to end, with the fake `claude` running a scripted orchestrator and worker (`FAKE_CLAUDE_MODE=script`) and a fake `gh` over a folder tracker.
