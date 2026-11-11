@@ -134,6 +134,22 @@ _Avoid_: discovery, note
 The record of a run's plan, progress and evidence that lets any fresh session carry the run on.
 _Avoid_: checkpoint, memory
 
+**Integration branch**:
+The branch a run merges each finished ticket into, kept apart from `main` until the end gate approves the run's PRs.
+_Avoid_: staging branch, run branch
+
+**Integration worktree**:
+The run's own checkout of its integration branch, where merges and the full suite run, so no session changes the main checkout.
+_Avoid_: merge worktree
+
+**Wave digest**:
+What the Artisan sees after each wave: each ticket's status and verdict, what it cost against its estimate, and what runs next.
+_Avoid_: wave report, wave summary
+
+**Run digest**:
+Where an open run stands, read first by any chat that picks the run up, after compaction, on resume or in a new session.
+_Avoid_: run summary (that's the end-of-run report)
+
 ### Judgement
 
 **Taste**:
@@ -176,6 +192,14 @@ _Avoid_: report, summary
 **Evidence**:
 For each acceptance criterion, what shows it was met, together with what the agent was unsure of and what the work cost.
 _Avoid_: proof, results
+
+**Evidence record**:
+A worker's own account of one ticket: its evidence for each acceptance criterion, what it was unsure of and the decisions it made alone. The verifier checks it; it is the worker's claim, not the verdict.
+_Avoid_: result file, report
+
+**Evidence contract**:
+The verified evidence for one ticket: each acceptance criterion with the verifier's verdict and its evidence. It is posted on the ticket and is what the packet and wave digest are built from.
+_Avoid_: verdict file
 
 **Lesson**:
 Something a retro keeps from a run so later runs go better.
