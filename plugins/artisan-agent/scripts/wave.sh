@@ -77,7 +77,7 @@
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
-# 12 the run is halted, 13 not verified. One table of every code, with
+# 12 the run is halted, 13 not verified, 15 the login would expire mid-run. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -214,6 +214,13 @@ cmd_launch() {
   fi
   id="orchestrator-w$wave"
   wt=$(integration_worktree)
+
+  # A run on the always-on host must not outlive the claude.ai login (#69):
+  # checked once, before the run's first orchestrator (exit 15, nothing launched).
+  # A machine with no host record is not checked.
+  if [ "$(get '(.orchestrators // []) | length')" = 0 ]; then
+    "$SCRIPT_DIR/login-check.sh" check --run-dir "$RUN_DIR" >&2 || exit $?
+  fi
 
   # The chat's writer pid holds the lock (or takes it now) until it hands it on.
   me=$(writer)
