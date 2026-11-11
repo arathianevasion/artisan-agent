@@ -67,11 +67,10 @@ jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit:
   decisions: [{job: 3, question: "Which file?", choice: "hello.txt", alternative: "HELLO", by: "worker 1",
                kind: "engineering taste", criterion: "4", confidence: "provisional"}],
   review: {ran: true, remarks: []}, findings: []}' >"$ARTISAN_RESULT_FILE"
-# WORKER_PARAPHRASE=1 rewords every criterion; =drop also leaves one out.
+# WORKER_PARAPHRASE=1 rewords every criterion.
 if [ -n "${WORKER_PARAPHRASE:-}" ]; then
   jq '.acceptance = [{criterion: "The file hello.txt is there", met: true, evidence: {tests: ["check.sh"]}},
-                     {criterion: "Greeting says hi", met: true, evidence: {diff: "hello.txt +1 -0"}}]
-      | if env.WORKER_PARAPHRASE == "drop" then .acceptance |= .[:1] else . end' "$ARTISAN_RESULT_FILE" >"$ARTISAN_RESULT_FILE.tmp"
+                     {criterion: "Greeting says hi", met: true, evidence: {diff: "hello.txt +1 -0"}}]' "$ARTISAN_RESULT_FILE" >"$ARTISAN_RESULT_FILE.tmp"
   mv "$ARTISAN_RESULT_FILE.tmp" "$ARTISAN_RESULT_FILE"
 fi
 EOF
