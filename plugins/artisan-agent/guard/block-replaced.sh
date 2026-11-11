@@ -5,7 +5,8 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 input=$(cat)
-name=$(printf '%s' "$input" | sed -n 's/.*"command_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+name=$(printf '%s' "$input" | sed -n 's/.*"command_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+name=${name%%$'\n'*}
 name=${name#mattpocock-skills:}
 reason=$("$HERE/guard.sh" reasons | awk -F'\t' -v n="$name" '$1 == n { print $2 }')
 [ -n "$reason" ] || reason="Blocked by the artisan-agent replaced-skill guard: this upstream skill is replaced in this pipeline. See the artisan-agent skills."

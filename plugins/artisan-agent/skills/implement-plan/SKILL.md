@@ -44,6 +44,8 @@ This skill is Claude-callable, so another pipeline step can hand it work. Dispat
 
 ### 1. Read the queue and build the graph
 
+If the Artisan named a plan issue (labelled `plan`), several, or plans mixed with tickets, resolve them to tickets first: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/plan-issues.md`, using `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-scope.sh`.
+
 Read every ticket body in full, not just titles. Extract for each: its number, title, blockers (native tracker links or the `## Blocked by` body section), acceptance criteria, and the layers it touches.
 
 Compute **waves** by topological level: wave 1 is every ticket with no open blockers, wave 2 is everything unblocked once wave 1 merges, and so on. Tickets within a wave run in parallel; waves run in series. The waves are a forecast: each orchestrator recomputes the frontier from the tracker and git.
@@ -61,6 +63,8 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 **Expected size.** Input tokens, output tokens and minutes, judged from the body: how much it reads, how much it writes, how many layers it touches. With no history these make the estimate, so size each ticket on its own; there are no per-tier defaults.
 
 **Brief.** Under a paragraph: the seams to test at if the ticket names them, and any `GLOSSARY.md` vocabulary or ADRs it must respect. The ticket is the spec; don't copy it into the brief.
+
+**Expected files.** The paths the ticket will touch (`expected_files` in the draft); they set how wide each wave can be (`references/parallel-waves.md`).
 
 **Expected output.** What "done" looks like for this ticket in one or two lines, from its acceptance criteria. The orchestrator checks the worker's diff against it before merging. If you can't write a concrete one, the ticket is underspecified and goes back to `/to-tickets`.
 
@@ -101,6 +105,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 |---|---|
 | `wait` | The wave is still running. Say so in one line, with the table if asked, and end your turn. |
 | `launch` | Report the wave (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
+| `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |

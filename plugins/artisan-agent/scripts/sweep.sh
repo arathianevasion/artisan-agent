@@ -56,22 +56,7 @@ stop_worker() {
 }
 
 # A failed attempt for ticket $t; jq args: --arg t, --arg reason, --argjson now.
-FAIL_FILTER="$STATE_JQ_DEFS"'
-  .plan.attempts_per_ticket as $max
-  | .tickets[$t] as $tk
-  | .tickets[$t] |= (
-      .failures += [{attempt: .attempts, reason: $reason, at: $now}]
-      | .pid = null
-      | .status = (if .attempts >= $max then "blocked" else "queued" end))
-  | if $tk.attempts >= $max then
-      .decisions += [{
-        id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-        question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Bypass or defer?",
-        status: "waiting", at: $now
-      }]
-    else . end
-  | event({event: "failed", ticket: $t, attempt: $tk.attempts, reason: $reason,
-           next: .tickets[$t].status}; $now)'
+FAIL_FILTER="$STATE_JQ_DEFS"'failed_attempt($t; $reason; $now)'
 
 RESULT_FILTER="$STATE_JQ_DEFS"'
   $rs[0] as $r

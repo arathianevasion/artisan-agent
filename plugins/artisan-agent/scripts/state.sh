@@ -101,6 +101,7 @@ init_write() {
         waves: [],
         frontier: [],
         orchestrators: [],
+        halted: null,
         events: []
       }
     | reduce .plan.scope[] as $t (.; .tickets[$t] = new_ticket($t))' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }

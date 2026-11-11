@@ -131,6 +131,28 @@ The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <t
 
 The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `guard/README.md`. Tests: `tests/main-checkout.test.sh`.
 
+# Plans: `/artisan-agent:to-plan` and plan issues
+
+`to-plan.sh` is the arithmetic and the tracker calls behind `skills/to-plan/SKILL.md`; `resolve-scope.sh` is how `implement-plan` reads plan issues back. Tested in `tests/to-plan.test.sh`, with the fake `gh` (which also answers `issue create`, sub-issue and blocked-by writes).
+
+| Command | Does | Exit status |
+| :- | :- | :- |
+| `to-plan.sh graph --repo <o/n> <ticket>...` | reads the tickets: title, acceptance criteria (the checkboxes under `## Acceptance criteria`), blockers within the set, open blockers outside it as `external_blockers` | 0, 1 |
+| `to-plan.sh propose --graph F --budget USD` | proposes plans (JSON) | 0, 1 |
+| `to-plan.sh split\|merge\|reorder\|move <plans> --graph F ...` | edits the plans file in place, renumbering; refused, file untouched, when a blocker would follow its dependent | 0, 1 |
+| `to-plan.sh check <plans> --graph F` | every ticket in exactly one plan, no blocker in a later plan | 0, 1 |
+| `to-plan.sh render <plans> --graph F` | the approval view: a table of plans, then each plan's tickets with blockers, estimates and acceptance criteria, then warnings | 0, 1 |
+| `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent]` | creates the `plan` issues, sub-issues and blocking | 0, 1 |
+| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out | 0, 1, 2, 3 |
+
+**The graph** is a JSON file the chat completes after `graph`: per ticket `slice` (what reviewable thing it helps make; none means its own slice) and an estimate, either `estimate_usd` or `model` with `expected.input_tokens` and `expected.output_tokens` priced from `references/model-prices.json` (the plan step's method). No estimate is refused; there are no defaults. The budget has no default either.
+
+**How a proposal is cut.** Tickets are grouped by slice; slices that block each other both ways become one unit; units are put in order, blockers first (ties by lowest ticket number); then packed in that order, starting a new plan when the next unit would take the plan over the budget. So a plan boundary is only ever between slices, every blocker is in the same or an earlier plan, and a single slice bigger than the budget gets a plan of its own, flagged in the view. A cycle in the tickets is refused with the cycle named. Edits may split a slice (the Artisan's call); the view then warns that neither plan ends at a slice reviewable end to end.
+
+**Plans file** (`plans.json`): `{"schema_version": 1, "budget_usd": 6, "plans": [{"slice": "...", "tickets": ["1", "2"], "issue": 71}]}`. A plan's number is its position. `issue` appears once published; published plans refuse edits, and a repeat `publish` skips plans that already have an issue, so a failed publish resumes without duplicates.
+
+**Plan issues.** Labelled `plan`, titled `Plan <n>: <slice>`, the body listing its tickets as a task list. Each ticket is added as a sub-issue (`POST issues/<plan>/sub_issues`); a plan depending on earlier plans (through its tickets' blockers, with implied dependencies removed) is blocked natively by them (`dependencies/blocked_by`). GitHub allows one parent per issue: a ticket already under its spec is kept there, with a notice, unless `--replace-parent` is given, and stays in its plan's body either way. `resolve-scope.sh` reads sub-issues first and the body's task list second.
+
 # Waves: the two-tier run
 
 `wave.sh` is the run's own steps, split by tier as `skills/implement-plan/SKILL.md` describes. Tested in `tests/wave.test.sh`, end to end, with the fake `claude` running a scripted orchestrator and worker (`FAKE_CLAUDE_MODE=script`) and a fake `gh` over a folder tracker.
@@ -138,13 +160,17 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
 | `wave.sh start <run-dir> [--base REF]` | Engineering chat | creates the integration branch and the run's integration worktree, `<repo>-wt/run-<run-id>` | 0, 1 |
-| `wave.sh launch <run-dir>` | Engineering chat | launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs |
-| `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `decide`, `blocked`, `done`), with a ticket table | 0 |
-| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), and a slot free under Max Agents (9); then a worktree from the integration tip and a worker running `/artisan-agent:implement` | 0, 1, 4, 5, 9 |
-| `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the attempt `completed` and the record's commit is the branch tip; merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict, 7 suite red (both undo and block), 8 worker still running |
+| `wave.sh launch <run-dir> [--resume]` | Engineering chat | refuses while the run is halted (12) unless `--resume` records the Artisan's decision to carry on; launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs |
+| `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `blocked`, `done`), with a ticket table | 0 |
+| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9) and its expected files overlap nothing in flight or in this wave (10); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10 |
+| `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip; an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try |
+| `wave.sh resolved <run-dir> <ticket> [--gave-up WHY]` | orchestrator | after `/artisan-agent:resolve-conflicts`: aborts and blocks if anything is still conflicted, marked or unstaged (or it gave up), else commits the merge and runs the suite as `merge` does | 0, 6, 7 |
+| `wave-width.sh pick <run-dir>` / `check <run-dir> <ticket>` | orchestrator | the tickets to dispatch now: the smallest of Max Agents less those in flight, the frontier, and tickets with non-overlapping `expected_files`; `check` is dispatch's overlap refusal | 0, 10 |
 | `wave.sh block <run-dir> <ticket> <reason>` | orchestrator | blocks a returned ticket it won't merge (the diff misses its expected output): an exception decision for the Artisan and a `blocked` event | 0, 4 |
 | `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence, ticks met criteria (`lib/tick-criteria.py`), closes the ticket | 0, 1 |
-| `wave.sh report <run-dir>` | orchestrator | the wave report, JSON, for its result file | 0 |
+| `wave.sh report <run-dir>` | orchestrator | halts the run if every ticket dispatched in the wave ended blocked, then the wave report, JSON, for its result file | 0 |
+
+Wave width, serial merges, the one conflict try, two attempts and the halt are described in `skills/implement-plan/references/parallel-waves.md` and tested end to end in `tests/parallel-waves.test.sh`, with a scripted orchestrator that follows that page and a stand-in for the resolve skill.
 
 The orchestrator's files sit beside its workers' in the run folder, named `orchestrator-w<wave>.<attempt>`: `results/…exit.json`, `results/…result.json` (the wave report) and `workers/…/`. So `classify-worker.sh <run-dir> orchestrator-w<wave> <attempt>` judges it, and `wait-any.sh` wakes on its exit record.
 
