@@ -21,7 +21,7 @@ drop_field() {
 exercise_readers() {
   "$SCRIPTS/state.sh" show "$RUN_DIR" >/dev/null
   "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null
-  "$SCRIPTS/wave-width.sh" pick "$RUN_DIR" >/dev/null 2>&1
+  "$SCRIPTS/wave-width.sh" pick "$RUN_DIR" >/dev/null
   "$PLUGIN_ROOT/scripts/run-digest.sh" --run-dir "$RUN_DIR" --peek >/dev/null
   "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event":"probe"}'
   "$SCRIPTS/state.sh" cost "$RUN_DIR" 0.5
@@ -85,7 +85,7 @@ test_a_missing_event_log_starts_at_one_and_missing_costs_default() {
   assert_eq '[]' "$(jq -c '.plan.checks // []' "$RUN_DIR/state.json")"
 }
 
-test_a_missing_optional_ticket_field_defaults_in_the_digest() {
+test_the_digest_reads_a_file_without_events_halted_or_orchestrators() {
   init_run
   drop_field .events
   drop_field .halted
