@@ -269,7 +269,7 @@ cmd_launch() {
                         then .status = "decided" | .choice = "resume" | .by = "Artisan" | .decided_at = $now
                         else . end)
       | event({event: "resumed", wave: .halted.wave}; $now)
-      | del(.halted)'
+      | .halted = null'
   fi
 
   [ -n "$model" ] || model=$(get --arg d "$DEFAULT_ORCHESTRATOR_MODEL" '.plan.orchestrator.model // $d')

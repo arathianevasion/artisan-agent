@@ -235,7 +235,8 @@ test_a_red_suite_after_merging_blocks_the_ticket_and_undoes_the_merge() {
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")" "never closed"
   local out
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_contains "$out" "next: decide"
+  # Its wave's only ticket failed, so the wave failed whole and the run halts (#58).
+  assert_contains "$out" "next: halted"
   assert_contains "$out" "| Decision | Ticket | Question |"
 }
 

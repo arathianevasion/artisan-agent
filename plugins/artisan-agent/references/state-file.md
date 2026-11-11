@@ -69,7 +69,7 @@ Top level:
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}` |
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
-| `halted` | top-level | set when a wave failed whole: `{wave, tickets, reason, at}`. `wave.sh launch` refuses while it is set; `--resume` (the Artisan's decision) removes it |
+| `halted` | top-level | `null`, or, once a wave failed whole, `{wave, tickets, reason, at}`. `wave.sh launch` refuses while it is set; `--resume` (the Artisan's decision) sets it back to `null` |
 | `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`, plus `cost_usd` once `wave.sh status` has seen it end. Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
