@@ -3,7 +3,7 @@ name: grill
 description: Understand-stage skill. Grill the Artisan about a plan, design or decision until you share an understanding, writing glossary terms and ADRs as each decision settles. Each question arrives with options, one recommendation and why the strongest alternative lost. Offers /artisan-agent:debate-me, autonomous research and prototype variants. Use when the Artisan says "grill me", "stress-test this", "interview me about this plan", or when the pipeline reaches Understand.
 ---
 
-Interview the Artisan until you reach a shared understanding of the problem and the solution. This is the pipeline's single grilling step. It replaces the upstream grill-me and grill-with-docs steps; don't offer or mention either one.
+Interview the Artisan until you reach a shared understanding of the problem and the solution. This is the pipeline's single grilling step. It replaces the upstream grilling steps in the pipeline; don't offer or name them.
 
 Wherever you put something in front of the Artisan, follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Decisions are the Artisan's: you recommend, they decide.
 
@@ -48,7 +48,7 @@ Tell the Artisan in one line what you wrote and where. Settling a term is an app
 
 ## Offer these tools
 
-Offer each at the moment it helps, in one line, and let the Artisan choose. Don't run the first two on your own.
+Offer each at the moment it helps, in one line, and let the Artisan choose. Don't start the first one on your own; the other two are yours to start or offer as described.
 
 - **Debate.** When the Artisan doubts your recommendation, or the decision is hard to reverse or shapes many tickets, offer `/artisan-agent:debate-me`. It argues your recommendation against their view until they decide; carry its decision summary back into the tree.
 - **Research.** When a question needs facts you can't get from the codebase, run the upstream `research` skill without asking approval: finding facts is autonomous (job 5). Say what you're researching and carry on with the rest of the frontier. The Artisan can add or correct a fact at any time; take it as given, without asking them to approve it, and rework anything downstream of it.

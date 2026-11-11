@@ -16,12 +16,8 @@ test_skills_have_frontmatter_name_and_description() {
   done
 }
 
-test_skills_never_present_replaced_skills_as_a_step() {
-  # to-spec never names them; grill may name them once, only to say it replaces them
-  assert_eq 0 "$(grep -Ec 'grill-me|grill-with-docs' "$TOSPEC" || true)" "to-spec mentions a replaced skill"
-  local bad
-  bad=$(grep -E 'grill-me|grill-with-docs' "$GRILL" | grep -vc 'replaces the upstream' || true)
-  assert_eq 0 "$bad" "grill mentions a replaced skill outside its replacement note"
+test_skills_never_mention_replaced_grill_skills() {
+  assert_eq 0 "$(cat "$GRILL" "$TOSPEC" | grep -Ec 'grill-me|grill-with-docs' || true)" "a skill names a replaced grilling skill"
 }
 
 test_grill_always_loads_grilling_and_domain_modeling() {
