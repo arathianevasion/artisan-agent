@@ -141,8 +141,8 @@ test_a_due_gate_not_yet_opened_still_holds_the_dependents() {
   merged_with_evidence 1
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["4"].status = "merged"'
   assert_eq slice-1 "$("$G" due "$RUN_DIR")"
-  assert_status 0 "$G" holds "$RUN_DIR" 1
-  assert_status 1 "$G" holds "$RUN_DIR" 4
+  assert_eq held "$("$G" holds "$RUN_DIR" 1)"
+  assert_eq free "$("$G" holds "$RUN_DIR" 4)"
   # The reconciler leaves #2 off the frontier, #3 stays on it.
   assert_eq 3 "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
 }
@@ -184,7 +184,7 @@ test_keep_all_approves_closes_and_records_each_decision_with_its_job_and_who() {
   assert_eq true "$(state_get '.review_gates[0].decisions | all(.job != null and .by == "Andrew")')"
   assert_eq 13 "$(state_get '.review_gates[0].decisions[] | select(.outcome == "approve") | .job')"
   assert_eq decided "$(state_get '.decisions[] | select(.kind == "review-gate") | .status')"
-  assert_status 1 "$G" holds "$RUN_DIR" 1
+  assert_eq free "$("$G" holds "$RUN_DIR" 1)"
   # Approving twice is refused.
   assert_status 6 "$G" approve "$RUN_DIR" "$num"
 }
@@ -203,7 +203,8 @@ test_change_on_a_card_creates_a_rework_ticket_in_the_run() {
   assert_eq queued "$(jq -r --arg r "$rw" '.tickets[$r].status' "$RUN_DIR/state.json")"
   assert_eq 1 "$(jq -r --arg r "$rw" '.plan.tickets[$r].rework_of' "$RUN_DIR/state.json")"
   assert_eq claude-sonnet-5-5 "$(jq -r --arg r "$rw" '.plan.tickets[$r].model' "$RUN_DIR/state.json")"
-  assert_eq 1.25 "$(state_get '.plan.estimate_usd')"
+  # Its cost counts against the approved budget; raising that is the overrun gate's.
+  assert_eq "1 1.25" "$(state_get '"\(.plan.estimate_usd) \(.plan.budget_usd)"')"
   # The dependents wait for the rework too.
   assert_eq "[1,$num,$rw]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")"
   # The decision: the card's job, who changed it, what it was.

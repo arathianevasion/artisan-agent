@@ -397,7 +397,7 @@ check_blockers() { # ticket
       fi
       [ "$(get --arg b "$b" '.tickets[$b].risk_gate.status? // ""')" != waiting ] \
         || state_die 5 "wave.sh: refusing #$t: its blocker #$b merged under a risk gate the Artisan hasn't cleared (drain.sh gate)"
-      ! "$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" \
+      [ "$("$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" 2>/dev/null)" = free ] \
         || state_die 5 "wave.sh: refusing #$t: its blocker #$b is in a slice whose review gate the Artisan hasn't approved (gate.sh)"
     elif [ "$state" != closed ]; then
       state_die 5 "wave.sh: refusing #$t: its blocker #$b, outside this run, is still open"

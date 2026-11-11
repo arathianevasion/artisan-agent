@@ -28,7 +28,8 @@ Standard-library Python 3.
 import json
 import sys
 
-LOW = {"provisional", "low"}
+# The decision record has two confidences; provisional is the low one.
+LOW = {"provisional"}
 
 
 def cell(text):
@@ -158,7 +159,7 @@ def card_block(c):
         "| Confidence | %s |" % conf_cell,
         "| Kind | %s |" % cell(c.get("kind")),
         "| Made by | %s |" % cell(made),
-        "| Actions | keep · change (`change %d to <choice>`) · make it a guardrail (`guardrail %d <team, product or individual> <ticket, area or everywhere>`) |" % (n, n),
+        "| Actions | keep · change (`change %d to <choice>`) · make it a guardrail (`guardrail %d <team, product or individual> <ticket, area <name> or everywhere>`) |" % (n, n),
     ]
     if c.get("why"):
         lines.insert(8, "| Why | %s |" % cell(c["why"]))
@@ -223,7 +224,7 @@ def body(view):
     if version:
         out += ["Plugin version %s." % version, ""]
     guard = (view.get("guardrails") or "").strip()
-    out += [guard if guard.count("\n") >= 2 else "None in force."]
+    out += [guard if guard.count("\n") >= 2 or guard.startswith("Could not") else "None in force."]
     out += ["", "### Checks proven to fail", ""]
     checks = state.get("plan", {}).get("checks") or []
     if checks:

@@ -46,8 +46,9 @@
 #       posted on the issue, the issue closes and the dependents are free to
 #       dispatch in the next wave.
 #   gate.sh holds <run-dir> <ticket>
-#       exit 0 when the ticket is in a slice gate that is due and not yet
-#       approved (its dependents wait), 1 otherwise.
+#       prints "held" when the ticket is in a slice gate that is due and not
+#       yet approved (its dependents wait), else "free". A caller treats
+#       anything else (an error) as held.
 #
 # Every decision recorded carries its job and who made it (--by, default
 # Artisan); the card's own job for a card, job 13 for the gate.
@@ -93,7 +94,11 @@ cmd_due() {
 cmd_holds() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  [ "$(jget 'gate_holds($t)' --arg t "$2")" = true ]
+  case "$(jget 'gate_holds($t)' --arg t "$2")" in
+    true) echo held ;;
+    false) echo free ;;
+    *) die "could not read the gates of #$2" ;;
+  esac
 }
 
 # --------------------------------------------------------------------- open
@@ -102,7 +107,9 @@ cmd_holds() {
 # guardrails and other provisional cards as their scripts print them.
 build_view() { # id dependents-json
   local def="$1" deps="$2" guard prov t
-  guard=$("$SCRIPT_DIR/guardrails.sh" table --run-dir "$RUN_DIR" 2>/dev/null) || guard=""
+  gates_dir >/dev/null
+  guard=$("$SCRIPT_DIR/guardrails.sh" table --run-dir "$RUN_DIR" 2>"$RUN_DIR/gates/.guardrails.err") \
+    || guard="Could not be read: $(tr '\n' ' ' <"$RUN_DIR/gates/.guardrails.err")"
   prov=$("$SCRIPT_DIR/questions.sh" provisional "$RUN_DIR" 2>/dev/null) || prov=""
   # The slice's own decisions are its cards; the listing keeps the rest.
   for t in $(jq -r '.tickets[]' <<<"$def"); do
@@ -246,10 +253,6 @@ ACTION_FILTER='
           | .plan.scope = ((.plan.scope + [$r]) | unique)
           | .plan.tickets[$r] = ((.plan.tickets[$f] // {}) | del(.branch, .slice)
               + {title: $a.rework.title, rework_of: $f, gate: $a.gate})
-          | .plan.estimate_usd = (if .plan.estimate_usd == null then null
-              else .plan.estimate_usd + (.plan.tickets[$f].estimate_usd // 0) end)
-          | .plan.budget_usd = (if .plan.budget_usd == null then null
-              else .plan.budget_usd + (.plan.tickets[$f].estimate_usd // 0) end)
           | (if .tickets[$r] == null then .tickets[$r] = new_ticket($r) else . end)
           | .review_gates[$i].reworks += [{card: $a.decisions[0].card, ticket: $r}]
           | event({event: "rework", ticket: $r, from: $f, gate: $a.gate, card: $a.decisions[0].card}; $now)
@@ -266,16 +269,23 @@ ACTION_FILTER='
 
 # record action-file: into the state file now if the lock can be had, else
 # kept in gates/pending/ for the next sync (the orchestrator may hold it).
+# fold action-file: one locked, one-step write of the action; the file goes
+# once it is in. Returns the write's status (3: the lock is held).
+fold() {
+  local f="$1" st=0
+  ( apply "$ACTION_FILTER" --argjson a "$(cat "$f")" ) 2>"$f.err" || st=$?
+  if [ "$st" -eq 0 ]; then rm -f "$f" "$f.err"; fi
+  return "$st"
+}
+
 record() {
   local f="$1" st=0
-  ( state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" "$STATE_JQ_DEFS$ACTION_FILTER" \
-      --argjson now "$(state_now)" --argjson a "$(cat "$f")" ) 2>/dev/null || st=$?
-  if [ "$st" -eq 0 ]; then
-    rm -f "$f"
-  elif [ "$st" -eq 3 ]; then
+  fold "$f" || st=$?
+  if [ "$st" -eq 3 ]; then
+    rm -f "$f.err"
     echo "gate.sh: the run's state lock is held (a wave is running); recorded on the tracker and in $f, folded into the state file at the next sync" >&2
-  else
-    die "could not record the action in the state file (kept in $f)"
+  elif [ "$st" -ne 0 ]; then
+    die "could not record the action in the state file (kept in $f): $(tr '\n' ' ' <"$f.err")"
   fi
 }
 
@@ -322,7 +332,12 @@ cmd_change() {
   repo=$(get '.repo')
   t=$(jq -r .ticket <<<"$card")
   title="Rework #$t: $(jq -r '.question // "a decision"' <<<"$card")"
-  url=$(gh issue create -R "$repo" --title "$title" --label ready-for-agent --label in-run --body "$(
+  # A call that crashed after opening the rework ticket left it open: reuse it.
+  num=$(gh issue list -R "$repo" --state open --label in-run --json number,title,body \
+          | jq -r --arg t "$title" --arg mark "Review gate #$issue, card $n," \
+              '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
+  [ -z "$num" ] || url="/$num"
+  [ -n "$num" ] || url=$(gh issue create -R "$repo" --title "$title" --label ready-for-agent --label in-run --body "$(
     jq -r --arg choice "$choice" --arg why "$WHY" --arg issue "$issue" --arg run "$RUN_ID" '
 "## Parent
 
@@ -435,11 +450,7 @@ cmd_sync() {
   # Actions the Artisan took while the lock was held.
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
-    st=0
-    ( state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" "$STATE_JQ_DEFS$ACTION_FILTER" \
-        --argjson now "$(state_now)" --argjson a "$(cat "$f")" ) || st=$?
-    [ "$st" -eq 0 ] || exit "$st"
-    rm -f "$f"
+    fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
   done
   # A gate closed on the tracker by hand is approved by whoever closed it.
   repo=$(get '.repo')
@@ -455,11 +466,7 @@ cmd_sync() {
            | {job: (.job // 13), choice, by: "Artisan (closed on the tracker)", card, ticket, gate: $g,
               outcome: "keep", original: {choice, by}}]
            + [{job: 13, choice: "approve the slice", by: "Artisan (closed on the tracker)", gate: $g, outcome: "approve"}])}' >"$f"
-      st=0
-      ( state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" "$STATE_JQ_DEFS$ACTION_FILTER" \
-          --argjson now "$(state_now)" --argjson a "$(cat "$f")" ) || st=$?
-      [ "$st" -eq 0 ] || exit "$st"
-      rm -f "$f"
+      fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
     fi
   done
   local num
