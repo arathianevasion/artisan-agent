@@ -3,7 +3,8 @@
 # and worker, each a capped headless `claude -p` loading this plugin with
 # --plugin-dir under the normal login, on a throwaway repo with the fake
 # tracker (tests/fixtures/fake-gh). Nothing reaches GitHub; no settings are
-# read or written (--setting-sources project,local, --no-session-persistence).
+# read or written (tests/helpers/live-hooks.sh keeps them out and runs the
+# plugin's hooks; --no-session-persistence).
 #
 # Usage: live.sh <workdir>
 #
@@ -45,7 +46,9 @@ export FAKE_GH_DIR=$WD/tracker
 export PATH="$PLUGIN_ROOT/tests/fixtures/fake-gh:$PATH"
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
-export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT --plugin-dir $UPSTREAM_PLUGIN_DIR --setting-sources project,local --no-session-persistence"
+. "$PLUGIN_ROOT/tests/helpers/live-hooks.sh"
+export ARTISAN_HOOK_PROOF=$WD/hook-proof
+export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT --plugin-dir $UPSTREAM_PLUGIN_DIR $(live_hooks_args "$PLUGIN_ROOT" "$WD/hooks") --no-session-persistence"
 export ARTISAN_MAX_BUDGET_USD=$BUDGET
 
 failures=0
@@ -177,6 +180,8 @@ check "the main checkout never moved and is clean" \
 check "the worker's and orchestrator's costs are in the state file" \
   jq -e '.tickets["1"].cost_usd > 0 and .costs.orchestrator_usd > 0' "$RUN/state.json"
 check "the tracker was only ever the fake one" test -s "$FAKE_GH_DIR/calls"
+check "a plugin hook fired in the sessions (SessionStart line in $ARTISAN_HOOK_PROOF)" live_hooks_proof_check "$ARTISAN_HOOK_PROOF"
+check "the orchestrator's SessionStart hook recorded its transcript" test -s "$RUN/workers/orchestrator-w1.1/transcript.path"
 
 # Costs, from each session's own JSON output.
 for f in "$WD/chat.json" "$RUN/workers/orchestrator-w1.1/output.json" "$RUN/workers/1.1/output.json" "$RUN"/workers/verify-1.*/output.json "$WD/status-chat.json"; do

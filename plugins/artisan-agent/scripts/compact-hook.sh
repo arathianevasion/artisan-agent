@@ -47,6 +47,13 @@ cwd=$(field cwd)
 [ -n "$cwd" ] || cwd=$PWD
 role=${ARTISAN_ROLE:-}
 
+# Hook-fired proof for the live harnesses (#105): when ARTISAN_HOOK_PROOF names a
+# file, every run of this hook appends one line to it, so a harness can tell a
+# session that ran the plugin's hooks from one that silently skipped them.
+if [ -n "${ARTISAN_HOOK_PROOF:-}" ]; then
+  printf '%s %s role=%s session=%s\n' "$event" "$(date +%s)" "${role:--}" "$(field session_id)" >>"$ARTISAN_HOOK_PROOF" 2>/dev/null || true
+fi
+
 # This session's folder in its run, for a session run-ticket.sh launched.
 session_dir() {
   [ -n "${ARTISAN_RUN_DIR:-}" ] && [ -n "${ARTISAN_RESULT_FILE:-}" ] || return 1
