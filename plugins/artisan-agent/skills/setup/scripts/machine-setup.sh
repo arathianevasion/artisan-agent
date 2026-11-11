@@ -99,6 +99,38 @@ trash_skill() {
   echo "moved to trash: $name -> $dest"
 }
 
+# The claude CLI finds a project-scope install by the current directory, so the uninstall must
+# run inside the project's path. When that folder is gone, recreate it (only the missing
+# levels), run the CLI's own uninstall, then remove the levels we created if still empty.
+uninstall_in_project() { # plugin scope path
+  local pid=$1 scope=$2 ppath=$3 d created="" recreated=0 rc=0
+  if [ ! -d "$ppath" ]; then
+    d=$ppath
+    while [ ! -d "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+      created="$created$d"$'\n'   # deepest first, one per line
+      d=$(dirname "$d")
+    done
+    mkdir -p "$ppath" || { echo "failed: cannot recreate $ppath to uninstall $pid ($scope)" >&2; return 1; }
+    recreated=1
+  fi
+  (cd "$ppath" && CLAUDE_CONFIG_DIR=$CFG "$CLAUDE_BIN" plugin uninstall "$pid" --scope "$scope" >/dev/null) || rc=$?
+  if [ "$recreated" = 1 ]; then
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      rmdir "$d" 2>/dev/null || echo "kept: $d is not empty after the uninstall" >&2
+    done <<EOF_CREATED
+$created
+EOF_CREATED
+  fi
+  if [ "$rc" = 0 ]; then
+    if [ "$recreated" = 1 ]; then echo "uninstalled: $pid ($scope) at $ppath (project folder was gone; recreated it for the uninstall and removed it again)"
+    else echo "uninstalled: $pid ($scope) at $ppath"; fi
+  else
+    echo "failed: claude plugin uninstall $pid --scope $scope in $ppath" >&2
+  fi
+  return "$rc"
+}
+
 cmd_remove() {
   local id kind rest pid scope ppath status=0
   [ $# -gt 0 ] || { echo "remove: no ids given; nothing removed" >&2; return 0; }
@@ -110,13 +142,10 @@ cmd_remove() {
       override) json drop-override "$CFG" "$rest" ;;
       project-install)
         pid=${rest%%:*}; rest=${rest#*:}; scope=${rest%%:*}; ppath=${rest#*:}
-        if [ ! -d "$ppath" ]; then
-          echo "failed: $pid ($scope) project path $ppath is gone; remove the record with 'claude plugin uninstall' from a checkout" >&2
+        if [ -z "$ppath" ]; then
+          echo "failed: $pid ($scope) has no project path in the registry; nothing to run the uninstall in" >&2
           status=1
-        elif (cd "$ppath" && CLAUDE_CONFIG_DIR=$CFG "$CLAUDE_BIN" plugin uninstall "$pid" --scope "$scope" >/dev/null); then
-          echo "uninstalled: $pid ($scope) at $ppath"
-        else
-          echo "failed: claude plugin uninstall $pid --scope $scope in $ppath" >&2
+        elif ! uninstall_in_project "$pid" "$scope" "$ppath"; then
           status=1
         fi ;;
       *) echo "unknown id: $id" >&2; status=1 ;;

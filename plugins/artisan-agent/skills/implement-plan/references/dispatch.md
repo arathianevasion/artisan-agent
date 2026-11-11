@@ -81,8 +81,8 @@ done. You cannot predict a crash, a timeout, or an account rate limit. A
 wip commit you later build on costs nothing; an uncommitted tree at the
 moment you are killed costs everything.
 
-Run /code-review over your own diff before writing your result, and record
-what it says in review.findings — including anything it finds that you
+Run /mattpocock-skills:code-review over your own diff before writing your result, and record
+what it says in review.remarks — including anything it finds that you
 disagree with or chose not to act on.
 EOF
 )" \
@@ -95,7 +95,7 @@ Launch every ticket in the wave, then wait on all of them. Keep the log alongsid
 
 The commit-early instruction earns its place the first time a wave dies mid-flight. An agent killed by an account rate limit left ten modified files uncommitted and therefore unverifiable — the orchestrator cannot merge work it cannot vouch for, so recovering it cost a second full dispatch. Agents left to their own judgment hold a clean tree until the end.
 
-The `/code-review` instruction is the highest-value line in the whole prompt. Agents that review their own diff catch their own unmet acceptance criteria, and — more usefully — sometimes report that a test they wrote passes for the wrong reason. Neither is visible in a green suite.
+The `/mattpocock-skills:code-review` instruction is the highest-value line in the whole prompt. Agents that review their own diff catch their own unmet acceptance criteria, and — more usefully — sometimes report that a test they wrote passes for the wrong reason. Neither is visible in a green suite.
 
 A per-process wall-clock timeout is worth setting. An agent that hangs on a prompt it cannot answer will otherwise hold up the whole wave indefinitely.
 
@@ -121,11 +121,11 @@ Give the agent this shape explicitly. Parsing prose out of a transcript is unrel
   "tests": { "suite_passed": true, "typecheck_passed": true },
   "review": {
     "ran": true,
-    "findings": [
+    "remarks": [
       { "axis": "standards", "severity": "minor", "note": "..." }
     ]
   },
-  "discovered": [
+  "findings": [
     {
       "title": "Billing tab needs a paginated invoice endpoint",
       "why": "Ticket assumed one existed; it does not",
@@ -139,10 +139,10 @@ Give the agent this shape explicitly. Parsing prose out of a transcript is unrel
 `status` is one of `complete`, `blocked`, `failed`.
 
 - `complete` — committed, suite green, review ran.
-- `blocked` — the ticket cannot be finished as written. Something in `discovered` should explain why.
+- `blocked` — the ticket cannot be finished as written. Something in `findings` should explain why.
 - `failed` — the agent errored. `notes` says where.
 
-`discovered` is the mechanism for outstanding requirements. An agent that finds missing work records it here and keeps its own slice narrow, rather than expanding scope to cover it. Scope creep inside a ticket is what breaks the single-context-window guarantee.
+`findings` is the mechanism for outstanding requirements. An agent that finds missing work records it here and keeps its own slice narrow, rather than expanding scope to cover it. Scope creep inside a ticket is what breaks the single-context-window guarantee.
 
 ## Reconciliation and cleanup
 

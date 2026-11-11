@@ -20,7 +20,7 @@ problems=$(jq -r '
   def oneof($v; $allowed; $where):
     select(($allowed | index($v)) == null) | "\($where): \($v | tojson) is not one of \($allowed | join(", "))";
 
-  need(.; ["ticket","status","branch","commit","base","acceptance","tests","unsure","decisions","review","discovered"]; "record"),
+  need(.; ["ticket","status","branch","commit","base","acceptance","tests","unsure","decisions","review","findings"]; "record"),
   (select(has("status")) | oneof(.status; ["complete","blocked","failed"]; "status")),
   (select(has("acceptance")) | .acceptance |
     if type != "array" or length == 0 then "acceptance: must be a non-empty array"
@@ -31,7 +31,7 @@ problems=$(jq -r '
     end),
   (select(has("tests")) | .tests |
     if (.suite_passed | type) != "boolean" then "tests: suite_passed must be true or false" else empty end),
-  (["unsure","discovered","decisions"][] as $k | select(has($k) and (.[$k] | type) != "array") | "\($k): must be an array"),
+  (["unsure","findings","decisions"][] as $k | select(has($k) and (.[$k] | type) != "array") | "\($k): must be an array"),
   (select((.decisions | type) == "array") | .decisions | to_entries[] | .key as $i | .value |
     (need(.; ["job","choice","by","question","alternative","kind","criterion"]; "decisions[\($i)]")),
     (select(has("kind")) | oneof(.kind; ["product taste","engineering taste","engineering"]; "decisions[\($i)].kind")),
@@ -39,13 +39,13 @@ problems=$(jq -r '
     (select(has("reach")) | oneof(.reach; ["ticket","area","everywhere"]; "decisions[\($i)].reach"))),
   (select(has("review")) | .review |
     (select((.ran | type) != "boolean") | "review: ran must be true or false"),
-    (if (.findings | type) != "array" then "review: findings must be an array"
-     else .findings | to_entries[] | .key as $i | .value |
-       (need(.; ["axis","severity","note","disposition"]; "review.findings[\($i)]")),
-       (select(has("axis")) | oneof(.axis; ["standards","spec"]; "review.findings[\($i)].axis")),
-       (select(has("severity")) | oneof(.severity; ["bug","violation","missing","scope","judgement"]; "review.findings[\($i)].severity")),
-       (select(has("disposition")) | oneof(.disposition; ["fixed","decision","not_acted"]; "review.findings[\($i)].disposition")),
-       (select(.disposition == "not_acted" and ((.why // "") == "")) | "review.findings[\($i)]: not_acted needs why")
+    (if (.remarks | type) != "array" then "review: remarks must be an array"
+     else .remarks | to_entries[] | .key as $i | .value |
+       (need(.; ["axis","severity","note","disposition"]; "review.remarks[\($i)]")),
+       (select(has("axis")) | oneof(.axis; ["standards","spec"]; "review.remarks[\($i)].axis")),
+       (select(has("severity")) | oneof(.severity; ["bug","violation","missing","scope","judgement"]; "review.remarks[\($i)].severity")),
+       (select(has("disposition")) | oneof(.disposition; ["fixed","decision","not_acted"]; "review.remarks[\($i)].disposition")),
+       (select(.disposition == "not_acted" and ((.why // "") == "")) | "review.remarks[\($i)]: not_acted needs why")
      end))
 ' "$file")
 

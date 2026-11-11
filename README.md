@@ -70,7 +70,7 @@ plugins/artisan-agent/
 
 - **Cite, don't copy.** A skill points at a shared reference by path from the plugin root, for example "follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`" or "criterion 3 in `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md`". Numbers in the references are stable.
 - **Vocabulary** comes from [GLOSSARY.md](GLOSSARY.md). "Workflow" is never a technical term; say "pipeline".
-- **Skills name skills by their pipeline names**: our replacements as `/artisan-agent:<name>`, kept upstream skills by their upstream names.
+- **Skills name skills by their pipeline names**: our replacements as `/artisan-agent:<name>`, kept upstream skills by their upstream names, in full as `mattpocock-skills:<name>` wherever a Claude Code built-in shares the short name (today only `code-review`; a bare `code-review` resolves to the built-in). `tests/skill-names.test.sh` fails on a bare clashing name.
 - **Runtime state stays out of git.** `.artisan-agent/runs/` is ignored; `.artisan-agent/config.yml` is committed. No secrets are committed.
 
 ## Script tests
