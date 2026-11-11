@@ -3,7 +3,8 @@
 # Bash 3.2-safe. Usage: guard.sh <command> [--list FILE] [--hook-command CMD]
 #   matcher        the UserPromptExpansion matcher regex
 #   hooks-json     the plugin's hooks/hooks.json: the replaced-skill hook plus the
-#                  main-checkout and run-lock hooks (committed; a test keeps it fresh)
+#                  main-checkout and run-lock hooks and the compaction hooks
+#                  (committed; a test keeps it fresh)
 #   deny-rules     one Skill(...) deny rule per line
 #   deny-json      {"permissions":{"deny":[...]}} for project settings
 #   flag-watch     one upstream skill (plugin:name) per line for the upstream check
@@ -73,11 +74,17 @@ json_hooks_body() { # the "hooks" object value
 # implement-plan's own lock check (guard/README.md).
 json_plugin_hooks_body() {
   local protect='${CLAUDE_PLUGIN_ROOT}/guard/protect.sh'
+  local compact='${CLAUDE_PLUGIN_ROOT}/scripts/compact-hook.sh'
   printf '{"UserPromptExpansion":[{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]},' \
     "$(matcher)" "$hook_command"
   printf '{"matcher":"^(artisan-agent:)?implement-plan$","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"
   printf '"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"%s main-edit"}]},' "$protect"
-  printf '{"matcher":"Skill","hooks":[{"type":"command","command":"%s run-start"}]}]}' "$protect"
+  printf '{"matcher":"Skill","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"
+  # The context drain and resume (scripts/compact-hook.sh, #59): the
+  # orchestrator's hand-off marker, the chat's steered summary and the run
+  # digest put back after compaction or /resume.
+  printf '"PreCompact":[{"hooks":[{"type":"command","command":"%s pre-compact"}]}],' "$compact"
+  printf '"SessionStart":[{"matcher":"startup|resume|compact|clear","hooks":[{"type":"command","command":"%s session-start"}]}]}' "$compact"
 }
 
 deny_array() { printf '['; deny_lines | sed 's/.*/"&"/' | join ','; printf ']'; }
@@ -94,6 +101,6 @@ case "$cmd" in
       printf '%s\t%s /%s:%s is replaced in this pipeline. Use %s instead.\n' \
         "$name" "$MARKER" "$UPSTREAM" "$name" "$repl"
     done ;;
-  -h|--help|help|"") sed -n '2,12p' "$0" ;;
+  -h|--help|help|"") sed -n '2,13p' "$0" ;;
   *) echo "guard.sh: unknown command $cmd" >&2; exit 2 ;;
 esac

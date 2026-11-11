@@ -119,6 +119,7 @@ reconcile() {
         | select(all($tr[$t].blocked_by[];
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"
+                 and ($s.tickets[.number].risk_gate.status? // "") != "waiting"
             else .state == "closed" end))
         | $t
       ] | .frontier |= sort_by(tonumber? // .)' --argjson tr "$tracker"

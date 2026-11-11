@@ -9,19 +9,23 @@
 #       create the integration branch (from REF, default the main checkout's
 #       branch) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
-#   wave.sh launch <run-dir> [--resume] [--model M] [--estimate-usd N] [-- claude args...]
+#   wave.sh launch <run-dir> [--resume] [--handoff] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
 #       The state lock passes to the orchestrator's runner for the wave.
 #       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
-#       carry on, and clears the halt.
+#       carry on, and clears the halt. --handoff is for drain.sh handoff
+#       only: the running orchestrator, having recorded its hand-off, launches
+#       the next attempt of the same wave and hands it the lock (6 from anyone
+#       else); the wave's guardrails are not read again.
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
 #       "next: <launch|wait|halted|decide|blocked|done>", then a
-#       ticket table.
+#       ticket table. A waiting risk gate (drain.sh gate) holds only its
+#       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -176,10 +180,11 @@ orchestrator_state() { # id attempt -> classify-worker.sh's line
 cmd_launch() {
   open_run "${1:-}"
   shift
-  local model= estimate= args=() resume=0
+  local model= estimate= args=() resume=0 handoff=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --resume) resume=1; shift ;;
+      --handoff) handoff=1; shift ;;
       --model) [ $# -ge 2 ] || usage; model=$2; shift 2 ;;
       --estimate-usd) [ $# -ge 2 ] || usage; estimate=$2; shift 2 ;;
       --) shift; args=("$@"); break ;;
@@ -194,7 +199,15 @@ cmd_launch() {
     set -- $last
     id=$1 attempt=$2 wave=$3 pid=$4
     cls=$(orchestrator_state "$id" "$attempt")
+    # A hand-off (drain.sh handoff): the running orchestrator, which recorded
+    # why, launches the next one for the same wave before it exits.
+    if [ "$handoff" -eq 1 ]; then
+      [ "$(writer)" = "$pid" ] && [ "$(get '(.orchestrators | last | .handoff) != null')" = true ] \
+        || state_die 6 "wave.sh: --handoff is for the running orchestrator that recorded its hand-off (drain.sh handoff)"
+      cls=handoff
+    fi
     case "$cls" in
+      handoff) attempt=$((attempt + 1)) ;;
       running*) state_die 3 "wave.sh: the orchestrator for wave $wave is still running (pid $pid)" ;;
       completed*) wave=$((wave + 1)) attempt=1 ;;
       *) attempt=$((attempt + 1)) ;;   # it ended without finishing: carry the same wave on
@@ -235,12 +248,19 @@ You are the orchestrator for wave $wave of run $RUN_ID. Follow $PLUGIN_DIR/skill
 - Scripts: $PLUGIN_DIR/scripts
 - Your state-writer pid is already exported as ARTISAN_WRITER_PID, and you hold the state lock.
 EOF
+  if [ "$attempt" -gt 1 ]; then
+    printf -- '- An earlier orchestrator for this wave %s. Carry the same wave on from the state file: reconcile first.\n' \
+      "$(get '(.orchestrators | last | .handoff) as $h | if $h then "handed off to you (\($h.reason))" else "ended without finishing" end')" >>"$prompt"
+  fi
 
   # Guardrails are read at the point of use: fetch the team, product and
   # individual sources, bring main in if a product guardrail changed, record
   # each commit and the plugin version for this wave (references/guardrails.md).
-  "$SCRIPT_DIR/guardrails.sh" wave-start "$RUN_DIR" "$wave" >/dev/null \
-    || die "could not read the guardrails for wave $wave (guardrails.sh wave-start failed)"
+  # A hand-off carries the wave on with the guardrails its workers were given.
+  if [ "$handoff" -eq 0 ]; then
+    "$SCRIPT_DIR/guardrails.sh" wave-start "$RUN_DIR" "$wave" >/dev/null \
+      || die "could not read the guardrails for wave $wave (guardrails.sh wave-start failed)"
+  fi
 
   apply '
     .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, launched_at: $now}])
@@ -295,7 +315,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting
+  local last id attempt wave pid cls next reconciled=1 waiting o
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -313,13 +333,20 @@ cmd_status() {
       if [ -n "${ARTISAN_WRITER_PID:-}" ]; then
         state_lock "$RUN_DIR" "$ARTISAN_WRITER_PID" || exit 3
       fi
-      [ -z "${id:-}" ] || record_orchestrator_cost "$id" "$attempt"
+      # Every ended orchestrator's spend, a handed-off one's included.
+      for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
+        record_orchestrator_cost "${o%.*}" "${o##*.}"
+      done
       "$SCRIPT_DIR/reconcile.sh" "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.status.err" || {
         reconciled=0
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
-      waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
+      # A risk gate holds only its ticket's dependents (drain.sh gate): the
+      # run carries on while the frontier has work.
+      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate")] | length')
+      [ "$(get '.frontier | length')" -gt 0 ] \
+        || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
@@ -335,7 +362,8 @@ cmd_status() {
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
   ticket_table
-  if [ "${next}" = decide ] || [ "${next}" = halted ]; then
+  if [ "${next}" = decide ] || [ "${next}" = halted ] \
+     || { [ "$next" = launch ] && [ "$(get '[.decisions[] | select(.status == "waiting")] | length')" -gt 0 ]; }; then
     echo
     echo "| Decision | Ticket | Question |"
     echo "|---|---|---|"
@@ -363,6 +391,8 @@ check_blockers() { # ticket
       if [ "$status" != merged ] || [ -z "$sha" ] || ! git -C "$MAIN" merge-base --is-ancestor "$sha" "$tip" 2>/dev/null; then
         state_die 5 "wave.sh: refusing #$t: its blocker #$b is not merged into $ib (status $status); dispatch only on merged work"
       fi
+      [ "$(get --arg b "$b" '.tickets[$b].risk_gate.status? // ""')" != waiting ] \
+        || state_die 5 "wave.sh: refusing #$t: its blocker #$b merged under a risk gate the Artisan hasn't cleared (drain.sh gate)"
     elif [ "$state" != closed ]; then
       state_die 5 "wave.sh: refusing #$t: its blocker #$b, outside this run, is still open"
     fi
