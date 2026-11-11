@@ -28,6 +28,14 @@ _Avoid_: dashboard, UI
 The person who holds the roles in a project and instils taste in how its problems are solved.
 _Avoid_: user, human orchestrator, owner (as a role), craftsman
 
+**Individual home**:
+The Artisan's own store, outside any project, for what follows them between projects: their individual standards, their motivation for each product, and their satisfaction record. Set up once per machine.
+_Avoid_: personal config, dotfiles
+
+**Motivation**:
+An Artisan's personal reason for caring about a product they work on: their own connection to it, separate from the product's purpose. One per product, kept in their individual home and private unless they choose to share it.
+_Avoid_: purpose, mission (those belong to the product, not the Artisan)
+
 **Focus**:
 One of the three things an Artisan's attention is for: understanding the problem, finding the best solution, or improving the pipeline. Every human step serves one.
 _Avoid_: priority, concern
@@ -145,6 +153,10 @@ A guardrail for one product and its repo.
 **Individual guardrail**:
 A guardrail carrying one Artisan's taste, which follows them into every project they work on.
 
+**Individual standards**:
+The Artisan's written taste that applies in every project: their individual guardrails, what should always come back to them, and how the pipeline speaks to them. Kept in their individual home.
+_Avoid_: personal standards, preferences
+
 **Area**:
 A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
 _Avoid_: module, zone
@@ -172,3 +184,7 @@ _Avoid_: learning, takeaway
 **Retro**:
 The step after every run where agents propose lessons from the run and the Artisan decides which to keep and where they go.
 _Avoid_: retrospective (in skills), post-mortem
+
+**Satisfaction record**:
+An Artisan's private history of their answers to the satisfaction questions asked at every retro (problem, solution, pipeline and chores), kept with each run's facts. Shared only if the Artisan chooses.
+_Avoid_: survey, scores, feedback log
