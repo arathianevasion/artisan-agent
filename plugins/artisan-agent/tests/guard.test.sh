@@ -63,3 +63,21 @@ test_no_skill_is_both_replaced_and_a_dependency() {
     if grep -qx "$n" "$PLUGIN_ROOT/guard/dependencies.list"; then fail "$n is on both lists"; fi
   done
 }
+
+test_hook_blocks_every_replaced_name_with_its_own_replacement() {
+  local name repl out
+  while read -r name repl; do
+    out=$(printf '{"command_name":"mattpocock-skills:%s"}' "$name" | "$PLUGIN_ROOT/guard/block-replaced.sh")
+    assert_contains "$out" "/mattpocock-skills:$name is replaced"
+    assert_contains "$out" "Use $repl instead."
+  done <<EOT
+$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/replaced-skills.list")
+EOT
+}
+
+test_settings_json_has_hook_and_deny_rules() {
+  local out
+  out=$("$GUARD" settings-json --hook-command /abs/block-replaced.sh)
+  assert_contains "$out" '"command":"/abs/block-replaced.sh"'
+  assert_contains "$out" '"deny":["Skill(mattpocock-skills:implement-spec)"'
+}
