@@ -111,3 +111,39 @@ test_rescan_after_removal_offers_nothing() {
   "$SCRIPT" remove stale-skill:tdd plugin-skill:implement-plan plugin-skill:debate-me override:tdd >/dev/null
   assert_eq "project-install" "$("$SCRIPT" scan | cut -f2 | tr '\n' ' ' | sed 's/ $//')" "only the install left"
 }
+
+# The stub models the real CLI (checked against claude 2.x in an isolated CLAUDE_CONFIG_DIR):
+# a project-scope uninstall succeeds only when run from inside the recorded project path.
+seed_gone_project() { # leaves an install whose project folder (two levels deep, one with a space) is gone
+  seed_machine
+  GONE="$TEST_TMPDIR/deleted parent/proj"
+  printf '#!/bin/sh\n[ -d "%s" ] || { echo "not installed in project scope" >&2; exit 1; }\n[ "$PWD" = "%s" ] || { echo "not installed in project scope" >&2; exit 1; }\necho "$PWD $*" >>"%s/claude-calls"\n' "$GONE" "$GONE" "$TEST_TMPDIR" >"$ARTISAN_CLAUDE_BIN"
+  python3 -I -c '
+import json,sys
+p=sys.argv[1]; d=json.load(open(p))
+d["plugins"]["artisan-agent@artisan-agent"][1]["projectPath"]=sys.argv[2]
+json.dump(d,open(p,"w"))' "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json" "$GONE"
+}
+
+test_remove_uninstalls_when_project_path_is_gone_and_leaves_no_folder_behind() {
+  seed_gone_project
+  local out
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE") || fail "remove failed: $out"
+  assert_contains "$out" "uninstalled: artisan-agent@artisan-agent (project)"
+  assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "$GONE plugin uninstall artisan-agent@artisan-agent --scope project"
+  [ ! -e "$GONE" ] || fail "recreated project folder left behind"
+  [ ! -e "$TEST_TMPDIR/deleted parent" ] || fail "recreated parent folder left behind"
+  [ -d "$TEST_TMPDIR" ] || fail "existing folders must stay"
+}
+
+test_remove_keeps_recreated_folder_that_the_uninstall_filled_and_reports_failure_honestly() {
+  seed_gone_project
+  printf '#!/bin/sh\nmkdir .claude && echo x >.claude/settings.json\n' >"$ARTISAN_CLAUDE_BIN"
+  "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE" 2>"$TEST_TMPDIR/err" >/dev/null || fail "remove failed"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "kept: $GONE is not empty"
+  [ -f "$GONE/.claude/settings.json" ] || fail "files the CLI wrote were removed"
+  printf '#!/bin/sh\nexit 1\n' >"$ARTISAN_CLAUDE_BIN"
+  rm -rf "$GONE"
+  if "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE" >/dev/null 2>&1; then fail "a failing uninstall must fail"; fi
+  [ ! -e "$GONE" ] || fail "folder left behind after a failed uninstall"
+}
