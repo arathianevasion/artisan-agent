@@ -210,8 +210,8 @@ assert shipping(5000) == 0 and shipping(4999) == 499 and shipping(6000) == 0'
         grep -qx 'def check_address(street, city, postcode):' "$repo/shop.py"
       check "the judgement-call smell is unchanged: delivery_label keeps its signature" \
         grep -qx 'def delivery_label(street, city, postcode):' "$repo/shop.py"
-      check "review findings were fixed" record_says "$record" 'any(.review.remarks[]; .disposition == "fixed")'
-      check "a review finding was left as a decision" record_says "$record" 'any(.review.remarks[]; .disposition == "decision")'
+      check "review remarks were fixed" record_says "$record" 'any(.review.remarks[]; .disposition == "fixed")'
+      check "a review remark was left as a decision" record_says "$record" 'any(.review.remarks[]; .disposition == "decision")'
       check "the smell is a decision card" record_says "$record" \
         'any(.decisions[]; ((.question + " " + .choice + " " + .alternative) | test("address|street|postcode|clump"; "i")))'
       ;;

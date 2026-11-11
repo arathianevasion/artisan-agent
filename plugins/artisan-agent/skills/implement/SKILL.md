@@ -73,7 +73,7 @@ Sort every finding the review returns into one of these, and act on it:
 
 Where a fix would itself meet a controversy criterion or an "Always ask" item, don't make it: record it as a decision card instead. When a finding could be either a hard violation or a judgement call, it's a judgement call.
 
-`review.remarks` holds what the review found. A problem you found and fixed yourself while building isn't a review finding; mention it in `notes` if it matters.
+`review.remarks` holds what the review found. A problem you found and fixed yourself while building isn't a review remark; mention it in `notes` if it matters.
 
 Run the full suite again after the fixes and commit. One review pass is enough. Run a second only when the fixes changed more code than the findings pointed at.
 
