@@ -1,0 +1,1 @@
+{"hooks":{"UserPromptExpansion":[{"matcher":"^mattpocock-skills:(implement-spec|implement|to-spec|retro|triage|grill-with-docs)$","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/guard/block-replaced.sh"}]}]}}

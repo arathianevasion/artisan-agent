@@ -1,0 +1,11 @@
+# The replaced-skill list: the single source for the replaced-skill guard.
+# One line per upstream skill we replace:  <upstream skill name> <replacement>
+# The hook matcher, the Skill(...) deny rules and the upstream check's flag
+# watch are all generated from this file by guard.sh. Never edit those by
+# hand; run `guard/guard.sh --help`. Upstream plugin: mattpocock-skills.
+implement-spec   /artisan-agent:implement-spec
+implement        /artisan-agent:implement
+to-spec          /artisan-agent:to-spec
+retro            /artisan-agent:retro
+triage           /artisan-agent:triage
+grill-with-docs  /artisan-agent:grill

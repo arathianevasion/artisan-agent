@@ -1,0 +1,16 @@
+# The dependency list: upstream skills (mattpocock-skills) the pipeline uses
+# and keeps. One name per line. The upstream check confirms each still exists
+# and that its disable-model-invocation flag is unchanged. A skill is never on
+# both this list and replaced-skills.list.
+grilling
+domain-modeling
+to-tickets
+to-plan
+tdd
+code-review
+diagnosing-bugs
+research
+prototype
+codebase-design
+writing-for-agents
+pr
