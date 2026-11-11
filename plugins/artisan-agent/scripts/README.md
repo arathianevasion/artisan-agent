@@ -9,7 +9,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
-| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
 
 Each script's header has its full usage.
