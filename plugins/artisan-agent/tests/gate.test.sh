@@ -94,7 +94,7 @@ test_the_packet_follows_variant_b_top_to_bottom() {
   # Summary: counts, then Problem, Solution, Verification.
   assert_contains "$body" "**2 decisions (1 low confidence), 2 uncertainties.**"
   assert_contains "$body" "- **Problem:** Nobody is greeted."
-  assert_contains "$body" "- **Verification:** 2 of 2 criteria verified across 1 ticket: 1 proven by a test or check, 1 need you."
+  assert_contains "$body" "- **Verification:** 2 of 2 criteria verified across 1 ticket: 1 proven by a test or check, 1 needs you."
   # A card: question, choice, alternative, confidence, kind, actions.
   assert_contains "$body" "### Card 1: Which file name? (low confidence)"
   assert_contains "$body" "| Alternative considered | T.TXT |"

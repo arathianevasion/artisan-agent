@@ -243,6 +243,20 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
+## Slice gates
+
+`gate.sh` opens a slice's review gate once every ticket of the slice has merged, and takes the Artisan's answers; `lib/packet.py` renders the packet. The rules, the packet and the answers: `references/review-gates.md`. Tested in `tests/gate.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate.sh sync <run-dir>` | both (`wave.sh close`, `wave.sh status`) | folds in answers given while the lock was held, approves a gate closed by hand on the tracker, opens every gate that is due: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate.sh due <run-dir>` / `open <run-dir> <gate-id>` | orchestrator | the gates due; open one: the packet, the `review-gate` issue natively blocking only the slice's dependents, a `review-gate` decision; prints the issue (again, on a repeat) | 0, 1, 6 not due |
+| `gate.sh holds <run-dir> <ticket>` | `wave.sh dispatch` | 0 when the ticket's slice gate is due and not approved: its dependents wait (dispatch 5) | 0, 1 |
+| `gate.sh chat <run-dir> [<issue>]` / `packet` / `list` | Engineering chat | the compressed packet; the full one; a table of the run's gates | 0 |
+| `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
+| `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
+| `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
+
 ## The fake tracker
 
 `tests/fixtures/fake-gh/gh` answers the `gh` calls the run makes (`api` issue and blocked-by reads, `issue view`, `list`, `comment`, `edit`, `close`) from a folder (`FAKE_GH_DIR`) of `issue-<n>.json` and `blocked_by-<n>.json` files, so tests and live trials never reach GitHub.

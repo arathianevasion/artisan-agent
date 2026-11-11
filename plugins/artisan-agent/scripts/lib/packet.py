@@ -133,8 +133,9 @@ def summary_lines(view):
     prov = sum(1 for _, a in rows if proven(a))
     suites = [(state["tickets"].get(t) or {}).get("suite") or {} for t in tickets]
     suite_ok = all(s.get("passed") for s in suites) and suites
-    verification = "%d of %d criteria verified across %d ticket%s: %d proven by a test or check, %d need you. %s" % (
+    verification = "%d of %d criteria verified across %d ticket%s: %d proven by a test or check, %d need%s you. %s" % (
         met, len(rows), len(tickets), "" if len(tickets) == 1 else "s", prov, len(rows) - prov,
+        "s" if len(rows) - prov == 1 else "",
         "The full suite passed after every merge." if suite_ok else "The full suite's result after a merge is missing; see the evidence.")
     return problem, solution, verification
 
