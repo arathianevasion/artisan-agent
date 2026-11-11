@@ -129,10 +129,10 @@ case "$cmd" in
         . as $r
         | if (($r.conflicts // []) | length) == 0 and (($r.own_reviews // []) | length) == 0 then "No conflicts between the three levels."
           else "| Guardrail | Applies | Overridden |", "|---|---|---|",
-            ($r.conflicts[] as $k
+            (($r.conflicts // [])[] as $k
              | ($r.applied | map(select(.key == $k))[0]) as $w
-             | "| \($k) | \($w.level): \($w.value) | \([$r.overridden[] | select(.key == $k) | "\(.level): \(.value)"] | join("; ")) |"),
-            ($r.own_reviews[] | "| \(.key) | own-reviews: \(.level): \(.value) (the Artisan holding those gates) | |") end' "$gfile"
+             | "| \($k) | \($w.level // "?"): \($w.value // "?") | \([$r.overridden[] | select(.key == $k) | "\(.level): \(.value)"] | join("; ")) |"),
+            (($r.own_reviews // [])[] | "| \(.key) | own-reviews: \(.level): \(.value) (the Artisan holding those gates) | |") end' "$gfile"
     fi
     ;;
   *) usage ;;

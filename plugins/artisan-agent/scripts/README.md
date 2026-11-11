@@ -286,9 +286,9 @@ Neither tier ever stops to compact (#59). `drain.sh` reads a session's context a
 
 | Command | Does | Exit status |
 | :- | :- | :- |
-| `adr-check.sh list [--adr-dir D]` | the ADRs as JSON: number, file, title | 0, 1 |
-| `adr-check.sh refs [--adr-dir D]` | reads text on stdin; prints the number of each existing ADR it cites | 0, 1 |
-| `adr-check.sh render <check.json> [--adr-dir D] [--guardrails resolve.json]` | the approval view: plan compliance, each ticket's ADRs with `TENSION` flagged, ADR gaps, then guardrail conflicts and the level that applies (from `guardrails.sh resolve`); an ADR number with no file is refused | 0, 1 |
-| `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1 |
+| `adr-check.sh list [--adr-dir D]` | the ADRs as JSON: number, file, title | 0, 1, 2 |
+| `adr-check.sh refs [--adr-dir D]` | reads text on stdin; prints the number of each existing ADR it cites | 0, 1, 2 |
+| `adr-check.sh render <check.json> [--adr-dir D] [--guardrails resolve.json]` | the approval view: plan compliance, each ticket's ADRs with `TENSION` flagged, ADR gaps, then guardrail conflicts and the level that applies (from `guardrails.sh resolve`); an ADR number with no file is refused | 0, 1, 2 |
+| `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1, 2 |
 
 The edit itself is not scripted: the Artisan approves a drafted diff, it lands by a short PR (`doc-change.sh`, upstream `pr`) before dispatch, then `affected` names the tickets to re-check.
