@@ -62,7 +62,12 @@ case "$mode" in
     run_id=${holder% *}; pid=${holder#* }
     # Resuming the open run is not a second run: a bare call, "resume" or the
     # run's id opens with its digest (skills/implement-plan/references/context-drain.md).
+    # (With no arguments the request is the prompt itself: drop the command.)
     resume=$(printf '%s' "$request" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+    case "$resume" in
+      /implement-plan | /artisan-agent:implement-plan) resume= ;;
+      "/implement-plan "* | "/artisan-agent:implement-plan "*) resume=${resume#* } ;;
+    esac
     case "$resume" in
       "" | resume | "$run_id" | "resume $run_id") exit 0 ;;
     esac

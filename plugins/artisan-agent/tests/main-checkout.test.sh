@@ -312,6 +312,13 @@ test_resuming_the_open_run_passes_the_run_lock() {
       '{hook_event_name:"PreToolUse",tool_name:"Skill",cwd:$c,tool_input:{skill:"artisan-agent:implement-plan",args:$a}}' \
       | "$PROTECT" run-start)" "called [$args]"
   done
+  # Typed bare, the hook sees no arguments, only the prompt.
+  local p
+  for p in "/artisan-agent:implement-plan" "/implement-plan resume" "/artisan-agent:implement-plan r1"; do
+    assert_eq "" "$(jq -cn --arg c "$REPO" --arg p "$p" \
+      '{hook_event_name:"UserPromptExpansion",command_name:"artisan-agent:implement-plan",prompt:$p,cwd:$c}' \
+      | "$PROTECT" run-start)" "prompt [$p]"
+  done
   assert_eq 0 "$(grep -c . "$GH_LOG")"
   assert_contains "$(jq -cn --arg c "$REPO" \
     '{hook_event_name:"UserPromptExpansion",command_name:"implement-plan",command_args:"resume r2",cwd:$c}' \
