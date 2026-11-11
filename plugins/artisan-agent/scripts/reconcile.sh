@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# The reconciler: bring the state file into line with git and the tracker,
+# then recompute the frontier from them, never from the plan's waves.
+# Field meanings: ${CLAUDE_PLUGIN_ROOT}/references/state-file.md
+#
+# Usage: reconcile.sh <run-dir>
+#
+# A new orchestrator runs this before anything else. It:
+#   1. runs the sweep (sweep.sh) over in-flight tickets and findings;
+#   2. marks merged every ticket in scope whose branch was merged into the
+#      integration branch (with --no-ff, so the merge commit is on its
+#      first-parent line), recording that merge commit; git is the fact, the
+#      state file only a claim;
+#   3. reads each ticket in scope from the tracker (gh api): open or closed,
+#      labels, and its native blocked-by list;
+#   4. marks closed any queued ticket the tracker has closed without a merge;
+#   5. writes the frontier: queued tickets, open on the tracker, not labelled
+#      ready-for-human, whose blockers are all merged into the integration
+#      branch (blockers in the run) or closed (blockers outside it).
+# Prints the frontier, one ticket per line. Running it again on the same git
+# and tracker state changes nothing. The run folder must sit at
+# <checkout>/.artisan-agent/runs/<run-id>.
+#
+# Exit status: 0 ok, 1 error (including a failed tracker read; nothing is
+# written then), 2 usage, 3 the lock is held by another live process.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/state-lib.sh
+. "$SCRIPT_DIR/lib/state-lib.sh"
+state_require_jq
+
+[ $# -eq 1 ] || { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+RUN_DIR=$(cd "$1" && pwd)
+state_require_run_dir "$RUN_DIR"
+REPO_DIR=$(cd "$RUN_DIR/../../.." && pwd)
+
+# merge_commit_for integration branch: the first commit on the integration
+# branch's first-parent line that contains the ticket branch's tip.
+merge_commit_for() {
+  local integration="$1" tip="$2" c
+  local commits
+  commits=$(git -C "$REPO_DIR" rev-list --first-parent --reverse "$integration")
+  for c in $commits; do
+    if git -C "$REPO_DIR" merge-base --is-ancestor "$tip" "$c"; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+reconcile() {
+  local file tmp repo integration first_parent t branch tip sha issue blockers tracker
+  file=$(state_file "$RUN_DIR")
+  tmp=$(state_tmp "$RUN_DIR")
+  cp "$file" "$tmp"
+
+  step() {
+    local f="$1"
+    shift
+    jq "$@" "$f" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "reconcile: jq step failed"; }
+    mv -f "$tmp.next" "$tmp"
+  }
+
+  repo=$(jq -r '.repo' "$tmp")
+  integration=$(jq -r '.integration.branch' "$tmp")
+
+  # Tickets added to the scope after approval get an entry.
+  step '.plan.scope as $s | reduce $s[] as $t (.;
+          if .tickets[$t] == null then .tickets[$t] = {
+            status: "queued", attempts: 0, pid: null,
+            branch: (.plan.tickets[$t].branch // ("agent/" + $t)),
+            dispatched_at: null, deadline_at: null, result: null, evidence: null,
+            merge_commit: null, cost_usd: 0, failures: []} else . end)'
+
+  # Git: what is merged into the integration branch.
+  if git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$integration" >/dev/null; then
+    first_parent=$(git -C "$REPO_DIR" rev-list --first-parent "$integration")
+    for t in $(jq -r '.plan.scope[]' "$tmp"); do
+      [ "$(jq -r --arg t "$t" '.tickets[$t].status' "$tmp")" = "merged" ] && continue
+      branch=$(jq -r --arg t "$t" '.tickets[$t].branch' "$tmp")
+      tip=$(git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null) || continue
+      # A branch still sitting on the integration line (dispatched, nothing
+      # merged yet) is not merged work; a merged ticket comes in through a
+      # --no-ff merge commit, so its tip is off the first-parent line.
+      case "$first_parent" in *"$tip"*) continue ;; esac
+      sha=$(merge_commit_for "$integration" "$tip") || continue
+      step '.tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
+            | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}])' \
+        --arg t "$t" --arg sha "$sha"
+    done
+  fi
+
+  # Tracker: state, labels and blockers for every ticket in scope.
+  tracker='{}'
+  for t in $(jq -r '.plan.scope[]' "$tmp"); do
+    issue=$(gh api "repos/$repo/issues/$t") || { rm -f "$tmp"; state_die 1 "reconcile: could not read #$t from the tracker"; }
+    blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
+      || { rm -f "$tmp"; state_die 1 "reconcile: could not read blockers of #$t from the tracker"; }
+    tracker=$(jq -n --argjson acc "$tracker" --arg t "$t" --argjson i "$issue" --argjson b "$blockers" '
+      $acc + {($t): {
+        state: ($i.state | ascii_downcase),
+        labels: [$i.labels[]? | (.name? // .)],
+        blocked_by: [$b[]? | {number: (.number | tostring), state: (.state | ascii_downcase)}]
+      }}')
+  done
+
+  step '
+    .tickets |= with_entries(
+      if .value.status == "queued" and $tr[.key].state == "closed"
+      then .value.status = "closed" else . end)
+    | . as $s
+    | .frontier = [
+        $s.plan.scope[] as $t
+        | select($s.tickets[$t].status == "queued")
+        | select($tr[$t].state == "open")
+        | select(($tr[$t].labels | index("ready-for-human")) == null)
+        | select(all($tr[$t].blocked_by[];
+            if $s.tickets[.number] != null
+            then $s.tickets[.number].status == "merged"
+            else .state == "closed" end))
+        | $t
+      ] | .frontier |= sort_by(tonumber? // .)' --argjson tr "$tracker"
+
+  state_commit "$RUN_DIR" "$tmp"
+}
+
+"$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
+state_with_lock "$RUN_DIR" reconcile
+jq -r '.frontier[]' "$(state_file "$RUN_DIR")"
