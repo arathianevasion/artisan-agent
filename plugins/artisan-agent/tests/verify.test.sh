@@ -285,13 +285,13 @@ test_v_paraphrased_claims_follow_position_only_when_the_counts_agree() {
   echo '["A thing", "B thing"]' >c.json
   echo '{"acceptance": [{"criterion": "A thing", "met": true}, {"criterion": "B thing", "met": true}]}' >v.json
   echo '{"acceptance": [{"criterion": "the first, reworded", "met": true}, {"criterion": "the second, reworded", "met": false}]}' >r.json
-  assert_eq "true false" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed) | join(" ")')"
+  assert_eq "true false" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed | tostring) | join(" ")')"
   # With the counts differing, a paraphrased claim stays null: no guessing.
   echo '{"acceptance": [{"criterion": "the first, reworded", "met": true}]}' >r.json
-  assert_eq "null null" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed) | join(" ")')"
+  assert_eq "null null" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed | tostring) | join(" ")')"
   # Exact text still wins when the counts differ.
   echo '{"acceptance": [{"criterion": "b THING", "met": true}]}' >r.json
-  assert_eq "null true" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed) | join(" ")')"
+  assert_eq "null true" "$(python3 -I "$py" align c.json v.json r.json | jq -r 'map(.claimed | tostring) | join(" ")')"
 }
 
 test_v_a_ticket_the_verifier_fails_is_retried_by_a_fresh_worker_given_its_findings() {
