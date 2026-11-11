@@ -96,8 +96,6 @@ test_setup_writes_the_autocompact_override_and_a_rerun_changes_nothing() {
   merge_setup_pr
   assert_contains "$(run_setup)" "unchanged: the project is already set up"
 }
-  assert_eq "$before" "$(cksum <"$P/.claude/settings.json")"
-}
 
 test_a_project_value_for_the_override_is_kept() {
   seed

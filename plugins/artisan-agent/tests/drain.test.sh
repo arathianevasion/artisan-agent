@@ -194,7 +194,7 @@ test_chat_warns_above_30_and_asks_once_past_55() {
   assert_eq "warn ask 60%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
   # No reading: say nothing. The thresholds are the run's config.
   assert_eq "unknown -" "$("$DRAIN" chat "$RUN_DIR" --transcript "$TEST_TMPDIR/none.jsonl")"
-  "$SCRIPTS/state.sh" override "$RUN_DIR" chat_context.warn_percent 70 >/dev/null
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.chat_context = {warn_percent: 70}' >/dev/null
   assert_eq "ok 60%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
   assert_status 2 "$DRAIN" chat "$RUN_DIR"
 }
