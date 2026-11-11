@@ -78,6 +78,8 @@ After each edit, render again and show only what changed in one line, then the n
 
 ### 5. Get approval
 
+Open with the ADR and guardrail check for each plan, then the loop if the Artisan wants an ADR changed, as `${CLAUDE_PLUGIN_ROOT}/references/adr-check.md` describes. Any ADR edit lands before the plans are created.
+
 The Artisan's approval is the only thing that creates anything. Show the final render once more, with every ticket's acceptance criteria, and ask for approval of the plans as shown. Nothing is created from silence, or from a plan the Artisan has seen only in an earlier version.
 
 ### 6. Create the plan issues

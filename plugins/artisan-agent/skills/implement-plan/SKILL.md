@@ -73,6 +73,8 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 
 ### 3. Get the plan approved
 
+Open with the ADR and guardrail check, as `${CLAUDE_PLUGIN_ROOT}/references/adr-check.md` describes it: it is part of this approval, and it is run here when the route skipped `/artisan-agent:to-plan` (a Small change, a Bug, or a Feature without chunks), including a one-ticket run. It also holds the ADR adjustment loop.
+
 The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11); the rest is the Artisan's to approve or change.
 
 1. **Write the draft** as JSON in the run folder (`$(${CLAUDE_PLUGIN_ROOT}/scripts/state.sh run-dir <run-id>)/draft.json`): `run_id`, `repo` (`owner/name` on the tracker, as `docs/agents/issue-tracker.md` names it), `integration_branch` (`run/<run-id>`), `scope` (exactly the defined set of work), `waves`, `gates`, `suite_command` (the full suite, as the project runs it), and per ticket `title`, `model`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
