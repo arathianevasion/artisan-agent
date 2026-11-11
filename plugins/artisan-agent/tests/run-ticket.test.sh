@@ -238,3 +238,8 @@ test_refuses_to_overwrite_an_earlier_attempt() {
 test_rejects_missing_arguments() {
   assert_status 2 "$PLUGIN_ROOT/scripts/run-ticket.sh" --ticket 46
 }
+
+test_an_option_missing_its_value_is_a_usage_error() {
+  setup_run
+  assert_status 2 run_ticket --attempt
+}

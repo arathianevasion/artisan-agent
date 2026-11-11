@@ -118,3 +118,9 @@ test_reads_the_attempt_it_is_given() {
   assert_eq "completed -" "$(classify 1)"
   assert_status 2 classify 2
 }
+
+test_usage_prints_the_whole_header() {
+  local out
+  out=$("$PLUGIN_ROOT/scripts/classify-worker.sh" 2>&1) || true
+  assert_contains "$out" "Needs jq."
+}

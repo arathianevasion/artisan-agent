@@ -25,12 +25,18 @@
 
 set -euo pipefail
 
+# Print this header (the leading comment block) and exit 2.
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' >&2
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
   exit 2
 }
 
-[ $# -ge 1 ] || usage
+bad_usage() {
+  echo "wait-any.sh: $*" >&2
+  exit 2
+}
+
+case "${1:-}" in ''|-h|--help) usage ;; esac
 run_dir=$1
 shift
 timeout=110
@@ -38,14 +44,18 @@ interval=1
 seen=
 
 while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || bad_usage "$1 needs a value"
   case "$1" in
-    --timeout) timeout=${2:?}; shift 2 ;;
-    --interval) interval=${2:?}; shift 2 ;;
-    --seen) seen=${2:?}; shift 2 ;;
-    -h|--help) usage ;;
-    *) echo "wait-any.sh: unknown argument: $1" >&2; exit 2 ;;
+    --timeout) timeout=$2 ;;
+    --interval) interval=$2 ;;
+    --seen) seen=$2 ;;
+    *) bad_usage "unknown argument: $1" ;;
   esac
+  shift 2
 done
+
+printf '%s' "$timeout" | grep -Eq '^[0-9]+$' || bad_usage "--timeout must be whole seconds"
+printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || bad_usage "--interval must be a number of seconds"
 
 if [ ! -d "$run_dir" ]; then
   echo "wait-any.sh: no such run folder: $run_dir" >&2

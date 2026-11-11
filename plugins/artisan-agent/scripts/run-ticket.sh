@@ -54,16 +54,20 @@ extra=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run-dir) run_dir=${2:-}; shift 2 ;;
-    --ticket) ticket=${2:-}; shift 2 ;;
-    --prompt-file) prompt_file=${2:-}; shift 2 ;;
-    --workdir) workdir=${2:-}; shift 2 ;;
-    --estimate-usd) estimate=${2:-}; shift 2 ;;
-    --expected-minutes) expected_minutes=${2:-}; shift 2 ;;
-    --attempt) attempt=${2:-}; shift 2 ;;
-    --model) model=${2:-}; shift 2 ;;
-    --max-turns) max_turns=${2:-}; shift 2 ;;
-    --deadline-seconds) deadline_seconds=${2:-}; shift 2 ;;
+    --foreground|--) ;;
+    *) [ $# -ge 2 ] || die_usage "$1 needs a value" ;;
+  esac
+  case "$1" in
+    --run-dir) run_dir=$2; shift 2 ;;
+    --ticket) ticket=$2; shift 2 ;;
+    --prompt-file) prompt_file=$2; shift 2 ;;
+    --workdir) workdir=$2; shift 2 ;;
+    --estimate-usd) estimate=$2; shift 2 ;;
+    --expected-minutes) expected_minutes=$2; shift 2 ;;
+    --attempt) attempt=$2; shift 2 ;;
+    --model) model=$2; shift 2 ;;
+    --max-turns) max_turns=$2; shift 2 ;;
+    --deadline-seconds) deadline_seconds=$2; shift 2 ;;
     --foreground) foreground=1; shift ;;
     --) shift; extra=("$@"); break ;;
     *) die_usage "unknown argument: $1" ;;

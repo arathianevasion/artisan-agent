@@ -5,7 +5,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | Script | Does | Returns |
 |---|---|---|
 | `run-ticket.sh` | Launches one capped headless worker detached; always leaves an exit record | the runner's PID, at once |
-| `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`/`grew <path>` lines; 124 on timeout |
+| `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 
 Each script's header has its full usage.
@@ -49,7 +49,7 @@ Because `--max-turns` limits each turn rather than the whole run, the budget cap
 
 ## Completion
 
-A headless run is judged by its result text, never by its exit code alone: a run blocked by a hook exits 0 with `is_error: false`. The runner adds notes to every prompt that give the worker its file paths, tell it not to leave background commands running, and ask it to end its final reply with this line, only once the ticket is done and the result file is written:
+A worker's session is judged by its result text, never by its exit code alone: a session blocked by a hook exits 0 with `is_error: false`. The runner adds notes to every prompt that give the worker its file paths, tell it not to leave background commands running, and ask it to end its final reply with this line, only once the ticket is done and the result file is written:
 
 ```
 ARTISAN-WORKER: complete
@@ -69,6 +69,6 @@ The runner starts a new session (`setsid`, or perl's `POSIX::setsid` on macOS, w
 
 Not covered by the script tests; to do once by hand on the machine that will run workers:
 
-1. In a throwaway repo, launch a real logged-in worker with `run-ticket.sh --estimate-usd 0.25 --expected-minutes 150 -- --no-session-persistence`, using a prompt that keeps it busy cheaply for more than 2 hours (for example, sleep in short foreground steps and check a file between them).
+1. In a throwaway repo, launch a real logged-in worker with `run-ticket.sh --estimate-usd 1 --expected-minutes 150 --max-turns 60 -- --no-session-persistence --model haiku`. Use a prompt that keeps it busy cheaply for more than 2 hours, for example a foreground `sleep 540` repeated about 15 times with a file check between each. That gives a $2.00 budget and 60 turns, enough room that neither cap ends the run before the 2 hours.
 2. Close the launching terminal or chat at once.
 3. After 2 hours, check that `workers/<t>.1/runner.pid` is still alive. When it ends, check that `results/<t>.1.exit.json` exists and that `classify-worker.sh` gives the expected status.

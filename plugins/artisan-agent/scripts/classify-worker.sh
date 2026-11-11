@@ -9,7 +9,7 @@
 #   completed -                       the result text ends with the completion
 #                                     line and the result file exists
 #   not-completed no-completion-line  ended cleanly but the result text lacks
-#                                     the completion line (for example a run
+#                                     the completion line (for example a session
 #                                     blocked by a hook, which exits 0 with
 #                                     is_error false)
 #   not-completed no-result-file      completion line but no result file
@@ -21,8 +21,8 @@
 #   failed crashed                    no readable JSON output
 #   failed vanished                   no exit record and the runner is gone
 #
-# Every "failed" is a failed attempt. A headless run is judged by its result
-# text, never by its exit code alone.
+# Every "failed" is a failed attempt. A worker's session is judged by its
+# result text, never by its exit code alone.
 #
 # Exit status: 0 when it classified, 2 on bad usage or an unknown attempt.
 # Needs jq.
@@ -31,7 +31,12 @@ set -euo pipefail
 
 COMPLETION_LINE="ARTISAN-WORKER: complete"
 
-[ $# -ge 2 ] || { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { # print this header (the leading comment block) and exit 2
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
+  exit 2
+}
+
+[ $# -ge 2 ] || usage
 run_dir=$1 ticket=$2 attempt=${3:-1}
 key=$ticket.$attempt
 worker_dir=$run_dir/workers/$key

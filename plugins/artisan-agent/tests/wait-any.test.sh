@@ -102,3 +102,17 @@ test_waits_for_a_results_folder_that_does_not_exist_yet() {
 test_rejects_a_missing_run_folder() {
   assert_status 2 wait_any "$TEST_TMPDIR/nope" --timeout 1
 }
+
+test_bad_options_are_usage_errors_not_changes() {
+  setup_run
+  assert_status 2 wait_any "$RUN" --timeout
+  assert_status 2 wait_any "$RUN" --timeout abc
+  assert_status 2 wait_any "$RUN" --interval -1
+}
+
+test_help_prints_the_whole_header() {
+  local out
+  out=$(wait_any --help 2>&1) || true
+  assert_contains "$out" "Exit status: 0 on a change, 124 on timeout, 2 on bad usage."
+  assert_contains "$out" "Portable to bash 3.2"
+}
