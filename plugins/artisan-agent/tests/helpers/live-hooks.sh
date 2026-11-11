@@ -20,6 +20,7 @@
 
 live_hooks_args() { # plugin-root dir
   local root=$1 dir=$2
+  case "$root$dir" in *[\ \#\&\|]*) echo "live_hooks_args: no spaces, #, & or | in paths: $root $dir" >&2; return 1 ;; esac
   mkdir -p "$dir" || return 1
   sed "s#\${CLAUDE_PLUGIN_ROOT}#$root#g" "$root/hooks/hooks.json" >"$dir/plugin-hooks.settings.json" || return 1
   printf '%s' "--setting-sources project,local --settings $dir/plugin-hooks.settings.json"
