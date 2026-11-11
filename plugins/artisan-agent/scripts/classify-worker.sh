@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Classify one attempt of a ticket's worker from the files it left.
+#
+# Usage: classify-worker.sh <run-dir> <ticket> [attempt]   (attempt defaults to 1)
+#
+# Prints one line, "<status> <reason>":
+#
+#   running -                         no exit record and the runner is alive
+#   completed -                       the result text ends with the completion
+#                                     line and the result file exists
+#   not-completed no-completion-line  ended cleanly but the result text lacks
+#                                     the completion line (for example a session
+#                                     blocked by a hook, which exits 0 with
+#                                     is_error false)
+#   not-completed no-result-file      completion line but no result file
+#   failed deadline                   the runner stopped it at its deadline
+#   failed stopped                    the runner was told to stop it
+#   failed budget                     hit --max-budget-usd
+#   failed turns                      hit --max-turns
+#   failed error                      claude reported an error
+#   failed crashed                    no readable JSON output
+#   failed vanished                   no exit record and the runner is gone
+#
+# Every "failed" is a failed attempt. A worker's session is judged by its
+# result text, never by its exit code alone.
+#
+# Exit status: 0 when it classified, 2 on bad usage or an unknown attempt.
+# Needs jq.
+
+set -euo pipefail
+
+COMPLETION_LINE="ARTISAN-WORKER: complete"
+
+usage() { # print this header (the leading comment block) and exit 2
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
+  exit 2
+}
+
+[ $# -ge 2 ] || usage
+run_dir=$1 ticket=$2 attempt=${3:-1}
+key=$ticket.$attempt
+worker_dir=$run_dir/workers/$key
+exit_record=$run_dir/results/$key.exit.json
+
+command -v jq >/dev/null 2>&1 || { echo "classify-worker.sh: needs jq" >&2; exit 2; }
+
+if [ ! -f "$exit_record" ]; then
+  if [ ! -f "$worker_dir/runner.pid" ]; then
+    echo "classify-worker.sh: no attempt $attempt of ticket $ticket in $run_dir" >&2
+    exit 2
+  fi
+  if kill -0 "$(cat "$worker_dir/runner.pid")" 2>/dev/null; then
+    echo "running -"
+  else
+    echo "failed vanished"
+  fi
+  exit 0
+fi
+
+case "$(jq -r .reason "$exit_record")" in
+  deadline) echo "failed deadline"; exit 0 ;;
+  stopped) echo "failed stopped"; exit 0 ;;
+esac
+
+output=$worker_dir/output.json
+if ! jq -e 'type == "object" and .type == "result"' "$output" >/dev/null 2>&1; then
+  echo "failed crashed"
+  exit 0
+fi
+
+subtype=$(jq -r '.subtype // ""' "$output")
+case "$subtype" in
+  error_max_budget_usd) echo "failed budget"; exit 0 ;;
+  error_max_turns) echo "failed turns"; exit 0 ;;
+esac
+if [ "$(jq -r '.is_error // false' "$output")" != false ] || [ "$subtype" != success ]; then
+  echo "failed error"
+  exit 0
+fi
+
+last_line=$(jq -r '.result // ""' "$output" | awk 'NF { last = $0 } END { print last }' | sed 's/[[:space:]]*$//')
+if [ "$last_line" != "$COMPLETION_LINE" ]; then
+  echo "not-completed no-completion-line"
+elif [ ! -f "$run_dir/results/$key.result.json" ]; then
+  echo "not-completed no-result-file"
+else
+  echo "completed -"
+fi

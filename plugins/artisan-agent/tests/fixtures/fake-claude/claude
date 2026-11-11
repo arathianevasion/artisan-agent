@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# A stand-in for `claude -p --output-format json`, for the runner's tests.
+# Put this folder first on PATH. FAKE_CLAUDE_MODE picks the behaviour:
+#
+#   complete    writes $ARTISAN_RESULT_FILE, ends with the completion line, exit 0
+#   no-marker   writes $ARTISAN_RESULT_FILE, but no completion line, exit 0
+#   blocked     a run stopped by a UserPromptExpansion hook: 0 turns, exit 0,
+#               is_error false (the shape research ticket #38 observed)
+#   budget      hit --max-budget-usd: subtype error_max_budget_usd, exit 1
+#   turns       hit --max-turns: subtype error_max_turns, exit 1
+#   api-error   is_error true with subtype success (seen live when not logged in)
+#   nonzero     prints nothing, exits 3
+#   crash       kills itself with SIGSEGV, writing nothing
+#   sleep       leaves a stray background `sleep` in its process group, sleeps
+#               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
+#
+# It records its arguments, one "[arg]" per line, to $FAKE_CLAUDE_ARGS, its
+# working directory and environment of interest to $FAKE_CLAUDE_ENV, and its
+# PID to $FAKE_CLAUDE_PID, when those are set.
+
+[ -n "${FAKE_CLAUDE_PID:-}" ] && echo $$ >"$FAKE_CLAUDE_PID"
+[ -n "${FAKE_CLAUDE_ARGS:-}" ] && printf '[%s]\n' "$@" >"$FAKE_CLAUDE_ARGS"
+if [ -n "${FAKE_CLAUDE_ENV:-}" ]; then
+  {
+    echo "PWD=$PWD"
+    echo "ARTISAN_RESULT_FILE=${ARTISAN_RESULT_FILE:-}"
+    echo "ARTISAN_FINDINGS_FILE=${ARTISAN_FINDINGS_FILE:-}"
+  } >"$FAKE_CLAUDE_ENV"
+fi
+
+result() { # subtype is_error num_turns text
+  local text
+  text=$(printf '%s' "$4" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR > 1 ? "\\n" : ""), $0}')
+  printf '{"type":"result","subtype":"%s","is_error":%s,"num_turns":%s,"total_cost_usd":0.01,"result":"%s"}\n' \
+    "$1" "$2" "$3" "$text"
+}
+
+write_result_file() { echo '{"criteria":[]}' >"$ARTISAN_RESULT_FILE"; }
+
+case "${FAKE_CLAUDE_MODE:-complete}" in
+  complete)
+    write_result_file
+    result success false 4 "Built the ticket.
+
+ARTISAN-WORKER: complete"
+    ;;
+  no-marker)
+    write_result_file
+    result success false 4 "Built the ticket."
+    ;;
+  blocked)
+    result success false 0 "UserPromptExpansion operation blocked by hook: use /artisan-agent:grill instead"
+    ;;
+  budget)
+    result error_max_budget_usd true 9 ""
+    exit 1
+    ;;
+  turns)
+    result error_max_turns true 40 ""
+    exit 1
+    ;;
+  api-error)
+    result success true 1 "Not logged in · Please run /login"
+    exit 1
+    ;;
+  nonzero)
+    echo "fake claude: boom" >&2
+    exit 3
+    ;;
+  crash)
+    kill -SEGV $$
+    ;;
+  sleep)
+    sleep 300 &
+    sleep "${FAKE_CLAUDE_SLEEP:-30}"
+    write_result_file
+    result success false 4 "Slept.
+
+ARTISAN-WORKER: complete"
+    ;;
+esac
