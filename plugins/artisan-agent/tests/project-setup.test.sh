@@ -88,6 +88,28 @@ test_fresh_repo_gets_one_pr_with_every_item_and_the_main_checkout_is_untouched()
   assert_eq 1 "$(git -C "$P" worktree list | wc -l | tr -d ' ')"
 }
 
+test_setup_writes_the_autocompact_override_and_a_rerun_changes_nothing() {
+  seed
+  run_setup >/dev/null
+  assert_eq 40 "$(branch_file .claude/settings.json | jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')"
+  assert_eq null "$(branch_file .claude/settings.json | jq '.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW')" "the window is never forced"
+  merge_setup_pr
+  assert_contains "$(run_setup)" "unchanged: the project is already set up"
+}
+  assert_eq "$before" "$(cksum <"$P/.claude/settings.json")"
+}
+
+test_a_project_value_for_the_override_is_kept() {
+  seed
+  mkdir -p "$P/.claude"
+  printf '{"env":{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"55","OTHER":"1"}}\n' >"$P/.claude/settings.json"
+  git -C "$P" add -A && git -C "$P" commit -q -m own && git -C "$P" push -q origin main
+  local out; out=$(run_setup)
+  assert_contains "$out" "kept: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is \"55\""
+  assert_eq 55 "$(branch_file .claude/settings.json | jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')"
+  assert_eq 1 "$(branch_file .claude/settings.json | jq -r '.env.OTHER')"
+}
+
 test_deny_rules_match_the_replaced_skill_list() {
   seed
   run_setup >/dev/null

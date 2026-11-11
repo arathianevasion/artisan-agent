@@ -188,6 +188,7 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
   assert_contains "$out" "Total estimate: \$10.00"
   assert_contains "$out" "Max Agents: 5"
   for key in max_agents sweep_minutes context.drain_percent context.review_percent \
+    chat_context.warn_percent chat_context.compact_percent chat_context.window_tokens \
     overrun_allowance_percent usage_reserve.five_hour_reserve_percent \
     usage_reserve.seven_day_ceiling_percent stale_usage_minutes attempts_per_ticket \
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \

@@ -101,6 +101,9 @@ How the plan step reads the project config, estimates a run and records the numb
 | sweep | `sweep_minutes` | 5 |
 | context drain | `context.drain_percent` | 30 |
 | context review | `context.review_percent` | 50 |
+| chat warning | `chat_context.warn_percent` | 30 |
+| chat automatic compaction | `chat_context.compact_percent` | 40 |
+| chat expected window (tokens) | `chat_context.window_tokens` | 1000000 |
 | overrun allowance | `overrun_allowance_percent` | 25 |
 | usage reserve | `usage_reserve.five_hour_reserve_percent`, `usage_reserve.seven_day_ceiling_percent` | 20, 90 |
 | stale usage reading | `stale_usage_minutes` | 10 |
@@ -256,13 +259,14 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 # Context drain and resume
 
-Neither tier ever stops to compact (#59). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
+Neither tier ever stops to compact (#59); the chat is compacted by Claude Code at 40% and never asks the Artisan to (#104). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
 | `drain.sh percent --transcript F [--window N]` | either | the context used, from the transcript's last main-thread usage record against the model's window: `<percent> <used> <window>`, or `unknown` | 0, 2 |
 | `drain.sh decide --tier T --percent P --outstanding N [--marker] [--drain P] [--review P]` | either | the bands alone: `<band> <percent>% <dispatch\|process\|handoff>[ risk-gate]` | 0, 2 |
-| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat, a running orchestrator | 0, 1 |
+| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat tier, a running orchestrator (the chat itself uses `drain.sh chat`) | 0, 1 |
+| `drain.sh chat <run-dir> --transcript F` | chat | the chat's context: `ok <percent>%` (30 or under), `warn <percent>%` (the chat ends its message with a one-line warning), `warn ask <percent>%` (past 55% with no compaction: also the one fallback `/compact` ask, printed once; the marker `chat-compact-asked` in the run folder is cleared by a reading back under the line), `unknown -`. Thresholds and window: `chat_context.*` in the plan config (defaults 30, 40, 1,000,000) | 0, 2 |
 | `drain.sh handoff <run-dir>` | orchestrator | records the hand-off, launches the next orchestrator for the same wave (`wave.sh launch --handoff`), writes the hand-off report as the result file: `handed-off <id> <attempt> <pid>`, or `none` when nothing is left | 0, 1, 6 not the running orchestrator |
 | `drain.sh gate <run-dir> <ticket> <percent>` | orchestrator | a risk gate on a merge processed at the review band: its dependents wait for it (`wave.sh dispatch` 5, off the frontier), nothing else does; a `risk-gate` decision | 0, 4, 6 not merged |
 | `drain.sh gate-cleared <run-dir> <ticket> [--by NAME]` | chat | the Artisan cleared it | 0, 6 no gate waiting |
