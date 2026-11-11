@@ -115,7 +115,7 @@ For each returned result, in this order:
    Tickets from `to-tickets` are agent-ready by construction and should never be triaged; triage is for work that arrived from someone else. A ticket an agent invented mid-run is exactly that. It has not been grilled, sized to a context window, or checked for whether it is really a tracer bullet. Run `/artisan-agent:triage` on it before it is eligible for any wave, and never let an untriaged discovery enter the dispatch queue — that is how an unattended run turns one agent's guess into three more agents' work.
 
    Only once triage has admitted it do you add blocking edges and recompute the graph. If that changes the wave structure, say so and show what moved before continuing. If triage rejects or reshapes it, that is a fine outcome and belongs in the report.
-5. **Surface review findings.** `/code-review` findings arrive with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
+5. **Surface review remarks.** `/code-review` remarks arrive (`review.remarks`) with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
 
 Only after every ticket in the wave is closed or explicitly marked blocked, recompute the frontier and dispatch the next wave.
 
@@ -141,7 +141,7 @@ After the final wave:
 Completed: N of M tickets
 Blocked: #<number> (<description>) — <one line why>
 Discovered, awaiting triage: #<number> (<description>), from #<number> (<description>)
-Review findings not acted on: <count, grouped by ticket, each with number and description>
+Review remarks not acted on: <count, grouped by ticket, each with number and description>
 Branches left unmerged: <branch, with ticket number and description>
 ```
 

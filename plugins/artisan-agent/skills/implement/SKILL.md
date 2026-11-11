@@ -25,7 +25,7 @@ Take these from the prompt that invoked you:
 - **Leave nothing running.** Run commands in the foreground. If a test needs a server or watcher, stop it before moving on. A background process outlives you and holds the run's deadline open.
 - **Commit early and often**, with honest messages saying what is and isn't done. A crash, timeout or budget cap can come at any moment; uncommitted work is unverifiable and lost.
 - **Never skip a step to save budget.** `tdd` and the full two-axis `code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
-- **Keep to the ticket.** Missing work you find goes in the record's `discovered` list, not into your diff. Adding scope is controversy criterion 2.
+- **Keep to the ticket.** Missing work you find goes in the record's `findings` list, not into your diff. Adding scope is controversy criterion 2.
 - **Design never goes between workers.** If the ticket can't be built without changing an interface another ticket owns, stop: record the question and finish with status `blocked`.
 
 ## 1. Read before you build
@@ -56,7 +56,7 @@ Record each one as in `${CLAUDE_PLUGIN_ROOT}/references/decision-record.md`, wit
 
 A decision that is controversial and **not** easy-to-reverse taste is not yours to make. Stop and finish with status `blocked`, with the question and your recommendation in the record.
 
-## 4. Review, then act on the findings
+## 4. Review, then act on the remarks
 
 Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
 
@@ -73,7 +73,7 @@ Sort every finding the review returns into one of these, and act on it:
 
 Where a fix would itself meet a controversy criterion or an "Always ask" item, don't make it: record it as a decision card instead. When a finding could be either a hard violation or a judgement call, it's a judgement call.
 
-`review.findings` holds what the review found. A problem you found and fixed yourself while building isn't a review finding; mention it in `notes` if it matters.
+`review.remarks` holds what the review found. A problem you found and fixed yourself while building isn't a review finding; mention it in `notes` if it matters.
 
 Run the full suite again after the fixes and commit. One review pass is enough. Run a second only when the fixes changed more code than the findings pointed at.
 

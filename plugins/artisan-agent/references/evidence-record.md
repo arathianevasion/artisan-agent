@@ -11,7 +11,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | Field | Required | Values |
 |---|---|---|
 | `ticket` | yes | The ticket's id, as the orchestrator named it |
-| `status` | yes | `complete` (committed, suite green, review ran), `blocked` (can't be finished as written; `discovered` or `unsure` says why) or `failed` (the worker errored; `notes` says where) |
+| `status` | yes | `complete` (committed, suite green, review ran), `blocked` (can't be finished as written; `findings` or `unsure` says why) or `failed` (the worker errored; `notes` says where) |
 | `branch` | yes | The worker's branch |
 | `commit` | yes | The branch tip the record describes; `null` only if nothing was committed |
 | `base` | yes | The commit the branch started from |
@@ -19,8 +19,8 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `tests` | yes | `{"suite_passed": true, "command": "...", "summary": "..."}`: the full-suite run at the end, with the command and its result line. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
 | `unsure` | yes | What the worker was unsure of, one sentence each; `[]` if nothing |
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
-| `review` | yes | `{"ran": true, "findings": [...]}`, every `code-review` finding with what was done about it (below) |
-| `discovered` | yes | Work found outside the ticket: `{"title", "why", "blocks": [ticket ids]}`; `[]` if none |
+| `review` | yes | `{"ran": true, "remarks": [...]}`, every `code-review` remark with what was done about it (below) |
+| `findings` | yes | Work found outside the ticket: `{"title", "why", "blocks": [ticket ids]}`; `[]` if none |
 | `notes` | no | Free text for late facts: anything the orchestrator should know that fits nowhere else. One paragraph |
 
 Cost is not written by the worker. Whoever reads the session's `--output-format json` output adds the session's `total_cost_usd` as `cost_usd`.
@@ -69,15 +69,15 @@ For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decisio
 }
 ```
 
-### `review.findings` entries
+### `review.remarks` entries
 
 | Field | Values |
 |---|---|
 | `axis` | `standards` or `spec` |
 | `severity` | `bug`, `violation` (of a documented standard, naming the file and rule), `missing`, `scope` or `judgement` |
-| `note` | The finding, in one sentence |
+| `note` | The remark, in one sentence |
 | `disposition` | `fixed`, `decision` (left unchanged; a card in `decisions` records it) or `not_acted` |
-| `why` | Required for `not_acted`: why the finding was left |
+| `why` | Required for `not_acted`: why the remark was left |
 
 ## Example
 
@@ -115,11 +115,11 @@ For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decisio
   ],
   "review": {
     "ran": true,
-    "findings": [
+    "remarks": [
       { "axis": "standards", "severity": "violation", "note": "CODING_STANDARDS.md: library code must not print", "disposition": "fixed" }
     ]
   },
-  "discovered": [],
+  "findings": [],
   "notes": "Export reads every invoice into memory; fine at today's volumes."
 }
 ```
