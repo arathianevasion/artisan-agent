@@ -30,13 +30,13 @@ Each change to the skill was followed by another run of the samples. The early r
 - Workers skipped `tdd` and the review, or ran the review without its sub-agents, "to save budget" with under $0.20 spent. The skill now says never to skip a step to save budget.
 - The first `unnamed-seam` ticket could be met without any new seam (the worker tested through `cli.main` and carded *not* extracting one). The ticket now needs the CSV produced outside the command line, and `verify` checks a public function was added and carded as job 3.
 
-The last run, after the code-review fixes, passed every check on all three samples:
+The last run, after the code-review fixes, passed every check on the three original samples. After the worker-stops change (#87), `public-interface` and `unnamed-seam` were re-run and pass every check; `unnamed-seam` cost $0.37 and its card now has to name the function it added (`export.invoices_csv`):
 
 | Sample | Cost | Decision cards |
 |---|---|---|
 | `named-seam` | $0.28 | ASCII-only "letters" (product taste) |
 | `unnamed-seam` | $0.30 | new seam `export.to_csv(invoices)` (job 3); LF line endings; three review smells left as is (command table, `Invoice` type, fixture rows in tests) |
-| `public-interface` | 04: late fees, with a function later tickets must import | the CLI outputs and exit code; a public function added outside `cli.py`; status `complete`, not `blocked`; a job 3 decision card naming that function, with criterion 3 |
+| `public-interface` | $0.24 | new public function `late_fee(invoice_number, days_late)` in `late_fees.py` (job 3, criterion 3, no stop); negative days clamp to 0; command table left as is |
 | `review-seeds` | $0.30 | leave the `street, city, postcode` clump; keep the name `check_address` |
 
 In `review-seeds` the `print()` violation was fixed after `code-review` reported it. The boundary bug breaks an acceptance criterion, so the worker caught it test-first and committed the fix before the review ran. The review reported it again and the record lists it as fixed. A seed only a review could find would need to sit outside every criterion.

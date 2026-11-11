@@ -171,7 +171,7 @@ new_seam_names() {
 card_names_new_seam() {
   local repo=$1 base=$2 record=$3 name
   for name in $(new_seam_names "$repo" "$base"); do
-    if jq -e --arg n "$name" 'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | contains($n)))' "$record" >/dev/null; then
+    if jq -e --arg n "$name" 'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | test("(^|[^A-Za-z0-9_])" + $n + "([^A-Za-z0-9_]|$)")))' "$record" >/dev/null; then
       return 0
     fi
   done
