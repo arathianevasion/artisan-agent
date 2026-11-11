@@ -31,7 +31,7 @@ upstream_names() {
   } | sort -u
 }
 
-standards_file() { # name heading
+standards_file() { # title
   printf '# %s\n\nIndividual level: these follow the Artisan into every project. Product and team standards win a contradiction.\n\n## Always ask\n\nThings that must always come back to the Artisan.\n' "$1"
 }
 
@@ -43,7 +43,7 @@ cmd_init() {
     [ -e "$path" ] && continue
     case $f in
       satisfaction.jsonl) : >"$path" ;;
-      *) standards_file "Individual ${f%.md}" >"$path" ;;
+      *) standards_file "Individual $(printf %s "${f%.md}" | tr "A-Z_" "a-z ")" >"$path" ;;
     esac
     paths="$paths $f"
   done
@@ -55,7 +55,7 @@ cmd_init() {
   fi
   if [ -n "$paths" ]; then
     # Commit only the files setup created, never the Artisan's own uncommitted edits.
-    git -C "$HOME_DIR" config user.name >/dev/null 2>&1 || ident="-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost"
+    { git -C "$HOME_DIR" config user.name && git -C "$HOME_DIR" config user.email; } >/dev/null 2>&1 || ident="-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost"
     # shellcheck disable=SC2086
     git -C "$HOME_DIR" add -- $paths
     # shellcheck disable=SC2086
@@ -70,7 +70,7 @@ cmd_init() {
 cmd_scan() {
   local up name pid scope ppath ver value
   up=$(upstream_names)
-  json installs "$CFG" | while IFS=$'\t' read -r pid scope ppath ver; do
+  json installs "$CFG" | while IFS=$'\037' read -r pid scope ppath ver; do
     printf 'project-install:%s:%s:%s\tproject-install\t%s %s-scope install (version %s) at %s; projects should only enable it\n' \
       "$pid" "$scope" "$ppath" "$pid" "$scope" "$ver" "$ppath"
   done
@@ -107,7 +107,7 @@ cmd_remove() {
     rest=${id#*:}
     case $kind in
       stale-skill|plugin-skill) trash_skill "$rest" ;;
-      override) json drop-override "$CFG" "$rest"; echo "dropped skillOverrides entry: $rest" ;;
+      override) json drop-override "$CFG" "$rest" ;;
       project-install)
         pid=${rest%%:*}; rest=${rest#*:}; scope=${rest%%:*}; ppath=${rest#*:}
         if [ ! -d "$ppath" ]; then

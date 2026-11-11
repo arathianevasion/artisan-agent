@@ -32,7 +32,7 @@ def load(path):
 def save(path, data):
     tmp = path + ".machine-setup.tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.replace(tmp, path)
 
@@ -79,7 +79,7 @@ def installs(cfg):
             continue
         for r in records:
             if r.get("scope") in ("project", "local"):
-                print("\t".join([pid, r["scope"], r.get("projectPath", ""), str(r.get("version", "unknown"))]))
+                print("\x1f".join([pid, r["scope"], r.get("projectPath", ""), str(r.get("version", "unknown"))]))
 
 
 def overrides(cfg, names):
@@ -98,6 +98,9 @@ def drop_override(cfg, name):
         if not ov:
             del settings["skillOverrides"]
         save(path, settings)
+        print("dropped skillOverrides entry: " + name)
+    else:
+        print("skipped: no skillOverrides entry " + name)
 
 
 if __name__ == "__main__":
