@@ -24,9 +24,9 @@ test_craft_has_the_route_test_in_order() {
   local body; body=$(cat "$CRAFT")
   assert_contains "$body" 'propose the bigger route'
   local a b c
-  a=$(grep -n 'Can the destination' "$CRAFT" | head -1 | cut -d: -f1)
-  b=$(grep -n 'Does it need more than one ticket' "$CRAFT" | head -1 | cut -d: -f1)
-  c=$(grep -n 'a \*\*Bug\*\* if something is broken' "$CRAFT" | head -1 | cut -d: -f1)
+  a=$(grep -n 'Can the destination' "$CRAFT" | head -1 | cut -d: -f1 || true)
+  b=$(grep -n 'Does it need more than one ticket' "$CRAFT" | head -1 | cut -d: -f1 || true)
+  c=$(grep -n 'a \*\*Bug\*\* if something is broken' "$CRAFT" | head -1 | cut -d: -f1 || true)
   [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] || fail "route test questions not all found"
   [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] || fail "route test questions out of order"
 }

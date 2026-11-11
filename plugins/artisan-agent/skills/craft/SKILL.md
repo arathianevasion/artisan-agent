@@ -29,7 +29,7 @@ Put the proposal in front of the Artisan as one message:
 - the route and **why**, naming which test answer decided it and the part of the request that decided it (rule 3 in ARTISAN.md);
 - the strongest alternative route and why it lost;
 - the steps of the route with the **exact command** for each (below);
-- a prompt to approve or change the route. If they change it, adopt their route without argument; if the change looks costly (a Feature sent down as a Small change), say so once.
+- a prompt to approve or change the route. If they change it, adopt their route without argument.
 
 Start nothing before they answer.
 
@@ -39,7 +39,7 @@ Name our replacements as `/artisan-agent:<name>` always, even when the skill shi
 
 **Effort** (foggy; no statable destination):
 
-1. `/mattpocock-skills:wayfinder`: map the effort. Typed only; the Artisan types it.
+1. `/mattpocock-skills:wayfinder`: map the effort. Typed only (only the Artisan can invoke it), so the Artisan types it.
 2. `/artisan-agent:to-spec`: turn the decisions into a spec.
 3. `/mattpocock-skills:to-tickets`: slice the spec into tickets. Typed only; the Artisan iterates the slicing until happy, so approval of the slices happens there.
 4. `/artisan-agent:to-plan`: chunk the tickets into plans.
@@ -54,7 +54,7 @@ Name our replacements as `/artisan-agent:<name>` always, even when the skill shi
 
 **Small change** (clear, one ticket): draft one ticket with acceptance criteria, section 4.
 
-**Bug** (one ticket, something is broken): run `diagnosing-bugs` (the Skill tool, `mattpocock-skills:diagnosing-bugs`) to reproduce it and find the cause, then draft one ticket whose acceptance is a failing test, section 4.
+**Bug** (one ticket, something is broken): run `/mattpocock-skills:diagnosing-bugs` yourself (through the Skill tool) to reproduce it and find the cause, then draft one ticket whose acceptance is a failing test, section 4.
 
 For Effort and Feature, you hand the Artisan the first command and stop. You don't run `wayfinder`, `to-tickets`, `grill` or `to-spec` for them. At each step the Artisan finishes, if they come back to you, name the next command again.
 
