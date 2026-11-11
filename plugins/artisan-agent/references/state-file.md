@@ -12,17 +12,23 @@ The state file is the record of a run's plan, progress and evidence that lets an
       state.json                   the state file
       state.lock                   the writer lock, while held (a symlink to the holder's pid)
       results/
-        <ticket>.<n>.result.json   attempt n's result file (the result contract in implement-plan's dispatch.md)
+        <ticket>.<n>.result.json   attempt n's result file: the worker's evidence record (references/evidence-record.md)
         <ticket>.<n>.exit.json     attempt n's exit record: the worker ended (written by run-ticket.sh, even on a crash)
+        orchestrator-w<w>.<n>.*    the same two files for wave w's orchestrator; its result file is the wave report
         findings/<ticket>.jsonl    the worker's findings, one JSON object per line
+      workers/<id>.<n>/            per session: runner.pid, prompt.md, output.json, logs (scripts/README.md)
+      prompts/<id>.<n>.md          the prompt wave.sh wrote for each session
+      merges/<ticket>.<n>.suite.log  the full suite's output after merging; <ticket>.comment.md, the evidence posted
 ```
+
+Beside the repo, never inside it: `<repo>-wt/run-<run-id>/` is the run's integration worktree (the integration branch checked out; every merge happens here) and `<repo>-wt/<run-id>-<ticket>.<n>/` each worker's worktree, removed once its ticket merges. `scripts/wave.sh` makes and removes them.
 
 The run folder is always in the main checkout, never a worktree: `state.sh run-dir <run-id>` prints it from anywhere in the repo. `state.sh init` refuses a run folder git does not ignore.
 
 ## Rules
 
 - **Schema version.** `schema_version` is `1`. Every script refuses to read or write a file with another version. A change to the shape bumps it and updates this page.
-- **One writer.** A writer holds `state.lock`, a symlink whose target is its pid. The orchestrator holds it while a wave runs, the chat between waves: take it with `state.sh lock <run-dir> <pid>` using a long-lived pid (the session's process, not a one-off shell) and export `ARTISAN_WRITER_PID=<pid>` so every script call writes under it. A call with no lock held takes it for itself and releases it. Anyone else is refused with exit status `3` and the holder's pid. A lock whose pid is dead is stale; the next writer removes it and carries on.
+- **One writer.** A writer holds `state.lock`, a symlink whose target is its pid. The orchestrator holds it while a wave runs, the chat between waves. `wave.sh launch` hands the chat's lock to the orchestrator's runner (`run-ticket.sh --lock-from`) before the orchestrator's session starts, the runner exports its own pid to that session as `ARTISAN_WRITER_PID`, and once the orchestrator exits the lock is stale and `wave.sh status` takes it back for the chat. Otherwise: take it with `state.sh lock <run-dir> <pid>` using a long-lived pid (the session's process, not a one-off shell) and export `ARTISAN_WRITER_PID=<pid>` so every script call writes under it. A call with no lock held takes it for itself and releases it. Anyone else is refused with exit status `3` and the holder's pid. A lock whose pid is dead is stale; the next writer removes it and carries on.
 - **One-step rewrite.** Every write produces the whole new file as a temp file in the run folder, checks it is valid JSON of this schema version, and renames it over `state.json`. An interrupted writer leaves a stray `.state.json.tmp.<pid>` and the previous state file untouched. A write that changes nothing is skipped, so the file is only rewritten when an event happened.
 - **Files are the truth, git and the tracker are the facts.** Result files, exit records and findings files say what workers did; git says what is merged; the tracker says what is open and what blocks what. The state file is rebuilt from them by the sweep and the reconciler, and running either twice on the same inputs changes nothing.
 
@@ -37,6 +43,8 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
 | verified | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
+| closed on the tracker | `closed <run-dir> <ticket>` | `tracker_closed` set |
+| any other event | `event <run-dir> <json>` | logged in `events` |
 | decision waits | `decision <run-dir> <decision.json>` | adds to the decision queue |
 | orchestrator spend | `cost <run-dir> <usd>` | adds to `costs` |
 | number overridden for this run | `override <run-dir> <key> <value>` | changes `plan.config` and records `plan.overrides`; `.artisan-agent/config.yml` is never written |
@@ -53,13 +61,15 @@ Top level:
 | `repo` | top-level | `owner/name` on the tracker |
 | `plan` | top-level | the approved plan, as approved (below) |
 | `tickets` | top-level | per-ticket progress, keyed by ticket number as a string (below) |
-| `integration` | top-level | `branch`: the run's integration branch; `merges`: `[{ticket, commit}]` in merge order |
+| `integration` | top-level | `branch`: the run's integration branch; `merges`: `[{ticket, commit}]` in merge order; `worktree` and `base`, once `wave.sh start` has made the integration worktree |
 | `findings` | top-level | the findings log: each line of each findings file, as `{from, seq, ...the worker's object}` (`{from, seq, raw}` if the line is not a JSON object) |
 | `findings_read` | top-level | per ticket, how many complete lines of its findings file are already logged |
 | `costs` | top-level | `workers_usd` (sum of tickets' `cost_usd`), `orchestrator_usd`, `total_usd` |
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}` |
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
+| `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`. Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
+| `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
 `plan`, copied from the approved plan by `state.sh init <run-dir> <plan.json>`. The plan file needs `run_id`, `repo`, `integration_branch` and `scope`; the rest default. `state.sh` never reads `config.yml` itself: the plan step (`plan.sh build`) reads it and puts its numbers into the plan.
 
@@ -75,6 +85,8 @@ Top level:
 | `estimate_usd` | the approved estimate, in estimated dollars (`budget_usd` adds the overrun allowance) |
 | `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml` |
 | `overrides` | `{<key>: {value, project}}`, one per number overridden for this run, with the project's value it replaced |
+| `suite_command` | the full suite, run with `sh -c` in the integration worktree after every merge |
+| `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, $1, the longest ticket deadline plus 30 minutes) |
 
 `tickets.<n>`:
 
@@ -90,6 +102,14 @@ Top level:
 | `merge_commit` | the merge commit on the integration branch |
 | `cost_usd` | from the result file (`cost_usd`, or `claude -p`'s `total_cost_usd`) |
 | `failures` | `[{attempt, reason, at}]`, one per failed attempt |
+| `worktree`, `base` | the current attempt's worktree and the integration commit it branched from (`wave.sh dispatch`) |
+| `suite` | `{command, passed, log}` from the last merge attempt |
+| `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |
+| `blocked_reason` | why `wave.sh` blocked it (a conflict, a red suite, an attempt that did not complete) |
+
+## The event log
+
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), plus `integration` and `orchestrator` for the run's own steps. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, merge, closed, in that order.
 
 ## The sweep
 
