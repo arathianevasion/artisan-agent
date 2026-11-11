@@ -6,11 +6,11 @@
 # Usage: reconcile.sh <run-dir>
 #
 # A new orchestrator runs this before anything else. It:
-#   1. runs the sweep (sweep.sh) over in-flight tickets and findings;
-#   2. marks merged every ticket in scope whose branch was merged into the
+#   1. marks merged every ticket in scope whose branch was merged into the
 #      integration branch (with --no-ff, so the merge commit is on its
 #      first-parent line), recording that merge commit; git is the fact, the
 #      state file only a claim;
+#   2. runs the sweep (sweep.sh) over in-flight tickets and findings;
 #   3. reads each ticket in scope from the tracker (gh api): open or closed,
 #      labels, and its native blocked-by list;
 #   4. marks closed any queued ticket the tracker has closed without a merge;
@@ -21,8 +21,9 @@
 # and tracker state changes nothing. The run folder must sit at
 # <checkout>/.artisan-agent/runs/<run-id>.
 #
-# Exit status: 0 ok, 1 error (including a failed tracker read; nothing is
-# written then), 2 usage, 3 the lock is held by another live process.
+# Exit status: 0 ok, 1 error (including a failed tracker read: git's merges
+# and the sweep are kept, the frontier is not recomputed and must not be
+# used), 2 usage, 3 the lock is held by another live process.
 
 set -euo pipefail
 
@@ -93,6 +94,13 @@ reconcile() {
     done
   fi
 
+  state_commit "$RUN_DIR" "$tmp"
+
+  # The sweep, under this call's lock, after git: a worker whose branch is
+  # already merged is not a failed attempt.
+  ARTISAN_WRITER_PID=$(state_writer_pid) "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" || return $?
+  cp "$file" "$tmp"
+
   # Tracker: state, labels and blockers for every ticket in scope.
   tracker='{}'
   for t in $(jq -r '.plan.scope[]' "$tmp"); do
@@ -127,6 +135,5 @@ reconcile() {
   state_commit "$RUN_DIR" "$tmp"
 }
 
-"$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
 state_with_lock "$RUN_DIR" reconcile
 jq -r '.frontier[]' "$(state_file "$RUN_DIR")"

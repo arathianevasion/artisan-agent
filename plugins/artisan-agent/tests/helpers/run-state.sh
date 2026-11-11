@@ -107,7 +107,7 @@ merge_ticket() { # ticket -> prints merge commit
 # A worker stand-in: a long sleep in the background. Prints its pid. Call
 # kill_workers (trap it on EXIT) so no test leaves a process behind.
 start_worker() {
-  sleep 300 >/dev/null 2>&1 &
+  sleep 347 >/dev/null 2>&1 &
   printf '%s\n' "$!" >>"$TEST_TMPDIR/.workers"
   printf '%s\n' "$!"
 }
