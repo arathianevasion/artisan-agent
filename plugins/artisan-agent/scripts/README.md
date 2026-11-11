@@ -121,3 +121,12 @@ Caps follow `run-ticket.sh`: `max_budget_usd` twice the estimate, `max_turns` 40
 ## Scope
 
 The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <ticket>` exits 0 or 4; `state.sh dispatch` and `run-ticket.sh` (whenever its run folder holds a state file) refuse a ticket outside it with exit status 4 before anything starts.
+
+## Run lock and doc changes
+
+| Script | Does | Returns |
+| :- | :- | :- |
+| `run-lock.sh check [dir]` | one run per repo: looks for a `runs/*/state.lock` naming a live pid in the repo's main checkout (stale locks ignored) | 0 free; 3 held, printing `<run-id> <pid>`; 1 not a repo |
+| `doc-change.sh start <name>` / `finish <name>` | a chat's doc change: a short-lived `doc/<name>` branch worktree beside the repo, then a fast-forward of the main checkout (rebasing first if it moved) | the worktree path / 0; 1 when refused (dirty main, empty branch, conflict) |
+
+The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `guard/README.md`. Tests: `tests/main-checkout.test.sh`.

@@ -44,7 +44,7 @@ The same generator wires two more hooks into `hooks/hooks.json` (the shared rule
 
 | Hook | Event and matcher | What it does |
 |---|---|---|
-| `protect.sh main-edit` | `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit` | denies an edit to a file in a repo's main checkout (`git-dir` equals `git-common-dir`) when the repo has a committed `.artisan-agent/config.yml` and the path is not git-ignored; the reason says to work in a worktree (`scripts/doc-change.sh`) |
+| `protect.sh main-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit\|NotebookEdit` | denies an edit to a file in a repo's main checkout (`git-dir` equals `git-common-dir`) when the repo has a committed `.artisan-agent/config.yml` and the path is not git-ignored; the reason says to work in a worktree (`scripts/doc-change.sh`) |
 | `protect.sh run-start` | `UserPromptExpansion` for `^(artisan-agent:)?implement-plan$`, and `PreToolUse` on `Skill` (Claude calling it) | while `scripts/run-lock.sh check` reports a live holder, blocks the start and runs `queue-plan.sh`, which leaves the request as a `plan` issue via `gh` (reusing an open one with the same title) |
 
 Both fail open when they cannot tell (no `jq`, not a git repo, `gh` failing: the block message then says the issue was not filed). Their tests stub `gh`: `tests/main-checkout.test.sh`.

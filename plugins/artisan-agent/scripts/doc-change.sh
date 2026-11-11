@@ -43,7 +43,7 @@ case "$cmd" in
         || { git -C "$wt" rebase --abort >/dev/null 2>&1 || true; die "$branch conflicts with the main checkout; resolve in $wt, then finish again"; }
       git -C "$main" merge --ff-only -q "$branch" || die "fast-forward failed after rebase"
     fi
-    git -C "$main" worktree remove --force "$wt"
+    git -C "$main" worktree remove "$wt" || die "merged, but could not remove $wt (ignored or untracked files?); remove it and the branch by hand"
     git -C "$main" branch -q -d "$branch"
     printf 'fast-forwarded %s to %s\n' "$main" "$(git -C "$main" rev-parse --short HEAD)"
     ;;
