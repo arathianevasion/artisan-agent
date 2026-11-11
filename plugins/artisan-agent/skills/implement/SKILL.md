@@ -58,7 +58,7 @@ A decision that is controversial and **not** easy-to-reverse taste is not yours 
 
 ## 4. Review, then act on the remarks
 
-Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `mattpocock-skills:code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
+Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
 
 Sort every finding the review returns into one of these, and act on it:
 
