@@ -133,8 +133,43 @@ test_v_judging_twice_says_the_same_and_writes_nothing() {
   judge_verifier 1
   assert_eq "pass 2/2" "$JUDGE_OUT"
   cmp -s "$TEST_TMPDIR/before.json" "$RUN_DIR/state.json" || fail "a second judge rewrote the state file"
-  # Verified work is not verified again.
-  assert_status 1 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1
+  # Verified work is not verified again: starting again is a no-op.
+  local pid
+  pid=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>/dev/null)
+  assert_eq "$(cat "$RUN_DIR/workers/verify-1.1/runner.pid")" "$pid" "the first verifier's pid"
+  cmp -s "$TEST_TMPDIR/before.json" "$RUN_DIR/state.json" || fail "a second start rewrote the state file"
+}
+
+test_v_starting_a_verifier_twice_for_one_attempt_launches_one() {
+  setup_wave
+  returned_ticket
+  export VERIFIER_SLEEP=2   # still running for the second call
+  local first second third
+  first=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1)
+  second=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>/dev/null)
+  assert_eq "$first" "$second" "the running verifier's pid, not a new one"
+  judge_verifier 1
+  third=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>/dev/null)
+  assert_eq "$first" "$third" "ended and judged pass: still that verifier"
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "verify")] | length')"
+  [ ! -e "$RUN_DIR/workers/verify-1.2" ] || fail "a second verifier was launched"
+}
+
+test_v_two_starts_at_once_launch_one_verifier() {
+  setup_wave
+  returned_ticket
+  local i pids=
+  for i in 1 2 3 4; do
+    "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >"$TEST_TMPDIR/start.$i" 2>/dev/null &
+    pids="$pids $!"
+  done
+  for i in $pids; do wait "$i" || fail "a concurrent start failed"; done
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  assert_eq 1 "$(cat "$TEST_TMPDIR"/start.* | sort -u | wc -l | tr -d ' ')" "every call names the same verifier"
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')"
+  [ ! -e "$RUN_DIR/workers/verify-1.2" ] || fail "a second verifier was launched"
 }
 
 test_v_the_ticket_comment_is_the_contract_in_the_state_file() {

@@ -12,8 +12,12 @@
 #       criteria from the tracker (or its ticket_path), check out the
 #       worker's commit in a throwaway detached worktree and launch the
 #       verifier there, detached (run-ticket.sh --role verifier). Prints
-#       the verifier's runner pid. 8: the worker or a verifier is still
-#       running. 6: the attempt did not complete (a failed attempt, as
+#       the verifier's runner pid. Idempotent per attempt: while the
+#       attempt has a verifier running, ended but not judged, or passed (or
+#       another call is starting one), it launches nothing and prints that
+#       verifier's pid; only after an error (judge's 14) does it start the
+#       next. 8: the worker (or a verifier left from an earlier attempt) is
+#       still running. 6: the attempt did not complete (a failed attempt, as
 #       wave.sh merge counts it) or the result does not describe the branch
 #       tip (blocked).
 #   verify.sh judge <run-dir> <ticket>
@@ -90,6 +94,18 @@ remove_worktree() { # path: a throwaway detached checkout of a committed sha
 
 # ------------------------------------------------------------------- start
 
+# The runner pid of verifier v, once it is up (up to 10s, as run-ticket.sh
+# waits). 8 if it never comes up: call again, or judge it.
+started_pid() { # ticket v
+  local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" i=0
+  while [ ! -s "$f" ]; do
+    i=$((i + 1))
+    [ "$i" -le 100 ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet"
+    sleep 0.1
+  done
+  cat "$f"
+}
+
 cmd_start() {
   open_run "${1:-}"
   local t="${2:-}"
@@ -99,18 +115,38 @@ cmd_start() {
   check_returned verify.sh "$t" "not verified"
   n=$ATTEMPT tip=$TIP
 
+  # Idempotent per attempt: while this attempt has a verifier running, ended
+  # but not judged, or judged pass, starting again launches nothing and
+  # prints that verifier's runner pid. Only an error (14) starts the next.
   local last v
-  last=$(get --arg t "$t" --argjson n "$n" '(.tickets[$t].verifications // []) | last // empty
-    | "\(.attempt) \(.verdict // "")" + (if .worker_attempt == $n and .verdict == "pass" then " judged" else "" end)')
+  last=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty
+    | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
   v=1
   if [ -n "$last" ]; then
     set -- $last
-    [ -z "${3:-}" ] || die "#$t attempt $n is already verified (pass); merge it"
-    if [ -z "${2:-}" ]; then
-      [ "$(classify "verify-$t" "$1")" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
-      die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
-    fi
+    case "$3" in
+      -|pass)
+        if [ "$2" = "$n" ]; then
+          echo "verify.sh: #$t attempt $n already has verifier $1 ($( [ "$3" = pass ] && echo "passed; merge it" || echo "judge it")); not starting another" >&2
+          started_pid "$t" "$1"
+          return 0
+        fi
+        # A verifier left over from an earlier attempt (not judged).
+        [ "$3" = pass ] || [ "$(classify "verify-$t" "$1")" != "running -" ] \
+          || state_die 8 "verify.sh: #$t's verifier $1 is still running"
+        [ "$3" = pass ] || die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
+        ;;
+    esac
     v=$(($1 + 1))
+  fi
+  # Two starts at once (an orchestrator's parallel Bash calls share one
+  # writer pid, so the state lock does not part them): the first to claim
+  # this verifier launches it; the other waits for its pid.
+  mkdir -p "$RUN_DIR/verify/claims"
+  if ! mkdir "$RUN_DIR/verify/claims/$t.$v" 2>/dev/null; then
+    echo "verify.sh: #$t's verifier $v is being started by another call; not starting another" >&2
+    started_pid "$t" "$v"
+    return 0
   fi
 
   local criteria base ib wt id prompt cfile repo title path expected result model estimate minutes ref suite
