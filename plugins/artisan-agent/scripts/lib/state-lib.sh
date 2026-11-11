@@ -48,10 +48,43 @@ state_lock_holder() {
   readlink "$(state_lock_path "$1")" 2>/dev/null || true
 }
 
+# This machine's name in a moved run's `location` (move.sh). ARTISAN_MACHINE
+# overrides it (two clones on one machine, in tests).
+state_machine_id() {
+  printf '%s\n' "${ARTISAN_MACHINE:-$(hostname -s 2>/dev/null || hostname)}"
+}
+
+# state_location_guard run_dir: 0 unless the run's `location` says it is not
+# live here: moved away (in transit on its runs/<id> branch), or live on
+# another machine. A run that never moved has no `location`. move.sh sets
+# ARTISAN_MOVING=1 for its own writes. This is how the run lock travels with
+# the state: every writer takes state_lock, so none writes a run that is
+# somewhere else.
+state_location_guard() {
+  local run_dir="$1" file status machine
+  [ -z "${ARTISAN_MOVING:-}" ] || return 0
+  file=$(state_file "$run_dir")
+  [ -f "$file" ] || return 0
+  status=$(jq -r '.location.status // empty' "$file" 2>/dev/null) || return 0
+  [ -n "$status" ] || return 0
+  machine=$(jq -r '.location.machine // empty' "$file")
+  if [ "$status" = moved ]; then
+    printf 'this run was moved away (pushed to its runs/ branch); it is not live here until move.sh in resumes it\n' >&2
+    return 3
+  fi
+  if [ "$machine" != "$(state_machine_id)" ]; then
+    printf 'this run is live on %s, not here (move.sh out there, then move.sh in here)\n' "$machine" >&2
+    return 3
+  fi
+  return 0
+}
+
 # state_lock run_dir pid
-# 0: taken (or already held by pid). 3: held by another live process.
+# 0: taken (or already held by pid). 3: held by another live process, or the
+# run is not live on this machine (state_location_guard).
 state_lock() {
   local run_dir="$1" pid="$2" lock holder tries=0
+  state_location_guard "$run_dir" || return 3
   lock=$(state_lock_path "$run_dir")
   while [ "$tries" -lt 3 ]; do
     tries=$((tries + 1))
@@ -203,6 +236,11 @@ state_usage() {
 #   failed_attempt(t; reason; at): attempt .attempts of ticket t failed; back to
 #     queued for a fresh worker, or blocked with an exception decision once it
 #     has used the run's attempts per ticket
+#   slice_gates: the plan's slice gates, each {id, slice, role, problem,
+#     solution, tickets} (references/review-gates.md)
+#   gate_due(g): every ticket of gate g merged (or closed) and the gate not
+#     yet approved
+#   gate_holds(t): t is in a slice gate that is due: its dependents wait
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
     if $usd == null then .
@@ -236,4 +274,23 @@ STATE_JQ_DEFS='
   def merged($t; $sha):
     .tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
     | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}]);
+  def slice_gates:
+    . as $s
+    | [($s.plan.gates // []) | to_entries[] | select((.value.kind? // "") == "slice")
+       | .key as $k | .value as $g
+       | {id: "slice-\($k + 1)",
+          slice: ($g.slice // "slice \($k + 1)"),
+          role: ($g.role // "Engineering (QA)"),
+          problem: ($g.problem // null), solution: ($g.solution // null),
+          tickets: ([($g.tickets // (if $g.after != null then [$g.after] else null end)
+                      // [$s.plan.tickets | to_entries[] | select($g.slice != null and .value.slice? == $g.slice) | .key])
+                     | .. | scalars | tostring] | unique_by(tonumber? // .))}
+       | select(.tickets != [])];
+  def gate_due($g):
+    . as $s
+    | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")
+      and any($g.tickets[]; $s.tickets[.].status? == "merged")
+      and ([($s.review_gates // [])[] | select(.id == $g.id and .status == "approved")] == []);
+  def gate_holds($t):
+    . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
 '

@@ -77,7 +77,7 @@
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
-# 12 the run is halted, 13 not verified. One table of every code, with
+# 12 the run is halted, 13 not verified, 15 the login would expire mid-run. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -215,6 +215,14 @@ cmd_launch() {
   id="orchestrator-w$wave"
   wt=$(integration_worktree)
 
+  # A run on the always-on host must not outlive the claude.ai login (#69):
+  # checked before every orchestrator launch but a hand-off (exit 15, nothing
+  # launched), so a run moved onto the host is checked there too, against the
+  # tickets it has left. A machine with no host record is not checked.
+  if [ "$handoff" -eq 0 ]; then
+    "$SCRIPT_DIR/login-check.sh" check --run-dir "$RUN_DIR" >&2 || exit $?
+  fi
+
   # The chat's writer pid holds the lock (or takes it now) until it hands it on.
   me=$(writer)
   state_lock "$RUN_DIR" "$me" || exit 3
@@ -337,14 +345,18 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # The Artisan's gate actions taken while the lock was held, a gate
+      # closed on the tracker, and any slice gate due (gate.sh, #65).
+      "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
+        || echo "gate.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.gate.err")" >&2
       "$SCRIPT_DIR/reconcile.sh" "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.status.err" || {
         reconciled=0
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
-      # A risk gate holds only its ticket's dependents (drain.sh gate): the
-      # run carries on while the frontier has work.
-      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate")] | length')
+      # A risk gate or a review gate holds only its tickets' dependents
+      # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
+      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
@@ -393,6 +405,8 @@ check_blockers() { # ticket
       fi
       [ "$(get --arg b "$b" '.tickets[$b].risk_gate.status? // ""')" != waiting ] \
         || state_die 5 "wave.sh: refusing #$t: its blocker #$b merged under a risk gate the Artisan hasn't cleared (drain.sh gate)"
+      [ "$("$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" 2>/dev/null)" = free ] \
+        || state_die 5 "wave.sh: refusing #$t: its blocker #$b is in a slice whose review gate the Artisan hasn't approved (gate.sh)"
     elif [ "$state" != closed ]; then
       state_die 5 "wave.sh: refusing #$t: its blocker #$b, outside this run, is still open"
     fi
@@ -709,7 +723,10 @@ cmd_close() {
   local status repo body newbody
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
-  [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" != true ] || return 0
+  if [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" = true ]; then
+    "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"
+    return 0
+  fi
   repo=$(get '.repo')
   mkdir -p "$RUN_DIR/merges"
   # The comment is the evidence contract in the state file, shown.
@@ -725,6 +742,9 @@ cmd_close() {
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"
+  # The last merge of a slice opens its review gate before anything else
+  # dispatches (gate.sh, references/review-gates.md).
+  "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"
 }
 
 # ------------------------------------------------------------------ report

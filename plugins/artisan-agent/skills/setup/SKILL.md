@@ -12,6 +12,8 @@ This skill is rerunnable and never overwrites. It has two parts, run in this ord
 
 The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/machine-setup.sh`. It works under `CLAUDE_CONFIG_DIR` (default `~/.claude`), never deletes (skill copies move to `<config>/skills/.trash`), and never removes anything unless you pass it that offer's id. Run it with `bash`.
 
+**Host mode.** When the Artisan says this is the always-on machine, follow `${CLAUDE_PLUGIN_ROOT}/skills/setup/HOST.md` after the machine-level steps.
+
 ## Steps
 
 1. **Run `init`.** It creates `~/.claude/artisan-agent/` as a git repo holding `CODING_STANDARDS.md` and `PRODUCT_STANDARDS.md` (each with an "Always ask" section, for the Artisan's individual taste) and an empty `satisfaction.jsonl`, committing only the files it created. It then sets auto-update off for `claude-plugins-official` and on for `artisan-agent`. It first runs `check`: if `jq` (read by `classify-worker.sh`) or `perl` (detaches workers on macOS, which has no `setsid`) is missing, it prints a `missing:` line with an install hint, still does the setup, and exits non-zero. Tell the Artisan to install the missing tool; `bash machine-setup.sh check` re-checks alone. Lines starting `changed:` are what it did; `unchanged:` means a rerun found nothing to do. Existing files are never overwritten.

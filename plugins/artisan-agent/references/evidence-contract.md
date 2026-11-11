@@ -75,4 +75,4 @@ Each ticket's cost is logged in the state file: the worker's and verifier's sess
 | #12 (retry failed uploads) | merged as `a1b2c3d`, closed | 3/3 verified | 1 unsure, 2 decisions | $0.42 of $0.50 |
 | #13 (billing tab) | blocked: the verifier found 1 of 4 criteria unmet, first: … | 3/4 verified | 0 unsure, 1 decision | $0.61 of $0.80 |
 
-Reviews and blocked tickets will come to the Artisan as full packets once gates exist; until then a blocked ticket's decision is in `wave.sh status`'s decision table.
+A finished slice comes to the Artisan as a packet built from these contracts at its slice gate (`references/review-gates.md`). Blocked tickets will once the exception gate exists (#70); until then a blocked ticket's decision is in `wave.sh status`'s decision table.

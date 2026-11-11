@@ -9,6 +9,8 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
+| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
 
 Each script's header has its full usage.
 
@@ -195,7 +197,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 2 | bad usage | all | fix the call |
 | 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, any write | wait |
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
-| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`) | `dispatch` | leave it for a later wave |
+| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
 | 7 | the suite went red after the merge (undone, blocked) | `merge`, `resolved` | carry on with the rest |
 | 8 | a worker or verifier is still running or ending (from `verify.sh start`, also: another call's verifier could not launch or has not come up yet) | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
@@ -205,6 +207,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 12 | the run is halted | `launch` | the Artisan decides; `launch --resume` |
 | 13 | not verified: no passing verdict for this attempt at this commit | `merge` | `verify.sh start`, then `judge` |
 | 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
+| 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a wave launch, on a host) | log in again, `login-check.sh stamp` |
 
 # Verification and evidence
 
@@ -243,6 +246,20 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
+## Slice gates
+
+`gate.sh` opens a slice's review gate once every ticket of the slice has merged, and takes the Artisan's answers; `lib/packet.py` renders the packet. The rules, the packet and the answers: `references/review-gates.md`. Tested in `tests/gate.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate.sh sync <run-dir>` | both (`wave.sh close`, `wave.sh status`) | folds in answers given while the lock was held, approves a gate closed by hand on the tracker, opens every gate that is due: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate.sh due <run-dir>` / `open <run-dir> <gate-id>` | orchestrator | the gates due; open one: the packet, the `review-gate` issue natively blocking only the slice's dependents, a `review-gate` decision; prints the issue (again, on a repeat) | 0, 1, 6 not due |
+| `gate.sh holds <run-dir> <ticket>` | `wave.sh dispatch` | `held` when the ticket's slice gate is due and not approved, else `free`; dispatch refuses its dependents (5) on anything but `free`, so an error holds | 0, 1 |
+| `gate.sh chat <run-dir> [<issue>]` / `packet` / `list` | Engineering chat | the compressed packet; the full one; a table of the run's gates | 0 |
+| `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
+| `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
+| `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
+
 ## The fake tracker
 
 `tests/fixtures/fake-gh/gh` answers the `gh` calls the run makes (`api` issue and blocked-by reads, `issue view`, `list`, `comment`, `edit`, `close`) from a folder (`FAKE_GH_DIR`) of `issue-<n>.json` and `blocked_by-<n>.json` files, so tests and live trials never reach GitHub.
@@ -279,3 +296,16 @@ Neither tier ever stops to compact (#59). `drain.sh` reads a session's context a
 **The fallback for the context percentage** (pilot prerequisite 6). Claude Code gives a session's context percentage only to the interactive status line; a headless `claude -p` has no way to ask. So the percentage is computed: the last main-thread assistant record in the session's transcript that carries `usage`, summing `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` and `output_tokens`, over the window (200,000; 1,000,000 for a `[1m]` model id or once the sum passes 200,000; `ARTISAN_CONTEXT_WINDOW` overrides). Subagent (sidechain) records are skipped. A session without a transcript (`--no-session-persistence`) reads `unknown`, treated as normal: the `PreCompact` marker is its only backstop.
 
 **Resuming past the run lock.** `guard/protect.sh run-start` lets `/artisan-agent:implement-plan` through with no arguments, `resume` or the open run's id, so a new or resumed chat can open the run's digest while an orchestrator holds the lock. Anything else is still a second run: refused and left as a `plan` issue.
+
+# The ADR and guardrail check at plan approval
+
+`adr-check.sh` is the mechanical half of the check that opens plan approval, in `/artisan-agent:to-plan` and in `implement-plan`'s plan step when the route skipped `to-plan`; the procedure and the ADR adjustment loop are `references/adr-check.md`. An agent judges (which ADRs a ticket touches, where there is tension, which decisions no ADR covers) and writes `adr-check.json`; the script validates it against the ADR files and prints the view. Tested in `tests/adr-check.test.sh`.
+
+| Command | Does | Exit status |
+| :- | :- | :- |
+| `adr-check.sh list [--adr-dir D]` | the ADRs as JSON: number, file, title | 0, 1, 2 |
+| `adr-check.sh refs [--adr-dir D]` | reads text on stdin; prints the number of each existing ADR it cites | 0, 1, 2 |
+| `adr-check.sh render <check.json> [--adr-dir D] [--guardrails resolve.json]` | the approval view: plan compliance, each ticket's ADRs with `TENSION` flagged, ADR gaps, then guardrail conflicts and the level that applies (from `guardrails.sh resolve`); an ADR number with no file is refused | 0, 1, 2 |
+| `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1, 2 |
+
+The edit itself is not scripted: the Artisan approves a drafted diff, it lands by a short PR (`doc-change.sh`, upstream `pr`) before dispatch, then `affected` names the tickets to re-check.
