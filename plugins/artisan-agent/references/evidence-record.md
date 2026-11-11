@@ -21,6 +21,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
 | `review` | yes | `{"ran": true, "remarks": [...]}`, every `mattpocock-skills:code-review` remark with what was done about it (below) |
 | `findings` | yes | Work found outside the ticket: `{"title", "why", "blocks": [ticket ids]}`; `[]` if none |
+| `design_question` | no | On a `blocked` record that stopped for a design or interface change another ticket owns: `{"question": "...", "recommendation": "..."}`. The sweep queues it as a `design` decision for the Artisan and notes a slicing lesson (`references/findings.md`) |
 | `notes` | no | Free text for late facts: anything the orchestrator should know that fits nowhere else. One paragraph |
 
 Cost is not written by the worker. Whoever reads the session's `--output-format json` output adds the session's `total_cost_usd` as `cost_usd`.

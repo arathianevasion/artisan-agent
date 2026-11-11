@@ -67,6 +67,8 @@ Top level:
 | `tickets` | top-level | per-ticket progress, keyed by ticket number as a string (below) |
 | `integration` | top-level | `branch`: the run's integration branch; `merges`: `[{ticket, commit}]` in merge order; `worktree` and `base`, once `wave.sh start` has made the integration worktree |
 | `findings` | top-level | the findings log: each line of each findings file, as `{from, seq, ...the worker's object}` (`{from, seq, raw}` if the line is not a JSON object) |
+| `relays` | top-level | each finding handled: `{from, seq, target, action: relay\|comment\|triage, issue, at}`, written by `findings.sh mark` (`references/findings.md`) |
+| `lessons` | top-level | lessons noted during the run for the retro: `{kind: "slicing", ticket, note, at}`, written by the sweep when a worker stops for a design question |
 | `findings_read` | top-level | per ticket, how many complete lines of its findings file are already logged |
 | `costs` | top-level | `workers_usd` (sum of tickets' `cost_usd`), `orchestrator_usd`, `total_usd` |
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}` |
@@ -118,7 +120,7 @@ Top level:
 
 ## The event log
 
-Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), `finding` (`from`, `seq`, `target`, `action`) and `design-question` (`ticket`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
 
 ## The sweep
 

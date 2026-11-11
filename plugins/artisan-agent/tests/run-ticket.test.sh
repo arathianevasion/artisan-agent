@@ -283,3 +283,12 @@ test_an_orchestrator_id_must_say_so() {
   assert_status 2 run_ticket --role orchestrator
   assert_status 2 run_ticket --role verifier
 }
+
+test_a_worker_gets_a_name_and_accepts_messages_from_other_sessions() {
+  setup_run
+  launch complete
+  wait_for_file "$EXIT_RECORD"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" "[--name]
+[worker-46]"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" '[{"crossSessionInbound":"accept"}]'
+}

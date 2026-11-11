@@ -26,7 +26,8 @@ Take these from the prompt that invoked you:
 - **Commit early and often**, with honest messages saying what is and isn't done. A crash, timeout or budget cap can come at any moment; uncommitted work is unverifiable and lost.
 - **Never skip a step to save budget.** `tdd` and the full two-axis `mattpocock-skills:code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
 - **Keep to the ticket.** Missing work you find goes in the record's `findings` list, not into your diff. Adding scope is controversy criterion 2.
-- **Design never goes between workers.** Stop only when the ticket can't be built without changing the design or interface of something another ticket owns: record the question and finish with status `blocked`. An interface *you* introduce is not that. It is a new seam: carry on and record it as a decision card (step 2).
+- **Findings go out at once, and in from the orchestrator.** Append each finding to `$ARTISAN_FINDINGS_FILE` as you find it (`{"title", "why", "blocks": [ticket ids]}`), not at the end, so a worker it concerns hears now. A message starting `FINDING from #<n>` is a fact relayed from another ticket's worker: take it as given and don't reply. Details: `${CLAUDE_PLUGIN_ROOT}/references/findings.md`.
+- **Design never goes between workers.** Stop only when the ticket can't be built without changing the design or interface of something another ticket owns: record the question and finish with status `blocked`. Put the question and your recommendation in the record's `design_question`. An interface *you* introduce is not that. It is a new seam: carry on and record it as a decision card (step 2).
 
 ## 1. Read before you build
 
