@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# The verifier: a fresh, short-lived headless session per returned ticket
+# that checks the worker's diff against the ticket's acceptance criteria and
+# returns a verdict in the evidence format. The orchestrator reads only the
+# one line this script prints, never the verifier's transcript. The
+# verifier's brief: ${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/verifier.md.
+# The verdict and the evidence contract: ${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md.
+#
+# Usage, from the orchestrator:
+#   verify.sh start <run-dir> <ticket>
+#       for a returned ticket whose attempt completed: read its acceptance
+#       criteria from the tracker (or its ticket_path), check out the
+#       worker's commit in a throwaway detached worktree and launch the
+#       verifier there, detached (run-ticket.sh --role verifier). Prints
+#       the verifier's runner pid. 8: the worker or a verifier is still
+#       running. 6: the attempt did not complete (a failed attempt, as
+#       wave.sh merge counts it) or the result does not describe the branch
+#       tip (blocked).
+#   verify.sh judge <run-dir> <ticket>
+#       once the verifier has ended: read its verdict, build the ticket's
+#       evidence contract, write it to the state file (one event,
+#       "verified"), remove the verifier's worktree. Prints one line:
+#         pass <met>/<total>                    every criterion met: merge it
+#         fail <met>/<total> retry: <first unmet>   a failed attempt: queued
+#                                               for a fresh worker given the
+#                                               verifier's findings
+#         fail <met>/<total> blocked: <first unmet> a failed attempt, the last:
+#                                               blocked, with a decision
+#         error <reason>                        the verifier itself failed
+#       A fail posts the evidence comment on the ticket. Exit 0 pass, 6 fail
+#       or a second verifier failure (blocked), 8 the verifier is still
+#       running, 14 the verifier failed once: start it again.
+#
+# Plan settings (state file, all optional): plan.verifier.model (default
+# claude-sonnet-5-5), plan.verifier.estimate_usd (0.5), plan.verifier.minutes
+# (15). ARTISAN_CLAUDE_ARGS and ARTISAN_MAX_BUDGET_USD apply as in wave.sh.
+#
+# Exit status: 0 ok, 1 error, 2 usage, 4 outside the scope, 6 not verified
+# (a failed attempt, or blocked), 8 still running, 14 the verifier failed and
+# may be started again. The numbers mean what they mean in wave.sh; one table
+# of every code: scripts/README.md, "Exit status".
+#
+# Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+# shellcheck source=lib/state-lib.sh
+. "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/wave-lib.sh
+. "$SCRIPT_DIR/lib/wave-lib.sh"
+state_require_jq
+
+DEFAULT_MODEL=claude-sonnet-5-5
+DEFAULT_ESTIMATE_USD=0.5
+DEFAULT_MINUTES=15
+VERIFIER_TOOLS="Bash,Read,Write,Glob,Grep"
+VERIFIER_FAILURES_ALLOWED=2
+
+usage() { state_usage "$0"; }
+die() { state_die 1 "verify.sh: $*"; }
+
+classify() { "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"; }
+
+# The ticket's acceptance criteria, verbatim, as a JSON array.
+read_criteria() { # ticket
+  local path body
+  path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
+  if [ -n "$path" ]; then
+    case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
+    [ -f "$path" ] || die "no ticket file $path for #$1"
+    body=$(cat "$path")
+  else
+    body=$(gh issue view "$1" -R "$(get .repo)" --json body -q .body) \
+      || die "could not read #$1 from the tracker; not verifying blind"
+  fi
+  printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract
+}
+
+session_cost() { # id attempt -> the session's total_cost_usd, or nothing
+  jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true
+}
+
+remove_worktree() { # path: a throwaway detached checkout of a committed sha
+  [ -n "$1" ] && [ -d "$1" ] || return 0
+  git -C "$MAIN" worktree remove --force "$1" >/dev/null 2>&1 \
+    || echo "verify.sh: could not remove the verifier's worktree $1" >&2
+}
+
+# ------------------------------------------------------------------- start
+
+cmd_start() {
+  open_run "${1:-}"
+  local t="${2:-}"
+  [ -n "$t" ] || usage
+  "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
+  local n tip
+  check_returned verify.sh "$t" "not verified"
+  n=$ATTEMPT tip=$TIP
+
+  local last v
+  last=$(get --arg t "$t" --argjson n "$n" '(.tickets[$t].verifications // []) | last // empty
+    | "\(.attempt) \(.verdict // "")" + (if .worker_attempt == $n and .verdict == "pass" then " judged" else "" end)')
+  v=1
+  if [ -n "$last" ]; then
+    set -- $last
+    [ -z "${3:-}" ] || die "#$t attempt $n is already verified (pass); merge it"
+    if [ -z "${2:-}" ]; then
+      [ "$(classify "verify-$t" "$1")" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
+      die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
+    fi
+    v=$(($1 + 1))
+  fi
+
+  local criteria base ib wt id prompt cfile repo title path expected result model estimate minutes ref suite
+  criteria=$(read_criteria "$t")
+  [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
+    || die "#$t has no acceptance criteria (checkbox lines) to verify against"
+  ib=$(get '.integration.branch')
+  base=$(get --arg t "$t" '.tickets[$t].base // ""')
+  [ -n "$base" ] || base=$(git -C "$MAIN" merge-base "refs/heads/$ib" "$tip")
+  id="verify-$t"
+  wt="$WT_ROOT/$RUN_ID-$id.$v"
+  mkdir -p "$WT_ROOT" "$RUN_DIR/prompts"
+  [ ! -e "$wt" ] || die "the verifier's worktree $wt already exists"
+  git -C "$MAIN" worktree add -q --detach "$wt" "$tip" >/dev/null 2>&1 || die "could not add the verifier's worktree $wt"
+
+  cfile="$RUN_DIR/prompts/$id.$v.criteria.json"
+  printf '%s\n' "$criteria" >"$cfile"
+  repo=$(get '.repo')
+  title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
+  path=$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')
+  expected=$(get --arg t "$t" '.plan.tickets[$t].expected_output // "see the acceptance criteria"')
+  suite=$(get '.plan.suite_command // ""')
+  result="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+  if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
+  prompt="$RUN_DIR/prompts/$id.$v.md"
+  {
+    printf 'You are the verifier for ticket %s, %s: %s (attempt %s, run %s). Follow %s exactly; it is your whole brief.\n\n' \
+      "$t" "$ref" "$title" "$n" "$RUN_ID" "$PLUGIN_DIR/skills/implement-plan/references/verifier.md"
+    printf -- '- You are in a detached checkout of the worker'"'"'s commit %s.\n' "$tip"
+    printf -- '- The diff to verify: git diff %s...%s\n' "$base" "$tip"
+    printf -- '- Expected output (from the plan): %s\n' "$expected"
+    [ -z "$suite" ] || printf -- '- The full suite: %s\n' "$suite"
+    printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
+    printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
+    printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
+  } >"$prompt"
+
+  model=$(get --arg d "$DEFAULT_MODEL" '.plan.verifier.model // $d')
+  estimate=$(clamp_estimate "$(get --arg d "$DEFAULT_ESTIMATE_USD" '.plan.verifier.estimate_usd // $d')")
+  minutes=$(get --arg d "$DEFAULT_MINUTES" '.plan.verifier.minutes // $d')
+  local pid
+  read_extra_args
+  pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
+    --prompt-file "$prompt" --workdir "$wt" --model "$model" \
+    --estimate-usd "$estimate" --expected-minutes "$minutes" \
+    -- --permission-mode acceptEdits --allowedTools "$VERIFIER_TOOLS" --add-dir "$RUN_DIR" \
+    ${EXTRA[@]+"${EXTRA[@]}"}) || { remove_worktree "$wt"; die "could not launch the verifier for #$t"; }
+
+  apply '
+    .tickets[$t].verifications = ((.tickets[$t].verifications // [])
+      + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null}])
+    | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
+    --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt"
+  printf '%s\n' "$pid"
+}
+
+# ------------------------------------------------------------------- judge
+
+# The evidence contract, from the criteria lined up with the verdict and the
+# worker's claims ($acc, lib/criteria.py align), the worker's evidence record
+# ($record), the verdict ($verdict) and the state file.
+CONTRACT_FILTER='
+  def nums: [to_entries[] | select(.key | test("^[0-9]+$")) | .value] | add // 0;
+  def vers: [to_entries[] | select(.key | startswith("verify.")) | .value] | add // 0;
+  . as $s | $s.tickets[$t] as $k
+  | ([$acc[] | select(.met)] | length) as $met
+  | { ticket: $t,
+      title: ($s.plan.tickets[$t].title // null),
+      attempt: $n,
+      commit: $commit,
+      base: $base,
+      verdict: (if $met == ($acc | length) then "pass" else "fail" end),
+      criteria_met: $met,
+      criteria_total: ($acc | length),
+      acceptance: $acc,
+      tests: ($record.tests // null),
+      diff: {summary: $shortstat, files: $files},
+      unsure: ($record.unsure // []),
+      decisions: ($record.decisions // []),
+      cost: { worker_usd: (($k.attempt_costs // {}) | nums),
+              verifier_usd: (($k.attempt_costs // {}) | vers),
+              total_usd: ($k.cost_usd // 0),
+              estimate_usd: ($s.plan.tickets[$t].estimate_usd // null) },
+      verifier: { attempt: $v, model: $model,
+                  unsure: ($verdict.unsure // []), notes: ($verdict.notes // null) },
+      verified_at: $now }'
+
+# The line judge prints for a judged verifier, and its exit status.
+say_again() { # ticket
+  local t="$1" line
+  line=$(get --arg t "$t" '.tickets[$t] as $k | $k.verifications[-1] as $x
+    | if $x.verdict == "error" then "error \($x.reason)"
+      else $k.evidence as $e
+        | "\($e.verdict) \($e.criteria_met)/\($e.criteria_total)"
+          + (if $e.verdict == "pass" then ""
+             else " \(if $k.status == "queued" then "retry" else "blocked" end): \([$e.acceptance[] | select(.met | not) | .criterion] | first)" end)
+      end')
+  echo "$line"
+  case "$line" in
+    pass*) return 0 ;;
+    fail*) exit 6 ;;
+  esac
+  [ "$(get --arg t "$t" '.tickets[$t].status')" != blocked ] || exit 6
+  exit 14
+}
+
+cmd_judge() {
+  open_run "${1:-}"
+  local t="${2:-}"
+  [ -n "$t" ] || usage
+  local entry v n done_verdict
+  entry=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
+  [ -n "$entry" ] || die "no verifier has been started for #$t; run verify.sh start"
+  set -- $entry
+  v=$1 n=$2 done_verdict=$3
+  if [ "$done_verdict" != - ]; then # judged already: say it again
+    say_again "$t"
+    return 0
+  fi
+  local id="verify-$t" cls verdict wt
+  cls=$(classify "$id" "$v")
+  case "$cls" in running*) state_die 8 "verify.sh: #$t's verifier is still running" ;; esac
+  verdict="$RUN_DIR/results/$id.$v.result.json"
+  wt=$(get --arg t "$t" '.tickets[$t].verifications[-1].worktree // ""')
+
+  local vcost wcost
+  vcost=$(session_cost "$id" "$v")
+  wcost=$(session_cost "$t" "$n")
+  # Both sessions have ended: log what each cost, once.
+  apply 'attempt_cost($t; $n; $w) | attempt_cost($t; "verify.\($v)"; $vc)
+    | .costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
+    | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' \
+    --arg t "$t" --argjson n "$n" --argjson v "$v" \
+    --argjson w "${wcost:-null}" --argjson vc "${vcost:-null}"
+
+  local why=
+  case "$cls" in
+    completed*)
+      jq -e '(.acceptance | type) == "array" and (.acceptance | length) > 0' "$verdict" >/dev/null 2>&1 \
+        || why="the verdict is not in the evidence format"
+      ;;
+    *) why="the verifier ended $cls" ;;
+  esac
+  if [ -n "$why" ]; then
+    remove_worktree "$wt"
+    apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)
+      | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: "error", reason: $r}; $now)' \
+      --arg t "$t" --argjson n "$n" --argjson v "$v" --arg r "$why"
+    local errors
+    errors=$(get --arg t "$t" --argjson n "$n" '[.tickets[$t].verifications[] | select(.worker_attempt == $n and .verdict == "error")] | length')
+    # The worker's work is not at fault: a verifier that keeps failing goes
+    # to the Artisan, without using up an attempt.
+    [ "$errors" -lt "$VERIFIER_FAILURES_ALLOWED" ] || block "$t" "the verifier failed $errors times ($why)"
+    say_again "$t"
+  fi
+
+  local commit base record shortstat files contract acc
+  commit=$(get --arg t "$t" '.tickets[$t].verifications[-1].commit')
+  base=$(get --arg t "$t" '.tickets[$t].verifications[-1].base')
+  record="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+  local record_json='{"unsure": ["The worker'"'"'s evidence record was missing or unreadable, so its uncertainties and decisions are unknown"]}'
+  [ ! -f "$record" ] || record_json=$(jq -c 'if type == "object" then . else error("not an object") end' "$record" 2>/dev/null || echo "$record_json")
+  acc=$(python3 -I "$SCRIPT_DIR/lib/criteria.py" align "$RUN_DIR/prompts/$id.$v.criteria.json" "$verdict" "$record") \
+    || die "could not line the verdict up with #$t's criteria"
+  shortstat=$(git -C "$MAIN" diff --shortstat "$base...$commit" | sed 's/^ *//')
+  files=$(git -C "$MAIN" diff --numstat "$base...$commit" \
+    | awk -F '\t' '{ printf "%s%s +%s -%s", (NR > 1 ? ", " : ""), $3, $1, $2 }')
+  mkdir -p "$RUN_DIR/verify"
+  contract="$RUN_DIR/verify/$t.$n.evidence.json"
+  jq -n --arg t "$t" --argjson n "$n" --argjson v "$v" --arg commit "$commit" --arg base "$base" \
+    --arg shortstat "$shortstat" --arg files "$files" --argjson now "$(state_now)" \
+    --arg model "$(get --arg t "$t" '.tickets[$t].verifications[-1].model // ""')" \
+    --slurpfile st "$FILE" --slurpfile verdict "$verdict" \
+    --argjson acc "$acc" --argjson record "$record_json" \
+    '$st[0] | ($verdict[0]) as $verdict | '"$CONTRACT_FILTER" >"$contract" \
+    || die "could not build the evidence contract for #$t"
+
+  apply '.tickets[$t].evidence = $ev[0]
+    | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict)
+    | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
+             met: $ev[0].criteria_met, total: $ev[0].criteria_total}; $now)' \
+    --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract"
+  remove_worktree "$wt"
+
+  if [ "$(jq -r .verdict "$contract")" = fail ]; then
+    # A criterion missed is a failed attempt: a fresh worker gets the
+    # verifier's findings (wave.sh dispatch), or, after the last attempt,
+    # the Artisan gets the ticket.
+    apply 'failed_attempt($t; $r; $now)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select(.met | not) | .criterion] | first)"' "$contract")"
+    # Work that failed is on the audit trail too: the same contract, on the ticket.
+    local body="$RUN_DIR/verify/$t.$n.comment.md"
+    "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body"
+    gh issue comment "$t" -R "$(get .repo)" --body-file "$body" >/dev/null 2>&1 \
+      || echo "verify.sh: could not post the evidence on #$t; it is in the state file" >&2
+  fi
+  say_again "$t"
+}
+
+[ $# -ge 1 ] || usage
+cmd=$1
+shift
+case "$cmd" in
+  start) cmd_start "$@" ;;
+  judge) cmd_judge "$@" ;;
+  *) usage ;;
+esac

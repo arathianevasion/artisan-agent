@@ -6,7 +6,7 @@
 #   run-ticket.sh --run-dir DIR --ticket ID --prompt-file FILE --workdir DIR
 #                 --estimate-usd N --expected-minutes N
 #                 [--attempt N] [--model MODEL] [--max-turns N]
-#                 [--deadline-seconds N] [--role worker|orchestrator]
+#                 [--deadline-seconds N] [--role worker|orchestrator|verifier]
 #                 [--lock-from PID] [-- extra claude arguments...]
 #
 # Prints the detached runner's PID and returns at once. The runner starts its
@@ -42,8 +42,10 @@
 # to the runner's PID: the long-lived pid that holds the state lock while the
 # wave runs. With --lock-from PID, the runner takes the state lock over from
 # PID (the chat that launched it) before the session starts, so the
-# orchestrator never finds its own run locked. Every session gets
-# ARTISAN_ROLE (worker or orchestrator) and ARTISAN_RUN_DIR.
+# orchestrator never finds its own run locked. --role verifier launches a
+# ticket's verifier (verify.sh) the same way: its id starts with "verify-",
+# it is not a ticket either, and it never gets a writer pid. Every session
+# gets ARTISAN_ROLE (worker, orchestrator or verifier) and ARTISAN_RUN_DIR.
 #
 # Exit status: 0 launched, 1 failed to launch, 2 bad usage, 4 the ticket is
 # outside the approved scope.
@@ -110,7 +112,8 @@ is_number "$expected_minutes" || die_usage "--expected-minutes must be a number"
 case "$role" in
   worker) ;;
   orchestrator) case "$ticket" in orchestrator-*) ;; *) die_usage "an orchestrator's id starts with orchestrator-" ;; esac ;;
-  *) die_usage "--role is worker or orchestrator" ;;
+  verifier) case "$ticket" in verify-*) ;; *) die_usage "a verifier's id starts with verify-" ;; esac ;;
+  *) die_usage "--role is worker, orchestrator or verifier" ;;
 esac
 [ -z "$lock_from" ] || [ "$role" = orchestrator ] || die_usage "--lock-from is for an orchestrator"
 
@@ -224,6 +227,8 @@ echo $$ >"$worker_dir/runner.pid.tmp" && mv "$worker_dir/runner.pid.tmp" "$worke
 
 if [ "$role" = orchestrator ]; then
   done_what="the wave is done and your result file (the wave report) is written"
+elif [ "$role" = verifier ]; then
+  done_what="your result file (the verdict) is written"
 else
   done_what="the ticket is done and your result file is written"
 fi

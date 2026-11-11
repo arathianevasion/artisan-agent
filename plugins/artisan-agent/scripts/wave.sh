@@ -37,7 +37,9 @@
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the plan's suite command
 #       there, record the merge and remove the worker's worktree. Prints the
-#       merge commit. 8: the worker is still running. 11: a conflict, left in
+#       merge commit. 8: the worker is still running. 13: not verified (no
+#       passing verdict from verify.sh for this attempt and commit; nothing
+#       changes). 11: a conflict, left in
 #       progress for its one /artisan-agent:resolve-conflicts try (then
 #       wave.sh resolved). 6: refused, or a conflict after that try was used,
 #       7: suite red (both mark the ticket blocked and queue a decision).
@@ -53,7 +55,8 @@
 #       block a returned ticket the orchestrator won't merge (its diff misses
 #       the expected output): queues an exception decision, logs the event.
 #   wave.sh close <run-dir> <ticket>
-#       post the evidence on the ticket, tick its met criteria, close it.
+#       post the evidence contract on the ticket (evidence.sh comment), tick
+#       its met criteria, close it.
 #   wave.sh report <run-dir>
 #       the wave report (JSON) the orchestrator writes as its result file.
 #       Halts the run first if every ticket dispatched in this wave failed.
@@ -70,7 +73,8 @@
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
-# 12 the run is halted.
+# 12 the run is halted, 13 not verified. One table of every code, with
+# verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
 
@@ -80,6 +84,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 # shellcheck source=lib/state-lib.sh
 . "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/wave-lib.sh
+. "$SCRIPT_DIR/lib/wave-lib.sh"
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -90,66 +96,6 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "wave.sh: $*"; }
 
 # ----------------------------------------------------------------- helpers
-
-RUN_DIR= FILE= RUN_ID= MAIN= WT_ROOT=
-open_run() { # run-dir
-  [ -n "${1:-}" ] || usage
-  state_require_run_dir "$1"
-  RUN_DIR=$(cd "$1" && pwd)
-  FILE=$(state_file "$RUN_DIR")
-  state_valid_file "$FILE" || die "unreadable or wrong schema version: $FILE"
-  RUN_ID=$(basename "$RUN_DIR")
-  local common
-  common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
-    || die "run folder $RUN_DIR is not inside a git repository"
-  MAIN=$(dirname "$common")
-  WT_ROOT="$(dirname "$MAIN")/$(basename "$MAIN")-wt"
-}
-
-get() { jq -r "$@" "$FILE"; }
-writer() { printf '%s\n' "${ARTISAN_WRITER_PID:-$$}"; }
-
-# apply filter [jq args]: one locked, one-step event write with the shared defs.
-apply() {
-  local filter="$1"
-  shift
-  state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" "$STATE_JQ_DEFS$filter" \
-    --argjson now "$(state_now)" "$@"
-}
-
-integration_branch() { get '.integration.branch'; }
-integration_worktree() {
-  local wt
-  wt=$(get '.integration.worktree // ""')
-  [ -n "$wt" ] && [ -d "$wt" ] || die "no integration worktree for run $RUN_ID; run wave.sh start first"
-  printf '%s\n' "$wt"
-}
-
-# The estimate passed to run-ticket.sh, which caps the session at twice it.
-clamp_estimate() { # usd
-  if [ -n "${ARTISAN_MAX_BUDGET_USD:-}" ]; then
-    awk -v e="$1" -v c="$ARTISAN_MAX_BUDGET_USD" 'BEGIN { h = c / 2; printf "%.2f", (e > h ? h : e) }'
-  else
-    printf '%s\n' "$1"
-  fi
-}
-
-EXTRA=()
-read_extra_args() {
-  EXTRA=()
-  [ -n "${ARTISAN_CLAUDE_ARGS:-}" ] || return 0
-  read -r -a EXTRA <<<"$ARTISAN_CLAUDE_ARGS"
-}
-
-# block ticket reason: the ticket goes to the Artisan with an exception decision.
-block() {
-  apply '
-    .tickets[$t] |= (.status = "blocked" | .pid = null | .blocked_reason = $r)
-    | .decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-                      question: "Ticket \($t) is blocked: \($r). Redirect, bypass or defer?",
-                      status: "waiting", at: $now}]
-    | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
-}
 
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
 # returned or waiting to retry, and every ticket dispatched in it (two or
@@ -548,6 +494,13 @@ failure_evidence() {
   else
     echo "- It wrote no evidence record."
   fi
+  # A verifier's fail: what it found unmet, from the contract it judged.
+  if [ -f "$RUN_DIR/verify/$t.$p.evidence.json" ]; then
+    jq -r '
+      "- The verifier found \(.criteria_met) of \(.criteria_total) criteria met:",
+      (.acceptance[] | select(.met != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
+      ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
+  fi
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   base=$(get --arg t "$t" '.tickets[$t].base // ""')
   if [ -n "$base" ] && log=$(git -C "$MAIN" log --oneline -n 10 "$base..refs/heads/$branch" 2>/dev/null) && [ -n "$log" ]; then
@@ -583,25 +536,15 @@ cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local status n cls branch tip claimed wt ib suite pre title
-  status=$(get --arg t "$t" '.tickets[$t].status // ""')
-  [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
-  n=$(get --arg t "$t" '.tickets[$t].attempts')
-  cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$n" 2>/dev/null || echo "failed vanished")
-  case "$cls" in
-    running*) state_die 8 "wave.sh: #$t's worker is still running; wait for its exit record" ;;
-    completed*) ;;
-    *)
-      apply 'failed_attempt($t; $r; $now)' --arg t "$t" --arg r "attempt $n did not complete ($cls)"
-      state_die 6 "wave.sh: #$t not merged: attempt $n is $cls; it is now $(get --arg t "$t" '.tickets[$t].status')" ;;
-  esac
+  local n branch wt ib suite pre title
+  check_returned wave.sh "$t" "not merged"
+  n=$ATTEMPT
   branch=$(get --arg t "$t" '.tickets[$t].branch')
-  tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch") || die "no branch $branch"
-  claimed=$(get --arg t "$t" '.tickets[$t].result.commit // ""')
-  if [ -n "$claimed" ] && [ "$(git -C "$MAIN" rev-parse -q --verify "$claimed^{commit}" 2>/dev/null)" != "$tip" ]; then
-    block "$t" "the result describes $claimed but $branch is at $tip"
-    state_die 6 "wave.sh: #$t not merged: the result file does not describe the branch tip"
-  fi
+  # Only verified work merges: a fresh verifier's pass for this attempt at
+  # this commit (verify.sh, references/evidence-contract.md).
+  [ "$(get --arg t "$t" --argjson n "$n" --arg tip "$TIP" \
+        '.tickets[$t].evidence | if . != null and .verdict == "pass" and .attempt == $n and .commit == $tip then "pass" else "" end')" = pass ] \
+    || state_die 13 "wave.sh: #$t not merged: no passing verdict for attempt $n at $TIP; run verify.sh start, then verify.sh judge"
   suite=$(get '.plan.suite_command // ""')
   [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after every merge"
   wt=$(integration_worktree)
@@ -728,42 +671,22 @@ cmd_close() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local status repo ib sha result body newbody
+  local status repo body newbody
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
   [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" != true ] || return 0
   repo=$(get '.repo')
-  ib=$(integration_branch)
-  sha=$(get --arg t "$t" '.tickets[$t].merge_commit')
-  result=$(get --arg t "$t" '.tickets[$t].result.file // ""')
-  [ -z "$result" ] || result="$RUN_DIR/$result"
   mkdir -p "$RUN_DIR/merges"
+  # The comment is the evidence contract in the state file, shown.
   body="$RUN_DIR/merges/$t.comment.md"
-  {
-    printf 'Merged into `%s` as %s by run %s; the full suite passed after the merge.\n\n' "$ib" "$sha" "$RUN_ID"
-    if [ -n "$result" ] && [ -f "$result" ]; then
-      jq -r '
-        def cell: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
-        def ev: if type == "object" then
-            ([(.tests // [])[]] + [(.checks // [])[] | "\(.command): \(.result)"]
-             + (if .diff then [.diff] else [] end) + (if .why then [.why] else [] end)) | join("; ")
-          else tostring end;
-        "| Criterion | Met | Evidence |", "|---|---|---|",
-        ((.acceptance // [])[] | "| \(.criterion | cell) | \(if .met then "yes" else "no" end) | \(.evidence | ev | cell) |"),
-        "",
-        "Suite: \(.tests.command // "-") → \(.tests.summary // "-" | cell)",
-        "Unsure: \(if (.unsure // []) == [] then "nothing" else (.unsure | join(" ")) end)",
-        "Decisions made alone: \((.decisions // []) | length). Review remarks: \((.review.remarks // []) | length)."' "$result"
-    fi
-  } >"$body"
+  "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body" || die "no evidence contract for #$t"
   gh issue comment "$t" -R "$repo" --body-file "$body" >/dev/null || die "could not comment on #$t"
-  if [ -n "$result" ] && [ -f "$result" ]; then
-    newbody="$RUN_DIR/merges/$t.body.md"
-    if gh issue view "$t" -R "$repo" --json body -q .body >"$newbody.orig" 2>/dev/null \
-      && python3 -I "$SCRIPT_DIR/lib/tick-criteria.py" "$result" <"$newbody.orig" >"$newbody" \
-      && ! cmp -s "$newbody.orig" "$newbody"; then
-      gh issue edit "$t" -R "$repo" --body-file "$newbody" >/dev/null || die "could not tick the criteria on #$t"
-    fi
+  newbody="$RUN_DIR/merges/$t.body.md"
+  get --arg t "$t" '.tickets[$t].evidence' >"$newbody.evidence.json"
+  if gh issue view "$t" -R "$repo" --json body -q .body >"$newbody.orig" 2>/dev/null \
+    && python3 -I "$SCRIPT_DIR/lib/criteria.py" tick "$newbody.evidence.json" <"$newbody.orig" >"$newbody" \
+    && ! cmp -s "$newbody.orig" "$newbody"; then
+    gh issue edit "$t" -R "$repo" --body-file "$newbody" >/dev/null || die "could not tick the criteria on #$t"
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"
@@ -781,6 +704,7 @@ cmd_report() {
       ticket: $t, title: (.plan.tickets[$t].title // null), status: $k.status,
       attempts: $k.attempts, merge_commit: $k.merge_commit,
       tracker_closed: ($k.tracker_closed // false), cost_usd: $k.cost_usd,
+      verdict: ($k.evidence.verdict // null),
       blocked_reason: ($k.blocked_reason // null), resolve: ($k.resolve // null)}],
     decisions_waiting: [.decisions[] | select(.status == "waiting")],
     halted: (.halted // null),

@@ -19,7 +19,7 @@ setup_wave() { # scope-json
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
   jq -n '{number: 1, title: "Add hello", state: "open", labels: [],
-          body: "## Acceptance criteria\n- [ ] hello.txt exists\n- [ ] Something not met"}' >"$FAKE_GH_DIR/issue-1.json"
+          body: "## Acceptance criteria\n- [ ] hello.txt exists\n- [ ] It says hi\n\n## Notes\n- [ ] not a criterion"}' >"$FAKE_GH_DIR/issue-1.json"
   jq -n '{number: 2, title: "Add goodbye", state: "open", labels: [], body: "- [ ] goodbye"}' >"$FAKE_GH_DIR/issue-2.json"
   echo '[1]' >"$FAKE_GH_DIR/blocked_by-2.json"
 
@@ -37,6 +37,7 @@ setup_wave() { # scope-json
   PATH="$TESTS_DIR/fixtures/fake-claude:$TESTS_DIR/fixtures/fake-gh:$PATH"
   export PATH FAKE_CLAUDE_MODE=script FAKE_CLAUDE_LOG="$TEST_TMPDIR/fake-claude.log"
   write_worker_script
+  write_verifier_script
   write_orchestrator_script
   # The chat's long-lived session: a process that outlives every call.
   CHAT=$(start_worker)
@@ -60,12 +61,31 @@ write_worker_script() {
 set -e
 sleep "${WORKER_SLEEP:-0}"
 echo hi >"${WORKER_FILE:-hello.txt}"
-git add -A && git commit -qm "worker"
+git add -A && git commit -q --allow-empty -m "worker"
 jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit: $c,
   acceptance: [{criterion: "hello.txt exists", met: true, evidence: {tests: ["check.sh"]}},
-               {criterion: "Something not met", met: false, evidence: {why: "out of reach"}}],
+               {criterion: "It says hi", met: true, evidence: {diff: "hello.txt +1 -0"}}],
   tests: {suite_passed: true, command: "sh check.sh", summary: "suite ok"},
-  unsure: [], decisions: [], review: {ran: true, remarks: []}, findings: []}' >"$ARTISAN_RESULT_FILE"
+  unsure: ["Whether hi needs a newline"],
+  decisions: [{job: 3, question: "Which file?", choice: "hello.txt", alternative: "HELLO", by: "worker 1",
+               kind: "engineering taste", criterion: "4", confidence: "provisional"}],
+  review: {ran: true, remarks: []}, findings: []}' >"$ARTISAN_RESULT_FILE"
+EOF
+}
+
+# The verifier: a verdict in the evidence format on the criteria verify.sh
+# gave it, each met unless VERIFIER_UNMET names it. VERIFIER_MODE=garbage
+# writes something that is not a verdict.
+write_verifier_script() {
+  export FAKE_CLAUDE_SCRIPT_VERIFIER="$TEST_TMPDIR/verifier.sh"
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF'
+set -e
+echo "$PWD" >>"$ARTISAN_RUN_DIR/../verifier-dirs"
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+if [ "${VERIFIER_MODE:-}" = garbage ]; then echo '{"verdict": "pass"}' >"$ARTISAN_RESULT_FILE"; exit 0; fi
+jq --arg unmet "${VERIFIER_UNMET:-}" '{verdict: "pass", acceptance: [.[] | {criterion: .,
+    met: (. != $unmet), evidence: (if . == $unmet then {why: "not in the diff"} else {checks: [{command: "sh check.sh", result: "suite ok"}]} end)}],
+  unsure: [], notes: "checked by behaviour"}' "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
 EOF
 }
 
@@ -77,6 +97,21 @@ set -euo pipefail
 S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
+# A fresh verifier per returned ticket; only its one-line verdict is read.
+verify() {
+  local rc
+  "\$S/verify.sh" start "\$R" "\$1" >/dev/null || return 1
+  while :; do
+    rc=0
+    "\$S/verify.sh" judge "\$R" "\$1" >>"\$R/../verdicts" 2>/dev/null || rc=\$?
+    case \$rc in
+      0) return 0 ;;
+      8) sleep 0.2 ;;
+      14) "\$S/verify.sh" start "\$R" "\$1" >/dev/null || return 1 ;;
+      *) return 1 ;;
+    esac
+  done
+}
 for t in \$("\$S/reconcile.sh" "\$R"); do "\$S/wave.sh" dispatch "\$R" "\$t" >/dev/null; done
 while [ "\$(inflight)" -gt 0 ]; do
   "\$S/wait-any.sh" "\$R" --timeout 5 >/dev/null || true
@@ -85,7 +120,7 @@ done
 for t in \$(jq -r '.tickets | to_entries[] | select(.value.status == "returned") | .key' "\$R/state.json"); do
   n=\$(jq -r --arg t "\$t" '.tickets[\$t].attempts' "\$R/state.json")
   while [ "\$("\$S/classify-worker.sh" "\$R" "\$t" "\$n")" = "running -" ]; do sleep 0.2; done
-  if "\$S/wave.sh" merge "\$R" "\$t"; then "\$S/wave.sh" close "\$R" "\$t"; fi
+  if verify "\$t" && "\$S/wave.sh" merge "\$R" "\$t"; then "\$S/wave.sh" close "\$R" "\$t"; fi
 done
 "\$S/wave.sh" report "\$R" >"\$ARTISAN_RESULT_FILE"
 EOF
@@ -130,9 +165,10 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   assert_eq true "$(state_get '.tickets["1"].suite.passed')"
   # Closed on the tracker, with the evidence posted and the met criterion ticked.
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")"
-  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "| hello.txt exists | yes | check.sh |"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "| hello.txt exists | yes | sh check.sh: suite ok |"
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [x] hello.txt exists"
-  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [ ] Something not met"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [x] It says hi"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [ ] not a criterion"
   # The worker's worktree is gone; the main checkout never moved or changed.
   [ ! -d "$TEST_TMPDIR/project-wt/r1-1.1" ] || fail "worker worktree left behind"
   assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse HEAD)" "main checkout's HEAD"
@@ -144,9 +180,9 @@ test_the_state_file_logs_each_event_in_order() {
   setup_wave
   start_and_launch
   wait_for "$ORCH_EXIT" 60
-  assert_eq "integration orchestrator dispatch result merge closed" \
+  assert_eq "integration orchestrator dispatch result verify verified merge closed" \
     "$(state_get '[.events[].event] | join(" ")')"
-  assert_eq "1 2 3 4 5 6" "$(state_get '[.events[].seq | tostring] | join(" ")')"
+  assert_eq "1 2 3 4 5 6 7 8" "$(state_get '[.events[].seq | tostring] | join(" ")')"
 }
 
 test_the_chat_learns_of_completion_from_the_exit_record_and_sweep_alone() {
@@ -275,7 +311,7 @@ test_dispatch_never_exceeds_max_agents() {
 test_tick_criteria_ticks_only_met_criteria() {
   printf '{"acceptance":[{"criterion":"Adds  a thing","met":true},{"criterion":"Other","met":false}]}' >"$TEST_TMPDIR/r.json"
   local out
-  out=$(printf -- '- [ ] adds a thing\n- [ ] Other\n- [ ] Unrelated' | python3 -I "$PLUGIN_ROOT/scripts/lib/tick-criteria.py" "$TEST_TMPDIR/r.json")
+  out=$(printf -- '- [ ] adds a thing\n- [ ] Other\n- [ ] Unrelated' | python3 -I "$PLUGIN_ROOT/scripts/lib/criteria.py" tick "$TEST_TMPDIR/r.json")
   assert_eq "- [x] adds a thing
 - [ ] Other
 - [ ] Unrelated" "$out"
@@ -286,11 +322,13 @@ test_costs_come_from_each_session_once_it_has_ended() {
   start_and_launch
   wait_for "$ORCH_EXIT" 60
   "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
-  # The fake claude reports $0.01 per session: one worker, one orchestrator.
-  assert_eq 0.01 "$(state_get '.tickets["1"].cost_usd')"
+  # The fake claude reports $0.01 per session: one worker and its verifier
+  # (the ticket's cost), one orchestrator.
+  assert_eq 0.02 "$(state_get '.tickets["1"].cost_usd')"
+  assert_eq 0.01 "$(state_get '.tickets["1"].attempt_costs["verify.1"]')"
   assert_eq 0.01 "$(state_get '.costs.orchestrator_usd')"
   "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
-  assert_eq 0.02 "$(state_get '.costs.total_usd')" "counted once"
+  assert_eq 0.03 "$(state_get '.costs.total_usd')" "counted once"
 }
 
 test_a_repo_that_is_not_owner_and_name_is_refused_at_start() {

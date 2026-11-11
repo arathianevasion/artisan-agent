@@ -11,8 +11,9 @@
 #   api-error   is_error true with subtype success (seen live when not logged in)
 #   nonzero     prints nothing, exits 3
 #   crash       kills itself with SIGSEGV, writing nothing
-#   script      runs the bash file in FAKE_CLAUDE_SCRIPT_ORCHESTRATOR or
-#               FAKE_CLAUDE_SCRIPT_WORKER (by $ARTISAN_ROLE) in its working
+#   script      runs the bash file in FAKE_CLAUDE_SCRIPT_ORCHESTRATOR,
+#               FAKE_CLAUDE_SCRIPT_VERIFIER or FAKE_CLAUDE_SCRIPT_WORKER (by
+#               $ARTISAN_ROLE) in its working
 #               directory; completes if the file exits 0, else ends without
 #               the completion line
 #   sleep       leaves a stray background `sleep` in its process group, sleeps
@@ -78,8 +79,11 @@ ARTISAN-WORKER: complete"
     kill -SEGV $$
     ;;
   script)
-    if [ "${ARTISAN_ROLE:-worker}" = orchestrator ]; then script=${FAKE_CLAUDE_SCRIPT_ORCHESTRATOR:-}
-    else script=${FAKE_CLAUDE_SCRIPT_WORKER:-}; fi
+    case "${ARTISAN_ROLE:-worker}" in
+      orchestrator) script=${FAKE_CLAUDE_SCRIPT_ORCHESTRATOR:-} ;;
+      verifier) script=${FAKE_CLAUDE_SCRIPT_VERIFIER:-} ;;
+      *) script=${FAKE_CLAUDE_SCRIPT_WORKER:-} ;;
+    esac
     if [ -n "$script" ] && bash "$script" >>"${FAKE_CLAUDE_LOG:-/dev/null}" 2>&1; then
       result success false 6 "Ran the script.
 
