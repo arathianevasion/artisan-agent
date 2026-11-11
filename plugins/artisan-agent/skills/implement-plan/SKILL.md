@@ -126,6 +126,8 @@ If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline),
 
 Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
 
+**Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
+
 Then the evidence table of the digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (a table naming each ticket with its verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`).
 
 ### 7. Findings filed for triage
@@ -144,6 +146,8 @@ When `status` says `done`, or the run halts, report:
 | #14 (export CSV) | 2 | claude-sonnet-5-5 | blocked: merge conflict in `export.py`; branch `agent/14` kept |
 
 Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
+
+Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/skills/retro/SKILL.md`).
 
 ## Failure handling
 

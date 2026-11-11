@@ -197,7 +197,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 2 | bad usage | all | fix the call |
 | 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, any write | wait |
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
-| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`) | `dispatch` | leave it for a later wave |
+| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
 | 7 | the suite went red after the merge (undone, blocked) | `merge`, `resolved` | carry on with the rest |
 | 8 | a worker or verifier is still running or ending (from `verify.sh start`, also: another call's verifier could not launch or has not come up yet) | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
@@ -245,6 +245,20 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh table [--run-dir D]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
 | `guardrails.sh sources` | each source's current commit | JSON |
+
+## Slice gates
+
+`gate.sh` opens a slice's review gate once every ticket of the slice has merged, and takes the Artisan's answers; `lib/packet.py` renders the packet. The rules, the packet and the answers: `references/review-gates.md`. Tested in `tests/gate.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate.sh sync <run-dir>` | both (`wave.sh close`, `wave.sh status`) | folds in answers given while the lock was held, approves a gate closed by hand on the tracker, opens every gate that is due: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate.sh due <run-dir>` / `open <run-dir> <gate-id>` | orchestrator | the gates due; open one: the packet, the `review-gate` issue natively blocking only the slice's dependents, a `review-gate` decision; prints the issue (again, on a repeat) | 0, 1, 6 not due |
+| `gate.sh holds <run-dir> <ticket>` | `wave.sh dispatch` | `held` when the ticket's slice gate is due and not approved, else `free`; dispatch refuses its dependents (5) on anything but `free`, so an error holds | 0, 1 |
+| `gate.sh chat <run-dir> [<issue>]` / `packet` / `list` | Engineering chat | the compressed packet; the full one; a table of the run's gates | 0 |
+| `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
+| `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
+| `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
 
 ## The fake tracker
 
