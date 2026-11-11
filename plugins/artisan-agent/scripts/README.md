@@ -279,3 +279,16 @@ Neither tier ever stops to compact (#59). `drain.sh` reads a session's context a
 **The fallback for the context percentage** (pilot prerequisite 6). Claude Code gives a session's context percentage only to the interactive status line; a headless `claude -p` has no way to ask. So the percentage is computed: the last main-thread assistant record in the session's transcript that carries `usage`, summing `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` and `output_tokens`, over the window (200,000; 1,000,000 for a `[1m]` model id or once the sum passes 200,000; `ARTISAN_CONTEXT_WINDOW` overrides). Subagent (sidechain) records are skipped. A session without a transcript (`--no-session-persistence`) reads `unknown`, treated as normal: the `PreCompact` marker is its only backstop.
 
 **Resuming past the run lock.** `guard/protect.sh run-start` lets `/artisan-agent:implement-plan` through with no arguments, `resume` or the open run's id, so a new or resumed chat can open the run's digest while an orchestrator holds the lock. Anything else is still a second run: refused and left as a `plan` issue.
+
+# The ADR and guardrail check at plan approval
+
+`adr-check.sh` is the mechanical half of the check that opens plan approval, in `/artisan-agent:to-plan` and in `implement-plan`'s plan step when the route skipped `to-plan`; the procedure and the ADR adjustment loop are `references/adr-check.md`. An agent judges (which ADRs a ticket touches, where there is tension, which decisions no ADR covers) and writes `adr-check.json`; the script validates it against the ADR files and prints the view. Tested in `tests/adr-check.test.sh`.
+
+| Command | Does | Exit status |
+| :- | :- | :- |
+| `adr-check.sh list [--adr-dir D]` | the ADRs as JSON: number, file, title | 0, 1 |
+| `adr-check.sh refs [--adr-dir D]` | reads text on stdin; prints the number of each existing ADR it cites | 0, 1 |
+| `adr-check.sh render <check.json> [--adr-dir D] [--guardrails resolve.json]` | the approval view: plan compliance, each ticket's ADRs with `TENSION` flagged, ADR gaps, then guardrail conflicts and the level that applies (from `guardrails.sh resolve`); an ADR number with no file is refused | 0, 1 |
+| `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1 |
+
+The edit itself is not scripted: the Artisan approves a drafted diff, it lands by a short PR (`doc-change.sh`, upstream `pr`) before dispatch, then `affected` names the tickets to re-check.
