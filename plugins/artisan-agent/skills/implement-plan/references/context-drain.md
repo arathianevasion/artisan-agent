@@ -22,7 +22,7 @@ The thresholds are the run's `context.drain_percent` and `context.review_percent
 | `process` | dispatch nothing new (no new ticket, no retry; for the chat, no new wave), keep processing what comes back |
 | `handoff` | hand off now (below) |
 
-`risk-gate` means a merge you process now gets a risk gate.
+`risk-gate` means a merge you process now gets a risk gate. Only an orchestrator merges, so for the chat it asks nothing more than its band does.
 
 ## Reading the context percentage
 

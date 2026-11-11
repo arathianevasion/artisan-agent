@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # Live proof of the orchestrator's hand-off (#59, pilot prerequisite 1): a
 # real headless orchestrator, loading this plugin with --plugin-dir under the
-# normal login, is driven into Claude Code's autocompact mid-wave; the
-# plugin's PreCompact hook blocks the compaction and leaves the hand-off
-# marker; the orchestrator sees it at its next drain.sh check, finishes its
-# step and hands off; a fresh real orchestrator finishes the same wave from
-# the state file. Workers and verifiers are the fake `claude` (scripted), so
+# normal login, gets the hand-off marker mid-wave, with its worker in flight;
+# it sees it at its next drain.sh check, finishes its step and hands off; a
+# fresh real orchestrator finishes the same wave from the state file.
+#
+# The marker is written by running the plugin's own PreCompact hook
+# (compact-hook.sh pre-compact) with the orchestrator's environment, exactly
+# as Claude Code runs it, once the worker is dispatched. A headless session
+# can't be made to compact on cue: claude -p (2.1.322) didn't autocompact
+# even with CLAUDE_AUTOCOMPACT_PCT_OVERRIDE and CLAUDE_CODE_AUTO_COMPACT_WINDOW
+# set, and /compact needs the session to have ended (claude -p --resume).
+# That the hook blocks a real headless orchestrator's compaction and writes
+# the marker was proved separately with --resume and /compact (README.md). Workers and verifiers are the fake `claude` (scripted), so
 # only the orchestrators cost anything. Nothing reaches GitHub (the fake
-# tracker); no settings are read or written (--setting-sources project,local).
+# tracker); no settings are written.
 #
 # Usage: live.sh <workdir>
 #
 # REAL_CLAUDE (default: the first `claude` on PATH that isn't a shim) is the
-# real binary. The first orchestrator gets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=PCT
-# (default 16: autocompact fires a few calls in, once its context passes
-# 16% of the window); the second runs as usual. Every session is capped at
+# real binary. Every session is capped at
 # BUDGET (default 1.00) dollars; the orchestrators' model is MODEL (default
 # claude-sonnet-5-5). The fake worker sleeps WORKER_SLEEP (default 90)
 # seconds, so it is still in flight when the first orchestrator hands off.
@@ -31,7 +36,6 @@ S=$PLUGIN_ROOT/scripts
 WD=${1:?usage: live.sh <workdir>}
 BUDGET=${BUDGET:-1.00}
 MODEL=${MODEL:-claude-sonnet-5-5}
-PCT=${PCT:-16}
 export WORKER_SLEEP=${WORKER_SLEEP:-90}
 
 if [ -z "${REAL_CLAUDE:-}" ]; then
@@ -51,7 +55,10 @@ RUN=$REPO/.artisan-agent/runs/live1
 export FAKE_GH_DIR=$WD/tracker
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
-export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT --setting-sources project,local"
+# No --setting-sources here: with "project,local" Claude Code (2.1.322) loads a
+# --plugin-dir plugin's skills but never runs its hooks, and the hooks are what
+# this proves. User settings are read, never written.
+export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT"
 export ARTISAN_MAX_BUDGET_USD=$BUDGET
 
 failures=0
@@ -67,9 +74,6 @@ cat >"$WD/bin/claude" <<EOF
 #!/usr/bin/env bash
 # Orchestrators are real; workers and verifiers are the scripted fake.
 if [ "\${ARTISAN_ROLE:-}" = orchestrator ]; then
-  case "\$(basename "\${ARTISAN_RESULT_FILE:-}")" in
-    orchestrator-w1.1.result.json) export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=$PCT ;;
-  esac
   exec "$REAL_CLAUDE" "\$@"
 fi
 exec "$PLUGIN_ROOT/tests/fixtures/fake-claude/claude" "\$@"
@@ -125,6 +129,20 @@ export ARTISAN_WRITER_PID=$CHAT
 (cd "$REPO" && "$S/wave.sh" start "$RUN" >/dev/null && "$S/wave.sh" launch "$RUN" >"$WD/launch.out")
 echo "info launched $(cat "$WD/launch.out")"
 
+# Once the worker is dispatched: the PreCompact hook, as Claude Code runs it.
+i=0
+until jq -e '[.events[].event] | index("dispatch")' "$RUN/state.json" >/dev/null 2>&1; do
+  i=$((i + 1))
+  [ "$i" -lt 600 ] || { echo "FAIL no dispatch in 10 minutes"; break; }
+  sleep 1
+done
+hook_rc=0
+jq -nc --arg cwd "$WD/sample-wt/run-live1" --arg tp "$(cat "$RUN/workers/orchestrator-w1.1/transcript.path" 2>/dev/null)" \
+  '{session_id: "live", transcript_path: $tp, cwd: $cwd, hook_event_name: "PreCompact", trigger: "auto"}' \
+  | ARTISAN_ROLE=orchestrator ARTISAN_RUN_DIR=$RUN ARTISAN_RESULT_FILE=$RUN/results/orchestrator-w1.1.result.json \
+    "$S/compact-hook.sh" pre-compact 2>/dev/null || hook_rc=$?
+echo "info PreCompact hook run at $(date +%T) with the worker in flight: exit $hook_rc"
+
 # ------------------------------------------------------ wait for the wave
 i=0
 until [ -f "$RUN/results/orchestrator-w1.1.exit.json" ] && {
@@ -135,7 +153,8 @@ until [ -f "$RUN/results/orchestrator-w1.1.exit.json" ] && {
 done
 
 check "the first orchestrator's PreCompact hook left the hand-off marker" test -f "$RUN/workers/orchestrator-w1.1/handoff.json"
-check "the marker came from autocompact" jq -e '.trigger == "auto"' "$RUN/workers/orchestrator-w1.1/handoff.json"
+check "the hook blocked the compaction (exit 2)" test "$hook_rc" = 2
+check "the first orchestrator's SessionStart hook recorded its transcript" test -s "$RUN/workers/orchestrator-w1.1/transcript.path"
 check "the first orchestrator recorded its hand-off" jq -e '.orchestrators[0].handoff.reason | test("compaction")' "$RUN/state.json"
 check "it wrote the hand-off report as its result" jq -e '.handoff.to == "orchestrator-w1"' "$RUN/results/orchestrator-w1.1.result.json"
 check "the next orchestrator took the same wave" jq -e '[.orchestrators[].wave] == [1, 1]' "$RUN/state.json"
@@ -144,7 +163,7 @@ check "the second orchestrator completed" \
 check "the ticket merged and closed" jq -e '.tickets["1"].status == "merged" and .tickets["1"].tracker_closed' "$RUN/state.json"
 check "the worker in flight was never dispatched again" jq -e '.tickets["1"].attempts == 1' "$RUN/state.json"
 check "the events show the hand-off before the merge" \
-  jq -e '[.events[].event] | (index("handoff") < index("merge"))' "$RUN/state.json"
+  jq -e '[.events[].event] | index("handoff") as $h | $h != null and $h < index("merge")' "$RUN/state.json"
 check "the main checkout never changed" sh -c "[ \"\$(git -C '$REPO' rev-parse HEAD)\" = '$MAIN_HEAD' ]"
 
 echo "info events: $(jq -r '[.events[].event] | join(" ")' "$RUN/state.json")"
