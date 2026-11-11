@@ -6,6 +6,8 @@ setup_run() {
   RUN="$TEST_TMPDIR/run"
   WORKTREE="$TEST_TMPDIR/worktree"
   mkdir -p "$RUN" "$WORKTREE"
+  # An approved plan with ticket 46 in scope: nothing launches without one.
+  jq -n '{schema_version: 1, plan: {scope: ["46"]}}' >"$RUN/state.json"
   printf 'Build ticket 46.\n' >"$TEST_TMPDIR/prompt.md"
   PATH="$TESTS_DIR/fixtures/fake-claude:$PATH"
   export PATH
@@ -242,4 +244,42 @@ test_rejects_missing_arguments() {
 test_an_option_missing_its_value_is_a_usage_error() {
   setup_run
   assert_status 2 run_ticket --attempt
+}
+
+test_nothing_launches_into_a_run_folder_with_no_state_file() {
+  setup_run
+  rm "$RUN/state.json"
+  export FAKE_CLAUDE_MODE=complete
+  local status=0
+  run_ticket >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 4 "$status" "no approved scope"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "no state file"
+  [ ! -e "$RUN/workers/46.1" ] || fail "a worker folder was created"
+}
+
+test_an_orchestrator_launches_outside_the_ticket_scope_and_owns_the_writer_pid() {
+  setup_run
+  export FAKE_CLAUDE_MODE=complete
+  local runner
+  runner=$("$PLUGIN_ROOT/scripts/run-ticket.sh" --run-dir "$RUN" --ticket orchestrator-w1 --role orchestrator \
+    --prompt-file "$TEST_TMPDIR/prompt.md" --workdir "$WORKTREE" \
+    --estimate-usd 0.25 --expected-minutes 5)
+  wait_for_file "$RUN/results/orchestrator-w1.1.exit.json"
+  assert_contains "$(cat "$FAKE_CLAUDE_ENV")" "ARTISAN_WRITER_PID=$runner"
+  assert_contains "$(cat "$FAKE_CLAUDE_ENV")" "ARTISAN_ROLE=orchestrator"
+  assert_contains "$(cat "$RUN/workers/orchestrator-w1.1/prompt.md")" "the wave is done"
+}
+
+test_a_worker_gets_its_role_and_no_writer_pid() {
+  setup_run
+  launch complete
+  wait_for_file "$EXIT_RECORD"
+  assert_contains "$(cat "$FAKE_CLAUDE_ENV")" "ARTISAN_ROLE=worker"
+  assert_contains "$(cat "$FAKE_CLAUDE_ENV")" "ARTISAN_WRITER_PID="$'\n'
+}
+
+test_an_orchestrator_id_must_say_so() {
+  setup_run
+  assert_status 2 run_ticket --role orchestrator
+  assert_status 2 run_ticket --role verifier
 }

@@ -183,8 +183,8 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
   out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Wave 1"
   assert_contains "$out" "### Wave 2"
-  assert_contains "$out" "| #10 | Retry failed uploads | claude-sonnet-5-5 | \$5.00 |"
-  assert_contains "$out" "| #11 | Billing tab | claude-opus-5-5 | \$5.00 |"
+  assert_contains "$out" "| #10 (Retry failed uploads) | 1 | claude-sonnet-5-5 | \$5.00 |"
+  assert_contains "$out" "| #11 (Billing tab) | 2 | claude-opus-5-5 | \$5.00 |"
   assert_contains "$out" "Total estimate: \$10.00"
   assert_contains "$out" "Max Agents: 5"
   for key in max_agents sweep_minutes context.drain_percent context.review_percent \

@@ -173,11 +173,12 @@ cmd_render() {
       "Scope: \($p.scope | map(ticket(.) + " (" + ($p.tickets[.].title // "untitled") + ")") | join(", ")). Anything else waits.",
       "",
       ( $waves | to_entries[]
-        | "### Wave \(.key + 1)",
-          "| Ticket | Description | Model | Estimate | From | Expected output |",
+        | (.key + 1) as $w
+        | "### Wave \($w)",
+          "| Ticket | Wave | Model | Estimate | From | Expected output |",
           "|---|---|---|---|---|---|",
           ( .value[] as $t | $p.tickets[$t] as $tk
-            | "| \(ticket($t)) | \($tk.title // "") | \($tk.model) | \($tk.estimate_usd | money) | "
+            | "| \(ticket($t)) (\($tk.title // "untitled")) | \($w) | \($tk.model) | \($tk.estimate_usd | money) | "
               + (if $tk.estimate_basis.mode == "history"
                  then "history: \($tk.estimate_basis.tickets) merged ticket(s), mean \($tk.estimate_basis.mean_usd | money) x \($tk.estimate_basis.multiplier)"
                  else "price: \($tk.estimate_basis.input_tokens) in / \($tk.estimate_basis.output_tokens) out tokens" end)

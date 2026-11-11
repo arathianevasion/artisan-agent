@@ -6,7 +6,8 @@
 #   run-ticket.sh --run-dir DIR --ticket ID --prompt-file FILE --workdir DIR
 #                 --estimate-usd N --expected-minutes N
 #                 [--attempt N] [--model MODEL] [--max-turns N]
-#                 [--deadline-seconds N] [-- extra claude arguments...]
+#                 [--deadline-seconds N] [--role worker|orchestrator]
+#                 [--lock-from PID] [-- extra claude arguments...]
 #
 # Prints the detached runner's PID and returns at once. The runner starts its
 # own session (setsid, or perl's POSIX::setsid where there is no setsid
@@ -29,8 +30,20 @@
 #                                 JSON output), stderr.log, runner.log
 #
 # A ticket's attempt is refused if its worker folder already exists; pass
-# --attempt for a retry. When the run folder holds a state file, a ticket
-# outside its approved scope (plan.scope) is refused before anything starts.
+# --attempt for a retry. The run folder must hold a state file (an approved
+# plan): a worker for a ticket outside its approved scope (plan.scope), or any
+# launch into a run folder with no state file, is refused before anything
+# starts.
+#
+# --role orchestrator launches a wave's orchestrator the same way (detached,
+# capped, always an exit record) instead of a worker. Its id must start with
+# "orchestrator-" (wave.sh uses orchestrator-w<wave>), it is not a ticket so
+# the scope check does not apply, and its session gets ARTISAN_WRITER_PID set
+# to the runner's PID: the long-lived pid that holds the state lock while the
+# wave runs. With --lock-from PID, the runner takes the state lock over from
+# PID (the chat that launched it) before the session starts, so the
+# orchestrator never finds its own run locked. Every session gets
+# ARTISAN_ROLE (worker or orchestrator) and ARTISAN_RUN_DIR.
 #
 # Exit status: 0 launched, 1 failed to launch, 2 bad usage, 4 the ticket is
 # outside the approved scope.
@@ -51,7 +64,7 @@ die_usage() {
 
 orig_args=("$@")
 run_dir= ticket= prompt_file= workdir= estimate= expected_minutes=
-attempt=1 model= max_turns= deadline_seconds= foreground=
+attempt=1 model= max_turns= deadline_seconds= foreground= role=worker lock_from=
 extra=()
 
 while [ $# -gt 0 ]; do
@@ -70,6 +83,8 @@ while [ $# -gt 0 ]; do
     --model) model=$2; shift 2 ;;
     --max-turns) max_turns=$2; shift 2 ;;
     --deadline-seconds) deadline_seconds=$2; shift 2 ;;
+    --role) role=$2; shift 2 ;;
+    --lock-from) lock_from=$2; shift 2 ;;
     --foreground) foreground=1; shift ;;
     --) shift; extra=("$@"); break ;;
     *) die_usage "unknown argument: $1" ;;
@@ -92,10 +107,23 @@ is_number "$expected_minutes" || die_usage "--expected-minutes must be a number"
 [ -z "$deadline_seconds" ] || is_count "$deadline_seconds" || die_usage "--deadline-seconds must be a positive whole number"
 [ -f "$prompt_file" ] || die_usage "no such prompt file: $prompt_file"
 [ -d "$workdir" ] || die_usage "no such workdir: $workdir"
+case "$role" in
+  worker) ;;
+  orchestrator) case "$ticket" in orchestrator-*) ;; *) die_usage "an orchestrator's id starts with orchestrator-" ;; esac ;;
+  *) die_usage "--role is worker or orchestrator" ;;
+esac
+[ -z "$lock_from" ] || [ "$role" = orchestrator ] || die_usage "--lock-from is for an orchestrator"
 
-# The scope is exactly the set approved: never launch a worker outside it.
-if [ -z "$foreground" ] && [ -f "$run_dir/state.json" ]; then
-  "$(dirname "$0")/state.sh" in-scope "$run_dir" "$ticket" || exit $?
+# Nothing launches without an approved plan, and the scope is exactly the set
+# approved: never launch a worker outside it.
+if [ -z "$foreground" ]; then
+  if [ ! -f "$run_dir/state.json" ]; then
+    echo "run-ticket.sh: refusing $ticket: $run_dir has no state file, so there is no approved scope; start the run with state.sh init" >&2
+    exit 4
+  fi
+  if [ "$role" = worker ]; then
+    "$(dirname "$0")/state.sh" in-scope "$run_dir" "$ticket" || exit $?
+  fi
 fi
 
 mkdir -p "$run_dir"
@@ -182,7 +210,23 @@ trap 'write_exit_record' EXIT
 trap 'stop_requested=1' TERM INT
 
 mkdir -p "$worker_dir" "$run_dir/results/findings"
+if [ -n "$lock_from" ]; then
+  # shellcheck source=lib/state-lib.sh
+  . "$(dirname "$0")/lib/state-lib.sh"
+  if ! state_hand_lock "$run_dir" "$lock_from" "$$"; then
+    echo "run-ticket.sh: could not take the state lock from $lock_from; not starting" >&2
+    code=1 reason=runner-error
+    echo $$ >"$worker_dir/runner.pid"
+    exit 1
+  fi
+fi
 echo $$ >"$worker_dir/runner.pid.tmp" && mv "$worker_dir/runner.pid.tmp" "$worker_dir/runner.pid"
+
+if [ "$role" = orchestrator ]; then
+  done_what="the wave is done and your result file (the wave report) is written"
+else
+  done_what="the ticket is done and your result file is written"
+fi
 
 prompt="$(cat "$prompt_file")
 
@@ -191,7 +235,7 @@ Notes from the ticket runner:
 - Write your result file to $result_file (also in \$ARTISAN_RESULT_FILE).
 - Append any findings, one JSON object per line, to $findings_file (also in \$ARTISAN_FINDINGS_FILE).
 - Do not leave background commands running. Anything still running when you finish is stopped.
-- Only when the ticket is done and your result file is written, end your final reply with this line on its own:
+- Only when $done_what, end your final reply with this line on its own:
 $COMPLETION_LINE
   If you could not finish, leave that line out and say why."
 printf '%s\n' "$prompt" >"$worker_dir/prompt.md"
@@ -204,6 +248,15 @@ claude_args=(-p "$prompt" --output-format json --max-budget-usd "$max_budget" --
 set -m
 (
   cd "$workdir"
+  # Only an orchestrator writes the state file; a worker started by one must
+  # not inherit its writer pid.
+  if [ "$role" = orchestrator ]; then
+    ARTISAN_WRITER_PID=$$
+    export ARTISAN_WRITER_PID
+  else
+    unset ARTISAN_WRITER_PID
+  fi
+  ARTISAN_ROLE=$role ARTISAN_RUN_DIR=$run_dir \
   ARTISAN_RESULT_FILE=$result_file ARTISAN_FINDINGS_FILE=$findings_file \
     exec claude "${claude_args[@]}" ${extra[@]+"${extra[@]}"}
 ) <"/dev/null" >"$worker_dir/output.json" 2>"$worker_dir/stderr.log" &

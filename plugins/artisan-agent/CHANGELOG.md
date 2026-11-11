@@ -2,6 +2,18 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.3.0 (2026-11-10)
+
+Wave 3: the first two-tier run, the plan step and main-checkout protection.
+
+- Tracer bullet: `/artisan-agent:implement-plan` runs a ticket end to end. The Engineering chat launches a detached orchestrator (`scripts/wave.sh`, `orchestrator.md`), which dispatches a worker, merges `--no-ff` into the run's own integration worktree, closes the ticket and logs each event in the state file. Ticket listings are tables.
+- Project config (`templates/config.yml`) and the plan step (`scripts/plan.sh`): one approval with estimates and every setting. Overrides apply to one run only, and a ticket outside the approved set never dispatches.
+- Main-checkout protection and the one-run-per-repo lock, with the pre-commit and lock-check fallbacks and `scripts/doc-change.sh` for doc edits.
+- The worker skill stops only for an interface another ticket owns; a new seam becomes a decision card.
+- The evidence record uses `findings` and `review.remarks`.
+- Kept upstream skills are named in full where a built-in shares the name (`mattpocock-skills:code-review`).
+- Triage defects fixed; machine setup removes stray installs whose folder is gone and checks for `jq` and `perl`.
+
 ## 0.2.0 (2026-11-10)
 
 Wave 2: the parts a run is built from, and the Understand, Specify and Product-chat skills.

@@ -1,161 +1,147 @@
 ---
 name: implement-plan
-description: Run a defined set of work to completion — a plan, several plans, individual tickets, a single ticket, or any mix. Reads published tickets and their blocking edges, plans a purpose-built agent for each one (model, brief, expected output), gets the plan approved, then dispatches tickets in dependency waves across isolated git worktrees where each agent runs /artisan-agent:implement, and closes tickets, resolves merge conflicts, and files discovered work for triage as results come back. Use this whenever the Artisan wants tickets built — "run this ticket", "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize agents over one or more issues, even if they do not say the word "ticket". Claude may call it, for example when another pipeline step hands an approved ticket or plan on to be built.
+description: Run a defined set of work to completion — a plan, several plans, individual tickets, a single ticket, or any mix. The Engineering chat reads the published tickets and their blocking edges, plans a worker for each one (model, brief, expected output), gets the plan approved, then launches a detached headless orchestrator per wave. The orchestrator dispatches workers that each run /artisan-agent:implement in their own worktree, merges their work into the run's integration branch, runs the suite and closes the tickets; the chat reports each wave and files findings for triage. Use this whenever the Artisan wants tickets built — "run this ticket", "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize work over one or more issues, even if they do not say the word "ticket". Claude may call it, for example when another pipeline step hands an approved ticket or plan on to be built.
 ---
 
 # Implement Plan
 
 Run a defined set of work to done: a plan, several plans, individual tickets, a single ticket, or any combination. That set is the run's scope; anything outside it waits.
 
-`/artisan-agent:implement` runs one ticket in the session that invokes it. It has no completion step: it ends at the commit and never touches the work item, does not act on `/mattpocock-skills:code-review` findings, and does not tick acceptance criteria. Even for a single ticket that leaves the work unverified and the ticket open, and for a queue it is fatal, because `to-tickets` defines the frontier as tickets whose blockers are all **closed**. If nothing closes, nothing ever unblocks, and an unattended run re-picks the same ticket forever.
+`/artisan-agent:implement` builds one ticket and ends at the commit and its evidence record. It never closes the ticket or merges, and for a queue that is fatal on its own: the frontier is tickets whose blockers are all **merged**, so if nothing merges, nothing ever unblocks. This skill is the layer above it. It owns the dependency graph, the plan, the dispatch and the reconciliation. It never implements anything itself.
 
-This skill is the missing layer above `/artisan-agent:implement`: it owns the dependency graph, the agent design, the dispatch, and — critically — the reconciliation. It never implements anything itself.
+Wherever this skill puts something in front of the Artisan (the plan, a wave report, a question, the run summary), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Wherever it lists tickets, use a markdown table, never a numbered list: one row per ticket, with its number and a short plain description together (such as "#12 (retry failed uploads)"), its wave or blockers, its model, and its expected output or status.
 
-Wherever this skill puts something in front of the Artisan (the plan, a wave report, a question), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`.
+## Two tiers
+
+You are the **Engineering chat**. You stay light: you hold the plan, show progress, take the Artisan's decisions and start each wave. You never dispatch a worker, merge or close a ticket yourself.
+
+Each wave runs in a fresh headless **orchestrator** that you launch detached and then leave alone. It dispatches the wave's **workers** (one headless `claude -p` per ticket, each running `/artisan-agent:implement` in its own worktree), waits on their files, merges their work into the run's integration branch, runs the full suite after each merge, closes each merged ticket, writes the state file after every event, and exits. Its brief is `references/orchestrator.md`; the mechanics both tiers share are in `references/dispatch.md`.
+
+| Who | Holds the state lock | Does | Learns what happened from |
+|---|---|---|---|
+| Engineering chat | between waves | plan step, `wave.sh start`, `wave.sh launch`, reports, decisions, findings for triage | the orchestrator's exit record and result file, and `wave.sh status` (sweep and reconciler) |
+| Orchestrator | for its wave | `wave.sh dispatch`, `wait-any.sh`, `sweep.sh`, `wave.sh merge`, `wave.sh close`, `wave.sh report` | result files, exit records, git and the tracker |
+| Worker | never | `/artisan-agent:implement` on one ticket in its own worktree | its ticket |
+
+Both the orchestrator and its workers are launched by `${CLAUDE_PLUGIN_ROOT}/scripts/run-ticket.sh`, detached in their own session under `nohup`, never as a tool background command. So neither the 2-hour cap on background commands, nor your turn ending, nor this chat being closed or killed, stops a wave. Nobody reads a transcript: completion is judged from files.
 
 ## Preconditions
 
 Stop and tell the Artisan which is missing rather than working around it:
 
-- Tickets are published — either `.scratch/<feature>/issues/NN-slug.md` or issues on a configured tracker. If not, route to `/to-tickets` first.
+- Tickets are published on the tracker that `docs/agents/issue-tracker.md` describes. If not, route to `/to-tickets` first.
 - `/setup-matt-pocock-skills` has run for this repo.
-- The working tree is clean and `git worktree` is available.
-- **No other run holds the run lock.** Before anything else, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-lock.sh check`. Exit 3 means another run holds this repo's lock (it prints the run id and pid): do not start. Leave the request as a `plan` issue (`${CLAUDE_PLUGIN_ROOT}/guard/queue-plan.sh "<request>"`), tell the Artisan which run holds the lock, and stop. A repo has one run at a time. This is the check that works when the plugin's own hook is disabled; the rule is in `${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md`.
-- You are not in the main checkout: no session edits it, and a run merges in its own integration worktree. If you are in the main checkout, go to a worktree first (`${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md`).
-- `/artisan-agent:implement`, `/tdd`, `/mattpocock-skills:code-review`, `/artisan-agent:resolve-conflicts` and `/artisan-agent:triage` are installed, because this skill and its agents all reach for them.
-- **Every gate the agents will report on has been proven capable of failing.** Run each one — test suite, typecheck, lint — against a deliberately broken file and confirm a non-zero exit, then revert. A gate that cannot fail turns every agent's report into noise for the length of the run, and nothing downstream will reveal it: the results all say "clean", the merges all stay green, and you find out only when someone reads the config. Report what each gate actually covers, in the plan, alongside the tier mapping.
-
-The last one is not ceremony. In a real run, `npm run typecheck` was `tsc --noEmit` against a root `tsconfig.json` with `"files": []` and only project references — `tsc` does not follow references, so it compiled an empty program and exited 0 unconditionally. Thirty tickets reported "typecheck clean" and every one of those claims was vacuous.
-
-Anything the agents cannot verify, say so in the plan rather than discovering it at the end. A gate whose coverage you have not measured is a gate you are entitled to distrust.
+- **No other run holds the run lock.** Before anything else, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-lock.sh check`. Exit 3 means another run holds this repo's lock (it prints the run id and pid): do not start. Leave the request as a `plan` issue (`${CLAUDE_PLUGIN_ROOT}/guard/queue-plan.sh "<request>"`), tell the Artisan which run holds the lock, and stop. A repo has one run at a time; the rule is in `${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md`.
+- **No session edits the main checkout.** You may sit in it, but you change nothing tracked there: the run's files go in its run folder (`.artisan-agent/runs/<run-id>/`, git-ignored), merges happen only in the run's own integration worktree, and workers work in their own worktrees. `${CLAUDE_PLUGIN_ROOT}/references/main-checkout.md` has the rule.
+- `git worktree` is available, and `jq`, `python3`, `perl` (macOS) and `gh` are on PATH.
+- **Every check the workers will report on has been proven capable of failing.** Run each one (test suite, typecheck, lint) against a deliberately broken file in a scratch worktree and confirm a non-zero exit, then throw the worktree away. A check that can't fail turns every worker's evidence into noise for the length of the run, and nothing downstream reveals it: the results all say "clean", the merges all stay green. In one real run, `npm run typecheck` was `tsc --noEmit` against a root `tsconfig.json` with `"files": []`; it compiled an empty program and exited 0, so thirty tickets reported "typecheck clean" and every claim was vacuous. Say in the plan what each check actually covers, and say what the workers can't verify.
 
 ## Composition
 
-Skills split on who can invoke them. A typed-only skill (`disable-model-invocation: true`) runs only when a person types it; a Claude-callable skill can also be called by Claude, including from another skill.
-
-This skill is Claude-callable, so another pipeline step can hand it work. Dispatch still never happens in-session: an in-session subagent shares this session's working directory and cannot give a ticket a fresh context window. Each ticket gets a separate `claude -p` process in its own worktree, where the prompt runs `/artisan-agent:implement` explicitly in a fresh session. Do not attempt an in-session fan-out.
+This skill is Claude-callable, so another pipeline step can hand it work. Dispatch still never happens in this session: an in-session subagent shares its working directory and cannot give a ticket a fresh context window. Each ticket gets its own `claude -p` worker in its own worktree. Agent teams are not used for code.
 
 ## Process
 
 ### 1. Read the queue and build the graph
 
-Read every ticket body in full — not just titles. Extract for each: id, title, its `Blocked by` edges (native tracker links or the `## Blocked by` body section), its acceptance criteria, and the layers it touches.
+Read every ticket body in full, not just titles. Extract for each: its number, title, blockers (native tracker links or the `## Blocked by` body section), acceptance criteria, and the layers it touches.
 
-Compute **waves** by topological level: wave 1 is every ticket with no open blockers, wave 2 is everything unblocked once wave 1 closes, and so on. Tickets within a wave run in parallel; waves run in series.
+Compute **waves** by topological level: wave 1 is every ticket with no open blockers, wave 2 is everything unblocked once wave 1 merges, and so on. Tickets within a wave run in parallel; waves run in series. The waves are a forecast: each orchestrator recomputes the frontier from the tracker and git.
 
-If the graph has a cycle, stop and show it. A cycle means `to-tickets` produced edges that cannot be satisfied, and that is a planning bug to fix, not something to route around.
+If the graph has a cycle, stop and show it: it is a planning bug to fix, not something to route around.
 
 Watch for the expand–contract shape. Migrate batches from a wide refactor look independent but often touch overlapping call sites; when two tickets in a wave name the same package or directory, put them in separate waves and say why.
 
-### 2. Design an agent per ticket
+### 2. Design a worker per ticket
 
-Each ticket gets its own agent spec with three parts. Design them from the ticket body, not from a template.
+Each ticket gets its own worker spec, designed from the ticket body, not a template.
 
-**Model.** Implementation mostly follows context and tolerates a cheaper model; the expensive reasoning already happened during grilling. So default every ticket to the mid tier and escalate deliberately. Escalate when the ticket introduces a new seam or module boundary, is the first tracer bullet through a layer that does not exist yet, changes domain vocabulary or an ADR, or has acceptance criteria that read as judgment rather than as behaviour. Use the fast tier only for mechanical migrate batches in an expand–contract sequence.
+**Model.** Implementation mostly follows context and tolerates a cheaper model; the expensive reasoning happened during grilling. Default every ticket to the mid tier and escalate deliberately: when the ticket introduces a new seam or module boundary, is the first tracer bullet through a layer that doesn't exist yet, changes domain vocabulary or an ADR, or has acceptance criteria that read as judgement rather than behaviour. Use the fast tier only for mechanical migrate batches. Map tiers to model ids once, in the plan.
 
-Map tiers to concrete model ids once, in the plan, so the mapping is visible and can be changed in one place rather than being buried per ticket.
+**Expected size.** Input tokens, output tokens and minutes, judged from the body: how much it reads, how much it writes, how many layers it touches. With no history these make the estimate, so size each ticket on its own; there are no per-tier defaults.
 
-**Expected size.** Input tokens, output tokens and minutes for this ticket, judged from its body: how much it reads, how much it writes, how many layers it touches. With no history these are what the estimate is made from, so size each ticket on its own; there are no per-tier defaults.
+**Brief.** Under a paragraph: the seams to test at if the ticket names them, and any `GLOSSARY.md` vocabulary or ADRs it must respect. The ticket is the spec; don't copy it into the brief.
 
-**Brief.** A short prompt that names the ticket path, the seams the agent should test at if the ticket already pre-agreed them, and any GLOSSARY.md vocabulary or ADRs it must respect. Keep it under a paragraph. The ticket is the spec; the brief is orientation, and duplicating the ticket into the brief just spends context twice.
-
-**Expected output.** What "done" looks like for this specific ticket in one or two lines, drawn from its acceptance criteria. This is what the reconciliation step in 5 checks against — a vague expected output makes the whole loop unverifiable, so if you cannot write a concrete one, the ticket is underspecified and should go back to `/to-tickets`.
+**Expected output.** What "done" looks like for this ticket in one or two lines, from its acceptance criteria. The orchestrator checks the worker's diff against it before merging. If you can't write a concrete one, the ticket is underspecified and goes back to `/to-tickets`.
 
 ### 3. Get the plan approved
 
-The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11, autonomous within the run's limits); the rest is the Artisan's to approve or change.
+The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11); the rest is the Artisan's to approve or change.
 
-1. **Write the draft** as JSON: `run_id`, `repo`, `integration_branch`, `scope` (exactly the defined set of work), `waves`, `gates`, and per ticket `title`, `model`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
-2. **Build the plan:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh build --draft <draft.json> > <plan.json>`. It reads the project config (`.artisan-agent/config.yml`; a missing key is its default), estimates each ticket in estimated dollars from the logged cost of past merged tickets times any estimate multipliers, or with no history from the model's price and the expected size, and sets each ticket's caps, the total and the budget.
-3. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed, with your tier mapping, worktree location and what each gate actually covers (from the preconditions) underneath. Wherever a plan, report or status update names a ticket, give its number and a short plain description together, such as "#01 (retry failed uploads)". A number or slug alone means nothing to a reader who hasn't memorised the queue.
+1. **Write the draft** as JSON in the run folder (`$(${CLAUDE_PLUGIN_ROOT}/scripts/state.sh run-dir <run-id>)/draft.json`): `run_id`, `repo` (`owner/name` on the tracker, as `docs/agents/issue-tracker.md` names it), `integration_branch` (`run/<run-id>`), `scope` (exactly the defined set of work), `waves`, `gates`, `suite_command` (the full suite, as the project runs it), and per ticket `title`, `model`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
+2. **Build the plan:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh build --draft <draft.json> > <run folder>/plan.json`. It reads the project config (`.artisan-agent/config.yml`), estimates each ticket in estimated dollars and sets each ticket's caps, the total and the budget.
+3. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed: a table per wave with each ticket's number and description, wave, model, estimate and expected output, then every number the run uses. Underneath, add your tier mapping, the suite command, and what each check actually covers (from the preconditions).
 4. **Iterate until approved.** A change to the scope, waves, a model or an expected size goes into the draft; a number the Artisan overrides for this run is a `--set key=value` on the build (for example `--set max_agents=3`). Rebuild and show it again. Never edit `config.yml` for an override: it holds the project's numbers, and changing them for good is job 23, by PR.
-5. **Start the run** from the approved plan: `${CLAUDE_PLUGIN_ROOT}/scripts/state.sh init <run-dir> <plan.json>`. From here the run's numbers come from the state file's `plan.config`, not `config.yml`. A number overridden mid-run goes through `state.sh override <run-dir> <key> <value>`, which changes the state file only.
+5. **Start the run:** `${CLAUDE_PLUGIN_ROOT}/scripts/state.sh init <run folder> <plan.json>`. From here the run's numbers come from the state file's `plan.config`; a number overridden mid-run goes through `state.sh override`.
 
-Review capacity is never inferred: it comes from Max Agents and the gates the Artisan approved. Don't size waves by what you guess the Artisan can review.
+The approved scope is the run's scope, exactly: `state.sh dispatch` and `run-ticket.sh` refuse any ticket outside it (exit 4), and `run-ticket.sh` refuses to launch anything into a run folder with no state file. A ticket that should join gets its own plan step and approval first. Review capacity comes from Max Agents and the gates the Artisan approved; never size waves by guessing what the Artisan can review. Dispatch nothing before approval.
 
-The approved scope is the run's scope, exactly. `state.sh dispatch` and `run-ticket.sh` refuse any ticket outside it (exit status 4); a ticket that should join gets its own plan step and approval first.
+### 4. Take the lock and start the integration branch
 
-Dispatch nothing before approval — an unattended run that starts from a wrong graph is far more expensive to unwind than one that starts late.
+1. **Hold the run.** Your session's process is the long-lived pid that holds the state lock between waves. In every Bash call that runs a run script, set `ARTISAN_WRITER_PID=$(ps -o ppid= -p $$ | tr -d ' ')` (the tool shell's parent is this session), and take the lock once: `ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/state.sh lock <run folder> "$ARTISAN_WRITER_PID"`. While you hold it, `run-lock.sh check` refuses a second run in this repo.
+2. **Start the integration branch:** `${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh start <run folder>`. It creates `run/<run-id>` from the main checkout's branch and checks it out in the run's own integration worktree, `<repo>-wt/run-<run-id>`, beside the repo. Every merge in this run happens there; the main checkout is never touched.
 
-### 4. Dispatch a wave
+### 5. Launch a wave and yield
 
-One worktree and one `claude -p` process per ticket in the wave, running concurrently. Full mechanics, commands and the result contract are in `references/dispatch.md` — read it before the first dispatch.
+`ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh launch <run folder>` launches the next wave's orchestrator, detached, in the integration worktree, with `references/orchestrator.md` as its brief. It hands the state lock to the orchestrator for the wave and prints `orchestrator-w<wave> <attempt> <pid>`.
 
-The essential shape: each agent gets its own branch and checkout, is told to run `/artisan-agent:implement` against its ticket path, and writes a structured result file into the shared results directory when it finishes. Results go in files rather than stdout because a crashed or truncated process still leaves whatever it wrote, and stdout parsing turns an agent's prose into a coin flip.
+Then tell the Artisan in two or three lines what is running and that you'll report when the wave ends, and **end your turn**. Don't poll, sleep, wait on the orchestrator or start a monitor: the wave runs without you, and a chat that waits spends its context on nothing.
 
-Never let an agent close its own ticket or merge its own branch. Both are orchestrator jobs, and an agent that judges its own completion has no independent check.
+### 6. When you're woken: check, report, carry on
 
-**Dispatch on merged, never on reported.** A ticket is dispatchable only when every one of its blockers is **merged into the integration branch** — not when the blocker's agent reported `complete`. Agents branch from the integration branch, so a ticket dispatched against an unmerged blocker gets a base without it and silently re-derives the blocker's work. Gate on the branch, not on a status field:
+You learn what happened from files alone. Whenever you are woken (the Artisan writes, a task notification or `notify_when_idle` notice arrives, or the session resumes), run:
 
 ```bash
-git merge-base --is-ancestor "${BLOCKER_MERGE_SHA}" "${BASE}" || echo "not dispatchable yet"
+ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh status <run folder>
 ```
 
-A result file is a claim; the merge is the fact, and the gap between them is where this goes wrong.
+The first line is the orchestrator's state from its exit record (`running`, `completed`, or `failed`/`not-completed` with a reason), the second is what to do next, then a ticket table. Once the orchestrator has ended, `status` takes the lock back for you and runs the reconciler (git, the sweep, the tracker) before printing. Notices are a convenience that may wake you sooner; nothing depends on them, and messaging can be off entirely.
 
-The observed failure is subtler than plain duplication, and worth knowing in its exact shape. A ticket was dispatched the moment its blocker's result said `complete` but before the merge landed. The agent noticed its base lacked the blocker and merged the blocker's branch itself — which fast-forwarded, because both branched from the same base — then built on top. The work was correct. What broke was the **orchestrator's own measurement**: diffing that branch against a `main` still missing the blocker showed 23 shared files, which reads exactly like an independent re-derivation. That reading triggered an unnecessary reconciliation dispatch.
+| `next:` | Do |
+|---|---|
+| `wait` | The wave is still running. Say so in one line, with the table if asked, and end your turn. |
+| `launch` | Report the wave (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
+| `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
+| `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
+| `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
 
-So the rule has two halves:
+If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline), launch again: the next orchestrator reconciles from the state file and carries the same wave on.
 
-- Verify `BASE` contains every blocker before dispatching, so an agent never has to rescue you.
-- **Measure collisions against a base that contains all merged work.** A three-dot diff against a stale tip attributes the blocker's files to the dependent, and the conclusion you draw from it — duplication, conflict risk, merge order — will be wrong. If a collision set looks like one ticket wholly containing another, check `git merge-base --is-ancestor` before believing it.
+**The wave report** is a table, never a list:
 
-The stronger form of the same rule: **a blocker and its dependent are never concurrently in flight.** Not in the same wave, and not via a conditional dispatch at the end of one. If you find yourself writing "dispatch B if A succeeded", the answer is to merge A first and put B in the next wave.
+| Ticket | Wave | Model | Status |
+|---|---|---|---|
+| #12 (retry failed uploads) | 1 | claude-sonnet-5-5 | merged as `a1b2c3d`, closed |
+| #13 (billing tab) | 1 | claude-opus-5-5 | blocked: the suite failed after merging |
 
-### 5. Reconcile the wave
+Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
 
-For each returned result, in this order:
+### 7. Findings filed for triage
 
-1. **Verify against expected output.** Read the diff on the agent's branch against the expected output from step 2 and the ticket's acceptance criteria. An agent reporting success is a claim, not evidence.
-2. **Merge** the branch, run the full test suite on the merged result, and remove the worktree. Merge serially, testing after each, so a break is attributable to one ticket. On a conflict, run `/artisan-agent:resolve-conflicts` — parallel waves make conflicts routine rather than exceptional, and the repo already has the discipline for them. If that does not resolve it, or the suite fails on the merged result, abort, leave the branch and worktree in place, mark the ticket blocked, and carry it into the report.
-3. **Close the ticket** and tick its acceptance criteria. This is what advances the frontier.
-4. **File discovered work, then triage it.** Where a result names outstanding requirements, create a new ticket on the same tracker with a body citing the ticket that discovered it — and file it **off the frontier**, with no blocking edges and no wave assignment.
+A finding is a fact a worker turned up that may matter to other work (its evidence record's `findings`, logged by the sweep). Between waves, file each finding that names missing work as a new ticket on the tracker, citing the ticket that found it, **off the frontier**: no blocking edges, no wave. Then run `/artisan-agent:triage` on it before it can join any run. A ticket a worker invented mid-run hasn't been grilled, sized or checked, and an untriaged finding entering the dispatch queue is how one worker's guess becomes three more workers' work. Only once triage admits it does it get edges, and it joins a run only through its own plan step and approval. If that changes the waves, show what moved before continuing.
 
-   Tickets from `to-tickets` are agent-ready by construction and should never be triaged; triage is for work that arrived from someone else. A ticket an agent invented mid-run is exactly that. It has not been grilled, sized to a context window, or checked for whether it is really a tracer bullet. Run `/artisan-agent:triage` on it before it is eligible for any wave, and never let an untriaged discovery enter the dispatch queue — that is how an unattended run turns one agent's guess into three more agents' work.
+### 8. The run summary
 
-   Only once triage has admitted it do you add blocking edges and recompute the graph. If that changes the wave structure, say so and show what moved before continuing. If triage rejects or reshapes it, that is a fine outcome and belongs in the report.
-5. **Surface review remarks.** `/mattpocock-skills:code-review` remarks arrive (`review.remarks`) with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
+When `status` says `done`, or the run halts, report:
 
-Only after every ticket in the wave is closed or explicitly marked blocked, recompute the frontier and dispatch the next wave.
+| Ticket | Wave | Model | Outcome |
+|---|---|---|---|
+| #12 (retry failed uploads) | 1 | claude-sonnet-5-5 | merged, closed |
+| #14 (export CSV) | 2 | claude-sonnet-5-5 | blocked: merge conflict in `export.py`; branch `agent/14` kept |
 
-**Recompute the frontier from the tracker and the branch, not from the plan.** The wave structure from step 3 is a forecast. What actually dispatches next is whatever is open, untriaged-free, and has every blocker merged *right now*. Re-derive it each time rather than working down the approved list — a blocked ticket, a discovered edge, or a wave that lands out of order all invalidate the forecast without invalidating the run.
-
-### 5a. Keep going
-
-Once the plan is approved the run is **unattended**. Continue through every wave without pausing for the Artisan's input: reconcile, recompute, dispatch, repeat, until the queue is empty or genuinely blocked. Report at wave boundaries — but a report is not a stopping point, and neither is a status question from the Artisan.
-
-Two specific failure modes to avoid, both observed:
-
-- **Do not yield the turn while agents are in flight.** Poll the result files. Notifications and monitors are a convenience, not the source of truth: a monitor whose stream ends looks exactly like a wave still running, and work can sit finished and unreconciled for as long as it takes someone to ask.
-- **Do not treat "I have something to report" as "I am done."** If the next action is knowable — a merge, a close, a dispatch — take it, then report what happened including the part you just did.
-
-Stop only for: an approval the Artisan actually owes you, a graph change that invalidates the plan they approved, or every ticket in a wave failing.
-
-### 6. Report
-
-After the final wave:
-
-```
-## Run summary
-Completed: N of M tickets
-Blocked: #<number> (<description>) — <one line why>
-Discovered, awaiting triage: #<number> (<description>), from #<number> (<description>)
-Review remarks not acted on: <count, grouped by ticket, each with number and description>
-Branches left unmerged: <branch, with ticket number and description>
-```
-
-Blocked tickets and unmerged branches go at the top, not buried. The value of an unattended run is knowing precisely where it stopped.
+Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
 
 ## Failure handling
 
-- **An agent fails or times out.** Mark the ticket blocked, keep the worktree for inspection, and continue the rest of the wave. Do not retry automatically — a repeat failure usually means the ticket is wrong, and a retry loop burns tokens proving that slowly.
-- **An agent reports success but the diff does not meet the expected output.** Treat as blocked, not complete. Say what was missing.
-- **A discovered dependency invalidates the graph.** Recompute waves, stop, and show the Artisan the new graph before continuing. A silently reshuffled plan is one the Artisan never approved.
-- **Everything in a wave fails.** Halt the run entirely. Something upstream is wrong — a bad spec, a broken main branch, a missing setup step — and the next wave will fail the same way.
+- **A worker fails or runs out of time.** The sweep counts the failed attempt; the orchestrator dispatches it once more with the failure evidence (two attempts in all by default), then it is blocked with a decision for the Artisan.
+- **A worker reports success but the diff misses the expected output.** The orchestrator blocks it rather than merging. A result file is a claim; the merge is the fact.
+- **A merge conflicts or the suite goes red after a merge.** `wave.sh merge` undoes the merge, blocks the ticket and queues a decision; the branch and worktree stay for inspection.
+- **Everything in a wave fails.** The run halts: something upstream is wrong (a bad spec, a broken base, a missing setup step) and the next wave would fail the same way. Report it and wait for the Artisan.
+- **A finding invalidates the graph.** Show the Artisan the new graph before the next wave. A silently reshuffled plan is one the Artisan never approved.
 
 ## Rules
 
-- One agent, one ticket. Never batch tickets into a single agent to save processes; that is exactly the context blow-up the ticket sizing exists to prevent.
-- The orchestrator never writes product code. If you find yourself fixing a merge conflict by editing source, stop and hand it back as a blocked ticket.
-- Keep the orchestrator's own context small: read ticket bodies and result files, never agent transcripts.
-- Do not compact between waves. Results are files; the orchestrator's working state should be small enough that it never needs to.
+- One worker, one ticket. Never batch tickets into one worker.
+- Dispatch only on merged work. A ticket is dispatchable only when every blocker is merged into the integration branch, never when its worker merely reported `complete`; a blocker and its dependent are never in flight together. `wave.sh dispatch` enforces this.
+- Neither tier writes product code. A conflict the orchestrator can't merge comes to the Artisan as a blocked ticket.
+- Keep the chat's context small: read the status, result summaries and the tracker; never a worker's or orchestrator's transcript.

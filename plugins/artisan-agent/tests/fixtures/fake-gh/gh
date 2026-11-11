@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# A stand-in for `gh`, backed by a local folder tracker, so no test or trial
+# ever touches GitHub. Put this folder first on PATH and set FAKE_GH_DIR.
+#
+# The tracker, in $FAKE_GH_DIR:
+#   issue-<n>.json        {"number", "title", "body", "state": "open"|"closed", "labels": [{"name"}]}
+#   blocked_by-<n>.json   [<number>, ...] the issues blocking <n> (state read live)
+#   comments-<n>.md       comments, appended, separated by "---"
+#   calls                 every call, one per line
+#
+# Answers:
+#   gh api repos/<o>/<r>/issues/<n>
+#   gh api repos/<o>/<r>/issues/<n>/dependencies/blocked_by
+#   gh issue view <n> [-R repo] [--json fields] [-q|--jq filter] [--comments]
+#   gh issue list [-R repo] [--state open|closed|all] [--json fields] [-q filter]
+#   gh issue comment <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
+#   gh issue edit <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
+#   gh issue close <n> [-R repo] [--comment|-c TEXT]
+# Anything else fails with exit 1. Needs jq.
+
+set -euo pipefail
+: "${FAKE_GH_DIR:?set FAKE_GH_DIR to the fake tracker folder}"
+printf '%s\n' "$*" >>"$FAKE_GH_DIR/calls"
+
+issue_file() { printf '%s/issue-%s.json\n' "$FAKE_GH_DIR" "$1"; }
+need_issue() { [ -f "$(issue_file "$1")" ] || { echo "gh: issue #$1 not found (HTTP 404)" >&2; exit 1; }; }
+set_field() { # n jq-filter [args]
+  local f n=$1
+  f=$(issue_file "$n")
+  shift
+  jq "$@" "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+}
+
+# A repo must look like owner/name, as on GitHub.
+bad_repo() { echo "gh: expected the \"[HOST/]OWNER/REPO\" format, got \"$1\"" >&2; exit 1; }
+check_repo() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || bad_repo "$1"; }
+
+# Common flags after the subcommand: -R, --json, -q/--jq, bodies.
+n= json= filter= body= body_set= comments= state=open
+parse() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -R|--repo) check_repo "$2"; shift 2 ;;
+      --json) json=$2; shift 2 ;;
+      -q|--jq) filter=$2; shift 2 ;;
+      --body|-b|--comment|-c) body=$2; body_set=1; shift 2 ;;
+      --body-file|-F) body=$(cat "$2"); body_set=1; shift 2 ;;
+      --comments) comments=1; shift ;;
+      --state|-s) state=$2; shift 2 ;;
+      --*) shift ;;
+      *) [ -n "$n" ] || n=${1#\#}; shift ;;
+    esac
+  done
+}
+
+emit() { # json-object-or-array
+  if [ -n "$filter" ]; then printf '%s' "$1" | jq -r "$filter"; else printf '%s\n' "$1"; fi
+}
+
+case "${1:-} ${2:-}" in
+  "api "*)
+    path=$2
+    r=${path#repos/}; r=${r%%/issues/*}
+    case "$path" in repos/*/issues/*) check_repo "$r" ;; esac
+    case "$path" in
+      repos/*/issues/*/dependencies/blocked_by)
+        n=${path%/dependencies/blocked_by}; n=${n##*/}
+        need_issue "$n"
+        list='[]'
+        [ -f "$FAKE_GH_DIR/blocked_by-$n.json" ] && list=$(cat "$FAKE_GH_DIR/blocked_by-$n.json")
+        for b in $(printf '%s' "$list" | jq -r '.[]'); do
+          if [ -f "$(issue_file "$b")" ]; then jq -c '{number, title, state}' "$(issue_file "$b")"
+          else jq -cn --argjson b "$b" '{number: $b, state: "open"}'; fi
+        done | jq -s . ;;
+      repos/*/issues/*)
+        n=${path##*/}
+        need_issue "$n"
+        cat "$(issue_file "$n")" ;;
+      *) echo "gh: unsupported api path: $path" >&2; exit 1 ;;
+    esac ;;
+  "issue view")
+    shift 2; parse "$@"; need_issue "$n"
+    f=$(issue_file "$n")
+    if [ -n "$json" ]; then
+      emit "$(jq -c --arg fields "$json" --arg c "$(cat "$FAKE_GH_DIR/comments-$n.md" 2>/dev/null || true)" '
+        . + {comments: (if $c == "" then [] else [$c | split("\n---\n")[] | {body: .}] end)}
+        | with_entries(select(.key as $k | $fields | split(",") | index($k)))' "$f")"
+    else
+      jq -r '"title:\t\(.title)\nstate:\t\(.state | ascii_upcase)\nnumber:\t\(.number)\n--\n\(.body)"' "$f"
+      if [ -n "$comments" ] && [ -f "$FAKE_GH_DIR/comments-$n.md" ]; then
+        printf -- '--\n'; cat "$FAKE_GH_DIR/comments-$n.md"
+      fi
+    fi ;;
+  "issue list")
+    shift 2; parse "$@"
+    all=$(for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] && cat "$f"; done | jq -s --arg s "$state" \
+      'map(select($s == "all" or .state == $s)) | sort_by(.number)')
+    if [ -n "$json" ]; then emit "$all"
+    else printf '%s' "$all" | jq -r '.[] | "\(.number)\t\(.state | ascii_upcase)\t\(.title)"'; fi ;;
+  "issue comment")
+    shift 2; parse "$@"; need_issue "$n"
+    [ -n "$body_set" ] || { echo "gh: a comment needs --body or --body-file" >&2; exit 1; }
+    c="$FAKE_GH_DIR/comments-$n.md"
+    [ ! -s "$c" ] || printf '\n---\n' >>"$c"
+    printf '%s' "$body" >>"$c" ;;
+  "issue edit")
+    shift 2; parse "$@"; need_issue "$n"
+    [ -n "$body_set" ] && set_field "$n" --arg b "$body" '.body = $b' ;;
+  "issue close")
+    shift 2; parse "$@"; need_issue "$n"
+    if [ -n "$body_set" ]; then
+      c="$FAKE_GH_DIR/comments-$n.md"
+      [ ! -s "$c" ] || printf '\n---\n' >>"$c"
+      printf '%s' "$body" >>"$c"
+    fi
+    set_field "$n" '.state = "closed"' ;;
+  *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;
+esac
