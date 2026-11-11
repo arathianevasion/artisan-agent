@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Script test harness for the pipeline's scripts.
+#
+# Usage: tests/run.sh [dir]
+#
+# Runs every test_* function in every *.test.sh file directly inside dir
+# (default: this script's own directory; subdirectories are not searched).
+# Each test runs in its own bash process with `set -euo pipefail`, lib.sh's
+# assertions, and a fresh empty working directory that is removed afterwards.
+# Tests can read:
+#   TESTS_DIR    this harness's directory
+#   PLUGIN_ROOT  the plugin's root directory
+#   TEST_TMPDIR  the test's own scratch directory (also its working directory)
+#
+# Exit status: 0 when every test passes, 1 when any fails, 2 when no tests
+# were found (an empty suite is never reported green).
+#
+# Portable to bash 3.2 (macOS) and Linux.
+
+set -uo pipefail
+
+TESTS_DIR=$(cd "$(dirname "$0")" && pwd)
+PLUGIN_ROOT=$(cd "$TESTS_DIR/.." && pwd)
+export TESTS_DIR PLUGIN_ROOT
+
+suite_dir=${1:-$TESTS_DIR}
+if [ ! -d "$suite_dir" ]; then
+  echo "run.sh: no such directory: $suite_dir" >&2
+  exit 2
+fi
+suite_dir=$(cd "$suite_dir" && pwd)
+
+passed=0
+failed=0
+
+for file in "$suite_dir"/*.test.sh; do
+  [ -f "$file" ] || continue
+  names=$(bash -c 'source "$1" >/dev/null 2>&1; declare -F' _ "$file" | awk '$3 ~ /^test_/ {print $3}')
+  if [ -z "$names" ]; then
+    echo "FAIL $(basename "$file"): no test_ functions found"
+    failed=$((failed + 1))
+    continue
+  fi
+  for name in $names; do
+    label="$(basename "$file" .test.sh): $name"
+    tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/artisan-test.XXXXXX")" && pwd -P)
+    output=$(cd "$tmp" && TEST_TMPDIR="$tmp" bash -c '
+      set -euo pipefail
+      source "$TESTS_DIR/lib.sh"
+      source "$1"
+      "$2"
+    ' _ "$file" "$name" 2>&1)
+    status=$?
+    rm -rf "$tmp"
+    if [ "$status" -eq 0 ]; then
+      echo "ok   $label"
+      passed=$((passed + 1))
+    else
+      echo "FAIL $label"
+      [ -n "$output" ] && printf '%s\n' "$output" | sed 's/^/     /'
+      failed=$((failed + 1))
+    fi
+  done
+done
+
+total=$((passed + failed))
+echo
+echo "$passed passed, $failed failed"
+if [ "$total" -eq 0 ]; then
+  echo "run.sh: no tests found in $suite_dir" >&2
+  exit 2
+fi
+[ "$failed" -eq 0 ]
