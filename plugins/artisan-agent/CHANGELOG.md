@@ -2,6 +2,19 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.4.0 (2026-11-11)
+
+Wave 4: parallel waves, independent verification, worker questions and the context drain.
+
+- Fresh verifier (#57): a separate session judges each result against the ticket's own criteria, posts the evidence on the ticket and adds it to the wave digest.
+- Parallel waves (#58): tickets in a wave run side by side and merge one at a time; conflicts go through `/artisan-agent:resolve-conflicts`, and each ticket gets two attempts.
+- Context drain (#59): the orchestrator never compacts. Its `PreCompact` blocks compaction and hands off to a fresh orchestrator, which finishes the wave from the state file. The chat gets the run digest back after compacting, on `/resume`, and in a new session. `verify.sh start` is idempotent per attempt (#106).
+- Shared findings (#60): workers' findings reach the other workers, and a design question stops the worker and becomes a decision.
+- Worker questions (#61): a decision a worker may not make is filed as a question; the ticket waits while the wave carries on, then goes out again with the answer.
+- Guardrail levels (team, product, individual) are read at the point of use (#62).
+- `/artisan-agent:to-plan` (#63) files plans as `plan` issues.
+- `/artisan-agent:setup` for a project (#64), including proving each check can fail.
+
 ## 0.3.0 (2026-11-10)
 
 Wave 3: the first two-tier run, the plan step and main-checkout protection.
