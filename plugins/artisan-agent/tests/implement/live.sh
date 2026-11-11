@@ -11,6 +11,9 @@
 # Scenarios (fixtures in tests/fixtures/implement/<scenario>/):
 #   named-seam    the ticket names its seam; built test-first there
 #   unnamed-seam  no seam named; the worker's new seam becomes a decision card
+#   public-interface  a new public function only this ticket introduces; the
+#                 worker carries on and records a decision card (criterion 3),
+#                 it does not stop
 #   review-seeds  a first attempt with a seeded bug, a seeded documented-standard
 #                 violation and a seeded judgement-call smell; the bug and the
 #                 violation get fixed, the smell becomes a decision card
@@ -34,6 +37,7 @@ ticket_id() {
   case "$1" in
     named-seam) echo 01 ;;
     unnamed-seam) echo 02 ;;
+    public-interface) echo 04 ;;
     review-seeds) echo 03 ;;
     *) echo "live.sh: unknown scenario: $1" >&2; exit 2 ;;
   esac
@@ -155,6 +159,24 @@ never_prints() { ! grep -n 'print(' "$1"; }
 adds_public_function() {
   git -C "$1" diff "$2" -- . ':!tests' ':!cli.py' | grep -Eq '^\+def [a-z]'
 }
+# Names the branch adds as public functions outside the tests and cli.py, and
+# the modules they sit in, one per line.
+new_seam_names() {
+  git -C "$1" diff "$2" -- . ':!tests' ':!cli.py' | awk '
+    /^\+\+\+ b\// { f = substr($0, 7); sub(/\.py$/, "", f); if (f != "invoices") print f }
+    /^\+def [a-z]/ { n = substr($0, 6); sub(/\(.*/, "", n); print n }'
+}
+# True when a decision card with job 3 names one of those words, so the card
+# is about the seam the worker really added and not just any seam-like word.
+card_names_new_seam() {
+  local repo=$1 base=$2 record=$3 name
+  for name in $(new_seam_names "$repo" "$base"); do
+    if jq -e --arg n "$name" 'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | contains($n)))' "$record" >/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 verify() {
   local scenario=$1 wd=$2 id repo record base attempt_commits=0
@@ -198,8 +220,27 @@ import subprocess, sys
 out = subprocess.run([sys.executable, "cli.py", "list"], capture_output=True, text=True, check=True).stdout
 assert out == "INV-001 Ada\nINV-002 Grace\n", out'
       check "the CSV is produced outside cli.py (a new seam)" adds_public_function "$repo" "$base"
-      check "the new seam is a decision card (job 3)" record_says "$record" \
-        'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | test("seam|function|module|interface|boundary"; "i")))'
+      check "the new seam is a decision card (job 3) that names it" card_names_new_seam "$repo" "$base" "$record"
+      ;;
+    public-interface)
+      check "late-fee meets the ticket's examples" python_in "$repo" '
+import subprocess, sys
+def fee(n, d):
+    return subprocess.run([sys.executable, "cli.py", "late-fee", n, str(d)], capture_output=True, text=True, check=True).stdout.strip()
+assert fee("INV-001", 14) == "50" and fee("INV-002", 6) == "0" and fee("INV-002", 700) == "99000"'
+      check "an unknown invoice exits 1 with stderr" python_in "$repo" '
+import subprocess, sys
+r = subprocess.run([sys.executable, "cli.py", "late-fee", "NOPE", "9"], capture_output=True, text=True)
+assert r.returncode == 1 and r.stderr.strip() and not r.stdout.strip(), r'
+      check "cli.py list is unchanged" python_in "$repo" '
+import subprocess, sys
+out = subprocess.run([sys.executable, "cli.py", "list"], capture_output=True, text=True, check=True).stdout
+assert out == "INV-001 Ada\nINV-002 Grace\n", out'
+      check "the fee is a public function outside cli.py (the new interface)" adds_public_function "$repo" "$base"
+      check "the worker did not stop: status complete, not blocked" record_says "$record" '.status == "complete"'
+      check "the new interface is a decision card (job 3) that names it" card_names_new_seam "$repo" "$base" "$record"
+      check "the card names controversy criterion 3 (a public interface)" record_says "$record" \
+        'any(.decisions[]; .job == 3 and (.criterion | tostring | test("(^|[^0-9])3([^0-9]|$)")))'
       ;;
     review-seeds)
       check "the seeded bug is fixed: 5000 pence ships free" python_in "$repo" '
