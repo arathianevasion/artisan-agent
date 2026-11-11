@@ -104,6 +104,7 @@ init_write() {
         waves: [],
         frontier: [],
         orchestrators: [],
+        review_gates: [],
         halted: null,
         events: []
       }
