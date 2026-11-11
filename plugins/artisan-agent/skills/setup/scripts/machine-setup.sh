@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Machine-level setup for /artisan-agent:setup. Run once per machine; a rerun changes nothing.
+#
+#   machine-setup.sh init           create the individual home, set marketplace auto-update
+#   machine-setup.sh scan           list removal offers, one per line: ID<TAB>KIND<TAB>description
+#   machine-setup.sh remove ID...   apply only the offers the Artisan said yes to
+#
+# Everything lives under CLAUDE_CONFIG_DIR (default $HOME/.claude). Nothing is deleted:
+# skill copies move to $CFG/skills/.trash. ARTISAN_CLAUDE_BIN overrides the claude binary.
+# Portable to bash 3.2.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+PLUGINS=${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$CFG/plugins}
+HOME_DIR=$CFG/artisan-agent
+TRASH=$CFG/skills/.trash
+CLAUDE_BIN=${ARTISAN_CLAUDE_BIN:-claude}
+PERSONAL_PLUGIN_SKILLS="implement-plan debate-me"
+
+json() { python3 -I "$HERE/machine_json.py" "$@"; }
+
+upstream_names() {
+  {
+    grep -v '^#' "$HERE/../upstream-skills.txt" 2>/dev/null || true
+    local f
+    for f in "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/SKILL.md \
+             "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/*/SKILL.md; do
+      [ -f "$f" ] && basename "$(dirname "$f")"
+    done
+  } | sort -u
+}
+
+standards_file() { # name heading
+  printf '# %s\n\nIndividual level: these follow the Artisan into every project. Product and team standards win a contradiction.\n\n## Always ask\n\nThings that must always come back to the Artisan.\n' "$1"
+}
+
+cmd_init() {
+  local f path paths="" ident="" did=0
+  mkdir -p "$HOME_DIR"
+  for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md satisfaction.jsonl; do
+    path=$HOME_DIR/$f
+    [ -e "$path" ] && continue
+    case $f in
+      satisfaction.jsonl) : >"$path" ;;
+      *) standards_file "Individual ${f%.md}" >"$path" ;;
+    esac
+    paths="$paths $f"
+  done
+  if [ ! -d "$HOME_DIR/.git" ]; then
+    git -C "$HOME_DIR" init -q
+    git -C "$HOME_DIR" symbolic-ref HEAD refs/heads/main
+    echo "changed: git repo created at $HOME_DIR"
+    did=1
+  fi
+  if [ -n "$paths" ]; then
+    # Commit only the files setup created, never the Artisan's own uncommitted edits.
+    git -C "$HOME_DIR" config user.name >/dev/null 2>&1 || ident="-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost"
+    # shellcheck disable=SC2086
+    git -C "$HOME_DIR" add -- $paths
+    # shellcheck disable=SC2086
+    git -C "$HOME_DIR" $ident commit -q -m "Artisan Agent: individual home" -- $paths
+    echo "changed: created$paths in $HOME_DIR"
+    did=1
+  fi
+  [ "$did" = 1 ] || echo "unchanged: individual home $HOME_DIR"
+  json autoupdate "$CFG"
+}
+
+cmd_scan() {
+  local up name pid scope ppath ver value
+  up=$(upstream_names)
+  json installs "$CFG" | while IFS=$'\t' read -r pid scope ppath ver; do
+    printf 'project-install:%s:%s:%s\tproject-install\t%s %s-scope install (version %s) at %s; projects should only enable it\n' \
+      "$pid" "$scope" "$ppath" "$pid" "$scope" "$ver" "$ppath"
+  done
+  if [ -d "$CFG/skills" ]; then
+    for name in $PERSONAL_PLUGIN_SKILLS; do
+      [ -e "$CFG/skills/$name" ] && printf 'plugin-skill:%s\tpersonal-plugin-skill\tpersonal %s; now ships in the artisan-agent plugin\n' "$name" "$name"
+    done
+    for name in $up; do
+      [ -e "$CFG/skills/$name" ] && printf 'stale-skill:%s\tstale-upstream-skill\tpersonal copy of upstream skill %s\n' "$name" "$name"
+    done
+  fi
+  # shellcheck disable=SC2086
+  json overrides "$CFG" $up $PERSONAL_PLUGIN_SKILLS | while IFS=$'\t' read -r name value; do
+    printf 'override:%s\thiding-override\tskillOverrides "%s": "%s" only hides a skill being replaced\n' "$name" "$name" "$value"
+  done
+  return 0
+}
+
+trash_skill() {
+  local name=$1 dest
+  [ -e "$CFG/skills/$name" ] || { echo "skipped: $name is already gone"; return 0; }
+  mkdir -p "$TRASH"
+  dest=$TRASH/$name.$(date +%Y%m%d%H%M%S)
+  [ -e "$dest" ] && dest=$dest.$$
+  mv "$CFG/skills/$name" "$dest"
+  echo "moved to trash: $name -> $dest"
+}
+
+cmd_remove() {
+  local id kind rest pid scope ppath status=0
+  [ $# -gt 0 ] || { echo "remove: no ids given; nothing removed" >&2; return 0; }
+  for id in "$@"; do
+    kind=${id%%:*}
+    rest=${id#*:}
+    case $kind in
+      stale-skill|plugin-skill) trash_skill "$rest" ;;
+      override) json drop-override "$CFG" "$rest"; echo "dropped skillOverrides entry: $rest" ;;
+      project-install)
+        pid=${rest%%:*}; rest=${rest#*:}; scope=${rest%%:*}; ppath=${rest#*:}
+        if [ ! -d "$ppath" ]; then
+          echo "failed: $pid ($scope) project path $ppath is gone; remove the record with 'claude plugin uninstall' from a checkout" >&2
+          status=1
+        elif (cd "$ppath" && CLAUDE_CONFIG_DIR=$CFG "$CLAUDE_BIN" plugin uninstall "$pid" --scope "$scope" >/dev/null); then
+          echo "uninstalled: $pid ($scope) at $ppath"
+        else
+          echo "failed: claude plugin uninstall $pid --scope $scope in $ppath" >&2
+          status=1
+        fi ;;
+      *) echo "unknown id: $id" >&2; status=1 ;;
+    esac
+  done
+  return $status
+}
+
+case ${1:-} in
+  init) cmd_init ;;
+  scan) cmd_scan ;;
+  remove) shift; cmd_remove "$@" ;;
+  *) echo "usage: machine-setup.sh init|scan|remove ID..." >&2; exit 2 ;;
+esac
