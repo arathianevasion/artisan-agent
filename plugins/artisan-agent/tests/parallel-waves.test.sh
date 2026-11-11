@@ -118,6 +118,12 @@ resolve_conflicts() { # the stand-in for /artisan-agent:resolve-conflicts
       done
       "$S/wave.sh" resolved "$R" "$1" ;;
     markers) git add -A; "$S/wave.sh" resolved "$R" "$1" ;;
+    litter)
+      for f in $(git diff --name-only --diff-filter=U); do
+        grep -v -E '^(<<<<<<<|=======|>>>>>>>)' "$f" >"$f.tmp"; mv "$f.tmp" "$f"; git add "$f"
+      done
+      mkdir -p __pycache__ && touch __pycache__/x.pyc
+      "$S/wave.sh" resolved "$R" "$1" ;;
     giveup) "$S/wave.sh" resolved "$R" "$1" --gave-up "both tickets rewrite the greeting" ;;
   esac
 }
@@ -323,6 +329,16 @@ test_a_resolution_that_leaves_conflict_markers_is_unresolved() {
   assert_eq blocked "$(status_of 2)"
   assert_contains "$(state_get '.tickets["2"].resolve.why')" "conflict markers left in greeting.txt"
   assert_eq "$(state_get '.tickets["1"].merge_commit')" "$(git -C "$PROJECT" rev-parse run/r1)"
+}
+
+test_a_resolution_that_leaves_files_behind_is_unresolved_and_cleaned_up() {
+  setup_waves 3 1 2
+  seed_conflict
+  export RESOLVE_MODE=litter
+  run_wave 1
+  assert_eq blocked "$(status_of 2)"
+  assert_contains "$(state_get '.tickets["2"].resolve.why')" "files left behind: __pycache__/"
+  assert_eq "" "$(git -C "$INTEGRATION" status --porcelain)" "integration worktree clean"
 }
 
 test_a_resolution_that_never_came_back_is_abandoned_before_the_next_merge() {

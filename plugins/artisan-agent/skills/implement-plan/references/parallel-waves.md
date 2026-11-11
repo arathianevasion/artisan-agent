@@ -39,7 +39,7 @@ On exit 11 the merge is stopped halfway in the integration worktree, conflicts i
 1. Call the Skill tool with `artisan-agent:resolve-conflicts`, giving it the run folder and the ticket.
 2. It ends with `RESOLVED: …` or `UNRESOLVED: …`. Then run `wave.sh resolved <run folder> <ticket>`, adding `--gave-up "<its sentence>"` after UNRESOLVED.
 
-`wave.sh resolved` checks the work rather than trusting it: a file still unmerged, a conflict marker left, a change left unstaged or `--gave-up` aborts the merge and blocks the ticket (6). Otherwise it commits the merge and runs the full suite, as `merge` does: green merges it (0), red undoes it and blocks it (7). A blocked ticket's branch and worktree are always kept for the Artisan.
+`wave.sh resolved` checks the work rather than trusting it: a file still unmerged, a conflict marker left, a change left unstaged, an untracked file left behind or `--gave-up` aborts the merge and blocks the ticket (6). Otherwise it commits the merge and runs the full suite, as `merge` does: green merges it (0), red undoes it and blocks it (7). A blocked ticket's branch and worktree are always kept for the Artisan.
 
 **Once per ticket.** The try is recorded (`tickets.<t>.resolve`) the moment the conflict is left in progress. Any later conflict for that ticket blocks it at once, and a try that never came back (the orchestrator ended mid-try) is aborted and blocked by the next `wave.sh merge`. Never run the skill twice on one ticket, and never resolve a conflict by hand.
 

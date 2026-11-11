@@ -37,7 +37,7 @@ Choosing a side to make a conflict go away is never a resolution.
 
 For each file you can resolve: edit it to the joined result, with every `<<<<<<<`, `=======` and `>>>>>>>` line gone, then `git add <file>`. Don't stage anything else. If one file is not yours to resolve, stop: a merge is resolved whole or not at all, so leave the rest as they are.
 
-You may run a quick check that touches only the conflicted files (a syntax check, the one test file that covers them) to catch a broken join. Don't run the full suite; `wave.sh resolved` runs it.
+You may run a quick check that touches only the conflicted files (a syntax check, the one test file that covers them) to catch a broken join. Don't run the full suite; `wave.sh resolved` runs it. Remove anything your check created (`__pycache__/`, build output): the integration worktree must hold only the merge, and `wave.sh resolved` counts any file left behind as UNRESOLVED.
 
 ## 4. Finish
 

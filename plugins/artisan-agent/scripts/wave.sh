@@ -45,8 +45,9 @@
 #       fresh worker, or blocked once it has used its attempts (6).
 #   wave.sh resolved <run-dir> <ticket> [--gave-up REASON]
 #       after /artisan-agent:resolve-conflicts: commit the resolved merge and
-#       run the suite as merge does. 6: still conflicted, or gave up (the
-#       merge is aborted); 7: suite red. Either way the ticket is blocked
+#       run the suite as merge does. 6: still conflicted, markers, unstaged
+#       changes or untracked files left, or gave up (the merge is aborted
+#       and the untracked files removed); 7: suite red. Either way the ticket is blocked
 #       with its branch and worktree kept.
 #   wave.sh block <run-dir> <ticket> <reason>
 #       block a returned ticket the orchestrator won't merge (its diff misses
@@ -696,11 +697,15 @@ cmd_resolved() {
       if [ -n "$left" ]; then why="still conflicted: ${left% }"
       elif [ -n "$markers" ]; then why="conflict markers left in ${markers% }"
       elif ! git -C "$wt" diff --quiet; then why="changes left unstaged: $(git -C "$wt" diff --name-only | tr '\n' ' ')"
+      elif [ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]; then
+        why="files left behind: $(git -C "$wt" ls-files --others --exclude-standard --directory | tr '\n' ' ')"
       fi
     fi
   fi
   if [ -n "$why" ]; then
     git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
+    # The integration worktree holds nothing but the integration branch.
+    git -C "$wt" clean -q -fd >/dev/null 2>&1 || true
     apply '.tickets[$t].resolve |= (.outcome = "unresolved" | .why = $w)
       | event({event: "resolve", ticket: $t, outcome: "unresolved", why: $w}; $now)' --arg t "$t" --arg w "$why"
     block "$t" "merge conflict in $paths that /artisan-agent:resolve-conflicts could not resolve: $why"
