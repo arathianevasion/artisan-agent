@@ -74,7 +74,7 @@ Two launcher failures look like a worker that died instantly, which is why the r
 2. `git merge --no-ff` in the integration worktree. Always `--no-ff`: the reconciler finds merged tickets by merge commits on the integration branch's first-parent line, so a fast-forward looks as if nothing merged.
 3. Runs the plan's `suite_command` there; its output goes to `merges/<ticket>.<n>.suite.log`.
 4. Green: records the merge (an event in the state file) and removes the worker's worktree. The branch stays, so the reconciler can still find the merge.
-5. A conflict (6) or a red suite (7): the merge is undone, the ticket is blocked with an exception decision for the Artisan, and the branch and worktree stay. `/artisan-agent:resolve-conflicts` will take one try at a conflict once it exists; until then, a conflict comes straight to the Artisan. Never hand-edit source to make a merge go through: that turns a reviewable ticket into an unreviewed one.
+5. A conflict (11) gets one `/artisan-agent:resolve-conflicts` try before anything else (`parallel-waves.md`). A conflict it can't resolve (6) or a red suite (7): the merge is undone, the ticket is blocked with an exception decision for the Artisan, and the branch and worktree stay. Never hand-edit source to make a merge go through: that turns a reviewable ticket into an unreviewed one.
 
 When several tickets returned in one wave, measure before choosing the order: list each branch's files against the integration tip (`git diff --name-only <tip>...<branch>`), and merge the branch with the widest blast radius first.
 

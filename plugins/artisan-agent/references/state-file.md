@@ -18,6 +18,7 @@ The state file is the record of a run's plan, progress and evidence that lets an
         findings/<ticket>.jsonl    the worker's findings, one JSON object per line
       workers/<id>.<n>/            per session: runner.pid, prompt.md, output.json, logs (scripts/README.md)
       prompts/<id>.<n>.md          the prompt wave.sh wrote for each session
+      prompts/<ticket>.<n>.failure.md  a retry's failure evidence from attempt n-1, also in its prompt
       merges/<ticket>.<n>.suite.log  the full suite's output after merging; <ticket>.comment.md, the evidence posted
 ```
 
@@ -68,6 +69,7 @@ Top level:
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}` |
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
+| `halted` | top-level | set when a wave failed whole: `{wave, tickets, reason, at}`. `wave.sh launch` refuses while it is set; `--resume` (the Artisan's decision) removes it |
 | `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`, plus `cost_usd` once `wave.sh status` has seen it end. Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
@@ -77,7 +79,7 @@ Top level:
 |---|---|
 | `scope` | the agreed scope: every ticket in the run, and the only tickets that dispatch. `state.sh dispatch` and `run-ticket.sh` refuse any other ticket with exit status 4. A ticket added later (triage-admitted, urgent) is added here, by its own approval, and the reconciler gives it a `tickets` entry |
 | `waves` | the forecast waves, `[[ticket, ...], ...]`. A forecast only: the frontier never comes from it |
-| `tickets` | per ticket: `model`, `caps` (`max_budget_usd`, `max_turns`, `deadline_seconds`), `branch` (default `agent/<ticket>`); from the plan step also `title`, `expected_output`, `expected` (`input_tokens`, `output_tokens`, `minutes`), `estimate_usd` and `estimate_basis` |
+| `tickets` | per ticket: `model`, `caps` (`max_budget_usd`, `max_turns`, `deadline_seconds`), `branch` (default `agent/<ticket>`); from the plan step also `title`, `expected_output`, `expected` (`input_tokens`, `output_tokens`, `minutes`), `expected_files` (paths the ticket will touch; a trailing `/` covers a directory; they bound the wave width), `estimate_usd` and `estimate_basis` |
 | `gates` | the gates the Artisan approved for this run |
 | `max_agents` | Max Agents (default 5) |
 | `budget_usd` | the run's approved budget |
@@ -106,11 +108,13 @@ Top level:
 | `worktree`, `base` | the current attempt's worktree and the integration commit it branched from (`wave.sh dispatch`) |
 | `suite` | `{command, passed, log}` from the last merge attempt |
 | `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |
+| `wave` | the wave its last dispatch belonged to (the last orchestrator's wave; 0 before any) |
+| `resolve` | its one conflict-resolution try: `{attempt, paths, pre, outcome, why?, at}`, `outcome` `pending` (the merge left in progress), `resolved`, `unresolved` or `abandoned` |
 | `blocked_reason` | why `wave.sh` blocked it (a conflict, a red suite, an attempt that did not complete) |
 
 ## The event log
 
-Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), plus `integration` and `orchestrator` for the run's own steps. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, merge, closed, in that order.
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), plus `integration` and `orchestrator` for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, merge, closed, in that order.
 
 ## The sweep
 
@@ -132,7 +136,7 @@ A failed attempt appends to `failures` and sends the ticket back to `queued`, or
 3. **Tracker.** For each ticket in scope, `gh api repos/<repo>/issues/<n>` (open or closed, labels) and `gh api repos/<repo>/issues/<n>/dependencies/blocked_by` (native blockers). A failed read exits 1 with git's merges and the sweep kept and the frontier not recomputed. A `queued` ticket the tracker has closed becomes `closed`.
 4. **Frontier.** Every `queued` ticket in scope, open on the tracker, not labelled `ready-for-human`, whose blockers are all merged into the integration branch (blockers in the run) or closed (blockers outside it). Printed one per line and stored in `frontier`.
 
-Wave width (Max Agents, overlapping file sets) is the orchestrator's choice from the frontier, not the reconciler's.
+Wave width (Max Agents, the ready tickets, overlapping file sets) is applied to the frontier by `scripts/wave-width.sh pick`, not by the reconciler; see `skills/implement-plan/references/parallel-waves.md`.
 
 ## Known limits
 

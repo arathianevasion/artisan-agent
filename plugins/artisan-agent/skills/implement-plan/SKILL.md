@@ -62,6 +62,8 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 
 **Brief.** Under a paragraph: the seams to test at if the ticket names them, and any `GLOSSARY.md` vocabulary or ADRs it must respect. The ticket is the spec; don't copy it into the brief.
 
+**Expected files.** The paths the ticket will touch (`expected_files` in the draft); they set how wide each wave can be (`references/parallel-waves.md`).
+
 **Expected output.** What "done" looks like for this ticket in one or two lines, from its acceptance criteria. The orchestrator checks the worker's diff against it before merging. If you can't write a concrete one, the ticket is underspecified and goes back to `/to-tickets`.
 
 ### 3. Get the plan approved
@@ -101,6 +103,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 |---|---|
 | `wait` | The wave is still running. Say so in one line, with the table if asked, and end your turn. |
 | `launch` | Report the wave (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
+| `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
