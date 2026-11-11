@@ -142,6 +142,8 @@ When `status` says `done`, or the run halts, report:
 
 Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
 
+Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/skills/retro/SKILL.md`).
+
 ## Failure handling
 
 - **A worker fails or runs out of time.** The sweep counts the failed attempt; the orchestrator dispatches it once more with the failure evidence (two attempts in all by default), then it is blocked with a decision for the Artisan.

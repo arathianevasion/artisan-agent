@@ -249,13 +249,16 @@ project_lessons() { # worktree-making, one commit per lesson, one PR
     return 0
   fi
   printf 'project\t%s\t%s\n' "$branch" "$wt"
-  if [ "$pr" = 1 ]; then
-    local body
+  if [ "$pr" = 1 ] && ! delivered pr pr; then
+    local body url
     body=$(jq -r --arg run "$RUN" '"Lessons kept at the retro of run \($run). Merging this PR is the approval; there is no retro issue.\n\n| # | Lesson | Home | Role | Reach |\n|---|---|---|---|---|\n" +
       ([.lessons[] | select(.delivery == "project")] | map("| \(.id) | \(.lesson) | \(.home) | \(.role) | \(.scope) |") | join("\n"))' "$CHECKED")
     git -C "$wt" push -q -u origin "$branch" >/dev/null 2>&1 || die "could not push $branch"
-    (cd "$wt" && "$GH" pr create --head "$branch" --title "Retro lessons from run $RUN" --body "$body") \
+    url=$(cd "$wt" && "$GH" pr create --head "$branch" --title "Retro lessons from run $RUN" --body "$body") \
       || die "could not open the PR for $branch"
+    mark pr pr "$url"; printf 'pr\t%s\n' "$url"
+  elif [ "$pr" = 1 ]; then
+    git -C "$wt" push -q origin "$branch" >/dev/null 2>&1 || die "could not push $branch"
   fi
 }
 

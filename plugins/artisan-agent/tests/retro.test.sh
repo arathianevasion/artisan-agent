@@ -221,9 +221,10 @@ test_approved_lessons_land_as_one_pr_home_commits_with_origin_and_pipeline_ticke
   assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)" "home left clean"
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "main checkout untouched"
   assert_contains "$out" "project	retro/r1"
+  assert_contains "$out" "pr	https://github.com/owner/repo/pull/7"
   # Delivering again changes nothing.
   local calls; calls=$(wc -l <"$FAKE_GH_DIR/calls")
-  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/decisions.json" >/dev/null
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/decisions.json" --pr >/dev/null
   assert_eq "$calls" "$(wc -l <"$FAKE_GH_DIR/calls")" "second delivery called the tracker"
   assert_eq $((home0 + 2)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
   assert_eq 3 "$(git -C "$wt" rev-list --count main..HEAD)" "second delivery added commits"
