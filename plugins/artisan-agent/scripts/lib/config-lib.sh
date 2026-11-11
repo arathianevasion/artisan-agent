@@ -21,10 +21,15 @@ config_yaml_json() {
 #     for this run. The key must be a setting (a dotted path to a number,
 #     true/false or text), or a model under estimate_multipliers; the value
 #     must have the setting's type. Errors name what is wrong.
+#   run_override($key; $value): a plan, or the plan in a state file (.), with one
+#     setting overridden for this run: .config changed, .overrides[$key] =
+#     {value, project} (project: the value before this run touched it), and
+#     max_agents and attempts_per_ticket kept in step with the config.
 #   parse_value: a command-line string as a number, true/false, null or text.
-#   numbers: every setting as [{key, value}], keys dotted, in file order.
+#   settings_list: every setting as [{key, value}], keys dotted, in file order.
 CONFIG_JQ_DEFS='
   def strip_nulls: if type == "object" then with_entries(select(.value != null) | .value |= strip_nulls) else . end;
+  def leaves: paths(type != "object" and type != "array");
   def kind: if type == "null" or type == "string" then "text" elif type == "boolean" then "true/false" else type end;
   def check_against($d; $path):
     . as $v
@@ -53,16 +58,25 @@ CONFIG_JQ_DEFS='
     | if ($p | length) == 2 and $p[0] == "estimate_multipliers" then
         (if ($value | type) == "number" and $value > 0 then setpath($p; $value)
          else error("estimate_multipliers.\($p[1]) must be a positive number") end)
-      elif ([paths(scalars, nulls)] | index([$p])) == null then
-        error("\($key) is not a setting; settings are: \([paths(scalars, nulls) | join(".")] | join(", "))")
+      elif ([leaves] | index([$p])) == null then
+        error("\($key) is not a setting; settings are: \([leaves | join(".")] | join(", "))")
       elif (getpath($p) | kind) != ($value | kind) then
         error("\($key) must be \(getpath($p) | kind), not \($value | kind)")
       elif ($value | type) == "number" and $value < 0 then error("\($key) must not be negative")
       else setpath($p; $value) end;
-  def numbers:
-    [paths(scalars, nulls) as $p | {key: ($p | join(".")), value: getpath($p)}]
-    + [(.areas // {}) | select(length == 0) | {key: "areas", value: "none"}]
-    + [(.estimate_multipliers // {}) | select(length == 0) | {key: "estimate_multipliers", value: "none"}]
-    | map(select(.key | test("^areas\\.") | not))
-    + [(.areas // {}) | to_entries[] | {key: "areas.\(.key)", value: (.value | tojson)}];
+  def run_override($key; $value):
+    (.config | getpath($key | split("."))) as $was
+    | .config |= override($key; $value)
+    | .overrides = ((.overrides // {}) | .[$key] = {value: $value,
+        project: (if has($key) then .[$key].project else $was end)})
+    | .max_agents = .config.max_agents
+    | .attempts_per_ticket = .config.attempts_per_ticket;
+  def settings_list:
+    . as $c
+    | [leaves | select(.[0] != "areas" and .[0] != "estimate_multipliers")
+       | {key: join("."), value: (. as $p | $c | getpath($p))}]
+    + (if ($c.areas | length) == 0 then [{key: "areas", value: "none"}]
+       else [$c.areas | to_entries[] | {key: "areas.\(.key)", value: (.value | tojson)}] end)
+    + (if ($c.estimate_multipliers | length) == 0 then [{key: "estimate_multipliers", value: "none"}]
+       else [$c.estimate_multipliers | to_entries[] | {key: "estimate_multipliers.\(.key)", value: .value}] end);
 '

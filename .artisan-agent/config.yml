@@ -1,0 +1,69 @@
+# .artisan-agent/config.yml: the project's settings. Committed.
+#
+# Every number the pipeline uses lives here as a product guardrail; the values
+# below are the Artisan's own preferences, used as defaults. A key left out
+# (or left empty) falls back to the default shown here, so this file only
+# needs the keys a project changes. A lasting change is job 23; a change for
+# one run only is an override at the plan step, written to that run's state
+# file and never here.
+#
+# Read by scripts/config.sh. Plain YAML: maps, scalars, [flow, lists] and
+# "- item" lists of scalars. Key spellings: see scripts/README.md (Config).
+
+# Workers in flight at once. Review capacity comes from this and the gates.
+max_agents: 5
+
+# How often the orchestrator sweeps the run folder, in minutes.
+sweep_minutes: 5
+
+# Context drain rules, as a percentage of the context window.
+context:
+  drain_percent: 30     # dispatch nothing new, hand off once idle
+  review_percent: 50    # every merge from here gets a risk gate
+
+# Budget = approved estimate + this percentage.
+overrun_allowance_percent: 25
+
+# Plan-usage guard: park when the 5-hour window is within this reserve, or
+# the 7-day window passes this ceiling.
+usage_reserve:
+  five_hour_reserve_percent: 20
+  seven_day_ceiling_percent: 90
+
+# A usage reading older than this counts as unknown, and unknown stops dispatch.
+stale_usage_minutes: 10
+
+# Failed attempts allowed before a ticket is blocked.
+attempts_per_ticket: 2
+
+# Deferred gates come back for review after this many days.
+deferral_review_days: 30
+
+# Occurrences of a lesson before it is proposed as a guardrail.
+evidence_threshold: 3
+
+# Nudge towards a hands-on ticket after this many runs without one.
+hands_on_nudge_runs: 5
+
+# Named path sets that gates and guardrails can apply to. A ticket belongs to
+# every area its files touch; the strictest setting wins. None by default.
+# Example:
+#   areas:
+#     billing:
+#       paths: [src/billing/, db/migrations/]
+#       gates: [risk]
+areas: {}
+
+# owner/name of the team guardrails repo, or empty for none.
+team_guardrails_repo:
+
+# Multipliers on history-based estimates, keyed by model id; "all" applies to
+# every model without its own key. None by default (1).
+# Example:
+#   estimate_multipliers:
+#     all: 1.1
+#     claude-opus-5-5: 1.3
+estimate_multipliers: {}
+
+# Whether runs live on an always-on host.
+host_configured: false
