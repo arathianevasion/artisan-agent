@@ -41,7 +41,7 @@ cmd_check() {
     missing=1
   fi
   if ! command -v perl >/dev/null 2>&1; then
-    echo "missing: perl - needed on macOS to detach workers (macOS has no setsid); install it (macOS: brew install perl; Debian/Ubuntu: apt install perl)"
+    echo "missing: perl - needed on macOS to detach workers (macOS has no setsid); install it (Debian/Ubuntu: apt install perl; macOS ships it, so check PATH)"
     missing=1
   fi
   [ "$missing" = 1 ] || echo "ok: jq and perl are available"

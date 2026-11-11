@@ -9,7 +9,7 @@ cache_root() {
 
 list_names() { grep -v '^#' "$LIST" | grep -v '^$' | sort -u; }
 
-test_list_has_no_blank_or_duplicate_names() {
+test_list_has_no_duplicate_names() {
   local dups
   dups=$(grep -v '^#' "$LIST" | grep -v '^$' | sort | uniq -d)
   assert_eq "" "$dups" "duplicate names"

@@ -183,4 +183,5 @@ test_init_still_sets_up_but_exits_non_zero_when_a_tool_is_missing() {
   rc=0; out=$(PATH="$TEST_TMPDIR/nojq" /bin/bash "$SCRIPT" init 2>&1) || rc=$?
   assert_contains "$out" "missing: jq"
   [ "$rc" != 0 ] || fail "init must exit non-zero when jq is missing"
+  [ -f "$CLAUDE_CONFIG_DIR/artisan-agent/CODING_STANDARDS.md" ] || fail "init must still create the individual home"
 }
