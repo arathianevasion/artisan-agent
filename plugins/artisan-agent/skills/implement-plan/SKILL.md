@@ -44,6 +44,8 @@ This skill is Claude-callable, so another pipeline step can hand it work. Dispat
 
 ### 1. Read the queue and build the graph
 
+If the Artisan named a plan issue (labelled `plan`), several, or plans mixed with tickets, resolve them to tickets first: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/plan-issues.md`, using `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-scope.sh`.
+
 Read every ticket body in full, not just titles. Extract for each: its number, title, blockers (native tracker links or the `## Blocked by` body section), acceptance criteria, and the layers it touches.
 
 Compute **waves** by topological level: wave 1 is every ticket with no open blockers, wave 2 is everything unblocked once wave 1 merges, and so on. Tickets within a wave run in parallel; waves run in series. The waves are a forecast: each orchestrator recomputes the frontier from the tracker and git.
