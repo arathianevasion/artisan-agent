@@ -297,3 +297,22 @@ test_a_repo_that_is_not_owner_and_name_is_refused_at_start() {
   assert_eq 1 "$status"
   assert_contains "$(cat "$TEST_TMPDIR/err")" "must be owner/name"
 }
+
+test_blocking_a_returned_ticket_queues_a_decision_and_logs_it() {
+  setup_wave
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].status = "returned"'
+  "$SCRIPTS/wave.sh" block "$RUN_DIR" 1 "misses the expected output"
+  assert_eq blocked "$(state_get '.tickets["1"].status')"
+  assert_eq exception "$(state_get '.decisions[0].kind')"
+  assert_eq blocked "$(state_get '.events[-1].event')"
+}
+
+test_fractional_expected_minutes_still_dispatch_with_a_deadline() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].expected.minutes = 2.5 | del(.plan.tickets["1"].caps.deadline_seconds)'
+  export FAKE_CLAUDE_MODE=complete
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["1"].status')"
+  [ "$(state_get '.tickets["1"].deadline_at - .tickets["1"].dispatched_at')" -ge 299 ] || fail "deadline not twice 2.5 minutes"
+}

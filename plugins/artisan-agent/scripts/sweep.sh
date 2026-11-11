@@ -79,8 +79,8 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
   | .tickets[$t] |= (
       .result = {status: $s, commit: ($r.commit // null), notes: ($r.notes // null),
                  file: $file}
-      | .cost_usd = ($r.cost_usd // $r.total_cost_usd // $session_cost // .cost_usd)
       | .pid = null)
+  | attempt_cost($t; .tickets[$t].attempts; ($r.cost_usd // $r.total_cost_usd // $session_cost))
   | event({event: "result", ticket: $t, attempt: .tickets[$t].attempts, status: $s}; $now)
   | if $s == "failed" then .
     elif $s == "blocked" then .tickets[$t].status = "blocked"
@@ -114,6 +114,9 @@ sweep() {
         step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"
       fi
     elif [ -f "$exit_record" ]; then
+      session_cost=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$attempt/output.json" 2>/dev/null || echo null)
+      [ -n "$session_cost" ] || session_cost=null
+      step "$STATE_JQ_DEFS"'attempt_cost($t; .tickets[$t].attempts; $usd)' --arg t "$t" --argjson usd "$session_cost"
       step "$FAIL_FILTER" --arg t "$t" --arg reason "exited without a result" --argjson now "$now"
     elif [ -n "$deadline" ] && [ "$now" -gt "$deadline" ]; then
       [ -n "$pid" ] && stop_worker "$pid"

@@ -68,7 +68,7 @@ Top level:
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}` |
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
-| `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`. Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
+| `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`, plus `cost_usd` once `wave.sh status` has seen it end. Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
 `plan`, copied from the approved plan by `state.sh init <run-dir> <plan.json>`. The plan file needs `run_id`, `repo`, `integration_branch` and `scope`; the rest default. `state.sh` never reads `config.yml` itself: the plan step (`plan.sh build`) reads it and puts its numbers into the plan.
@@ -100,8 +100,9 @@ Top level:
 | `result` | from the current attempt's result file: `{status, commit, notes, file}` |
 | `evidence` | the ticket's evidence, written after verification |
 | `merge_commit` | the merge commit on the integration branch |
-| `cost_usd` | from the result file (`cost_usd`, or `claude -p`'s `total_cost_usd`) |
+| `cost_usd` | the sum of `attempt_costs`: per attempt, from the result file's `cost_usd`, else the session's `total_cost_usd` in its JSON output (recorded by the sweep, and again by `wave.sh merge` once the session has ended) |
 | `failures` | `[{attempt, reason, at}]`, one per failed attempt |
+| `attempt_costs` | `{"<attempt>": usd}`, each attempt's session cost, failed attempts included |
 | `worktree`, `base` | the current attempt's worktree and the integration commit it branched from (`wave.sh dispatch`) |
 | `suite` | `{command, passed, log}` from the last merge attempt |
 | `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |

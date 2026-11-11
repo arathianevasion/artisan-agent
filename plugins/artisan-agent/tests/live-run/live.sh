@@ -104,7 +104,7 @@ session() { # name prompt -> runs claude -p in the sample repo, output in $WD/<n
 
 # ------------------------------------------------------ 1. chat and launch
 set -m
-session chat "/artisan-agent:implement-plan ticket #1 on local/sample. Use run id live1, the model $MODEL for the worker, and the suite command \`python3 -m unittest -q\`. I approve the plan as you render it, with one override for this run only: max_agents=1, applied with --set. Don't wait for me: once approved, start the run and launch the wave as the skill says, then end your turn." &
+session chat "/artisan-agent:implement-plan ticket #1 on local/sample. Use run id live1, the model $MODEL for the worker, an expected size of 50000 input tokens, 20000 output tokens and 10 minutes, and the suite command \`python3 -m unittest -q\`. I approve the plan as you render it, with one override for this run only: max_agents=1, applied with --set. Don't wait for me: once approved, start the run and launch the wave as the skill says, then end your turn." &
 CHAT=$!
 set +m
 i=0
@@ -148,7 +148,7 @@ check "the orchestrator is no longer running" sh -c "! kill -0 $ORCH"
 # ------------------------------------- 3. a fresh chat learns from files
 session status-chat "You are the Engineering chat for run live1 of /artisan-agent:implement-plan (run folder $RUN). You were just woken; there are no messages for you. Do step 6 of the skill (${PLUGIN_ROOT}/skills/implement-plan/SKILL.md): check the run with wave.sh status and report it to me as the skill says. Do not launch anything." || true
 check "the second chat reported the ticket merged from files alone" \
-  sh -c "jq -r '.result' '$WD/status-chat.json' | grep -i -q 'merged'"
+  sh -c "jq -r '.result' '$WD/status-chat.json' | grep -i -q 'merged as'"
 "$PLUGIN_ROOT/scripts/wave.sh" status "$RUN" >"$WD/status.txt" 2>&1 || true
 check "wave.sh status says the run is done" grep -q '^next: done' "$WD/status.txt"
 

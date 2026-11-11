@@ -110,8 +110,8 @@ state_with_lock() {
 }
 
 # state_hand_lock run_dir from to: give a lock held by pid "from" to pid "to"
-# in one step (a rename over the symlink), so no third writer can take it in
-# between. Used when the chat launches an orchestrator: the run stays locked
+# in one step (a rename over the symlink). "from" must be a live pid: a live
+# holder's lock is never taken as stale, so no third writer gets in between. Used when the chat launches an orchestrator: the run stays locked
 # and the orchestrator's long-lived runner becomes the writer. 3 if "from"
 # does not hold it.
 state_hand_lock() {
@@ -197,8 +197,13 @@ state_usage() {
 # event live in one place. Prepend to a filter: "$STATE_JQ_DEFS | ...".
 #   new_ticket(t): a queued ticket entry; reads .plan.tickets for its branch
 #   merged(t; sha): the ticket merged at sha, recorded in integration.merges
+#   attempt_cost(t; n; usd): attempt n of ticket t cost usd (cost_usd is the sum)
 #   event(e; at): append e to the event log, numbered, with its time (epoch)
 STATE_JQ_DEFS='
+  def attempt_cost($t; $n; $usd):
+    if $usd == null then .
+    else .tickets[$t].attempt_costs[($n | tostring)] = $usd
+      | .tickets[$t].cost_usd = ([.tickets[$t].attempt_costs[]] | add) end;
   def event($e; $at):
     .events = ((.events // []) as $log | $log + [{seq: (($log | length) + 1), at: $at} + $e]);
   def new_ticket($t): {

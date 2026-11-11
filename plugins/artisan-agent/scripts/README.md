@@ -142,6 +142,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `decide`, `blocked`, `done`), with a ticket table | 0 |
 | `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), and a slot free under Max Agents (9); then a worktree from the integration tip and a worker running `/artisan-agent:implement` | 0, 1, 4, 5, 9 |
 | `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the attempt `completed` and the record's commit is the branch tip; merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict, 7 suite red (both undo and block), 8 worker still running |
+| `wave.sh block <run-dir> <ticket> <reason>` | orchestrator | blocks a returned ticket it won't merge (the diff misses its expected output): an exception decision for the Artisan and a `blocked` event | 0, 4 |
 | `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence, ticks met criteria (`lib/tick-criteria.py`), closes the ticket | 0, 1 |
 | `wave.sh report <run-dir>` | orchestrator | the wave report, JSON, for its result file | 0 |
 

@@ -32,6 +32,9 @@
 #       there, record the merge and remove the worker's worktree. Prints the
 #       merge commit. 8: the worker is still running. 6: refused or conflict,
 #       7: suite red (both mark the ticket blocked and queue a decision).
+#   wave.sh block <run-dir> <ticket> <reason>
+#       block a returned ticket the orchestrator won't merge (its diff misses
+#       the expected output): queues an exception decision, logs the event.
 #   wave.sh close <run-dir> <ticket>
 #       post the evidence on the ticket, tick its met criteria, close it.
 #   wave.sh report <run-dir>
@@ -443,7 +446,8 @@ EOF
   if [ -n "$deadline" ]; then
     "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid"
   else
-    "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" "$(( $(state_now) + minutes * 120 ))"
+    "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" \
+      "$(awk -v now="$(state_now)" -v m="$minutes" 'BEGIN { printf "%d", now + m * 120 }')"
   fi
   apply '.tickets[$t] |= (.worktree = $wt | .base = $base)' --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
@@ -457,9 +461,9 @@ record_session_cost() { # ticket attempt
   local usd
   usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true)
   [ -n "$usd" ] || return 0
-  apply '.tickets[$t].cost_usd = $usd
+  apply 'attempt_cost($t; $n; $usd)
     | .costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
-    | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' --arg t "$1" --argjson usd "$usd"
+    | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' --arg t "$1" --argjson n "$2" --argjson usd "$usd"
 }
 
 cmd_merge() {
@@ -593,6 +597,12 @@ case "$cmd" in
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
   close) cmd_close "$@" ;;
+  block)
+    [ $# -eq 3 ] || usage
+    open_run "$1"
+    "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$2" || exit $?
+    block "$2" "$3"
+    ;;
   report) cmd_report "$@" ;;
   *) usage ;;
 esac
