@@ -76,7 +76,7 @@ test_the_checker_rejects_a_file_that_is_not_json() {
 
 test_each_sample_ticket_sets_up_a_repo_whose_suite_passes() {
   local scenario
-  for scenario in named-seam unnamed-seam review-seeds; do
+  for scenario in named-seam unnamed-seam public-interface review-seeds; do
     "$LIVE" setup "$scenario" "$scenario"
     (cd "$scenario/repo" && python3 -m unittest -q >/dev/null 2>&1) || fail "$scenario: suite fails before the worker starts"
     [ -z "$(git -C "$scenario/repo" status --porcelain)" ] || fail "$scenario: setup left the tree dirty"
@@ -93,9 +93,21 @@ test_the_review_seeds_are_really_there_before_the_worker_starts() {
 
 test_verify_fails_on_every_sample_before_a_worker_has_run() {
   local scenario out
-  for scenario in named-seam unnamed-seam review-seeds; do
+  for scenario in named-seam unnamed-seam public-interface review-seeds; do
     "$LIVE" setup "$scenario" "$scenario"
     out=$("$LIVE" verify "$scenario" "$scenario" 2>&1) && fail "$scenario: verify passed with no worker run"
     assert_contains "$out" "FAIL a result file exists"
   done
+}
+
+test_the_skill_stops_only_for_something_another_ticket_owns() {
+  local body
+  body=$(tr '\n' ' ' < "$SKILL")
+  assert_contains "$body" "Stop only when the ticket can't be built without changing the design or interface of something another ticket owns"
+  assert_contains "$body" "including when it is a new public interface"
+  assert_contains "$body" "**carry on**"
+  case "$body" in
+    *"If the seam changes an interface another ticket owns, or a schema or stored data"*) fail "SKILL.md still stops for a schema or any hard-to-reverse seam" ;;
+    *"Stop and finish with status \`blocked\`, with the question and your recommendation in the record. "*) fail "SKILL.md still stops for every controversial decision" ;;
+  esac
 }

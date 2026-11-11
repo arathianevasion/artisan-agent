@@ -133,7 +133,7 @@ test_events_record_dispatch_merge_wave_evidence_decision_and_cost() {
   assert_eq waiting "$(state_get '.decisions[0].status')"
   "$SCRIPTS/state.sh" cost "$RUN_DIR" 1.5
   assert_eq 1.5 "$(state_get '.costs.total_usd')"
-  assert_status 1 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 99 1
+  assert_status 4 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 99 1
 }
 
 test_a_dispatch_without_a_deadline_is_refused() {
