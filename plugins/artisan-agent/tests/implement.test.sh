@@ -60,13 +60,13 @@ test_the_documented_example_is_a_valid_evidence_record() {
 test_the_checker_rejects_a_malformed_record_and_names_each_problem() {
   local out status=0
   example_record | jq '.status = "done" | del(.base) | .decisions[0].kind = "taste"
-    | .review.findings[0].disposition = "not_acted"' > bad.json
+    | .review.remarks[0].disposition = "not_acted"' > bad.json
   out=$("$CHECK" bad.json) || status=$?
   assert_eq 1 "$status" "checker exit status"
   assert_contains "$out" "record: missing base"
   assert_contains "$out" 'status: "done" is not one of'
   assert_contains "$out" 'decisions[0].kind: "taste" is not one of'
-  assert_contains "$out" "review.findings[0]: not_acted needs why"
+  assert_contains "$out" "review.remarks[0]: not_acted needs why"
 }
 
 test_the_checker_rejects_a_file_that_is_not_json() {

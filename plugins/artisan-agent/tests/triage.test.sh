@@ -70,3 +70,52 @@ test_deferred_due_does_not_list_a_date_that_has_not_come() {
   case "$out" in *'#10'*) fail "#10 not yet due on 2026-09-01" ;; esac
   assert_contains "$out" '#12'
 }
+
+test_record_miss_zero_padded_numbers_are_valid_json() {
+  export ARTISAN_AGENT_DIR="$TEST_TMPDIR/state"
+  "$SCRIPTS/record-miss.sh" 02 7 Do Defer x
+  "$SCRIPTS/record-miss.sh" '#02' 7 Do Defer x
+  "$SCRIPTS/record-miss.sh" 000 new Do Defer x
+  local f="$TEST_TMPDIR/state/triage/misses.jsonl" line n=0
+  while IFS= read -r line; do
+    printf '%s' "$line" | python3 -I -m json.tool >/dev/null || fail "invalid JSON: $line"
+    n=$((n+1))
+  done < "$f"
+  assert_eq 3 "$n" "lines"
+  assert_contains "$(sed -n 1p "$f")" '"ticket":2,'
+  assert_contains "$(sed -n 2p "$f")" '"ticket":2,'
+  assert_contains "$(sed -n 3p "$f")" '"ticket":0,'
+}
+
+test_backlog_review_prompt_resolves_plugin_without_plugin_root() {
+  local md="$PLUGIN_ROOT/skills/triage/backlog-review.md" line
+  # Inside the pasted prompt, plugin paths use $ROOT, never the unset variable.
+  local prompt; prompt=$(sed -n '/^````text/,/^````$/p' "$md")
+  assert_contains "$prompt" 'claude plugin list --json'
+  if printf '%s\n' "$prompt" | grep -v 'ROOT=' | grep -q 'CLAUDE_PLUGIN_ROOT'; then fail "prompt uses \${CLAUDE_PLUGIN_ROOT} outside the resolver"; fi
+  if printf '%s\n' "$prompt" | grep -q 'find /'; then fail "prompt mentions find /"; fi
+  # Run the resolver with the variable unset and a stub claude.
+  line=$(printf '%s\n' "$prompt" | grep '^ *ROOT=' | sed 's/^ *//')
+  mkdir -p "$TEST_TMPDIR/bin" "$TEST_TMPDIR/installed"
+  cat > "$TEST_TMPDIR/bin/claude" <<STUB
+#!/usr/bin/env bash
+[ "\$*" = "plugin list --json" ] || exit 1
+cat <<JSON
+[{"id":"mattpocock-skills@claude-plugins-official","enabled":true,"installPath":"/nope"},
+ {"id":"artisan-agent@artisan-agent","enabled":false,"installPath":"/disabled"},
+ {"id":"artisan-agent@artisan-agent","enabled":true,"installPath":"$TEST_TMPDIR/installed"}]
+JSON
+STUB
+  chmod +x "$TEST_TMPDIR/bin/claude"
+  local out; out=$(env -u CLAUDE_PLUGIN_ROOT PATH="$TEST_TMPDIR/bin:$PATH" bash -c "$line")
+  assert_eq "$TEST_TMPDIR/installed" "$out" "resolved root"
+  out=$(CLAUDE_PLUGIN_ROOT=/set PATH="$TEST_TMPDIR/bin:$PATH" bash -c "$line")
+  assert_eq /set "$out" "variable wins when set"
+}
+
+test_triage_identity_follows_the_tracker_doc() {
+  local skill="$PLUGIN_ROOT/skills/triage/SKILL.md"
+  if grep -q 'gh api user' "$skill"; then fail "triage SKILL.md hardcodes gh api user"; fi
+  assert_contains "$(cat "$skill")" 'docs/agents/issue-tracker.md'
+  assert_contains "$(cat "$skill")" 'on a local-markdown tracker make no `gh` call'
+}
