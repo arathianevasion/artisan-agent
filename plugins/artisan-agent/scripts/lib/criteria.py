@@ -114,7 +114,8 @@ def main(argv):
     elif cmd == "tick" and len(argv) == 3:
         sys.stdout.write(tick(load(argv[2]), sys.stdin.read()))
     else:
-        sys.exit(__doc__.split("\n\n", 2)[2].split("Standard-library")[0].rstrip())
+        print(__doc__.split("Standard-library")[0].rstrip(), file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

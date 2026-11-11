@@ -17,7 +17,8 @@
 #       short description, then one line of cost. --all covers every ticket
 #       in scope.
 #
-# Exit status: 0 ok, 1 error (no contract for the ticket), 2 usage.
+# Exit status: 0 ok, 1 error (no contract for the ticket, an unreadable state
+# file), 2 usage (including a --wave that is not a number).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs jq.
 
@@ -92,7 +93,7 @@ cmd_digest() {
   local scope=wave wave=
   while [ $# -gt 0 ]; do
     case "$1" in
-      --wave) [ $# -ge 2 ] || usage; wave=$2; shift 2 ;;
+      --wave) [ $# -ge 2 ] || usage; case "$2" in '' | *[!0-9]*) usage ;; esac; wave=$2; shift 2 ;;
       --all) scope=all; shift ;;
       *) usage ;;
     esac
@@ -113,7 +114,10 @@ cmd_digest() {
               elif $k.status == "blocked" then "blocked: \($k.blocked_reason // ($k.failures // [] | last | .reason) // "see decisions" | cell)"
               elif $k.status == "in_flight" then "in flight (attempt \($k.attempts))"
               else $k.status end )
-          + " | " + (if $e then "\($e.criteria_met)/\($e.criteria_total) verified" else "not verified" end)
+          # A contract from an earlier attempt says nothing about the current one.
+          + " | " + (if $e == null then "not verified"
+                     elif $e.attempt != $k.attempts and $k.status != "blocked" then "not verified yet (attempt \($k.attempts))"
+                     else "\($e.criteria_met)/\($e.criteria_total) verified" end)
           + " | " + (if $e then "\($e.unsure | arr | length) unsure, \($e.decisions | arr | length) decision\(if ($e.decisions | arr | length) == 1 then "" else "s" end)" else "-" end)
           + " | \($k.cost_usd // 0 | usd) of \($s.plan.tickets[$t].estimate_usd // null | usd) |" ),
       "",

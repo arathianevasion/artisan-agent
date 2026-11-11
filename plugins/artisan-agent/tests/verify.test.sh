@@ -232,6 +232,9 @@ test_v_a_ticket_the_verifier_fails_is_retried_by_a_fresh_worker_given_its_findin
   prompt=$(cat "$RUN_DIR/prompts/1.2.md")
   assert_contains "$prompt" "The last attempt failed: the verifier found 1 of 2 criteria unmet, first: It says hi"
   assert_contains "$prompt" "- Unmet (verifier): It says hi (not in the diff)"
+  # Judging again, with the retry under way, still says what happened.
+  judge_verifier 1
+  assert_eq "6 fail 1/2 retry: It says hi" "$JUDGE_STATUS $JUDGE_OUT"
   wait_for "$RUN_DIR/results/1.2.exit.json" 30
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   # Attempt 1's verdict doesn't let attempt 2 merge unverified.

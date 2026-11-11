@@ -35,7 +35,7 @@
 # claude-sonnet-5-5), plan.verifier.estimate_usd (0.5), plan.verifier.minutes
 # (15). ARTISAN_CLAUDE_ARGS and ARTISAN_MAX_BUDGET_USD apply as in wave.sh.
 #
-# Exit status: 0 ok, 1 error, 2 usage, 4 outside the scope, 6 not verified
+# Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 4 outside the scope, 6 not verified
 # (a failed attempt, or blocked), 8 still running, 14 the verifier failed and
 # may be started again. The numbers mean what they mean in wave.sh; one table
 # of every code: scripts/README.md, "Exit status".
@@ -119,7 +119,7 @@ cmd_start() {
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
   ib=$(get '.integration.branch')
   base=$(get --arg t "$t" '.tickets[$t].base // ""')
-  [ -n "$base" ] || base=$(git -C "$MAIN" merge-base "refs/heads/$ib" "$tip")
+  [ -n "$base" ] || base=$(git -C "$MAIN" merge-base "refs/heads/$ib" "$tip") || die "no merge base between $ib and #$t's commit"
   id="verify-$t"
   wt="$WT_ROOT/$RUN_ID-$id.$v"
   mkdir -p "$WT_ROOT" "$RUN_DIR/prompts"
@@ -151,19 +151,23 @@ cmd_start() {
   model=$(get --arg d "$DEFAULT_MODEL" '.plan.verifier.model // $d')
   estimate=$(clamp_estimate "$(get --arg d "$DEFAULT_ESTIMATE_USD" '.plan.verifier.estimate_usd // $d')")
   minutes=$(get --arg d "$DEFAULT_MINUTES" '.plan.verifier.minutes // $d')
-  local pid
-  read_extra_args
-  pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
-    --prompt-file "$prompt" --workdir "$wt" --model "$model" \
-    --estimate-usd "$estimate" --expected-minutes "$minutes" \
-    -- --permission-mode acceptEdits --allowedTools "$VERIFIER_TOOLS" --add-dir "$RUN_DIR" \
-    ${EXTRA[@]+"${EXTRA[@]}"}) || { remove_worktree "$wt"; die "could not launch the verifier for #$t"; }
-
+  # Recorded before it launches, so no verifier ever runs unrecorded.
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
       + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt"
+  local pid
+  read_extra_args
+  if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
+    --prompt-file "$prompt" --workdir "$wt" --model "$model" \
+    --estimate-usd "$estimate" --expected-minutes "$minutes" \
+    -- --permission-mode acceptEdits --allowedTools "$VERIFIER_TOOLS" --add-dir "$RUN_DIR" \
+    ${EXTRA[@]+"${EXTRA[@]}"}); then
+    remove_worktree "$wt"
+    apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = "could not launch")' --arg t "$t"
+    die "could not launch the verifier for #$t"
+  fi
   printf '%s\n' "$pid"
 }
 
@@ -206,7 +210,7 @@ say_again() { # ticket
       else $k.evidence as $e
         | "\($e.verdict) \($e.criteria_met)/\($e.criteria_total)"
           + (if $e.verdict == "pass" then ""
-             else " \(if $k.status == "queued" then "retry" else "blocked" end): \([$e.acceptance[] | select(.met | not) | .criterion] | first)" end)
+             else " \($x.next // "blocked"): \([$e.acceptance[] | select(.met | not) | .criterion] | first)" end)
       end')
   echo "$line"
   case "$line" in
@@ -299,12 +303,15 @@ cmd_judge() {
     # A criterion missed is a failed attempt: a fresh worker gets the
     # verifier's findings (wave.sh dispatch), or, after the last attempt,
     # the Artisan gets the ticket.
-    apply 'failed_attempt($t; $r; $now)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select(.met | not) | .criterion] | first)"' "$contract")"
+    # The next step is kept with the verdict, so judging again says the same.
+    apply 'failed_attempt($t; $r; $now)
+      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select(.met | not) | .criterion] | first)"' "$contract")"
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"
-    "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body"
-    gh issue comment "$t" -R "$(get .repo)" --body-file "$body" >/dev/null 2>&1 \
-      || echo "verify.sh: could not post the evidence on #$t; it is in the state file" >&2
+    if ! "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body" \
+      || ! gh issue comment "$t" -R "$(get .repo)" --body-file "$body" >/dev/null 2>&1; then
+      echo "verify.sh: could not post the evidence on #$t; it is in the state file" >&2
+    fi
   fi
   say_again "$t"
 }
