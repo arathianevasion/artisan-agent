@@ -57,7 +57,7 @@ for n in "${NAMED[@]}"; do
     add_ticket "$n" "$(jq -r .title <<<"$issue")" "$(jq -r '.state | ascii_downcase' <<<"$issue")" ""
     continue
   fi
-  subs=$(gh api "repos/$REPO/issues/$n/sub_issues" 2>/dev/null || echo '[]')
+  subs=$(gh api "repos/$REPO/issues/$n/sub_issues") || die "cannot read the sub-issues of plan #$n"
   members=$(jq -c '[.[] | {number, title, state: (.state | ascii_downcase)}]' <<<"$subs")
   if [ "$(jq length <<<"$members")" -eq 0 ]; then
     # No sub-issues: the task list in the body, each ticket read in turn.
@@ -74,7 +74,7 @@ for n in "${NAMED[@]}"; do
   while IFS=$'\t' read -r num title state; do
     add_ticket "$num" "$title" "$state" "$n"
   done < <(jq -r '.[] | [.number, .title, .state] | @tsv' <<<"$members")
-  blockers=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>/dev/null || echo '[]')
+  blockers=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of plan #$n"
   for b in $(jq -r '.[] | select(.state == "open") | .number' <<<"$blockers"); do
     named=0
     for m in "${NAMED[@]}"; do [ "$m" != "$b" ] || named=1; done

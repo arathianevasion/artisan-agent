@@ -347,21 +347,21 @@ def warnings(plans, graph):
         total = sum(estimate(tickets, n) for n in p["tickets"])
         if budget is not None and total > budget:
             solo = len({slice_of(tickets, n) for n in p["tickets"]}) == 1
-            out.append("Plan %d is estimated at %s, over the %s budget%s." % (
-                i + 1, money(total), money(budget),
+            out.append(("Plan %d" % (i + 1), "estimated at %s, over the %s budget%s." % (
+                money(total), money(budget),
                 " (one slice that cannot be cut smaller without ending mid-slice)" if solo else
-                "; split it, or raise the budget"))
+                "; split it, or raise the budget")))
     slices = {}
     for n in tickets:
         slices.setdefault(slice_of(tickets, n), set()).add(where[n])
     for s in sorted(slices):
         if len(slices[s]) > 1:
-            out.append("Slice \"%s\" is split across plans %s: neither of them ends at a slice reviewable end to end."
-                       % (s, ", ".join(str(i + 1) for i in sorted(slices[s]))))
+            out.append(("Slice \"%s\"" % s, "split across plans %s: neither of them ends at a slice reviewable end to end."
+                        % ", ".join(str(i + 1) for i in sorted(slices[s]))))
     for n in sorted(tickets, key=key):
         ext = [str(x).lstrip("#") for x in tickets[n].get("external_blockers") or []]
         if ext:
-            out.append("#%s waits on #%s, which is outside these tickets and still open." % (n, ", #".join(ext)))
+            out.append((describe(tickets, n), "waits on #%s, which is outside these tickets and still open." % ", #".join(ext)))
     return out
 
 
@@ -392,13 +392,14 @@ def render(plans, graph):
         lines.append("")
     warn = warnings(plans, graph)
     if warn:
-        lines += ["## Needs your attention", ""] + ["- " + w for w in warn] + [""]
+        lines += ["## Needs your attention", "", "| About | Problem |", "|---|---|"]
+        lines += ["| %s | %s |" % (cell(a), cell(b)) for a, b in warn] + [""]
     return "\n".join(lines)
 
 
 def main(argv):
     if len(argv) < 2:
-        raise Refusal("usage: to-plan.py propose|edit|check|render|deps|publish-view ...")
+        raise Refusal("usage: to-plan.py propose|edit|check|render|deps ...")
     cmd, rest = argv[1], argv[2:]
     if cmd == "propose":
         graph, budget = load(rest[0]), float(rest[1])

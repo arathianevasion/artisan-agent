@@ -69,10 +69,10 @@ The Artisan can ask for any of these, in any order, as many times as they like. 
 
 | Artisan says | Run |
 |---|---|
-| "split plan 2: move #5 out" | `to-plan.sh split <plans.json> --graph <graph.json> 2 5` |
-| "merge plans 1 and 2" | `to-plan.sh merge <plans.json> --graph <graph.json> 1 2` |
-| "run plan 3 before plan 2" | `to-plan.sh reorder <plans.json> --graph <graph.json> 1,3,2` |
-| "put #4 in plan 3" | `to-plan.sh move <plans.json> --graph <graph.json> 4 3` |
+| "split plan 2: move #5 out" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh split <plans.json> --graph <graph.json> 2 5` |
+| "merge plans 1 and 2" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh merge <plans.json> --graph <graph.json> 1 2` |
+| "run plan 3 before plan 2" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh reorder <plans.json> --graph <graph.json> 1,3,2` |
+| "put #4 in plan 3" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh move <plans.json> --graph <graph.json> 4 3` |
 
 After each edit, render again and show only what changed in one line, then the new tables. When an edit is refused, tell the Artisan which blocking edge stopped it and what would make it possible (for example, moving the blocker too). Changing a ticket's slice or estimate goes into `graph.json`; propose again only if the Artisan asks. A correction the Artisan repeats ("I always want plans this small") is offered as a guardrail (ARTISAN.md rule 5).
 

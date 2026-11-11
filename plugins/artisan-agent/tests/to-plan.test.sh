@@ -48,7 +48,7 @@ test_a_slice_over_budget_stays_whole_and_is_flagged() {
   sample_graph
   "$TP" propose --graph "$GRAPH" --budget 3 >"$PLANS"
   assert_eq "1,2" "$(plan_of "$PLANS" 0)"
-  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "Plan 1 is estimated at \$4.00, over the \$3.00 budget"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "| Plan 1 | estimated at \$4.00, over the \$3.00 budget"
 }
 
 test_slices_that_block_each_other_are_one_unit_so_no_blocker_follows_its_dependent() {
@@ -187,8 +187,8 @@ test_the_view_warns_about_a_split_slice_and_an_outside_blocker() {
   "$TP" split "$PLANS" --graph "$GRAPH" 2 4,5      # billing now spans plans 2 and 3
   jq '.tickets["1"].external_blockers = ["90"]' "$GRAPH" >"$GRAPH.tmp" && mv "$GRAPH.tmp" "$GRAPH"
   local view; view=$("$TP" render "$PLANS" --graph "$GRAPH")
-  assert_contains "$view" 'Slice "billing" is split across plans 2, 3'
-  assert_contains "$view" "#1 waits on #90"
+  assert_contains "$view" '| Slice "billing" | split across plans 2, 3'
+  assert_contains "$view" "| #1 (Upload endpoint) | waits on #90"
 }
 
 # ---- the tracker half, against the fake gh ------------------------------
@@ -256,7 +256,7 @@ test_publish_creates_plan_issues_with_sub_issues_and_native_blocking() {
   # Plan 2 is blocked by plan 1, natively; plan 1 by nothing.
   assert_eq "[$p1]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-$p2.json")"
   [ ! -f "$FAKE_GH_DIR/blocked_by-$p1.json" ] || fail "plan 1 should have no blockers"
-  assert_contains "$(cat "$TEST_TMPDIR/out")" "plan 2 #$p2"
+  assert_contains "$(cat "$TEST_TMPDIR/out")" "| Plan 2 | #$p2 | #3, #4, #5 |"
 }
 
 test_a_ticket_that_already_has_a_parent_keeps_it_unless_told_to_replace_it() {

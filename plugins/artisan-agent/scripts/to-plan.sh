@@ -79,7 +79,7 @@ case "$cmd" in
     out='{"tickets":{}}'
     for n in $numbers; do
       issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state) || die "cannot read #$n"
-      deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>/dev/null || echo '[]')
+      deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of #$n (a missing edge could put a blocker after its dependent)"
       crit=$(printf '%s' "$issue" | jq -r '.body // ""' | awk '
         /^##[[:space:]]/ { in_ac = ($0 ~ /^##[[:space:]]+[Aa]cceptance [Cc]riteria/); next }
         in_ac && /^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]+/ { sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]+/, ""); print }')
@@ -159,9 +159,12 @@ case "$cmd" in
       for t in $(jq -r --argjson i "$i" '.plans[$i].tickets[]' "$file"); do
         args=(-F "sub_issue_id=$(dbid "$t")")
         [ -z "$REPLACE_PARENT" ] || args+=(-F replace_parent=true)
-        if ! gh api --method POST "repos/$REPO/issues/$plan_no/sub_issues" "${args[@]}" >/dev/null 2>&1; then
-          printf 'to-plan.sh: #%s stays under its existing parent (listed in the body of #%s only)\n' "$t" "$plan_no" >&2
-          kept=$((kept + 1))
+        if ! err=$(gh api --method POST "repos/$REPO/issues/$plan_no/sub_issues" "${args[@]}" 2>&1 >/dev/null); then
+          case "$err" in
+            *[Pp]arent*) printf 'to-plan.sh: #%s stays under its existing parent (listed in the body of #%s only)\n' "$t" "$plan_no" >&2
+                         kept=$((kept + 1)) ;;
+            *) die "could not make #$t a sub-issue of #$plan_no: $err (carry on by running publish again)" ;;
+          esac
         fi
       done
       i=$((i + 1))
@@ -173,13 +176,18 @@ case "$cmd" in
       plan_no=$(jq -r --argjson i "$i" '.plans[$i].issue' "$file")
       for d in $(printf '%s' "$deps" | jq -r --argjson i "$i" '.[$i][]'); do
         blocker=$(jq -r --argjson d "$d" '.plans[$d].issue' "$file")
-        gh api --method POST "repos/$REPO/issues/$plan_no/dependencies/blocked_by" -F "issue_id=$(dbid "$blocker")" >/dev/null 2>&1 \
-          || printf 'to-plan.sh: #%s is already blocked by #%s, or the tracker refused the link\n' "$plan_no" "$blocker" >&2
+        if ! err=$(gh api --method POST "repos/$REPO/issues/$plan_no/dependencies/blocked_by" -F "issue_id=$(dbid "$blocker")" 2>&1 >/dev/null); then
+          case "$err" in
+            *[Aa]lready*) ;;
+            *) die "could not block #$plan_no by #$blocker: $err (carry on by running publish again)" ;;
+          esac
+        fi
       done
       i=$((i + 1))
     done
 
-    jq -r '.plans | to_entries[] | "plan \(.key + 1) #\(.value.issue)"' "$file"
+    printf '| Plan | Issue | Tickets |\n|---|---|---|\n'
+    jq -r '.plans | to_entries[] | "| Plan \(.key + 1) | #\(.value.issue) | \(.value.tickets | map("#" + .) | join(", ")) |"' "$file"
     [ "$kept" -eq 0 ] || printf '%s ticket(s) kept their existing parent; see the notes above\n' "$kept" >&2 ;;
 
   *) usage ;;
