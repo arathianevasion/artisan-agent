@@ -123,3 +123,10 @@ EOF
   assert_eq "npm test|make lint" "$("$CHECKS" json --file p/CODING_STANDARDS.md | jq -r '[.checks[].command] | join("|")')"
   assert_eq "npm test" "$("$CHECKS" suite --dir p | sed 's/^( //; s/ ) &&.*//')"
 }
+
+test_c_an_out_path_with_quotes_still_writes_valid_json() {
+  setup_with_checks
+  local out
+  out=$(cd "$P" && "$CHECKS" run --out "$TEST_TMPDIR/a \"q\" \\b/checks.json")
+  assert_contains "$(printf '%s' "$out" | jq -r '.results[0].log')" 'a "q" \b/checks.logs/1.log'
+}

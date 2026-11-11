@@ -86,6 +86,6 @@ Run the full suite again after the fixes and commit. One review pass is enough. 
 
 ## 5. Finish
 
-1. Run the full suite, then the checks: `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`. With checks recorded it runs exactly those and prints their results; with none recorded, pass the commands you found after `--` (`checks.sh run -- npm test npm run lint`), and its output says `no recorded checks (…): found …`. Its JSON output goes into the record's `checks` as it is. The working tree must be clean and every change committed.
+1. Run the full suite, then the checks: `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`. With checks recorded it runs exactly those and prints their results; with none recorded, pass the commands you found after `--` (`checks.sh run -- 'npm test' 'npm run lint'`: one quoted argument per command), and its output says `no recorded checks (…): found …`. Its JSON output goes into the record's `checks` as it is. The working tree must be clean and every change committed.
 2. Write the evidence record to the result path, in the shape in `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md`. **Write it even if you failed or are blocked.** A missing result file looks exactly like a crash.
 3. End with one line: status, commit and result path.

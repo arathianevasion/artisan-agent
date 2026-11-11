@@ -20,7 +20,8 @@
 #       the integration worktree's CODING_STANDARDS.md, not the worker's
 #       branch) and the one command that runs them and writes their results
 #       to verify/checks/<t>.<v>.json; with none recorded, to run what it
-#       finds through the same command, which records the fallback. 8: the worker (or a verifier left from an earlier attempt) is
+#       finds through the same command, which records the fallback.
+#       8: the worker (or a verifier left from an earlier attempt) is
 #       still running, or another call's verifier did not come up: call again. 6: the attempt did not complete (a failed attempt, as
 #       wave.sh merge counts it) or the result does not describe the branch
 #       tip (blocked).
@@ -217,7 +218,7 @@ cmd_start() {
       printf '%s' "$checks" | jq -r '.checks[] | "    - `\(.command)`"'
       printf '  A red one makes every criterion it bears on unmet: cite it in that criterion'"'"'s evidence.checks. If you can'"'"'t tie it to any criterion, every criterion is unmet.\n'
     else
-      printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found. It writes their results where the judge reads them and says you fell back:\n' \
+      printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found, one quoted argument each. It writes their results where the judge reads them and says you fell back:\n' \
         "$(printf '%s' "$checks" | jq -r .reason)"
       printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
       printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
@@ -233,7 +234,7 @@ cmd_start() {
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
       + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null,
-          checks: ($ck | {recorded, file, reason, results: $co})}])
+          checks: ($ck | {recorded, file, reason, commands: [.checks[].command], results: $co})}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
     --argjson ck "$checks" --arg co "verify/checks/$t.$v.json"
@@ -346,11 +347,19 @@ cmd_judge() {
   ck=$(get -c --arg t "$t" '.tickets[$t].verifications[-1].checks // {recorded: false, reason: "not read for this verifier"}')
   cres="$RUN_DIR/$(printf '%s' "$ck" | jq -r --arg d "verify/checks/$t.$v.json" '.results // $d')"
   if [ -z "$why" ] && [ "$(printf '%s' "$ck" | jq -r .recorded)" = true ] \
-    && ! jq -e '.recorded == true and (.results | type) == "array" and (.results | length) > 0' "$cres" >/dev/null 2>&1; then
+    && ! jq -e --argjson ck "$ck" '.recorded == true and (.results | type) == "array"
+          and [.results[].command] == $ck.commands' "$cres" >/dev/null 2>&1; then
     why="the verifier did not run the recorded checks"
   fi
   if jq -e '(.results | type) == "array"' "$cres" >/dev/null 2>&1; then
     cres=$(jq -c . "$cres")
+    # What the worker's evidence listed, beside what the verifier ran, so a
+    # worker that ran other checks than the recorded ones is visible.
+    local wrec="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+    cres=$(printf '%s' "$cres" | jq -c --slurpfile w <(jq -c '[.checks.results // [] | .[] | .command?]' "$wrec" 2>/dev/null || echo null) '
+      ($w[0] // null) as $listed
+      | . + {worker_listed: $listed}
+      + (if .recorded and $listed != null then {worker_matches: ($listed == [.results[].command])} else {} end)')
   else
     cres=$(printf '%s' "$ck" | jq -c '{recorded: false, reason, results: [],
       fallback: "no recorded checks (\(.reason)): the verifier ran none it found"}')

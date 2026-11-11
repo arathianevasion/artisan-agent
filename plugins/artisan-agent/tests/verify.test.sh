@@ -428,3 +428,30 @@ test_v_a_verifier_that_reports_no_fallback_is_still_named_as_one() {
   assert_eq "pass 2/2" "$JUDGE_OUT"
   assert_eq 'no recorded checks (no CODING_STANDARDS.md): the verifier ran none it found' "$(state_get '.tickets["1"].evidence.checks.fallback')"
 }
+
+test_v_the_contract_flags_a_worker_that_listed_other_checks_than_the_recorded_ones() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  # The default worker's record lists no checks at all.
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq false "$(state_get '.tickets["1"].evidence.checks.worker_matches')"
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" "**The worker's evidence listed other checks:**"
+}
+
+test_v_results_that_are_not_exactly_the_recorded_checks_are_not_a_run_of_them() {
+  setup_wave
+  record_checks
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF2'
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+mkdir -p "$ARTISAN_RUN_DIR/verify/checks"
+echo '{"recorded": true, "results": [{"command": "true", "passed": true, "result": ""}]}' >"$ARTISAN_RUN_DIR/verify/checks/1.1.json"
+jq '{verdict: "pass", acceptance: [.[] | {criterion: ., met: true}]}' "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+EOF2
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "error the verifier did not run the recorded checks" "$JUDGE_OUT"
+}

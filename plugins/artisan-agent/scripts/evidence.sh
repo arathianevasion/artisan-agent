@@ -72,7 +72,8 @@ cmd_comment() {
          else ($e.checks.results // [] | map("`\(.command)` \(if .passed then "passed" else "**red**" end)\(if (.result // "") != "" then " (\(.result | cell))" else "" end)") | join("; ")) as $ran
            | if $e.checks.recorded then "the recorded checks, run by the verifier: \($ran)"
              else ($e.checks.fallback // "no recorded checks" | cell) + (if $ran != "" then ": \($ran)" else "" end) end
-         end),
+         end)
+        + (if $e.checks.worker_matches == false then ". **The worker'"'"'s evidence listed other checks:** \($e.checks.worker_listed | map("`" + . + "`") | join(", ") | cell)" else "" end),
       "- **Diff:** \(if ($e.diff.summary // "") == "" then "no changes" else $e.diff.summary end)",
       "- **Cost:** \($e.cost.total_usd | usd) (worker \($e.cost.worker_usd | usd), verifier \($e.cost.verifier_usd | usd)) against an estimate of \($e.cost.estimate_usd | usd)",
       "",

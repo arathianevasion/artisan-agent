@@ -113,10 +113,10 @@ EOF
     rc=0
     (cd "$IN" && sh -c "$cmd") >"$tmp" 2>&1 </dev/null || rc=$?
     last=$(awk 'NF { l = $0 } END { print l }' "$tmp" | cut -c1-200)
-    local log=null
-    if [ -n "$logs" ]; then cp "$tmp" "$logs/$i.log"; log="\"$logs/$i.log\""; fi
-    results=$(printf '%s' "$results" | jq -c --arg c "$cmd" --argjson rc "$rc" --arg r "$last" --argjson log "$log" \
-      '. + [{command: $c, passed: ($rc == 0), exit_code: $rc, result: $r} + (if $log then {log: $log} else {} end)]')
+    local log=
+    if [ -n "$logs" ]; then cp "$tmp" "$logs/$i.log"; log="$logs/$i.log"; fi
+    results=$(printf '%s' "$results" | jq -c --arg c "$cmd" --argjson rc "$rc" --arg r "$last" --arg log "$log" \
+      '. + [{command: $c, passed: ($rc == 0), exit_code: $rc, result: $r} + (if $log != "" then {log: $log} else {} end)]')
   done
   rm -f "$tmp"
   out=$(jq -n --argjson j "$json" --argjson res "$results" --args '
