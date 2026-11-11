@@ -31,7 +31,8 @@
 #       flight or in this wave (10, wave-width.sh check); then branch a
 #       worktree from the integration tip and launch the worker with
 #       /artisan-agent:implement. A retry is a fresh worker on the same
-#       branch, given the failed attempt's evidence. Prints its pid.
+#       branch, given the failed attempt's evidence, and only once the
+#       failed attempt's session has ended (8 until then). Prints its pid.
 #   wave.sh merge <run-dir> <ticket>
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the plan's suite command
@@ -448,6 +449,13 @@ cmd_dispatch() {
   n=$(( $(get --arg t "$t" '.tickets[$t].attempts') + 1 ))
   wt="$WT_ROOT/$RUN_ID-$t.$n"
   prev=$(get --arg t "$t" '.tickets[$t].worktree // ""')
+  # A fresh worker never starts while the last attempt's session is still
+  # ending in its worktree (a worker can report failed before it exits).
+  if [ "$n" -gt 1 ]; then
+    case "$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null || true)" in
+      running*) state_die 8 "wave.sh: #$t's attempt $((n - 1)) is still ending; dispatch the retry once it has" ;;
+    esac
+  fi
   if [ -n "$prev" ] && [ -d "$prev" ]; then
     # A retry continues the same branch in a fresh worktree; the old one must be clean.
     if ! git -C "$MAIN" worktree remove "$prev" 2>/dev/null; then
@@ -526,11 +534,11 @@ failure_evidence() {
   get --arg t "$t" --argjson p "$p" '.tickets[$t].failures[] | select(.attempt == $p) | "- Why it counted as failed: \(.reason)"'
   echo "- Judged from its files: $("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$p" 2>/dev/null || echo "unknown")"
   [ ! -f "$exitf" ] || jq -r '"- Exit record: \(.reason), exit code \(.exit_code)"' "$exitf" 2>/dev/null || true
-  [ ! -f "$w/output.json" ] || jq -r '"- Session: \(.subtype // "-"), is_error \(.is_error // "-"), \(.num_turns // "-") turns"' "$w/output.json" 2>/dev/null || true
+  [ ! -f "$w/output.json" ] || jq -r '"- Session: \(.subtype // "-"), is_error \(.is_error | tostring), \(.num_turns // "-") turns"' "$w/output.json" 2>/dev/null || true
   if [ -f "$res" ]; then
     jq -r '
       "- Its evidence record said: status \(.status // "-")"
-        + (if .tests then ", suite_passed \(.tests.suite_passed // "-") (\(.tests.summary // "-"))" else "" end),
+        + (if .tests then ", suite_passed \(.tests.suite_passed | tostring) (\(.tests.summary // "-"))" else "" end),
       ((.acceptance // [])[] | select(.met != true) | "- Not met: \(.criterion) (\(.evidence.why // "no reason given"))"),
       ((.unsure // [])[] | "- Unsure: \(.)"),
       (if .notes then "- Notes: \(.notes)" else empty end)' "$res" 2>/dev/null || true

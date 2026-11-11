@@ -76,7 +76,7 @@ cmd_pick() {
         if ($s.tickets[$t].status // "") != "queued" then .
         elif ((.picked | length) + $busy) >= $max then
           .held += ["held #\($t): no free slot (Max Agents \($max), \($busy) in flight)"]
-        else ($s | in_the_way($t; peers($t) + .picked)) as $hit
+        else .picked as $p | ($s | in_the_way($t; peers($t) + $p)) as $hit
           | if $hit == null then .picked += [$t]
             else .held += ["held #\($t): overlaps #\($hit.ticket): \($hit.why)"] end
         end)
