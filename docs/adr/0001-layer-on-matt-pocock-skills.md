@@ -1,6 +1,6 @@
 # Layer on Matt Pocock's skills; don't fork them
 
-Version one installs alongside the upstream `mattpocock-skills` plugin and adds the owner's own skills (`implement-plan`, triage, `/to-plan`, `/raise-prs`, a retro wrapper) rather than forking the upstream library. Upstream releases every two to three weeks and has renamed files and skills without aliases, and the owner's September copies of seven skills had already drifted (`CONTEXT.md` vs `GLOSSARY.md`) within two months. The owner's need to put human taste into technical design is met through orchestrators the owner already owns and through project guardrails, which upstream skills already read.
+Version one installs alongside the upstream `mattpocock-skills` plugin and adds the owner's own skills (`implement-plan`, triage, `/to-plan`, a retro wrapper; PRs are cut with upstream `pr`, so the once-planned `/raise-prs` was dropped) rather than forking the upstream library. Upstream releases every two to three weeks and has renamed files and skills without aliases, and the owner's September copies of seven skills had already drifted (`CONTEXT.md` vs `GLOSSARY.md`) within two months. The owner's need to put human taste into technical design is met through orchestrators the owner already owns and through project guardrails, which upstream skills already read.
 
 ## Considered Options
 
