@@ -14,6 +14,7 @@
 #                                          prove CHECK fails on a deliberate break in a throwaway worktree
 #   project-setup.sh motivation get [REPO]          print the recorded motivation (exit 1: none)
 #   project-setup.sh motivation set [REPO] < TEXT   record it in the individual home and commit there
+#   project-setup.sh motivation update [REPO] < TEXT  replace it (the retro, on the Artisan's yes) and commit
 #   project-setup.sh individual HEADING LINE        add LINE under HEADING in the individual
 #                                          CODING_STANDARDS.md and commit there (individual guardrails)
 #   project-setup.sh finish WT             push the branch and open (or reuse) the PR; with no new
@@ -410,6 +411,12 @@ cmd_prove_check() {
 
 need_home() { [ -d "$HOME_DIR/.git" ] || die "no individual home at $HOME_DIR; run machine-level setup first (machine-setup.sh init)"; }
 
+write_motivation() { # file id text: the motivation record, staged in the individual home
+  mkdir -p "$(dirname "$1")"
+  printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$2" "$2" "$(date +%Y-%m-%d)" "$3" >"$1"
+  git -C "$HOME_DIR" add -- "$1"
+}
+
 cmd_motivation() {
   local sub=${1:-} f text id
   [ $# -gt 0 ] && shift
@@ -421,11 +428,18 @@ cmd_motivation() {
       [ ! -s "$f" ] || die "a motivation is already recorded for $id ($f); setup never overwrites it"
       text=$(cat)
       [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing recorded (skipping is fine)"
-      mkdir -p "$(dirname "$f")"
-      printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$id" "$id" "$(date +%Y-%m-%d)" "$text" >"$f"
-      git -C "$HOME_DIR" add -- "$f"
+      write_motivation "$f" "$id" "$text"
       git_commit "$HOME_DIR" "Motivation for $id" -- "$f"
       echo "changed: motivation for $id recorded in the individual home"
+      ;;
+    update)
+      need_home
+      text=$(cat)
+      [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing changed"
+      write_motivation "$f" "$id" "$text"
+      if git -C "$HOME_DIR" diff --cached --quiet -- "$f"; then echo "unchanged: motivation for $id"; exit 0; fi
+      git_commit "$HOME_DIR" "Motivation for $id updated${ARTISAN_RUN_ID:+ at the retro of run $ARTISAN_RUN_ID}" -- "$f"
+      echo "changed: motivation for $id updated in the individual home"
       ;;
     *) usage ;;
   esac
