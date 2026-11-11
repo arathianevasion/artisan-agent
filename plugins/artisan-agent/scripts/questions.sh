@@ -117,7 +117,7 @@ $rec
 
 ## Criterion
 
-$criterion: $crit_text (\`references/controversy-criteria.md\`).
+$criterion: $crit_text (the plugin's controversy criteria, 1-7, plus the project's \"Always ask\" items).
 
 ## Effect on #$ticket
 
@@ -301,12 +301,15 @@ cmd_provisional() {
        | select(.confidence == "provisional" and ((.criterion // "" | tostring) as $c | ["4", "6", "7"] | index($c)))
        | {t: $t} + .]
     | .[] | "| #\(.t) | \(.question // "-" | gsub("\\|"; "/")) | \(.choice // "-" | gsub("\\|"; "/")) | \(.alternative // "-" | gsub("\\|"; "/")) | \(.criterion) | provisional |"')
+  local shown_tickets
+  shown_tickets=$(printf '%s\n' "$rows" | sed -n 's/^| #\([^ ]*\) |.*/\1/p' | jq -R . | jq -sc 'unique')
   echo "| Ticket | Question | Picked | Alternative | Criterion | Confidence |"
   echo "|---|---|---|---|---|---|"
   [ -z "$rows" ] || printf '%s\n' "$rows"
   if [ "$mark" -eq 1 ]; then
-    apply '.provisional_shown = (((.provisional_shown // []) + [.tickets | to_entries[] | select(.value.status == "merged") | .key]) | unique)
-           | event({event: "provisional-shown"}; $now)'
+    # Only the tickets whose cards were printed: one merged since is for the next gate.
+    apply '.provisional_shown = (((.provisional_shown // []) + $shown) | unique)
+           | event({event: "provisional-shown"}; $now)' --argjson shown "$shown_tickets"
   fi
 }
 
