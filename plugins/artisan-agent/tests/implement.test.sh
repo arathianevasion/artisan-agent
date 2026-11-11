@@ -111,3 +111,32 @@ test_the_skill_stops_only_for_something_another_ticket_owns() {
     *"Stop and finish with status \`blocked\`, with the question and your recommendation in the record. "*) fail "SKILL.md still stops for every controversial decision" ;;
   esac
 }
+
+test_the_checker_wants_the_checks_and_a_said_fallback() {
+  local out status=0
+  example_record | jq 'del(.checks)' > a.json
+  out=$("$CHECK" a.json) || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$out" "record: missing checks"
+  example_record | jq '.checks = {recorded: false, results: []}' > b.json
+  assert_contains "$("$CHECK" b.json || true)" "checks: no recorded checks, but no fallback saying so"
+  example_record | jq '.checks = {recorded: false, fallback: "no recorded checks (no CODING_STANDARDS.md): found `make test`", results: []}' > c.json
+  "$CHECK" c.json || fail "a said fallback was refused"
+}
+
+test_the_skill_runs_the_recorded_checks_through_the_one_reader() {
+  local body
+  body=$(tr '\n' ' ' < "$SKILL")
+  assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh list'
+  assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run'
+  assert_contains "$body" "those, exactly, are your checks"
+  case "$body" in *"How the project runs its checks (test suite, typecheck, lint), from the ticket, README or build files."*)
+    fail "the skill still discovers checks first" ;; esac
+}
+
+test_the_review_seeds_record_a_check_beside_an_unrecorded_one() {
+  "$LIVE" setup review-seeds wd
+  assert_eq "python3 -m unittest -q" "$(cd wd/repo && "$PLUGIN_ROOT/scripts/checks.sh" list)"
+  (cd wd/repo && "$PLUGIN_ROOT/scripts/checks.sh" run >/dev/null) || fail "the recorded check is red before the worker starts"
+  grep -q '^lint:' wd/repo/Makefile || fail "the unrecorded make lint is missing"
+}
