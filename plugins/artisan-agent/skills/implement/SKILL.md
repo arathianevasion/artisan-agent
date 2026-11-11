@@ -43,7 +43,7 @@ Before writing the first test, call the Skill tool with `mattpocock-skills:tdd` 
 
 When the work needs a test at a public boundary the ticket does not name (a new module, a new public function or type other code calls, a new boundary between modules), that is a **new seam**, and choosing it is a decision you are making alone:
 
-- If the seam changes the design or interface of something another ticket owns, or the ticket or an "Always ask" item says to ask, don't choose it. Stop, record the question with your recommendation, and finish with status `blocked`.
+- If the seam changes the design or interface of something another ticket owns, or the ticket or an "Always ask" item says to ask, don't choose it. Stop and file the question (step 3), then finish with status `blocked`.
 - Otherwise, including when it is a new public interface, a new module or a new boundary that only your ticket introduces, **carry on**: build it test-first like a named seam and record a decision card for it (step 3). Don't stop for it, even though it is hard to reverse. Name controversy criterion 3 in the card when other code will come to depend on it; the card is what makes the Artisan see it, and a later risk gate fires on it (the orchestrator's job, not yours). Where no criterion applies, it is engineering taste.
 
 Run typechecks and single test files as you go, and the full suite once the ticket is built. Commit.
@@ -54,7 +54,13 @@ A notable decision is one the Artisan might have made differently: every new sea
 
 Record each one as in `${CLAUDE_PLUGIN_ROOT}/references/decision-record.md`, with the decision-card fields `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md` adds: the question, the alternative you rejected, its kind (product taste, engineering taste or engineering) and the controversy criterion it meets.
 
-A decision that is controversial and **not** easy-to-reverse taste is not yours to make, with one exception: a new seam you introduce (step 2), which you build and record, naming criterion 3 where it applies. Everything else, such as changing something another ticket owns or an "Always ask" item, is a stop: finish with status `blocked`, with the question and your recommendation in the record.
+A decision that is controversial and **not** easy-to-reverse taste is not yours to make, with one exception: a new seam you introduce (step 2), which you build and record, naming criterion 3 where it applies. Everything else, such as changing something another ticket owns or an "Always ask" item, is a question to file, not a choice to make. File it, as in `${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`: `${CLAUDE_PLUGIN_ROOT}/scripts/questions.sh file --ticket <id> --criterion <1-7|always-ask> --question … --option … --option … --recommendation … (--blocking | --split)`. It opens a `needs-triage` ticket with the question, the options, your recommendation and the criterion that triggered it. Read the criteria and every "Always ask" item again at this point; don't go from memory.
+
+- If your own ticket can't finish without the answer (`--blocking`): commit what is safe, finish with status `blocked`, and name the question ticket in `unsure`. The orchestrator marks your ticket blocked by it and the wave carries on.
+- If the question can be split off (`--split`): finish every other criterion and end `complete`, naming the question ticket in `unsure`.
+- Easy-to-reverse taste (criteria 4, 6 and 7) you may instead pick provisionally: record the card with `confidence: "provisional"`; it is shown at the next slice gate.
+
+Never leave a controversial choice made and unrecorded.
 
 ## 4. Review, then act on the remarks
 

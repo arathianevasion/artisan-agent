@@ -102,6 +102,14 @@ Return condition: blocked-by #12 #15
 
 A deferred ticket doesn't come back through triage; the backlog review surfaces it when the condition is met. When it returns, remove `deferred`.
 
+## Worker questions
+
+A `needs-triage` ticket a worker filed mid-run (its body: question, options, recommendation, criterion) is already controversial; it names its criterion, so don't re-derive it. The ticket it blocks is `in-run`, but the question ticket itself is yours to rule on. Present it with the options and the worker's recommendation. Record the ruling so the Engineering chat's `questions.sh sync` can read it (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`):
+
+- **Answer** (Do): post a comment whose first line is `Answer: <the decision>`, then close the ticket. The blocked ticket is redispatched with it. An answer that adds scope is new work: file it as its own ticket for triage; it never rides in on the answer.
+- **Defer**: as below, `deferred` with its `Return condition:` line. If the question blocks a running ticket, the Engineering chat then asks whether to pull that ticket from the run (it defers with this one) or let it carry on with "not now". That ticket's deferral comment uses the same `Return condition: blocked-by #<question>` format.
+- **Discard**: close with a reason; the Engineering chat sends the blocked ticket back to the Artisan.
+
 ## Recording a miss
 
 A **miss** is an "uncontroversial" recommendation the Artisan reversed: they moved it to `needs-triage` or ruled a different outcome. The retro counts misses and raises each with the criterion that should have caught it.
