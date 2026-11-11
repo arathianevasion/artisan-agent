@@ -124,7 +124,6 @@ In estimated dollars, per ticket, then summed; the budget is the total plus the 
 
 - **History.** When state files of other runs (`.artisan-agent/runs/*/state.json`, or `--history DIR`) hold merged tickets on the same model with a logged `cost_usd`: their mean cost, times `estimate_multipliers.<model>`, else `estimate_multipliers.all`, else 1.
 - **Price.** Otherwise: the model's price in `references/model-prices.json` times the ticket's expected size (`expected.input_tokens`, `expected.output_tokens`). There are no per-tier defaults: a model missing from the price table, with no history, is refused. Keep the table current; it says the date its prices were taken.
-
 - **Minimum.** Whichever of the two gives an estimate below `minimum_estimates.<model>` (else `.all`) is raised to it, before caps, total and budget are derived. The ticket's `estimate_basis` becomes `{mode: "minimum", model, minimum_usd, estimated_usd, was}` and the approval table's From column reads "minimum for <model>". The defaults cover every model in `references/model-prices.json`; their source is the comment in `templates/config.yml`. Override for one run with `plan.sh build --set minimum_estimates.<model>=N`.
 
 Caps follow `run-ticket.sh`: `max_budget_usd` twice the estimate, `max_turns` 40 per estimated dollar (at least 20), `deadline_seconds` twice `expected.minutes`.

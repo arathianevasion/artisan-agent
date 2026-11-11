@@ -142,7 +142,7 @@ cmd_build() {
                 basis: {mode: "price", input_per_mtok: $p.input_per_mtok, output_per_mtok: $p.output_per_mtok,
                         input_tokens: $x.input_tokens, output_tokens: $x.output_tokens}}
            end) as $e
-        | (.config.minimum_estimates[$m] // .config.minimum_estimates.all // 0) as $min
+        | ((.config.minimum_estimates[$m] // .config.minimum_estimates.all // 0) | round2) as $min
         | (if ($e.usd | round2) < $min
            then {usd: $min, basis: {mode: "minimum", model: $m, minimum_usd: $min,
                                     estimated_usd: ($e.usd | round2), was: $e.basis}}
