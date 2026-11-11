@@ -33,8 +33,16 @@ Turn auto-update **on** for the `artisan-agent` marketplace (in `/plugin`, under
 
 Then, from any project:
 
-- `/artisan-agent:implement-plan`: run a defined set of work (a plan, several plans, individual tickets or a single ticket) to done.
+- `/artisan-agent:craft`: the front door. Say what you want in plain words; it proposes a route (Effort, Feature, Small change, Bug) and names the next command.
+- `/artisan-agent:grill`: understand the work. Grilling and domain modeling together, with `debate-me`, research and prototype variants on offer.
 - `/artisan-agent:debate-me`: in the Understand stage, have an agent argue its suggestion, with sources, until you decide.
+- `/artisan-agent:to-spec`: write the spec, showing the draft and every addition that didn't come from the conversation.
+- `/artisan-agent:triage`: sort incoming tickets in the Product chat; every outcome is yours to approve.
+- `/artisan-agent:implement-plan`: run a defined set of work (a plan, several plans, individual tickets or a single ticket) to done.
+- `/artisan-agent:implement`: the worker skill each worker runs on one ticket (Claude-callable; you rarely type it).
+- `/artisan-agent:setup`: machine-level setup, once per machine (project-level setup comes later).
+
+Typing a replaced upstream skill (such as `/mattpocock-skills:implement`) is blocked with a message naming ours.
 
 ## Layout
 
@@ -48,8 +56,13 @@ plugins/artisan-agent/
     jobs.md                            job inventory, colour test, scope floor
     decision-record.md                 the shape of a recorded decision
     controversy-criteria.md            when an agent may not decide alone
+    evidence-record.md                 what a worker hands back for one ticket
+    state-file.md                      a run's state file: schema, lock, rewrite rules
   skills/<name>/SKILL.md               one directory per skill, invoked as /artisan-agent:<name>
-  tests/                               script test harness and script tests
+  scripts/                             run scripts: ticket runner, wait, classify, state, sweep, reconcile (see scripts/README.md)
+  guard/                               replaced-skill guard: the one list and what it generates (see guard/README.md)
+  hooks/hooks.json                     generated from guard/; never edit by hand
+  tests/                               script test harness, script tests and helpers
 .github/workflows/script-tests.yml     runs the script tests on macOS and Linux
 ```
 
@@ -68,6 +81,8 @@ The pipeline's scripts are tested on macOS and Linux. Tests are `test_*` functio
 plugins/artisan-agent/tests/run.sh          # every test in tests/
 plugins/artisan-agent/tests/run.sh <dir>    # every test in another directory
 ```
+
+The scripts need `jq`, `python3`, `perl` (to detach workers on macOS, which has no `setsid`) and git 2.31 or later.
 
 It exits 0 when every test passes, 1 when any fails, and 2 when it finds no tests. Scripts must run on macOS's `/bin/bash` 3.2 as well as Linux, so avoid bash 4 features (`mapfile`, associative arrays, `${var,,}`) and GNU-only flags. The [Script tests workflow](.github/workflows/script-tests.yml) runs the suite on `ubuntu-latest` and `macos-latest`, and again under `/bin/bash` 3.2 on macOS.
 
