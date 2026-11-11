@@ -5,7 +5,7 @@
 #   project-setup.sh scan [REPO]           facts, one "key<TAB>value..." per line
 #   project-setup.sh begin [REPO]          make or reuse the setup worktree; prints its path
 #   project-setup.sh apply WT ANSWERS      add every missing item in the setup worktree WT and
-#                                          commit; ANSWERS is a JSON file (see SETUP-PROJECT.md)
+#                                          commit; ANSWERS is a JSON file (see PROJECT.md)
 #   project-setup.sh labels WT             create the ten labels missing from the GitHub tracker
 #   project-setup.sh pre-commit [REPO]     install guard/pre-commit.sh (main-checkout fallback)
 #   project-setup.sh hook-probe [REPO]     prints "fires" or "silent": does the plugin's
@@ -205,7 +205,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind f login line team boundary level item tmp
+  local wt=$1 answers=$2 kind f login line team boundary level item tmp check break_cmd break_desc prepare outcome proven who
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -218,6 +218,8 @@ cmd_apply() {
   # Config: a copy of the template, which holds every default.
   f=$wt/.artisan-agent/config.yml
   team=$(jq -r '.team_repo // ""' "$answers")
+  case "$team" in ''|[A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) die "team_repo must be owner/name, got: $team" ;; esac
+  case "$team" in */*/*|*[!A-Za-z0-9_./-]*) die "team_repo must be owner/name, got: $team" ;; esac
   if [ ! -e "$f" ]; then
     mkdir -p "$(dirname "$f")"
     if [ -n "$team" ]; then
@@ -228,7 +230,7 @@ cmd_apply() {
     echo "changed: created .artisan-agent/config.yml"
   else
     echo "unchanged: .artisan-agent/config.yml"
-    if [ -n "$team" ] && ! grep -q "^team_guardrails_repo: *$team *\$" "$f"; then
+    if [ -n "$team" ] && ! grep -qxF "team_guardrails_repo: $team" "$f"; then
       echo "kept: .artisan-agent/config.yml exists; set team_guardrails_repo: $team in it by hand if you want it"
     fi
   fi
@@ -275,11 +277,22 @@ EOT
     edit section "$wt/CODING_STANDARDS.md" "Guardrails" "- \`pr-boundaries\`: one PR per $boundary (set at setup)."
   fi
 
-  # Question 4: the checks, recorded only once proven to fail (prove-check).
-  set -- ; while IFS=$'\t' read -r item line; do
-    [ -n "$item" ] && set -- "$@" "- \`$item\`: proven to fail on $(date +%Y-%m-%d), breaking: $line"
+  # Question 4: the checks. apply proves each one itself, so only a check shown failing on its
+  # break is recorded; any other outcome is reported and the check is not trusted.
+  set -- ; while IFS=$'\037' read -r check break_cmd break_desc prepare; do
+    [ -n "$check" ] || continue
+    if [ -z "$break_cmd" ]; then printf 'no-break\t%s\t(no break_cmd given: not proven, not recorded)\n' "$check"; continue; fi
+    if [ -n "$prepare" ]; then
+      outcome=$(cd "$wt" && cmd_prove_check --prepare "$prepare" --break "$break_cmd" -- "$check" 2>/dev/null) && proven=1 || proven=0
+    else
+      outcome=$(cd "$wt" && cmd_prove_check --break "$break_cmd" -- "$check" 2>/dev/null) && proven=1 || proven=0
+    fi
+    if [ "$proven" = 1 ]; then
+      set -- "$@" "- \`$check\`: proven to fail on $(date +%Y-%m-%d), breaking: $break_desc"
+    fi
+    printf '%s\n' "$outcome" | head -n 1
   done <<EOT
-$(jq -r '.checks // [] | .[] | [.command, .break] | @tsv' "$answers")
+$(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_cmd // ""), (.prepare // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$answers")
 EOT
   if [ $# -gt 0 ]; then edit section "$wt/CODING_STANDARDS.md" "Checks" "$@"; fi
 
@@ -288,14 +301,15 @@ EOT
 
   # Who the Artisan is, and agent-filed tickets carry needs-triage (read by triage).
   kind=$(tracker_kind "$wt"); f=$wt/docs/agents/issue-tracker.md
-  if ! grep -qs 'Who the Artisan is' "$f"; then
+  who="- **Who the Artisan is** (triage compares ticket authors to this):"
+  if ! grep -qsF "${who#- }" "$f"; then
     case "$kind" in
       github) login=$("$GH" api user --jq .login 2>/dev/null || true)
-              line="- **Who the Artisan is** (triage compares ticket authors to this): \`gh api user --jq .login\`${login:+, which was \`$login\` at setup}." ;;
+              line="$who \`gh api user --jq .login\`${login:+, which was \`$login\` at setup}." ;;
       gitlab) login=$(glab api user 2>/dev/null | jq -r '.username // empty' 2>/dev/null || true)
-              line="- **Who the Artisan is** (triage compares ticket authors to this): \`glab api user\` (its \`username\`)${login:+, which was \`$login\` at setup}." ;;
+              line="$who \`glab api user\` (its \`username\`)${login:+, which was \`$login\` at setup}." ;;
       *) login=$(git -C "$wt" config user.name 2>/dev/null || true)
-         line="- **Who the Artisan is** (triage compares ticket authors to this): \`git config user.name\`${login:+, which was \`$login\` at setup}. Make no \`gh\` call to find it." ;;
+         line="$who \`git config user.name\`${login:+, which was \`$login\` at setup}. Make no \`gh\` call to find it." ;;
     esac
     edit section "$f" "Conventions" "$line"
   else
@@ -322,18 +336,14 @@ EOT
 }
 
 cmd_labels() {
-  local wt=$1 have name color desc made=0
+  local wt=$1 have name color desc
   [ "$(tracker_kind "$wt")" = github ] || { echo "skipped: the tracker is not GitHub; the labels are recorded in docs/agents/triage-labels.md only"; return 0; }
   have=$(cd "$wt" && "$GH" label list --limit 500 --json name --jq '.[].name') || die "gh label list failed"
-  edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '1,/^labels:$/d' | while IFS= read -r name; do
+  edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '1,/^labels:$/d' | while IFS=$'\t' read -r name desc; do
     if printf '%s\n' "$have" | grep -qxF "$name"; then continue; fi
     case "$name" in
-      review-gate) color=5319e7; desc="A review gate: holds its packet and blocks its dependents" ;;
-      plan) color=0e8a16; desc="A plan: tickets approved to run together" ;;
-      in-run) color=fbca04; desc="Being worked by a run" ;;
-      urgent) color=b60205; desc="Goes ahead of everything else" ;;
-      deferred) color=c5def5; desc="Deferred by triage until its return condition" ;;
-      *) color=ededed; desc="Triage state (docs/agents/triage-labels.md)" ;;
+      review-gate) color=5319e7 ;; plan) color=0e8a16 ;; in-run) color=fbca04 ;;
+      urgent) color=b60205 ;; deferred) color=c5def5 ;; *) color=ededed ;;
     esac
     (cd "$wt" && "$GH" label create "$name" --color "$color" --description "$desc" >/dev/null) || die "gh label create $name failed"
     echo "changed: created label $name"

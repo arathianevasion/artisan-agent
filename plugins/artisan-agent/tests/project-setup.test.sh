@@ -115,7 +115,7 @@ test_rerun_after_merging_changes_nothing() {
   out=$(run_setup)
   assert_contains "$out" "unchanged: the project is already set up; no PR"
   assert_eq "$before" "$(cd "$P" && git rev-parse HEAD && git status --porcelain)"
-  grep -q '^pr create\|^label create' "$TEST_TMPDIR/gh-calls" && fail "rerun touched the tracker: $(cat "$TEST_TMPDIR/gh-calls")"
+  grep -qE '^(pr create|label create)' "$TEST_TMPDIR/gh-calls" && fail "rerun touched the tracker: $(cat "$TEST_TMPDIR/gh-calls")"
   git -C "$TEST_TMPDIR/origin.git" rev-parse -q --verify artisan-agent/setup >/dev/null && fail "rerun pushed a branch"
   assert_eq 1 "$(git -C "$P" worktree list | wc -l | tr -d ' ')"
 }
@@ -250,15 +250,6 @@ test_pr_boundary_at_individual_level_goes_to_the_individual_home() {
   assert_eq "$n" "$(git -C "$h" rev-list --count HEAD)" "rerun committed again"
 }
 
-test_proven_checks_are_recorded_once() {
-  seed
-  answers '{"checks":[{"command":"./test.sh","break":"flipped the expected value in test.sh"}]}'
-  run_setup >/dev/null
-  assert_contains "$(branch_file CODING_STANDARDS.md)" '- `./test.sh`: proven to fail on'
-  merge_setup_pr
-  assert_contains "$(run_setup)" "unchanged: the project is already set up"
-}
-
 # prove-check against a repo whose test passes until a file is broken.
 seed_checks() {
   seed
@@ -266,6 +257,32 @@ seed_checks() {
   printf '#!/bin/sh\ngrep -qx ok value\n' >"$P/test.sh"
   chmod +x "$P/test.sh"
   git -C "$P" add -A && git -C "$P" commit -q -m checks
+}
+
+test_apply_records_only_checks_it_proves_itself_and_only_once() {
+  seed_checks
+  git -C "$P" push -q origin main
+  answers '{"checks":[{"command":"./test.sh","break_cmd":"echo broken >value","break":"wrote a wrong value"},{"command":"true","break_cmd":"echo broken >value","break":"same"}]}'
+  local out; out=$(run_setup)
+  assert_contains "$out" "proven	./test.sh"
+  assert_contains "$out" "cannot-fail	true"
+  local c; c=$(branch_file CODING_STANDARDS.md)
+  assert_contains "$c" '- `./test.sh`: proven to fail on'
+  assert_contains "$c" 'breaking: wrote a wrong value'
+  case "$c" in *'`true`'*) fail "an unproven check was recorded" ;; esac
+  merge_setup_pr
+  assert_contains "$(run_setup)" "unchanged: the project is already set up"
+}
+
+test_team_repo_must_be_owner_name() {
+  seed
+  answers '{"team_repo":"o/n|x"}'
+  local wt rc=0; wt=$("$PS" begin "$P")
+  "$PS" apply "$wt" "$TEST_TMPDIR/answers.json" >/dev/null 2>&1 || rc=$?
+  assert_eq 1 "$rc"
+  answers '{"team_repo":"acme/guardrails"}'
+  "$PS" apply "$wt" "$TEST_TMPDIR/answers.json" >/dev/null
+  assert_contains "$(cat "$wt/.artisan-agent/config.yml")" "team_guardrails_repo: acme/guardrails"
 }
 
 test_prove_check_proves_a_real_check_in_a_throwaway_worktree() {
@@ -320,7 +337,7 @@ test_local_markdown_tracker_names_the_artisan_without_gh() {
   git -C "$P" config user.name "Ada Artisan"
   run_setup >/dev/null
   assert_contains "$(branch_file docs/agents/issue-tracker.md)" '`git config user.name`, which was `Ada Artisan` at setup. Make no `gh` call'
-  grep -q '^label\|^api' "$TEST_TMPDIR/gh-calls" && fail "gh called for a local tracker"
+  grep -qE '^(label|api)' "$TEST_TMPDIR/gh-calls" && fail "gh called for a local tracker"
   return 0
 }
 

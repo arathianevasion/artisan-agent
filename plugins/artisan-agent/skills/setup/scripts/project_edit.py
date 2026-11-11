@@ -11,9 +11,10 @@ changed or removed. Each prints "changed: ..." or "unchanged: ..." lines.
   project_edit.py section FILE HEADING LINE...
       make sure FILE has "## HEADING" and that each LINE is in that section;
       a missing section is appended at the end, missing lines at the section's end.
+      A line "- `cmd`: ..." counts as present when "- `cmd`" starts any line there.
   project_edit.py labels-doc FILE
-      make sure the triage-labels doc records all ten labels, then print the
-      tracker's label strings, one per line, after a "labels:" line.
+      make sure the triage-labels doc records all ten labels, then print
+      "<tracker label><TAB><meaning>" per label, after a "labels:" line.
 """
 import json
 import os
@@ -236,10 +237,10 @@ def cmd_labels_doc(path):
     else:
         print("unchanged: %s" % path)
     print("labels:")
-    for r, _ in UPSTREAM_LABELS:
-        print(mapped_label(lines, r) or r)
-    for r, _ in OUR_LABELS:
-        print(r)
+    for r, m in UPSTREAM_LABELS:
+        print("%s\t%s" % (mapped_label(lines, r) or r, m))
+    for r, m in OUR_LABELS:
+        print("%s\t%s" % (r, m))
 
 
 def main(argv):
