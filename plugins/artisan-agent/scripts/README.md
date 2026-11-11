@@ -26,6 +26,7 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `workers/<t>.<n>/prompt.md`, `stderr.log`, `runner.log` | runner | the full prompt as sent, and logs |
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
+| `verify/claims/<t>.<v>/` | `verify.sh start` | the claim on verifier `<v>`: one start launches it, however many run at once |
 | `verify/<t>.<n>.evidence.json`, `.comment.md` | `verify.sh judge` | the evidence contract as built (also in the state file), and the comment posted on a fail |
 | `.wait-any.seen` | `wait-any.sh` | what the waiting caller has already seen |
 
@@ -211,7 +212,7 @@ A fresh verifier per returned ticket, and the evidence contract it produces: in 
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
-| `verify.sh start <run-dir> <ticket>` | orchestrator | for a returned ticket whose attempt completed and whose record names its branch tip (the same check as `wave.sh merge`, in `lib/wave-lib.sh`): reads its criteria (`lib/criteria.py extract` over the tracker body, or `ticket_path`), checks out the worker's commit in a detached worktree, `<repo>-wt/<run-id>-verify-<t>.<v>`, and launches the verifier there (`run-ticket.sh --role verifier`, id `verify-<t>`) | 0, 1, 4, 6, 8 |
+| `verify.sh start <run-dir> <ticket>` | orchestrator | for a returned ticket whose attempt completed and whose record names its branch tip (the same check as `wave.sh merge`, in `lib/wave-lib.sh`): reads its criteria (`lib/criteria.py extract` over the tracker body, or `ticket_path`), checks out the worker's commit in a detached worktree, `<repo>-wt/<run-id>-verify-<t>.<v>`, and launches the verifier there (`run-ticket.sh --role verifier`, id `verify-<t>`). Idempotent per attempt: while the attempt has a verifier running, ended but not judged, or passed, or another call is starting one (claimed with `mkdir verify/claims/<t>.<v>`), it launches nothing and prints that verifier's pid; only after judge's 14 does it start the next | 0, 1, 4, 6, 8 |
 | `verify.sh judge <run-dir> <ticket>` | orchestrator | once the verifier has ended: lines its verdict up with the criteria (`lib/criteria.py align`), builds the evidence contract and writes it (`tickets.<t>.evidence`, event `verified`), logs the worker's and verifier's cost, removes the verifier's worktree. A fail is a failed attempt (retried with the verifier's findings, or blocked after the last) and posts the contract on the ticket. Prints one line: `pass m/n`, `fail m/n retry: <first unmet>`, `fail m/n blocked: <first unmet>` or `error <reason>`. Judging again repeats the line and writes nothing | 0, 1, 6, 8, 14 |
 | `evidence.sh comment <run-dir> <ticket>` | orchestrator (via `wave.sh close`, `verify.sh judge`) | the ticket's evidence comment, from the state file's contract, ending in the contract as JSON | 0, 1 no contract |
 | `evidence.sh digest <run-dir> [--wave N \| --all]` | Engineering chat | the wave digest: one table row per ticket dispatched in the wave (default the last), then cost against the budget | 0 |
