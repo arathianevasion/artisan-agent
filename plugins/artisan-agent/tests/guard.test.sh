@@ -82,6 +82,17 @@ test_settings_json_has_hook_and_deny_rules() {
   assert_contains "$out" '"deny":["Skill(mattpocock-skills:implement-spec)"'
 }
 
+test_settings_json_escapes_the_hook_command() {
+  local cmd out got
+  for cmd in '"$CLAUDE_PROJECT_DIR"/x/block-replaced.sh' 'C:\dir\my hook.sh "a b"'; do
+    out=$("$GUARD" settings-json --hook-command "$cmd")
+    got=$(printf '%s' "$out" | jq -r '.hooks.UserPromptExpansion[0].hooks[0].command')
+    assert_eq "$cmd" "$got"
+    got=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["hooks"]["UserPromptExpansion"][0]["hooks"][0]["command"],end="")')
+    assert_eq "$cmd" "$got"
+  done
+}
+
 test_missing_empty_or_incomplete_list_fails_loudly() {
   assert_status 2 "$GUARD" hooks-json --list "$TEST_TMPDIR/nope.list"
   : > "$TEST_TMPDIR/empty.list"
