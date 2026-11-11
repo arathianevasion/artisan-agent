@@ -23,6 +23,8 @@
 #                         like GitHub when the child already has a parent (parent-<child>) unless
 #                         -F replace_parent=true
 #   gh api --method POST repos/<o>/<r>/issues/<n>/dependencies/blocked_by -F issue_id=<id>
+#   gh api --method DELETE repos/<o>/<r>/issues/<n>/dependencies/blocked_by/<id>
+#   gh issue edit <n> --add-label L / --remove-label L (also with a body)
 # Anything else fails with exit 1. Needs jq.
 
 set -euo pipefail
@@ -83,6 +85,25 @@ fi
 case "${1:-} ${2:-}" in
   "api "*)
     path=$2
+    if [ "$api_method" = DELETE ]; then
+      case "$path" in
+        */dependencies/blocked_by/*)
+          n=${path%/dependencies/blocked_by/*}; n=${n##*/}
+          need_issue "$n"
+          blocker=
+          for f in "$FAKE_GH_DIR"/issue-*.json; do
+            [ -f "$f" ] || continue
+            b=$(jq -r --argjson id "${path##*/}" 'select((.id // (1000 + .number)) == $id) | .number' "$f")
+            [ -z "$b" ] || blocker=$b
+          done
+          [ -n "$blocker" ] || { echo "gh: blocking issue not found (HTTP 404)" >&2; exit 1; }
+          cur='[]'; [ -f "$FAKE_GH_DIR/blocked_by-$n.json" ] && cur=$(cat "$FAKE_GH_DIR/blocked_by-$n.json")
+          printf '%s' "$cur" | jq -c --argjson b "$blocker" 'map(select(. != $b))' >"$FAKE_GH_DIR/blocked_by-$n.json"
+          echo '{}' ;;
+        *) echo "gh: unsupported api DELETE path: $path" >&2; exit 1 ;;
+      esac
+      exit 0
+    fi
     if [ "$api_method" = POST ]; then
       field() { for kv in $api_fields; do case "$kv" in "$1="*) printf '%s' "${kv#*=}" ;; esac; done; }
       n=${path#repos/*/issues/}; n=${n%%/*}
@@ -189,7 +210,14 @@ case "${1:-} ${2:-}" in
     printf '%s' "$body" >>"$c" ;;
   "issue edit")
     shift 2; parse "$@"; need_issue "$n"
-    [ -n "$body_set" ] && set_field "$n" --arg b "$body" '.body = $b' ;;
+    [ -z "$body_set" ] || set_field "$n" --arg b "$body" '.body = $b'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --add-label) set_field "$n" --arg l "$2" '.labels = ((.labels // []) | map(select(.name != $l)) + [{name: $l}])'; shift 2 ;;
+        --remove-label) set_field "$n" --arg l "$2" '.labels = ((.labels // []) | map(select(.name != $l)))'; shift 2 ;;
+        *) shift ;;
+      esac
+    done ;;
   "issue close")
     shift 2; parse "$@"; need_issue "$n"
     if [ -n "$body_set" ]; then

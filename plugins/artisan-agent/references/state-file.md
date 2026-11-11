@@ -99,7 +99,7 @@ Top level:
 
 | Field | Meaning |
 |---|---|
-| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge) |
+| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge), `deferred` (pulled from the run with a deferred question, `references/worker-questions.md`) |
 | `attempts` | dispatches so far |
 | `pid` | the worker's pid while `in_flight`, else `null` |
 | `branch` | the ticket's branch |
@@ -116,11 +116,12 @@ Top level:
 | `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |
 | `wave` | the wave its last dispatch belonged to (the last orchestrator's wave; 0 before any) |
 | `resolve` | its one conflict-resolution try: `{attempt, paths, pre, outcome, why?, at}`, `outcome` `pending` (the merge left in progress), `resolved`, `unresolved` or `abandoned` |
+| `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
 ## The event log
 
-Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), `finding` (`from`, `seq`, `target`, `action`) and `design-question` (`ticket`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), `finding` (`from`, `seq`, `target`, `action`), `design-question` (`ticket`), and, for worker questions, `asked` (`ticket`, `question`), `answered` (`ticket`, `question`, `next`), `deferred-question`, `pulled` and `provisional-shown`, plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, and `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole. A top-level `provisional_shown` lists the tickets whose provisional cards a packet has shown. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
 
 ## The sweep
 

@@ -442,7 +442,12 @@ You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
-  if [ "$n" -gt 1 ]; then
+  # The Artisan's answers to the questions an earlier worker filed (questions.sh).
+  if [ "$(get --arg t "$t" '(.tickets[$t].answers // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan has answered what blocked an earlier attempt; treat each answer as decided, and continue from the branch:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].answers[] | "  - #\(.question): \(.answer)"' >>"$prompt"
+  fi
+  if [ "$n" -gt 1 ] && [ "$(get --arg t "$t" '.tickets[$t].failures | length')" -gt 0 ]; then
     printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
       "$(get '.plan.attempts_per_ticket // 2')" \
       "$(get --arg t "$t" '.tickets[$t].failures | last | "\(.reason)"')" >>"$prompt"
