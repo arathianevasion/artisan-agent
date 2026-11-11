@@ -36,7 +36,7 @@ cmd=$1 run_dir=$2
 shift 2
 state_require_run_dir "$run_dir"
 FILE=$(state_file "$run_dir")
-state_valid_file "$FILE" || state_die 1 "evidence.sh: unreadable or wrong schema version: $FILE"
+state_valid_file "$FILE" || state_die 1 "evidence.sh: $(state_version_message "$FILE")"
 
 # Shared: a table cell, a dollar figure, a ticket's name.
 DEFS='

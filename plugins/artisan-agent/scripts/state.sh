@@ -141,7 +141,7 @@ dispatch_ticket() {
 require_in_scope() {
   local file
   file=$(state_file "$1")
-  state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
+  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   jq -e --arg t "$2" '.plan.scope | map(tostring) | index($t) != null' "$file" >/dev/null \
     || state_die 4 "refusing ticket $2: it is not in the approved scope ($(jq -r '.plan.scope | map(tostring) | join(", ")' "$file")); add it through a plan step first"
 }
