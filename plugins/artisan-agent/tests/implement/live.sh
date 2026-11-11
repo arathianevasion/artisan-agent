@@ -107,7 +107,7 @@ check() { # description command...
 
 record_says() { jq -e "$2" "$1"; }
 
-py() { (cd "$1" && python3 -c "$2"); }
+python_in() { (cd "$1" && python3 -c "$2"); }
 
 # Paths the session wrote or edited, in order.
 edited_paths() {
@@ -149,20 +149,25 @@ suite_passes() { (cd "$1" && python3 -m unittest -q); }
 tree_clean() { [ -z "$(git -C "$1" status --porcelain)" ]; }
 no_stash() { [ -z "$(git -C "$1" stash list)" ]; }
 branch_moved() { [ "$(git -C "$1" rev-parse HEAD)" != "$2" ] && [ "$(git -C "$1" rev-list --count "$2..HEAD")" -gt "${3:-0}" ]; }
-record_commit_is_tip() { [ "$(jq -r .commit "$2")" = "$(git -C "$1" rev-parse HEAD)" ] || [ "$(git -C "$1" rev-parse "$(jq -r .commit "$2")")" = "$(git -C "$1" rev-parse HEAD)" ]; }
+record_commit_is_tip() { [ "$(git -C "$1" rev-parse "$(jq -r .commit "$2")")" = "$(git -C "$1" rev-parse HEAD)" ]; }
+never_prints() { ! grep -n 'print(' "$1"; }
+# True when the branch adds a public function outside the tests and cli.py.
+adds_public_function() {
+  git -C "$1" diff "$2" -- . ':!tests' ':!cli.py' | grep -Eq '^\+def [a-z]'
+}
 
 verify() {
-  local scenario=$1 wd=$2 id repo record base seeded=0
+  local scenario=$1 wd=$2 id repo record base attempt_commits=0
   id=$(ticket_id "$scenario")
   repo="$wd/repo"
   record="$wd/results/$id.json"
   base=$(cat "$wd/base")
-  [ "$scenario" != review-seeds ] || seeded=1
+  [ "$scenario" != review-seeds ] || attempt_commits=1
 
   check "a result file exists" test -f "$record"
   check "it is an evidence record ($HERE/check-evidence-record.sh)" "$HERE/check-evidence-record.sh" "$record"
   check "status is complete" record_says "$record" '.status == "complete"'
-  check "the worker committed on agent/$id" branch_moved "$repo" "$base" "$seeded"
+  check "the worker committed on agent/$id" branch_moved "$repo" "$base" "$attempt_commits"
   check "the record names the branch tip" record_commit_is_tip "$repo" "$record"
   check "the working tree is clean" tree_clean "$repo"
   check "nothing was stashed" no_stash "$repo"
@@ -175,7 +180,7 @@ verify() {
 
   case "$scenario" in
     named-seam)
-      check "slugify meets the ticket's examples" py "$repo" '
+      check "slugify meets the ticket's examples" python_in "$repo" '
 from text import slugify
 assert slugify("Hello, World!") == "hello-world"
 assert slugify("  --Weekly   Plan 2--  ") == "weekly-plan-2"'
@@ -184,22 +189,23 @@ assert slugify("  --Weekly   Plan 2--  ") == "weekly-plan-2"'
       check "test-first: a test run failed before the first commit" red_before_commit "$wd"
       ;;
     unnamed-seam)
-      check "cli.py export prints the CSV" py "$repo" '
+      check "cli.py export prints the CSV" python_in "$repo" '
 import subprocess, sys
 out = subprocess.run([sys.executable, "cli.py", "export"], capture_output=True, text=True, check=True).stdout
 assert out.splitlines() == ["number,customer,amount_pence", "INV-001,Ada,1250", "INV-002,Grace,99000"], out'
-      check "cli.py list is unchanged" py "$repo" '
+      check "cli.py list is unchanged" python_in "$repo" '
 import subprocess, sys
 out = subprocess.run([sys.executable, "cli.py", "list"], capture_output=True, text=True, check=True).stdout
 assert out == "INV-001 Ada\nINV-002 Grace\n", out'
-      check "the new seam is a decision card" record_says "$record" \
-        'any(.decisions[]; ((.question + " " + .choice) | test("seam|test|function|interface|module|boundary"; "i")))'
+      check "the CSV is produced outside cli.py (a new seam)" adds_public_function "$repo" "$base"
+      check "the new seam is a decision card (job 3)" record_says "$record" \
+        'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | test("seam|function|module|interface|boundary"; "i")))'
       ;;
     review-seeds)
-      check "the seeded bug is fixed: 5000 pence ships free" py "$repo" '
+      check "the seeded bug is fixed: 5000 pence ships free" python_in "$repo" '
 from shop import shipping
 assert shipping(5000) == 0 and shipping(4999) == 499 and shipping(6000) == 0'
-      check "the seeded standard violation is fixed: shop.py never prints" sh -c "! grep -n 'print(' '$repo/shop.py'"
+      check "the seeded standard violation is fixed: shop.py never prints" never_prints "$repo/shop.py"
       check "the judgement-call smell is unchanged: check_address keeps its signature" \
         grep -qx 'def check_address(street, city, postcode):' "$repo/shop.py"
       check "the judgement-call smell is unchanged: delivery_label keeps its signature" \
@@ -217,10 +223,12 @@ assert shipping(5000) == 0 and shipping(4999) == 499 and shipping(6000) == 0'
   [ "$failures" -eq 0 ]
 }
 
-[ $# -eq 3 ] || { sed -n '2,24p' "$0" >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
+
+[ $# -eq 3 ] || usage
 case "$1" in
   setup) setup "$2" "$3" ;;
   run) run "$2" "$3" ;;
   verify) verify "$2" "$3" ;;
-  *) sed -n '2,24p' "$0" >&2; exit 2 ;;
+  *) usage ;;
 esac

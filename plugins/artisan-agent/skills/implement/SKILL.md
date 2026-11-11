@@ -43,8 +43,8 @@ Before writing the first test, call the Skill tool with `mattpocock-skills:tdd` 
 
 When the work needs a test at a public boundary the ticket does not name (a new module, a new public function or type other code calls, a new boundary between modules), that is a **new seam**, and choosing it is a decision you are making alone:
 
-- If it is hard to reverse (a public interface other tickets or callers will depend on, a schema: controversy criterion 3), or the ticket or an "Always ask" item says to ask, don't choose it. Stop, record the question with your recommendation, and finish with status `blocked`.
-- Otherwise build it test-first like a named seam, and record a decision card for it (step 3). A seam is engineering taste unless a guardrail covers it.
+- If the seam changes an interface another ticket owns, or a schema or stored data, or the ticket or an "Always ask" item says to ask, don't choose it. Stop, record the question with your recommendation, and finish with status `blocked`.
+- Otherwise build it test-first like a named seam, and record a decision card for it (step 3). A seam is engineering taste unless a guardrail covers it. If it's a public interface other code will come to depend on, say so in the card and name controversy criterion 3, so the Artisan sees it at the gate.
 
 Run typechecks and single test files as you go, and the full suite once the ticket is built. Commit.
 
@@ -60,7 +60,7 @@ A decision that is controversial and **not** easy-to-reverse taste is not yours 
 
 Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
 
-Sort every finding into one of these, and act on it:
+Sort every finding the review returns into one of these, and act on it:
 
 | Finding | Action | `disposition` |
 |---|---|---|
@@ -72,6 +72,8 @@ Sort every finding into one of these, and act on it:
 | A finding you judge wrong | Leave it, and say why | `not_acted` |
 
 Where a fix would itself meet a controversy criterion or an "Always ask" item, don't make it: record it as a decision card instead. When a finding could be either a hard violation or a judgement call, it's a judgement call.
+
+`review.findings` holds what the review found. A problem you found and fixed yourself while building isn't a review finding; mention it in `notes` if it matters.
 
 Run the full suite again after the fixes and commit. One review pass is enough. Run a second only when the fixes changed more code than the findings pointed at.
 
