@@ -192,7 +192,6 @@ cmd_launch() {
     esac
   done
   local wt last id attempt wave pid cls me deadline minutes prompt runner
-  wt=$(integration_worktree)
   wave=1 attempt=1
   last=$(last_orchestrator)
   if [ -n "$last" ]; then
@@ -214,6 +213,7 @@ cmd_launch() {
     esac
   fi
   id="orchestrator-w$wave"
+  wt=$(integration_worktree)
 
   # The chat's writer pid holds the lock (or takes it now) until it hands it on.
   me=$(writer)
