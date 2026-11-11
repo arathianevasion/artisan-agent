@@ -26,7 +26,7 @@ upstream_names() {
     local f
     for f in "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/SKILL.md \
              "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/*/SKILL.md; do
-      [ -f "$f" ] && basename "$(dirname "$f")"
+      if [ -f "$f" ]; then basename "$(dirname "$f")"; fi
     done
   } | sort -u
 }
@@ -76,10 +76,10 @@ cmd_scan() {
   done
   if [ -d "$CFG/skills" ]; then
     for name in $PERSONAL_PLUGIN_SKILLS; do
-      [ -e "$CFG/skills/$name" ] && printf 'plugin-skill:%s\tpersonal-plugin-skill\tpersonal %s; now ships in the artisan-agent plugin\n' "$name" "$name"
+      if [ -e "$CFG/skills/$name" ]; then printf 'plugin-skill:%s\tpersonal-plugin-skill\tpersonal %s; now ships in the artisan-agent plugin\n' "$name" "$name"; fi
     done
     for name in $up; do
-      [ -e "$CFG/skills/$name" ] && printf 'stale-skill:%s\tstale-upstream-skill\tpersonal copy of upstream skill %s\n' "$name" "$name"
+      if [ -e "$CFG/skills/$name" ]; then printf 'stale-skill:%s\tstale-upstream-skill\tpersonal copy of upstream skill %s\n' "$name" "$name"; fi
     done
   fi
   # shellcheck disable=SC2086
