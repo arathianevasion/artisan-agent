@@ -55,7 +55,7 @@ RUN=$REPO/.artisan-agent/runs/live1
 export FAKE_GH_DIR=$WD/tracker
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
-# The hooks are what this proves, and plain `--setting-sources project,local`
+# The hooks are what this proves, and a bare project-and-local settings source list
 # stops them running (2.1.322), so tests/helpers/live-hooks.sh registers them
 # through --settings and keeps the Artisan's user settings out.
 . "$PLUGIN_ROOT/tests/helpers/live-hooks.sh"

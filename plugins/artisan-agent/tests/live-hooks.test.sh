@@ -2,7 +2,7 @@
 # user settings out, a hook-fired proof in every harness.
 
 HELPER="$TESTS_DIR/helpers/live-hooks.sh"
-HARNESSES="live-run/live.sh live-drain/live.sh implement/live.sh questions-live/live.sh"
+HARNESSES="live-run/live.sh live-drain/live.sh implement/live.sh questions-live/live.sh live-guards/live.sh"
 
 # The real claude, if there is one (CI has none: the live checks then skip).
 real_claude() { command -v claude 2>/dev/null; }
