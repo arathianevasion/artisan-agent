@@ -41,7 +41,7 @@ The Artisan's outcomes for a ticket:
 Tickets from agents, findings or other people go through triage. **A ticket the Artisan wrote or approved skips it** (the front door files those straight to `ready-for-agent`). Don't list or touch:
 
 - tickets already `ready-for-agent` or `ready-for-human`, or `in-run`;
-- tickets authored by the Artisan (compare the author to `gh api user --jq .login`) that don't start with the triage disclaimer or an agent-filed marker and aren't labelled `needs-triage`.
+- tickets authored by the Artisan (compare the author to the Artisan's identity, found the way `docs/agents/issue-tracker.md` says; on a local-markdown tracker make no `gh` call at all) that don't start with the triage disclaimer or an agent-filed marker and aren't labelled `needs-triage`.
 
 An agent files with `needs-triage`, so that label (or no label from someone other than the Artisan) is what makes a ticket triage work. An explicitly named ticket is triaged whoever wrote it, except that if it is the Artisan's own, say it normally skips triage and ask once whether they want it triaged anyway.
 
