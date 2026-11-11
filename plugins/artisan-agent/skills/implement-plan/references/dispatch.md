@@ -4,7 +4,7 @@ Read this before the first wave. It covers worktree setup, the agent invocation,
 
 ## Why worktrees
 
-A tracer-bullet ticket is a vertical slice through schema, API, UI and tests, and `/implement` ends by committing to the current branch. Two agents in one checkout therefore race on the same files and the same git index. Subagents in a single session share the working directory, so they hit this too — isolation of context is not isolation of filesystem.
+A tracer-bullet ticket is a vertical slice through schema, API, UI and tests, and `/artisan-agent:implement` ends by committing to the current branch. Two agents in one checkout therefore race on the same files and the same git index. Subagents in a single session share the working directory, so they hit this too — isolation of context is not isolation of filesystem.
 
 A worktree gives each agent its own checkout and its own branch off the same repository, with shared object storage so setup is cheap. A separate process per worktree also means a genuinely fresh context window per ticket, which is what `to-tickets` sized the tickets for in the first place.
 
@@ -62,11 +62,11 @@ If the project needs installed dependencies, run the install in each worktree be
 ```bash
 cd "../${REPO}-wt/${TICKET}"
 claude -p "$(cat <<EOF
-Run /implement against ${TICKET_PATH}.
+Run /artisan-agent:implement against ${TICKET_PATH}.
 
 ${BRIEF}
 
-When /implement has committed, write your result to
+When /artisan-agent:implement has committed, write your result to
 ${RESULTS_DIR}/${TICKET}.json using the contract in the ticket comment.
 Write the file even if you fail — a missing file is indistinguishable
 from a crash and forces a manual check.
@@ -159,7 +159,7 @@ git worktree remove "../${REPO}-wt/${TICKET}"
 git branch -d "agent/${TICKET}"
 ```
 
-On conflict, run `/resolving-merge-conflicts` rather than hand-editing. Running waves in parallel makes conflicts an expected cost of the approach, not an anomaly, so they get the same discipline as any other work. If it cannot be resolved, or the suite fails on the merged result, abort the merge and keep both the worktree and the branch. Report the ticket as blocked with the conflicting paths. Silently patching source in the orchestrator turns a reviewable ticket into an unreviewed one.
+On conflict, run `/artisan-agent:resolve-conflicts` rather than hand-editing. Running waves in parallel makes conflicts an expected cost of the approach, not an anomaly, so they get the same discipline as any other work. If it cannot be resolved, or the suite fails on the merged result, abort the merge and keep both the worktree and the branch. Report the ticket as blocked with the conflicting paths. Silently patching source in the orchestrator turns a reviewable ticket into an unreviewed one.
 
 Run `git worktree prune` at the end of the run to clear any stale registrations from crashed processes.
 
@@ -169,6 +169,6 @@ Closing and filing are orchestrator-only.
 
 - **Close:** close the work item and tick its acceptance criteria. Both matter — an open criterion on a closed ticket makes the audit trail lie.
 - **File discovered work:** create the new ticket with a body that names the discovering ticket, and file it with no blocking edges — off the frontier. On a local tracker that is a new numbered file in the same issues directory; on a real tracker, a new issue carrying the triage label vocabulary from `docs/agents/`.
-- **Triage it:** run `/triage` before the ticket is eligible for a wave. Agent-discovered work has not been grilled or sized, so it does not get the agent-ready status that `to-tickets` output has. Edges and wave placement come after triage admits it, not before.
+- **Triage it:** run `/artisan-agent:triage` before the ticket is eligible for a wave. Agent-discovered work has not been grilled or sized, so it does not get the agent-ready status that `to-tickets` output has. Edges and wave placement come after triage admits it, not before.
 
 After any filing that adds an edge, recompute the graph before dispatching the next wave.

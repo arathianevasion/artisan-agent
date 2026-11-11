@@ -1,24 +1,26 @@
 ---
 name: implement-plan
-description: Run a whole ticket queue to completion. Reads published tickets and their blocking edges, plans a purpose-built agent for each one (model, brief, expected output), gets the plan approved, then dispatches tickets in dependency waves across isolated git worktrees where each agent runs /implement, and closes tickets, resolves merge conflicts, and files discovered work for triage as results come back. Use this whenever the user wants to run more than one ticket — "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize agents over a set of issues, even if they do not say the word "ticket". Do not use for a single ticket; that is /implement.
+description: Run a defined set of work to completion — a plan, several plans, individual tickets, a single ticket, or any mix. Reads published tickets and their blocking edges, plans a purpose-built agent for each one (model, brief, expected output), gets the plan approved, then dispatches tickets in dependency waves across isolated git worktrees where each agent runs /artisan-agent:implement, and closes tickets, resolves merge conflicts, and files discovered work for triage as results come back. Use this whenever the Artisan wants tickets built — "run this ticket", "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize agents over one or more issues, even if they do not say the word "ticket". Claude may call it, for example when another pipeline step hands an approved ticket or plan on to be built.
 ---
 
 # Implement Plan
 
-Orchestrate a set of tickets to done.
+Run a defined set of work to done: a plan, several plans, individual tickets, a single ticket, or any combination. That set is the run's scope; anything outside it waits.
 
-`/implement` runs one ticket in the session that invokes it. It has no completion step: it ends at the commit and never touches the work item, does not act on `/code-review` findings, and does not tick acceptance criteria. That is fine for one ticket and fatal for a queue, because `to-tickets` defines the frontier as tickets whose blockers are all **closed**. If nothing closes, nothing ever unblocks, and an unattended run re-picks the same ticket forever.
+`/artisan-agent:implement` runs one ticket in the session that invokes it. It has no completion step: it ends at the commit and never touches the work item, does not act on `/code-review` findings, and does not tick acceptance criteria. Even for a single ticket that leaves the work unverified and the ticket open, and for a queue it is fatal, because `to-tickets` defines the frontier as tickets whose blockers are all **closed**. If nothing closes, nothing ever unblocks, and an unattended run re-picks the same ticket forever.
 
-This skill is the missing layer above `/implement`: it owns the dependency graph, the agent design, the dispatch, and — critically — the reconciliation. It never implements anything itself.
+This skill is the missing layer above `/artisan-agent:implement`: it owns the dependency graph, the agent design, the dispatch, and — critically — the reconciliation. It never implements anything itself.
+
+Wherever this skill puts something in front of the Artisan (the plan, a wave report, a question), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`.
 
 ## Preconditions
 
-Stop and tell the user which is missing rather than working around it:
+Stop and tell the Artisan which is missing rather than working around it:
 
 - Tickets are published — either `.scratch/<feature>/issues/NN-slug.md` or issues on a configured tracker. If not, route to `/to-tickets` first.
 - `/setup-matt-pocock-skills` has run for this repo.
 - The working tree is clean and `git worktree` is available.
-- `/implement`, `/tdd`, `/code-review`, `/resolving-merge-conflicts` and `/triage` are installed, because this skill and its agents all reach for them.
+- `/artisan-agent:implement`, `/tdd`, `/code-review`, `/artisan-agent:resolve-conflicts` and `/artisan-agent:triage` are installed, because this skill and its agents all reach for them.
 - **Every gate the agents will report on has been proven capable of failing.** Run each one — test suite, typecheck, lint — against a deliberately broken file and confirm a non-zero exit, then revert. A gate that cannot fail turns every agent's report into noise for the length of the run, and nothing downstream will reveal it: the results all say "clean", the merges all stay green, and you find out only when someone reads the config. Report what each gate actually covers, in the plan, alongside the tier mapping.
 
 The last one is not ceremony. In a real run, `npm run typecheck` was `tsc --noEmit` against a root `tsconfig.json` with `"files": []` and only project references — `tsc` does not follow references, so it compiled an empty program and exited 0 unconditionally. Thirty tickets reported "typecheck clean" and every one of those claims was vacuous.
@@ -27,11 +29,9 @@ Anything the agents cannot verify, say so in the plan rather than discovering it
 
 ## Composition
 
-Skills in this set split on who can invoke them: user-invoked skills orchestrate, model-invoked skills hold reusable discipline, and a user-invoked skill may invoke model-invoked skills but never another user-invoked one.
+Skills split on who can invoke them. A typed-only skill (`disable-model-invocation: true`) runs only when a person types it; a Claude-callable skill can also be called by Claude, including from another skill.
 
-`/implement` enforces this mechanically. It ships with `disable-model-invocation: true` (and `policy.allow_implicit_invocation: false` for Codex), so no skill can call it. Every "then `/implement` per ticket" line elsewhere in the set is an instruction to a human, not something an agent will do.
-
-This is why the dispatch substrate is not a preference. An in-session subagent cannot reach `/implement` at all. A separate `claude -p` process can, because there the prompt is a user turn and the skill is being invoked explicitly in a fresh session. Do not attempt an in-session fan-out; it will silently do nothing useful.
+This skill is Claude-callable, so another pipeline step can hand it work. Dispatch still never happens in-session: an in-session subagent shares this session's working directory and cannot give a ticket a fresh context window. Each ticket gets a separate `claude -p` process in its own worktree, where the prompt runs `/artisan-agent:implement` explicitly in a fresh session. Do not attempt an in-session fan-out.
 
 ## Process
 
@@ -53,7 +53,7 @@ Each ticket gets its own agent spec with three parts. Design them from the ticke
 
 Map tiers to concrete model ids once, in the plan, so the mapping is visible and can be changed in one place rather than being buried per ticket.
 
-**Brief.** A short prompt that names the ticket path, the seams the agent should test at if the ticket already pre-agreed them, and any CONTEXT.md vocabulary or ADRs it must respect. Keep it under a paragraph. The ticket is the spec; the brief is orientation, and duplicating the ticket into the brief just spends context twice.
+**Brief.** A short prompt that names the ticket path, the seams the agent should test at if the ticket already pre-agreed them, and any GLOSSARY.md vocabulary or ADRs it must respect. Keep it under a paragraph. The ticket is the spec; the brief is orientation, and duplicating the ticket into the brief just spends context twice.
 
 **Expected output.** What "done" looks like for this specific ticket in one or two lines, drawn from its acceptance criteria. This is what the reconciliation step in 5 checks against — a vague expected output makes the whole loop unverifiable, so if you cannot write a concrete one, the ticket is underspecified and should go back to `/to-tickets`.
 
@@ -76,13 +76,13 @@ Worktrees: <N> under ../<repo>-wt/
 
 Wherever a plan, report or status update names a ticket, give its number and a short plain description together, such as "#01 (retry failed uploads)". A number or slug alone means nothing to a reader who hasn't memorised the queue.
 
-Then wait. Iterate on wave composition, tier choices and briefs until the user approves. Dispatch nothing before approval — an unattended run that starts from a wrong graph is far more expensive to unwind than one that starts late.
+Then wait. Iterate on wave composition, tier choices and briefs until the Artisan approves. Dispatch nothing before approval — an unattended run that starts from a wrong graph is far more expensive to unwind than one that starts late.
 
 ### 4. Dispatch a wave
 
 One worktree and one `claude -p` process per ticket in the wave, running concurrently. Full mechanics, commands and the result contract are in `references/dispatch.md` — read it before the first dispatch.
 
-The essential shape: each agent gets its own branch and checkout, is told to run `/implement` against its ticket path, and writes a structured result file into the shared results directory when it finishes. Results go in files rather than stdout because a crashed or truncated process still leaves whatever it wrote, and stdout parsing turns an agent's prose into a coin flip.
+The essential shape: each agent gets its own branch and checkout, is told to run `/artisan-agent:implement` against its ticket path, and writes a structured result file into the shared results directory when it finishes. Results go in files rather than stdout because a crashed or truncated process still leaves whatever it wrote, and stdout parsing turns an agent's prose into a coin flip.
 
 Never let an agent close its own ticket or merge its own branch. Both are orchestrator jobs, and an agent that judges its own completion has no independent check.
 
@@ -108,11 +108,11 @@ The stronger form of the same rule: **a blocker and its dependent are never conc
 For each returned result, in this order:
 
 1. **Verify against expected output.** Read the diff on the agent's branch against the expected output from step 2 and the ticket's acceptance criteria. An agent reporting success is a claim, not evidence.
-2. **Merge** the branch, run the full test suite on the merged result, and remove the worktree. Merge serially, testing after each, so a break is attributable to one ticket. On a conflict, run `/resolving-merge-conflicts` — parallel waves make conflicts routine rather than exceptional, and the repo already has the discipline for them. If that does not resolve it, or the suite fails on the merged result, abort, leave the branch and worktree in place, mark the ticket blocked, and carry it into the report.
+2. **Merge** the branch, run the full test suite on the merged result, and remove the worktree. Merge serially, testing after each, so a break is attributable to one ticket. On a conflict, run `/artisan-agent:resolve-conflicts` — parallel waves make conflicts routine rather than exceptional, and the repo already has the discipline for them. If that does not resolve it, or the suite fails on the merged result, abort, leave the branch and worktree in place, mark the ticket blocked, and carry it into the report.
 3. **Close the ticket** and tick its acceptance criteria. This is what advances the frontier.
 4. **File discovered work, then triage it.** Where a result names outstanding requirements, create a new ticket on the same tracker with a body citing the ticket that discovered it — and file it **off the frontier**, with no blocking edges and no wave assignment.
 
-   Tickets from `to-tickets` are agent-ready by construction and should never be triaged; triage is for work that arrived from someone else. A ticket an agent invented mid-run is exactly that. It has not been grilled, sized to a context window, or checked for whether it is really a tracer bullet. Run `/triage` on it before it is eligible for any wave, and never let an untriaged discovery enter the dispatch queue — that is how an unattended run turns one agent's guess into three more agents' work.
+   Tickets from `to-tickets` are agent-ready by construction and should never be triaged; triage is for work that arrived from someone else. A ticket an agent invented mid-run is exactly that. It has not been grilled, sized to a context window, or checked for whether it is really a tracer bullet. Run `/artisan-agent:triage` on it before it is eligible for any wave, and never let an untriaged discovery enter the dispatch queue — that is how an unattended run turns one agent's guess into three more agents' work.
 
    Only once triage has admitted it do you add blocking edges and recompute the graph. If that changes the wave structure, say so and show what moved before continuing. If triage rejects or reshapes it, that is a fine outcome and belongs in the report.
 5. **Surface review findings.** `/code-review` findings arrive with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
@@ -123,14 +123,14 @@ Only after every ticket in the wave is closed or explicitly marked blocked, reco
 
 ### 5a. Keep going
 
-Once the plan is approved the run is **unattended**. Continue through every wave without pausing for user input: reconcile, recompute, dispatch, repeat, until the queue is empty or genuinely blocked. Report at wave boundaries — but a report is not a stopping point, and neither is a status question from the user.
+Once the plan is approved the run is **unattended**. Continue through every wave without pausing for user input: reconcile, recompute, dispatch, repeat, until the queue is empty or genuinely blocked. Report at wave boundaries — but a report is not a stopping point, and neither is a status question from the Artisan.
 
 Two specific failure modes to avoid, both observed:
 
 - **Do not yield the turn while agents are in flight.** Poll the result files. Notifications and monitors are a convenience, not the source of truth: a monitor whose stream ends looks exactly like a wave still running, and work can sit finished and unreconciled for as long as it takes someone to ask.
 - **Do not treat "I have something to report" as "I am done."** If the next action is knowable — a merge, a close, a dispatch — take it, then report what happened including the part you just did.
 
-Stop only for: an approval the user actually owes you, a graph change that invalidates the plan they approved, or every ticket in a wave failing.
+Stop only for: an approval the Artisan actually owes you, a graph change that invalidates the plan they approved, or every ticket in a wave failing.
 
 ### 6. Report
 
@@ -151,7 +151,7 @@ Blocked tickets and unmerged branches go at the top, not buried. The value of an
 
 - **An agent fails or times out.** Mark the ticket blocked, keep the worktree for inspection, and continue the rest of the wave. Do not retry automatically — a repeat failure usually means the ticket is wrong, and a retry loop burns tokens proving that slowly.
 - **An agent reports success but the diff does not meet the expected output.** Treat as blocked, not complete. Say what was missing.
-- **A discovered dependency invalidates the graph.** Recompute waves, stop, and show the user the new graph before continuing. A silently reshuffled plan is one the user never approved.
+- **A discovered dependency invalidates the graph.** Recompute waves, stop, and show the Artisan the new graph before continuing. A silently reshuffled plan is one the Artisan never approved.
 - **Everything in a wave fails.** Halt the run entirely. Something upstream is wrong — a bad spec, a broken main branch, a missing setup step — and the next wave will fail the same way.
 
 ## Rules
