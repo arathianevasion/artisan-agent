@@ -1,0 +1,366 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Ticket #43 "What does the revised flow look like, and where can the Artisan inject autonomy, mastery and purpose?"
+  An interactive map of the Artisan Agent pipeline built from the decisions on map #1. Open by double-clicking.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revised flow</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#5d6675; --line:#dfe3ea; --accent:#2f5fd0;
+          --human:#c0392b; --approved:#2f5fd0; --auto:#2b2f36; --dim:.18;
+          --prob:#8a2a75; --probbg:#fdeefa; --sol:#22508f; --solbg:#eef6ff; --pipe:#1f6b3a; --pipebg:#eefaf1; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1d2129; --ink:#e6e9ef; --muted:#9aa3b2; --line:#2e3440;
+          --auto:#c9ced8; --probbg:#3a2035; --prob:#f0a6dc; --solbg:#1d2c42; --sol:#9cc3ff; --pipebg:#1c3325; --pipe:#8fd9a8; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; padding:20px 16px 40px; }
+  header { max-width:1400px; margin:0 auto 14px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 12px; max-width:900px; }
+  .tabs { display:flex; gap:6px; margin:10px 0; flex-wrap:wrap; }
+  .tab { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:999px; padding:6px 14px; cursor:pointer; font-size:14px; }
+  .tab.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .controls { display:flex; flex-wrap:wrap; gap:14px; align-items:center; font-size:13px; color:var(--muted); }
+  .group { display:flex; gap:4px; align-items:center; flex-wrap:wrap; }
+  .chip { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:6px; padding:3px 9px; cursor:pointer; font-size:13px; }
+  .chip.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .legend { display:flex; flex-wrap:wrap; gap:12px; font-size:13px; color:var(--muted); margin-top:8px; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px; margin-right:4px; border:3px solid; }
+  .layout { max-width:1400px; margin:0 auto; display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:16px; align-items:start; }
+  @media (max-width:1000px){ .layout{ grid-template-columns:1fr; } .detail{ position:static !important; } }
+  .board { display:grid; grid-template-columns:repeat(7, minmax(170px,1fr)); gap:10px; overflow-x:auto; padding-bottom:6px; }
+  @media (max-width:700px){ .board{ grid-template-columns:1fr; } }
+  .stage h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0 0 6px; }
+  .stage .hint { font-size:12px; color:var(--muted); margin:-4px 0 8px; }
+  .lane { grid-column:1 / -1; border-top:1px dashed var(--line); padding-top:10px; margin-top:4px; }
+  .lane .row { display:grid; grid-template-columns:repeat(4, minmax(170px,1fr)); gap:10px; }
+  @media (max-width:700px){ .lane .row{ grid-template-columns:1fr; } }
+  .node { background:var(--card); border:1px solid var(--line); border-left:5px solid var(--auto); border-radius:8px; padding:8px 10px; margin-bottom:8px; cursor:pointer; transition:opacity .15s; position:relative; }
+  .node.human { border-left-color:var(--human); } .node.approved { border-left-color:var(--approved); }
+  .node.sel { outline:2px solid var(--accent); }
+  .node.dim { opacity:var(--dim); }
+  .node .t { font-weight:600; font-size:14px; line-height:1.3; }
+  .node .m { font-size:12px; color:var(--muted); margin-top:3px; display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+  .amp { display:inline-flex; gap:2px; position:absolute; top:6px; right:6px; }
+  .amp b { font-size:10px; width:16px; height:16px; border-radius:50%; display:inline-grid; place-items:center; background:#ffd479; color:#3b2a00; }
+  .f { font-size:11px; padding:0 6px; border-radius:999px; }
+  .f.problem { background:var(--probbg); color:var(--prob); } .f.solution { background:var(--solbg); color:var(--sol); } .f.pipeline { background:var(--pipebg); color:var(--pipe); }
+  .open { font-size:11px; padding:0 6px; border-radius:999px; border:1px dashed var(--muted); }
+  .detail { position:sticky; top:12px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+  .detail h3 { margin:0 0 4px; font-size:17px; }
+  .detail .kv { font-size:13px; color:var(--muted); margin-bottom:10px; }
+  .detail h4 { margin:12px 0 4px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .detail p { margin:4px 0; font-size:14px; }
+  .ampbox { border-radius:8px; background:color-mix(in srgb, #ffd479 18%, transparent); padding:8px 10px; margin-top:6px; }
+  .ampbox div { font-size:14px; margin:3px 0; }
+  .ampbox b { display:inline-block; min-width:84px; }
+  .timeline { display:grid; grid-template-columns:repeat(6, minmax(150px,1fr)); gap:10px; overflow-x:auto; }
+  @media (max-width:700px){ .timeline{ grid-template-columns:1fr; } }
+  .tstep { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .tstep .h { font-weight:700; font-size:14px; }
+  .tstep .s { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .lever { border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin:6px 0; cursor:pointer; font-size:13px; background:color-mix(in srgb, #ffd479 10%, var(--card)); }
+  .lever.sel { outline:2px solid var(--accent); }
+  .lever.dim { opacity:var(--dim); }
+  .when { font-size:11px; color:var(--muted); }
+  .note { font-size:13px; color:var(--muted); max-width:1400px; margin:14px auto 0; }
+  .v { display:none; } .v.on { display:block; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Artisan Agent: the revised flow</h1>
+  <p class="sub">Every step, who acts, the focus it serves and the reason. Agents do the delivery. The Artisan's autonomy, mastery and purpose go into three focuses: <b>understanding the problem</b>, <b>finding the best solution</b>, and <b>improving the pipeline</b>. Click any step or lever for details.</p>
+  <div class="tabs">
+    <button class="tab on" data-tab="flow">The flow</button>
+    <button class="tab" data-tab="run">Steer work in progress</button>
+  </div>
+  <div class="controls">
+    <span class="group" id="routes">Route: </span>
+    <span class="group" id="amps">Highlight: </span>
+    <span class="group" id="focuses">Focus: </span>
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="border-color:var(--human)"></span>Human-led: your judgement is the work</span>
+    <span><span class="sw" style="border-color:var(--approved)"></span>Approved: an agent drafts, you approve</span>
+    <span><span class="sw" style="border-color:var(--auto)"></span>Autonomous: no person involved</span>
+    <span><span class="amp" style="position:static"><b>A</b><b>M</b><b>P</b></span> where you put in autonomy, mastery, purpose</span>
+  </div>
+</header>
+
+<div class="layout">
+  <main>
+    <div class="v on" data-v="flow"><div class="board" id="board"></div></div>
+    <div class="v" data-v="run">
+      <p class="sub" style="max-width:none">A run is going. Agents carry it, and you can steer it at any point without stopping it. Each lever says when it takes effect.</p>
+      <div class="timeline" id="timeline"></div>
+    </div>
+  </main>
+  <aside class="detail" id="detail"><p class="sub" style="margin:0">Pick a step or lever to see who acts, why it has that colour, and how you put autonomy, mastery and purpose into it.</p></aside>
+</div>
+<p class="note">Built from the decisions on <a href="https://github.com/arathianevasion/artisan-agent/issues/1">the map</a>. Dashed "open" tags mark items still in "Not yet specified".</p>
+
+<script>
+// ---- Data: the flow, from the map's decisions (pure data, no DOM) ----
+const STAGES = [
+  {id:"enter", name:"Enter", hint:"One front door"},
+  {id:"understand", name:"Understand", hint:"Grill, research, prototype"},
+  {id:"specify", name:"Specify", hint:"Spec and tickets"},
+  {id:"plan", name:"Plan", hint:"Plan approval is the steering wheel"},
+  {id:"run", name:"Run", hint:"Agents build; you're at the gates"},
+  {id:"ship", name:"Ship", hint:"End gate and PRs"},
+  {id:"learn", name:"Learn", hint:"The retro, every run"},
+];
+const R = {E:"Effort", F:"Feature", S:"Small change", B:"Bug"};
+const ALL = ["E","F","S","B"];
+const NODES = [
+  // Enter
+  {id:"need", stage:"enter", t:"Say what you need", c:"human", f:"problem", job:"1, 2", role:"Product", routes:ALL, skill:"/artisan-agent:craft",
+   what:"You describe a request in plain words, starting with who it's for and what it solves.",
+   why:"Only you know what the work is for (R, D, T).",
+   amp:{A:"You choose what gets worked on.", P:"Every later step opens with the problem you stated here."}},
+  {id:"route", stage:"enter", t:"Choose the route", c:"approved", f:"problem", job:"route choice", role:"Product", routes:ALL, skill:"/artisan-agent:craft",
+   what:"The front door proposes Effort, Feature, Small change or Bug, says why, and takes the bigger route when unsure. It also resumes an open run.",
+   why:"An agent can draft the sizing; a wrong route wastes downstream work (D).",
+   amp:{A:"Accept or change the route.", M:"The stated reason teaches the sizing test: can the destination be stated now, and is it more than one ticket?"}},
+  // Understand
+  {id:"dest", stage:"understand", t:"Name the destination and scope", c:"human", f:"problem", job:"2", role:"Product", routes:["E"], skill:"/wayfinder (typed)",
+   what:"For foggy efforts, a wayfinder map: destination, notes, decision tickets, fog and out of scope.",
+   why:"Scope is hard to reverse and shapes everything (R, D).",
+   amp:{A:"You draw the destination and what's out of scope.", P:"The destination keeps every ticket tied to the purpose."}},
+  {id:"grill", stage:"understand", t:"Resolve design questions", c:"human", f:"problem", f2:"solution", job:"3", role:"either, by topic", routes:["E","F"], skill:"/artisan-agent:grill",
+   what:"Grilling plus domain modeling: numbered questions, each with a recommendation; terms and ADRs written as they settle.",
+   why:"Taste and hard-to-reverse choices (R, D, T).",
+   amp:{A:"Every decision is put to you, with a recommendation.", M:"Each question names the strongest alternative and why it lost.", P:"Questions open with who the answer affects."}},
+  {id:"research", stage:"understand", t:"Find the facts", c:"auto", f:"problem", job:"5", role:"agent", routes:["E","F"], skill:"research",
+   what:"Agents read primary sources and write findings on a throwaway branch.",
+   why:"Facts aren't judgement (none of R, D, T).",
+   amp:{M:"Findings reach you as understanding of the problem, not buried in evidence.", A:"You can add a fact at any time."}},
+  {id:"proto", stage:"understand", t:"React to a prototype", c:"human", f:"solution", job:"4", role:"Product (design) or Engineering", routes:["E","F"], skill:"prototype",
+   what:"A throwaway artifact with radically different variants to react to.",
+   why:"Pure taste (T).",
+   amp:{A:"You pick, or combine variants.", M:"Seeing the options side by side sharpens your taste."}},
+  {id:"terms", stage:"understand", t:"Settle glossary terms", c:"approved", f:"problem", job:"6", role:"either", routes:["E","F"], skill:"domain-modeling",
+   what:"Fuzzy words get a canonical term in GLOSSARY.md, written as soon as they settle.",
+   why:"Terms shape every later ticket (D).",
+   amp:{M:"Naming things precisely is understanding the problem."}},
+  {id:"diagnose", stage:"understand", t:"Reproduce and find the cause", c:"auto", f:"problem", job:"bug route", role:"agent, or you hands-on", routes:["B"], skill:"diagnosing-bugs",
+   what:"Reproduce, rank hypotheses, find the cause. The result is a ticket with a failing test as its acceptance.",
+   why:"Mechanical once reproduced; you can drive it yourself as hands-on work.",
+   amp:{M:"Optional hands-on: drive the diagnosis yourself to stay close to the code."}},
+  {id:"mapdone", stage:"understand", t:"Judge the map complete", c:"approved", f:"problem", job:"7", role:"Product", routes:["E"], skill:"/wayfinder",
+   what:"No decision is left open before the spec is written.",
+   why:"Gates everything downstream (D).", amp:{A:"You decide when the fog has cleared."}},
+  // Specify
+  {id:"spec", stage:"specify", t:"Approve the spec", c:"approved", f:"problem", job:"8", role:"Product", routes:["E","F"], skill:"/artisan-agent:to-spec",
+   what:"Shown to you before publishing. Every user story, decision or out-of-scope line that didn't come from the conversation is flagged as an addition to accept or cut.",
+   why:"Hard to reverse and shapes all tickets (R, D). The scope floor: nothing joins scope without your yes.",
+   amp:{A:"Accept or cut each addition: scope is yours alone.", P:"The spec opens with the problem and who it's for."}},
+  {id:"slice", stage:"specify", t:"Approve how work is sliced", c:"approved", f:"solution", job:"9", role:"Engineering", routes:["E","F"], skill:"to-tickets (typed)",
+   what:"Tickets, granularity and blocking edges, iterated until you approve.",
+   why:"Slicing is engineering taste and shapes the waves (D, T).",
+   amp:{A:"Merge, split or reorder tickets.", M:"Needing to negotiate design mid-run is a slicing lesson for the retro."}},
+  {id:"ticket", stage:"specify", t:"Write the ticket", c:"approved", f:"problem", job:"small/bug", role:"Product", routes:["S","B"], skill:"/artisan-agent:craft",
+   what:"The front door drafts one ticket with acceptance criteria (for a bug, the failing test). Tickets you write or approve skip triage.",
+   why:"Acceptance criteria define done (T).", amp:{A:"You approve what 'done' means."}},
+  // Plan
+  {id:"toplan", stage:"plan", t:"Chunk tickets into plans", c:"approved", f:"problem", job:"24", role:"Product", routes:["E","F"], skill:"/artisan-agent:to-plan",
+   what:"Tickets grouped into plan issues (sub-issues), showing each ticket's acceptance criteria.",
+   why:"Which work runs together is priority and taste (D, T).", amp:{P:"You decide what matters most and runs first."}},
+  {id:"adr", stage:"plan", t:"ADR and guardrail check", c:"approved", f:"solution", job:"plan approval", role:"Engineering", routes:ALL, skill:"/artisan-agent:to-plan",
+   what:"Opens the plan approval: which ADRs the plan touches and how each ticket complies; tensions flagged; important decisions no ADR covers yet; conflicts between guardrail levels (product beats team beats individual).",
+   why:"This is where your taste reaches every ticket at once (R, D, T).",
+   amp:{A:"Steer important work by adjusting an ADR, not by taking tickets. An agent drafts the edit and it lands by short PR before the run.", M:"Writing the decision down sharpens it.", P:"Gaps show where the problem's key choices are still unmade."}},
+  {id:"limits", stage:"plan", t:"Set scope, gates, Max Agents and budget", c:"human", f:"solution", job:"10", role:"Engineering", routes:ALL, skill:"/artisan-agent:implement-plan",
+   what:"The plan step proposes models, a cost estimate (approved with the plan), review gates and Max Agents (default 5). A projected overrun beyond 25% opens a gate.",
+   why:"Sets the run's envelope (R, D).",
+   amp:{A:"You set how far agents may go alone, and where they must stop for you."}},
+  {id:"handson", stage:"plan", t:"Accept a hands-on ticket (optional)", c:"human", f:"solution", job:"mastery", role:"either", routes:ALL, skill:"/artisan-agent:to-plan",
+   what:"At most one suggestion per plan, chosen for what you'll learn and kept off the critical path. If you take a critical-path ticket, its delay is shown first.",
+   why:"Hands-on work keeps judgement sharp; it's never suggested just because a ticket is important.",
+   amp:{M:"Build it yourself: the same verifier and checks apply, and its findings come back as feedback."}},
+  // Run
+  {id:"waves", stage:"run", t:"Group waves, choose models", c:"auto", f:"solution", job:"11", role:"orchestrator", routes:ALL, skill:"implement-plan",
+   what:"Wave width is the smallest of Max Agents, the tickets ready to run, and tickets whose files don't overlap. A fresh orchestrator runs each wave.",
+   why:"Within the limits you set (none of R, D, T)."},
+  {id:"build", stage:"run", t:"Workers build tickets", c:"auto", f:"solution", job:"12", role:"workers", routes:ALL, skill:"/artisan-agent:implement",
+   what:"One capped headless worker per ticket in its own worktree: tdd at the ticket's seams, code review, evidence. Easy-to-reverse taste is picked provisionally and shown as a decision card.",
+   why:"Proven checks decide; guardrails cover taste.",
+   amp:{A:"A decision a worker may not make becomes a triage ticket for you; its ticket waits."}},
+  {id:"merge", stage:"run", t:"Verify and merge", c:"auto", f:"solution", job:"12", role:"verifier, orchestrator", routes:ALL, skill:"implement-plan",
+   what:"A verifier checks each acceptance criterion. Serial merges into the integration branch, full suite after each, /resolving-merge-conflicts once, two attempts per ticket.",
+   why:"Checks proven to fail decide (quality floor)."},
+  {id:"gate", stage:"run", t:"Slice and risk gates", c:"approved", f:"solution", job:"13", role:"Engineering (QA)", routes:ALL, skill:"review-gate issue",
+   what:"A packet, decisions first: problem, solution, verification; decision cards with confidence; uncertainties; evidence. Blocks only its dependents.",
+   why:"Taste on finished work (T).",
+   amp:{A:"Approve, redirect, bypass or defer. On each decision card: keep, change, or make it a guardrail.", M:"The packet shows the reasoning and what the agents were unsure of.", P:"Every packet opens with the problem it solves."}},
+  {id:"giveup", stage:"run", t:"After a run gives up", c:"human", f:"solution", job:"15", role:"Engineering", routes:ALL, skill:"exception gate",
+   what:"A ticket blocked after two attempts, an overrun, or a check that won't go green.",
+   why:"Recovering is hard to reverse (R).", amp:{A:"Retry with notes, reslice, take it yourself, or drop it."}},
+  {id:"context", stage:"run", t:"Context drain and hand-off", c:"auto", f:"pipeline", job:"(16 removed)", role:"chat, orchestrator", routes:ALL, skill:"implement-plan",
+   what:"From 30%: dispatch nothing new, hand off once idle, never with agents outstanding. Merges made at 50% or more raise a risk gate.",
+   why:"A chore in the old diagram; now invisible to you."},
+  // Ship
+  {id:"endgate", stage:"ship", t:"End gate", c:"approved", f:"solution", job:"13", role:"Engineering", routes:ALL, skill:"review-gate issue",
+   what:"The last review before PRs. Anything deferred is still waiting here.",
+   why:"Taste on the whole (T).", amp:{A:"Approve or redirect the whole run.", P:"Problem, solution, verification for the whole run."}},
+  {id:"prs", stage:"ship", t:"Cut PRs", c:"approved", f:"solution", job:"17", role:"Engineering", routes:ALL, skill:"pr",
+   what:"PR boundaries follow your guardrail (asked at setup); approved until a guardrail covers them, then autonomous.",
+   why:"Taste, set once (T).",
+   amp:{A:"Corrections on a PR are redirects.", M:"The retro asks which ADR would have let an agent get it right."}},
+  // Learn
+  {id:"retro", stage:"learn", t:"Retro chat round", c:"human", f:"pipeline", job:"21", role:"either", routes:ALL, skill:"/artisan-agent:retro",
+   what:"Prepared headless after every run. Obvious lessons batched for one yes; questions only for judgement calls. Spot-checks about three decisions agents made alone. Asks the three focus questions. The PR is the record.",
+   why:"Which lessons become guardrails, and at which level, is yours (R, T).",
+   amp:{A:"You decide what becomes a guardrail and where it lives.", M:"\"Would you have decided this differently?\" tunes your criteria.", P:"\"Do you understand the problem better? Is it the solution you'd pick? Is the pipeline better?\""}},
+  {id:"guardrail", stage:"learn", t:"Move a guardrail", c:"human", f:"pipeline", job:"23", role:"either", routes:ALL, skill:"/artisan-agent:retro",
+   what:"Tighten any time (applies from the next wave); loosen only at a retro, with evidence (3 events). The scope floor and defer-only gates never loosen.",
+   why:"Hard to reverse (R).", amp:{A:"Only a person moves a guardrail; agents only propose."}},
+  {id:"upstream", stage:"learn", t:"Take an upstream update", c:"approved", f:"pipeline", job:"22", role:"Engineering", routes:ALL, skill:"/artisan-agent:retro",
+   what:"Auto-update is off; a script and an agent check our dependencies and the replaced skills' diffs first.",
+   why:"Shapes every run after it (D).", amp:{M:"Improvements worth porting become pipeline tickets."}},
+  {id:"outcome", stage:"learn", t:"Did it achieve its purpose?", c:"human", f:"problem", job:"20", role:"Product", routes:ALL, open:true, skill:"open",
+   what:"Can't be answered on the day of the run. When and where it is asked is still open.",
+   why:"Only you can judge purpose (R, T).", amp:{P:"Closes the loop on why the work was done."}},
+];
+const LANE = {name:"Product chat, alongside everything", nodes:[
+  {id:"sort", t:"Sort incoming tickets", c:"approved", f:"problem", job:"18", role:"Product", routes:ALL, skill:"/artisan-agent:triage",
+   what:"Every outcome is approved in version one. Uncontroversial items come first with recommendations; each item names the controversy criterion that applies, or none.",
+   why:"Nothing reaches ready-for-agent without you.", amp:{A:"Approve or move to the controversial queue.", M:"Reversed recommendations are counted as misses for the retro."}},
+  {id:"rule", t:"Rule on controversial tickets", c:"human", f:"problem", job:"19", role:"Product", routes:ALL, skill:"/artisan-agent:triage",
+   what:"Do, Defer (with a reason and a return condition), Discard (recorded in .out-of-scope/), or take it yourself.",
+   why:"Hard to reverse, taste (R, T).", amp:{A:"Yours alone.", P:"Each ruling records why, so the purpose survives."}},
+  {id:"finding", t:"Decide whether a finding becomes work", c:"approved", f:"problem", job:"14", role:"Product", routes:ALL, skill:"/artisan-agent:triage",
+   what:"Findings and workers' questions arrive as triage tickets. Deferring one that blocks a running ticket asks: pull that ticket, or carry on without it?",
+   why:"Scope floor.", amp:{A:"Scope grows only on your word."}},
+  {id:"backlog", t:"Backlog review", c:"human", f:"problem", job:"backlog", role:"Product", routes:ALL, skill:"(no skill yet)",
+   what:"Periodically, an agent reviews open tickets and you sort each into the next plan, closed, or left open. Deferred tickets come back here.",
+   why:"Priority is yours (T).", amp:{P:"Keeps the backlog aimed at what matters now."}},
+]};
+const LEVERS = [
+  {id:"l-gate", at:"gate", t:"Answer a gate", when:"Immediately unblocks or holds its dependents", amp:"AMP",
+   what:"Approve; redirect with notes (a rework ticket in the same run, not counted against the two attempts); bypass (recorded); or defer (dependents run, review waits for the end gate)."},
+  {id:"l-card", at:"gate", t:"Make a decision a guardrail", when:"From the next wave", amp:"A",
+   what:"On any decision card: keep, change, or make it a guardrail, choosing level (individual, product, team) and reach (ticket, area, everywhere)."},
+  {id:"l-tighten", at:"wave", t:"Tighten a guardrail", when:"From the next wave", amp:"A",
+   what:"Say it in the chat after a surprise. The orchestrator fetches guardrails at the start of each wave and records which version applied."},
+  {id:"l-adr", at:"plan", t:"Adjust an ADR", when:"Before the run, or from the next wave", amp:"AM",
+   what:"Say what changes; an agent drafts the edit; it lands by short PR; affected tickets are re-checked."},
+  {id:"l-question", at:"wave", t:"Answer a worker's question", when:"Its ticket is redispatched with your answer", amp:"A",
+   what:"A worker that reaches a decision it may not make files a triage ticket with options and a recommendation; its own ticket waits."},
+  {id:"l-steer", at:"wave", t:"Stop and redispatch with notes", when:"At once", amp:"A",
+   what:"Version one steers by stopping a worker and starting it again with your notes."},
+  {id:"l-priority", at:"wave", t:"Add a priority ticket", when:"Next wave, ahead of lower-priority work", amp:"P",
+   what:"A one-line approval with its estimate and the new budget is the scope gate."},
+  {id:"l-urgent", at:"wave", t:"Mark a ticket urgent", when:"Dispatched now, on one extra slot", amp:"P",
+   what:"Branches from main, keeps its gates and cost cap, and ships on its own PR before the run ends."},
+  {id:"l-handson", at:"plan", t:"Take a ticket yourself", when:"Its dependents wait for you", amp:"M",
+   what:"Mark it ready-for-human; the orchestrator sets up a worktree. Same verifier and checks, findings as feedback."},
+  {id:"l-defer", at:"wave", t:"Defer a blocking finding", when:"At once", amp:"A",
+   what:"Pull the ticket that's waiting on it out of the run, or let it carry on without the finding."},
+  {id:"l-move", at:"any", t:"Move the run", when:"After it drains to idle", amp:"A",
+   what:"implement-plan move: between laptop and host either way, e.g. home on a poor connection. The lock travels with it. Steer from your phone through Remote Control."},
+  {id:"l-end", at:"end", t:"Review the whole run", when:"Before any PR", amp:"AP",
+   what:"Approve or redirect at the end gate; deferred reviews are settled here. Corrections on PRs count as redirects and come back at the retro as ADR questions."},
+  {id:"l-retro", at:"retro", t:"Shape the next run", when:"After the run", amp:"AMP",
+   what:"Answer the retro's judgement questions and the three focus questions; loosen guardrails with evidence; hands-on and PR corrections become ADR lessons."},
+];
+const TIMELINE = [
+  {id:"plan", h:"Plan approved", s:"Envelope set: estimate, gates, Max Agents"},
+  {id:"wave", h:"Waves running", s:"Workers build; orchestrator merges"},
+  {id:"gate", h:"Slice or risk gate", s:"Only its dependents wait"},
+  {id:"any", h:"Anywhere in the run", s:"Laptop, host or phone"},
+  {id:"end", h:"End gate and PRs", s:"Deferred reviews wait here"},
+  {id:"retro", h:"Retro", s:"Every run, even smooth ones"},
+];
+
+// ---- Page ----
+const state = {route:"all", amp:null, focus:null, sel:null, tab:"flow"};
+const byId = Object.fromEntries([...NODES, ...LANE.nodes, ...LEVERS].map(n => [n.id, n]));
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const COL = {human:"Human-led", approved:"Approved", auto:"Autonomous"};
+
+function chips(boxId, opts, key) {
+  const box = document.getElementById(boxId);
+  opts.forEach(([v, label]) => {
+    const b = el("button", "chip", label); b.dataset.v = v;
+    b.onclick = () => { state[key] = (state[key] === v && key !== "route") ? null : v; render(); };
+    box.appendChild(b);
+  });
+}
+chips("routes", [["all","All"], ...ALL.map(k => [k, R[k]])], "route");
+chips("amps", [["A","Autonomy"],["M","Mastery"],["P","Purpose"]], "amp");
+chips("focuses", [["problem","Problem"],["solution","Solution"],["pipeline","Pipeline"]], "focus");
+
+function nodeCard(n) {
+  const d = el("div", `node ${n.c}`); d.dataset.id = n.id;
+  const ampKeys = Object.keys(n.amp || {});
+  d.innerHTML = `<div class="t">${n.t}</div><div class="m">${COL[n.c]} · job ${n.job}
+    <span class="f ${n.f}">${n.f}</span>${n.f2 ? `<span class="f ${n.f2}">${n.f2}</span>` : ""}${n.open ? `<span class="open">open</span>` : ""}</div>`;
+  if (ampKeys.length) d.appendChild(el("span", "amp", ["A","M","P"].filter(k => ampKeys.includes(k)).map(k => `<b>${k}</b>`).join("")));
+  d.onclick = () => { state.sel = n.id; render(); };
+  return d;
+}
+function visible(n) {
+  if (state.route !== "all" && !(n.routes || ALL).includes(state.route)) return false;
+  if (state.amp && !(n.amp && n.amp[state.amp])) return false;
+  if (state.focus && n.f !== state.focus && n.f2 !== state.focus) return false;
+  return true;
+}
+function buildBoard() {
+  const board = document.getElementById("board");
+  STAGES.forEach(s => {
+    const col = el("div", "stage"); col.appendChild(el("h2", null, s.name)); col.appendChild(el("div", "hint", s.hint));
+    NODES.filter(n => n.stage === s.id).forEach(n => col.appendChild(nodeCard(n)));
+    board.appendChild(col);
+  });
+  const lane = el("div", "lane"); lane.appendChild(el("h2", null, LANE.name)); lane.querySelector("h2").style.cssText = "font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 6px";
+  const row = el("div", "row"); LANE.nodes.forEach(n => row.appendChild(nodeCard(n))); lane.appendChild(row); board.appendChild(lane);
+}
+function buildTimeline() {
+  const tl = document.getElementById("timeline");
+  TIMELINE.forEach(step => {
+    const c = el("div", "tstep", `<div class="h">${step.h}</div><div class="s">${step.s}</div>`);
+    LEVERS.filter(l => l.at === step.id).forEach(l => {
+      const b = el("div", "lever", `<b>${l.t}</b> <span class="amp" style="position:static">${l.amp.split("").map(k => `<b>${k}</b>`).join("")}</span><div class="when">${l.when}</div>`);
+      b.dataset.id = l.id; b.onclick = () => { state.sel = l.id; render(); }; c.appendChild(b);
+    });
+    tl.appendChild(c);
+  });
+}
+function detail() {
+  const box = document.getElementById("detail"), n = byId[state.sel];
+  if (!n) return;
+  if (n.when) {
+    box.innerHTML = `<h3>${n.t}</h3><div class="kv">A lever on work in progress · takes effect: ${n.when}</div><p>${n.what}</p>
+      <div class="ampbox">${n.amp.split("").map(k => `<div><b>${{A:"Autonomy",M:"Mastery",P:"Purpose"}[k]}</b> serves this lever</div>`).join("")}</div>`;
+    return;
+  }
+  const amp = n.amp || {};
+  box.innerHTML = `<h3>${n.t}</h3>
+    <div class="kv">${COL[n.c]} · job ${n.job} · ${n.role} · <span class="f ${n.f}">${n.f}</span>${n.f2 ? ` <span class="f ${n.f2}">${n.f2}</span>` : ""}${n.open ? ` <span class="open">open</span>` : ""}<br>Skill: ${n.skill} · Routes: ${(n.routes || ALL).map(k => R[k]).join(", ")}</div>
+    <h4>What happens</h4><p>${n.what}</p>
+    <h4>Why it's ${COL[n.c].toLowerCase()}</h4><p>${n.why}</p>
+    <h4>Where you put in autonomy, mastery and purpose</h4>
+    ${Object.keys(amp).length ? `<div class="ampbox">${["A","M","P"].filter(k => amp[k]).map(k => `<div><b>${{A:"Autonomy",M:"Mastery",P:"Purpose"}[k]}</b>${amp[k]}</div>`).join("")}</div>`
+      : `<p>Nothing here needs you. That's deliberate: a step that needs you but serves no focus would be a chore.</p>`}`;
+}
+function render() {
+  document.querySelectorAll("#routes .chip").forEach(b => b.classList.toggle("on", b.dataset.v === state.route));
+  document.querySelectorAll("#amps .chip").forEach(b => b.classList.toggle("on", b.dataset.v === state.amp));
+  document.querySelectorAll("#focuses .chip").forEach(b => b.classList.toggle("on", b.dataset.v === state.focus));
+  document.querySelectorAll(".node").forEach(d => { d.classList.toggle("dim", !visible(byId[d.dataset.id])); d.classList.toggle("sel", d.dataset.id === state.sel); });
+  document.querySelectorAll(".lever").forEach(d => { const l = byId[d.dataset.id]; d.classList.toggle("dim", !!state.amp && !l.amp.includes(state.amp)); d.classList.toggle("sel", d.dataset.id === state.sel); });
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === state.tab));
+  document.querySelectorAll(".v").forEach(v => v.classList.toggle("on", v.dataset.v === state.tab));
+  document.getElementById("routes").style.display = document.getElementById("focuses").style.display = state.tab === "flow" ? "" : "none";
+  detail();
+}
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => { state.tab = t.dataset.tab; render(); });
+buildBoard(); buildTimeline(); render();
+</script>
+</body>
+</html>
