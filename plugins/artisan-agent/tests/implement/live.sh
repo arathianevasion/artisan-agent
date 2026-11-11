@@ -132,8 +132,9 @@ red_before_commit() {
       | select(.type == "tool_use" and .name == "Bash" and (.input.command | test("git( -C [^ ]+)? commit")))
       | .id] as $commits
     | .[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result")
+    | .tool_use_id as $id
     | (if (.content | tostring | test("FAILED \\(|AssertionError|ImportError")) then "red" else empty end),
-      (if ($commits | index(.tool_use_id)) != null then "commit" else empty end)' "$1/session.jsonl" 2>/dev/null | awk '
+      (if ($commits | index($id)) != null then "commit" else empty end)' "$1/session.jsonl" 2>/dev/null | awk '
     $0 == "red" && !r { r = NR } $0 == "commit" && !c { c = NR }
     END { exit !(r && (!c || r < c)) }'
 }
