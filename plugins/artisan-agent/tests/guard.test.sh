@@ -88,7 +88,8 @@ test_settings_json_escapes_the_hook_command() {
     out=$("$GUARD" settings-json --hook-command "$cmd")
     got=$(printf '%s' "$out" | jq -r '.hooks.UserPromptExpansion[0].hooks[0].command')
     assert_eq "$cmd" "$got"
-    got=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["hooks"]["UserPromptExpansion"][0]["hooks"][0]["command"],end="")')
+    # second, independent parser
+    got=$(printf '%s' "$out" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["hooks"]["UserPromptExpansion"][0]["hooks"][0]["command"],end="")')
     assert_eq "$cmd" "$got"
   done
 }

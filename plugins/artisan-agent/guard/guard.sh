@@ -63,7 +63,7 @@ matcher() { printf '^%s:(%s)$' "$UPSTREAM" "$(names | join '|')"; }
 
 deny_lines() { names | while read -r n; do printf 'Skill(%s:%s)\n' "$UPSTREAM" "$n"; done; }
 
-# JSON string escaping for a value that goes between double quotes (bash 3.2-safe).
+# JSON string escaping for a value that goes between double quotes: backslash, quote, tab, LF, CR (enough for a hook command; other control characters are not handled). Only --hook-command needs it; the matcher, deny rules and ${CLAUDE_PLUGIN_ROOT} paths are fixed literals or skill names. bash 3.2-safe.
 json_escape() {
   local s=$1 tab nl cr
   tab=$(printf '\t'); nl=$(printf '\n'); cr=$(printf '\r')
