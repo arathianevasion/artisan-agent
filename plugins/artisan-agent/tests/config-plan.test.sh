@@ -228,6 +228,8 @@ test_an_override_during_the_run_changes_the_state_file_but_not_the_config() {
   assert_eq 4 "$(state_get .plan.attempts_per_ticket)" "the sweep reads this"
   assert_eq 4 "$(state_get .plan.config.attempts_per_ticket)"
   assert_eq '{"value":4,"project":2}' "$(state_get '.plan.overrides.attempts_per_ticket | tojson')"
+  "$SCRIPTS/state.sh" override "$RUN_DIR" overrun_allowance_percent 50
+  assert_eq 15 "$(state_get .plan.budget_usd)" "budget follows the overrun allowance (10 + 50%)"
   assert_eq "$before" "$(config_sum)" "config.yml unchanged"
   assert_eq 2 "$(cd "$PROJECT" && config get attempts_per_ticket)"
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "nothing committed changed"
@@ -244,6 +246,9 @@ test_an_override_of_an_unknown_key_or_with_the_wrong_type_is_refused() {
   before=$(state_sum)
   assert_status 1 "$SCRIPTS/state.sh" override "$RUN_DIR" max_agents -1
   assert_status 1 "$SCRIPTS/state.sh" override "$RUN_DIR" nope 3
+  local err
+  err=$("$SCRIPTS/state.sh" override "$RUN_DIR" max_agents.x 3 2>&1 || true)
+  assert_contains "$err" "max_agents.x is not a setting"
   assert_eq "$before" "$(state_sum)" "state file untouched"
 }
 

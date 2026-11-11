@@ -24,7 +24,7 @@ config_yaml_json() {
 #   run_override($key; $value): a plan, or the plan in a state file (.), with one
 #     setting overridden for this run: .config changed, .overrides[$key] =
 #     {value, project} (project: the value before this run touched it), and
-#     max_agents and attempts_per_ticket kept in step with the config.
+#     max_agents, attempts_per_ticket and budget_usd kept in step with the config.
 #   parse_value: a command-line string as a number, true/false, null or text.
 #   settings_list: every setting as [{key, value}], keys dotted, in file order.
 CONFIG_JQ_DEFS='
@@ -50,7 +50,7 @@ CONFIG_JQ_DEFS='
       else . end;
   def effective($defaults): ($defaults * (. // {} | strip_nulls)) | check_against($defaults; []);
   def parse_value:
-    if test("^-?[0-9]+(\\.[0-9]+)?$") then tonumber
+    if test("^-?([0-9]+|[0-9]*\\.[0-9]+)$") then tonumber
     elif . == "true" then true elif . == "false" then false
     elif . == "null" or . == "" then null else . end;
   def override($key; $value):
@@ -65,12 +65,16 @@ CONFIG_JQ_DEFS='
       elif ($value | type) == "number" and $value < 0 then error("\($key) must not be negative")
       else setpath($p; $value) end;
   def run_override($key; $value):
-    (.config | getpath($key | split("."))) as $was
+    .config as $before
     | .config |= override($key; $value)
+    | ($before | getpath($key | split("."))) as $was
     | .overrides = ((.overrides // {}) | .[$key] = {value: $value,
         project: (if has($key) then .[$key].project else $was end)})
     | .max_agents = .config.max_agents
-    | .attempts_per_ticket = .config.attempts_per_ticket;
+    | .attempts_per_ticket = .config.attempts_per_ticket
+    | if (.estimate_usd | type) == "number"
+      then .budget_usd = ((.estimate_usd * (1 + .config.overrun_allowance_percent / 100) * 100 | round) / 100)
+      else . end;
   def settings_list:
     . as $c
     | [leaves | select(.[0] != "areas" and .[0] != "estimate_multipliers")

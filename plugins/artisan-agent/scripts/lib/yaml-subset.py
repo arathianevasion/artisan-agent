@@ -6,7 +6,7 @@ Supported: block maps nested by indentation, scalars (numbers, true/false,
 null, ~, empty, quoted or bare strings), flow lists [a, b] and flow maps
 {a: 1} of scalars, "- item" block lists of scalars, and # comments.
 Anything else is an error naming the line, so a config never half-reads.
-Exit status: 0 ok, 1 unreadable or unsupported.
+Exit status: 0 ok, 1 unreadable or unsupported, 2 bad usage.
 """
 
 import json
