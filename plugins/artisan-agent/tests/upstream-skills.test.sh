@@ -18,7 +18,7 @@ test_list_has_no_duplicate_names() {
 test_list_matches_newest_installed_cache_when_present() {
   local root newest actual
   root=$(cache_root)
-  newest=$(ls "$root" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+  newest=$(ls "$root" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)
   if [ -z "$newest" ] || [ ! -d "$root/$newest/skills" ]; then
     echo "skip: no mattpocock-skills cache at $root"
     return 0
