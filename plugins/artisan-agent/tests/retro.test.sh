@@ -140,6 +140,14 @@ test_check_refuses_a_lesson_without_role_reach_or_change() {
   assert_contains "$err" "lesson Y: kind"
 }
 
+test_a_check_must_be_the_check_itself_not_a_line_in_a_standards_file() {
+  sample_run; mkdir -p "$RUN_DIR/retro"
+  echo '{"lessons":[{"id":"X","kind":"product-taste","checkable":true,"lesson":"Exports carry a header row","role":"product","scope":"this-project","why":"#12","change":{"path":"PRODUCT_STANDARDS.md","text":"- header rows"}}]}' \
+    >"$RUN_DIR/retro/lessons.json"
+  local err; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  assert_contains "$err" "lesson X: a check's change must be the check itself"
+}
+
 test_render_is_one_chat_round_with_batch_questions_signals_and_satisfaction() {
   sample_run; seed_lessons
   "$RETRO" check "$RUN_DIR" >/dev/null

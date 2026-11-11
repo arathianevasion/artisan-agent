@@ -52,7 +52,7 @@ Every lesson has a kind, and the kind decides its home:
 | `upstream` | the upstream check | none |
 | `experience` | the satisfaction record | none |
 
-A **taste lesson a machine can check becomes a check**: if a rule from coding standards, product standards or the glossary could be enforced by a lint rule, test, hook or CI job, set `checkable: true` and give the check as the `change`. Keep project paths relative; `section` is a markdown heading such as `## Always ask`; `text` is added at the end of that section (the file and section are made if missing), or replaces the file when `replace` is true.
+A **taste lesson a machine can check becomes a check**: if a rule from coding standards, product standards or the glossary could be enforced by a lint rule, test, hook or CI job, set `checkable: true` and give the check itself as the `change` (the test file, the lint rule, the CI step), never a line in a standards file; propose it once, not as a rule and a check side by side. A check is runnable code that fails when the rule is broken, written against the project's real files: never a TODO or a placeholder. It is proven to fail before anyone trusts it. Keep project paths relative; `section` is a markdown heading such as `## Always ask`; `text` is added at the end of that section (the file and section are made if missing), or replaces the file when `replace` is true.
 
 Fields, all required unless marked:
 

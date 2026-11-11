@@ -41,6 +41,8 @@ HOMES = {
     "experience": ("the satisfaction record", "individual"),
 }
 TASTE = ("engineering-taste", "product-taste", "domain")
+# Where prose lessons live; a check is never only a line in one of these.
+PROSE_HOMES = r"^(CODING_STANDARDS\.md|PRODUCT_STANDARDS\.md|GLOSSARY\.md|docs/adr/)"
 ROLES = ("product", "engineering", "both")
 SCOPES = ("this-project", "generalises")
 FOCUSES = ("problem", "solution", "pipeline", "chore")
@@ -231,6 +233,9 @@ def check(lessons_path, threshold):
                 problems.append("%s: needs change.path and change.text for %s" % (where, l["home"]))
             elif os.path.isabs(ch["path"]) or ".." in ch["path"].split("/"):
                 problems.append("%s: change.path must be inside the repo" % where)
+            elif kind == "mechanical" and re.match(PROSE_HOMES, ch["path"]):
+                problems.append("%s: a check's change must be the check itself (a test, lint rule, hook or CI job), not %s"
+                                % (where, ch["path"]))
         if kind == "pipeline":
             t = l.get("ticket") or {}
             t.setdefault("title", text)
@@ -315,7 +320,7 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
         out += ["### Judgement calls", ""]
         for i, l in enumerate(asks, 1):
             out.append("%d. **%s** %s" % (i, l["id"], l["question"]))
-            out.append("   Lesson: %s. Home: %s. Role: %s. Reach: %s." % (l["lesson"], l["home"], l["role"], l["scope"]))
+            out.append("   Lesson: %s. Home: %s. Role: %s. Reach: %s." % (l["lesson"].rstrip("."), l["home"], l["role"], l["scope"]))
             if l.get("recommendation"):
                 out.append("   Recommend: %s" % l["recommendation"])
             out.append("   Why: %s" % l["why"])
