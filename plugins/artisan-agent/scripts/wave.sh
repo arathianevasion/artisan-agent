@@ -9,29 +9,44 @@
 #       create the integration branch (from REF, default the main checkout's
 #       branch) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
-#   wave.sh launch <run-dir> [--model M] [--estimate-usd N] [-- claude args...]
+#   wave.sh launch <run-dir> [--resume] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
 #       The state lock passes to the orchestrator's runner for the wave.
-#       Prints "orchestrator-w<wave> <attempt> <runner-pid>".
+#       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
+#       halted (a whole wave failed); --resume is the Artisan's decision to
+#       carry on, and clears the halt.
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
-#       "next: <launch|wait|decide|blocked|done>", then a ticket table.
+#       "next: <launch|wait|halted|decide|blocked|done>", then a
+#       ticket table.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
 #       refuse unless the ticket is in scope (4), queued, every blocker is
-#       merged into the integration branch or closed (5) and a slot is free
-#       under Max Agents (9); then branch a worktree from the integration tip
-#       and launch the worker with /artisan-agent:implement. Prints its pid.
+#       merged into the integration branch or closed (5), a slot is free
+#       under Max Agents (9) and its expected files overlap no ticket in
+#       flight or in this wave (10, wave-width.sh check); then branch a
+#       worktree from the integration tip and launch the worker with
+#       /artisan-agent:implement. A retry is a fresh worker on the same
+#       branch, given the failed attempt's evidence. Prints its pid.
 #   wave.sh merge <run-dir> <ticket>
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the plan's suite command
 #       there, record the merge and remove the worker's worktree. Prints the
-#       merge commit. 8: the worker is still running. 6: refused or conflict,
+#       merge commit. 8: the worker is still running. 11: a conflict, left in
+#       progress for its one /artisan-agent:resolve-conflicts try (then
+#       wave.sh resolved). 6: refused, or a conflict after that try was used,
 #       7: suite red (both mark the ticket blocked and queue a decision).
+#       An attempt that did not complete is a failed attempt: queued for a
+#       fresh worker, or blocked once it has used its attempts (6).
+#   wave.sh resolved <run-dir> <ticket> [--gave-up REASON]
+#       after /artisan-agent:resolve-conflicts: commit the resolved merge and
+#       run the suite as merge does. 6: still conflicted, or gave up (the
+#       merge is aborted); 7: suite red. Either way the ticket is blocked
+#       with its branch and worktree kept.
 #   wave.sh block <run-dir> <ticket> <reason>
 #       block a returned ticket the orchestrator won't merge (its diff misses
 #       the expected output): queues an exception decision, logs the event.
@@ -39,6 +54,7 @@
 #       post the evidence on the ticket, tick its met criteria, close it.
 #   wave.sh report <run-dir>
 #       the wave report (JSON) the orchestrator writes as its result file.
+#       Halts the run first if every ticket dispatched in this wave failed.
 #
 # Environment:
 #   ARTISAN_WRITER_PID      the long-lived pid writing state (the chat's
@@ -50,7 +66,9 @@
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 lock held or an orchestrator still
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
-# conflicted, 7 suite red, 8 worker still running, 9 no free slot.
+# conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
+# expected files overlap, 11 conflict awaiting its one resolution try,
+# 12 the run is halted.
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
 
@@ -131,6 +149,29 @@ block() {
     | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
 }
 
+# The wave the last orchestrator runs (0 before any): a dispatch is part of it.
+WAVE_JQ='def current_wave: ((.orchestrators // []) | last | .wave) // 0;'
+
+# halt_if_wave_failed: once nothing in the current wave is still in flight,
+# returned or waiting to retry, and every ticket dispatched in it is blocked,
+# the run halts: a decision for the Artisan, and no wave launches until they
+# resume it. Idempotent.
+halt_if_wave_failed() {
+  apply "$WAVE_JQ"'
+    current_wave as $w
+    | [.tickets | to_entries[] | select(.value.wave != null and .value.wave == $w)] as $d
+    | if $w == 0 or .halted != null or ($d | length) == 0
+         or ([$d[] | select(.value.status != "blocked")] | length) > 0 then .
+      else ([$d[].key]) as $ts
+        | .halted = {wave: $w, tickets: $ts, at: $now,
+                     reason: "every ticket dispatched in wave \($w) failed"}
+        | .decisions += [{id: ((.decisions | length) + 1), kind: "halt",
+            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))): something upstream is likely wrong. Resume the run, reslice or end it?",
+            status: "waiting", at: $now}]
+        | event({event: "halted", wave: $w, tickets: $ts}; $now)
+      end'
+}
+
 # ------------------------------------------------------------------- start
 
 cmd_start() {
@@ -188,9 +229,10 @@ orchestrator_state() { # id attempt -> classify-worker.sh's line
 cmd_launch() {
   open_run "${1:-}"
   shift
-  local model= estimate= args=()
+  local model= estimate= args=() resume=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      --resume) resume=1; shift ;;
       --model) [ $# -ge 2 ] || usage; model=$2; shift 2 ;;
       --estimate-usd) [ $# -ge 2 ] || usage; estimate=$2; shift 2 ;;
       --) shift; args=("$@"); break ;;
@@ -217,6 +259,16 @@ cmd_launch() {
   me=$(writer)
   state_lock "$RUN_DIR" "$me" || exit 3
   export ARTISAN_WRITER_PID=$me
+
+  if [ "$(get '.halted != null')" = true ]; then
+    [ "$resume" -eq 1 ] || state_die 12 "wave.sh: the run is halted: $(get '.halted.reason'); nothing launches until the Artisan decides (wave.sh launch --resume carries on)"
+    apply '
+      .decisions |= map(if .kind == "halt" and .status == "waiting"
+                        then .status = "decided" | .choice = "resume" | .by = "Artisan" | .decided_at = $now
+                        else . end)
+      | event({event: "resumed", wave: .halted.wave}; $now)
+      | del(.halted)'
+  fi
 
   [ -n "$model" ] || model=$(get --arg d "$DEFAULT_ORCHESTRATOR_MODEL" '.plan.orchestrator.model // $d')
   [ -n "$estimate" ] || estimate=$(get --arg d "$DEFAULT_ORCHESTRATOR_ESTIMATE_USD" '.plan.orchestrator.estimate_usd // $d')
@@ -317,8 +369,10 @@ cmd_status() {
         reconciled=0
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
       }
+      [ -z "${id:-}" ] || halt_if_wave_failed
       waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
-      if [ "$waiting" -gt 0 ]; then next=decide
+      if [ "$(get '.halted != null')" = true ]; then next=halted
+      elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
       elif [ "$(get '[.plan.scope[] as $t | .tickets[$t].status | select(. == "merged" or . == "closed")] | length')" \
@@ -329,9 +383,10 @@ cmd_status() {
   esac
   echo "next: $next"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
+  [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
   ticket_table
-  if [ "${next}" = decide ]; then
+  if [ "${next}" = decide ] || [ "${next}" = halted ]; then
     echo
     echo "| Decision | Ticket | Question |"
     echo "|---|---|---|"
@@ -384,6 +439,7 @@ cmd_dispatch() {
   max=$(get '.plan.max_agents // 5')
   [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
   check_blockers "$t"
+  "$SCRIPT_DIR/wave-width.sh" check "$RUN_DIR" "$t" || exit $?
 
   local ib base branch n wt prev repo title path expected estimate minutes model turns deadline prompt pid ref
   ib=$(integration_branch)
@@ -394,8 +450,10 @@ cmd_dispatch() {
   prev=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   if [ -n "$prev" ] && [ -d "$prev" ]; then
     # A retry continues the same branch in a fresh worktree; the old one must be clean.
-    git -C "$MAIN" worktree remove "$prev" 2>/dev/null \
-      || die "the previous attempt's worktree $prev has uncommitted work; look at it before a retry"
+    if ! git -C "$MAIN" worktree remove "$prev" 2>/dev/null; then
+      block "$t" "attempt $((n - 1))'s worktree $prev has uncommitted work, so no fresh worker can take the branch"
+      state_die 6 "wave.sh: #$t blocked: the previous attempt's worktree $prev has uncommitted work"
+    fi
   fi
   mkdir -p "$WT_ROOT"
   if git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
@@ -428,8 +486,11 @@ You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
   if [ "$n" -gt 1 ]; then
-    printf -- '- This is a retry. The last attempt failed: %s\n' \
+    printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
+      "$(get '.plan.attempts_per_ticket // 2')" \
       "$(get --arg t "$t" '.tickets[$t].failures | last | "\(.reason)"')" >>"$prompt"
+    failure_evidence "$t" "$((n - 1))" >"$RUN_DIR/prompts/$t.$n.failure.md"
+    { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"
   fi
 
   read_extra_args
@@ -449,8 +510,49 @@ EOF
     "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" \
       "$(awk -v now="$(state_now)" -v m="$minutes" 'BEGIN { printf "%d", now + m * 120 }')"
   fi
-  apply '.tickets[$t] |= (.worktree = $wt | .base = $base)' --arg t "$t" --arg wt "$wt" --arg base "$base"
+  apply "$WAVE_JQ"'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
+    --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
+}
+
+# failure_evidence ticket attempt: what a retry's fresh worker is told about
+# the attempt that failed, from that attempt's files and its branch. Bounded:
+# a few lines from each source, never a transcript.
+failure_evidence() {
+  local t="$1" p="$2" w="$RUN_DIR/workers/$1.$2" res="$RUN_DIR/results/$1.$2.result.json"
+  local exitf="$RUN_DIR/results/$1.$2.exit.json" branch base log
+  echo "## Failure evidence from attempt $p"
+  echo
+  get --arg t "$t" --argjson p "$p" '.tickets[$t].failures[] | select(.attempt == $p) | "- Why it counted as failed: \(.reason)"'
+  echo "- Judged from its files: $("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$p" 2>/dev/null || echo "unknown")"
+  [ ! -f "$exitf" ] || jq -r '"- Exit record: \(.reason), exit code \(.exit_code)"' "$exitf" 2>/dev/null || true
+  [ ! -f "$w/output.json" ] || jq -r '"- Session: \(.subtype // "-"), is_error \(.is_error // "-"), \(.num_turns // "-") turns"' "$w/output.json" 2>/dev/null || true
+  if [ -f "$res" ]; then
+    jq -r '
+      "- Its evidence record said: status \(.status // "-")"
+        + (if .tests then ", suite_passed \(.tests.suite_passed // "-") (\(.tests.summary // "-"))" else "" end),
+      ((.acceptance // [])[] | select(.met != true) | "- Not met: \(.criterion) (\(.evidence.why // "no reason given"))"),
+      ((.unsure // [])[] | "- Unsure: \(.)"),
+      (if .notes then "- Notes: \(.notes)" else empty end)' "$res" 2>/dev/null || true
+  else
+    echo "- It wrote no evidence record."
+  fi
+  branch=$(get --arg t "$t" '.tickets[$t].branch')
+  base=$(get --arg t "$t" '.tickets[$t].base // ""')
+  if [ -n "$base" ] && log=$(git -C "$MAIN" log --oneline -n 10 "$base..refs/heads/$branch" 2>/dev/null) && [ -n "$log" ]; then
+    echo "- Its commits, already on $branch (build on them or replace them):"
+    printf '%s\n' "$log" | sed 's/^/    /'
+  else
+    echo "- It left no commits on $branch."
+  fi
+  if [ -f "$w/output.json" ] && [ -n "$(jq -r '.result // empty' "$w/output.json" 2>/dev/null)" ]; then
+    echo "- The end of its last reply:"
+    jq -r '.result' "$w/output.json" | tail -n 8 | sed 's/^/    /'
+  fi
+  if [ -s "$w/stderr.log" ]; then
+    echo "- The end of its stderr:"
+    tail -n 8 "$w/stderr.log" | sed 's/^/    /'
+  fi
 }
 
 # ------------------------------------------------------------------- merge
@@ -470,7 +572,7 @@ cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local status n cls branch tip claimed wt ib suite pre sha log title worker_wt
+  local status n cls branch tip claimed wt ib suite pre title
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
   n=$(get --arg t "$t" '.tickets[$t].attempts')
@@ -478,7 +580,9 @@ cmd_merge() {
   case "$cls" in
     running*) state_die 8 "wave.sh: #$t's worker is still running; wait for its exit record" ;;
     completed*) ;;
-    *) block "$t" "attempt $n did not complete ($cls)"; state_die 6 "wave.sh: #$t not merged: attempt $n is $cls" ;;
+    *)
+      apply 'failed_attempt($t; $r; $now)' --arg t "$t" --arg r "attempt $n did not complete ($cls)"
+      state_die 6 "wave.sh: #$t not merged: attempt $n is $cls; it is now $(get --arg t "$t" '.tickets[$t].status')" ;;
   esac
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch") || die "no branch $branch"
@@ -491,16 +595,33 @@ cmd_merge() {
   [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after every merge"
   wt=$(integration_worktree)
   ib=$(integration_branch)
+  abandon_pending_resolution "$wt"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   pre=$(git -C "$wt" rev-parse HEAD)
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
   if ! git -C "$wt" merge --no-ff --no-edit -m "Merge #$t ($title) into $ib" "$branch" >/dev/null 2>&1; then
     local paths
     paths=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-    git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
-    block "$t" "merge conflict in ${paths:-unknown paths}"
-    state_die 6 "wave.sh: #$t not merged: conflict in ${paths:-unknown paths}"
+    paths=${paths% }
+    if [ "$(get --arg t "$t" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
+      git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
+      block "$t" "merge conflict in ${paths:-unknown paths}; its one /artisan-agent:resolve-conflicts try is used"
+      state_die 6 "wave.sh: #$t not merged: conflict in ${paths:-unknown paths}"
+    fi
+    # Left in progress for the one try at resolving it.
+    apply '.tickets[$t].resolve = {attempt: $n, paths: ($p | split(" ")), pre: $pre, outcome: "pending", at: $now}
+      | event({event: "conflict", ticket: $t, paths: ($p | split(" ")), next: "resolve-conflicts"}; $now)' \
+      --arg t "$t" --argjson n "$n" --arg p "$paths" --arg pre "$pre"
+    state_die 11 "wave.sh: #$t conflicts in $paths; run /artisan-agent:resolve-conflicts once in $wt, then wave.sh resolved $RUN_DIR $t"
   fi
+  finish_merge "$t" "$n" "$wt" "$pre"
+}
+
+# The suite after a merge commit is made: green records the merge, red undoes
+# it and blocks the ticket (7).
+finish_merge() { # ticket attempt worktree pre-merge-commit
+  local t="$1" n="$2" wt="$3" pre="$4" suite log sha worker_wt
+  suite=$(get '.plan.suite_command')
   mkdir -p "$RUN_DIR/merges"
   log="$RUN_DIR/merges/$t.$n.suite.log"
   if ! (cd "$wt" && sh -c "$suite") >"$log" 2>&1; then
@@ -519,6 +640,71 @@ cmd_merge() {
       || echo "wave.sh: left $worker_wt in place (it has changes); the merge stands" >&2
   fi
   printf '%s\n' "$sha"
+}
+
+# A conflict left in progress whose resolution never came back (the
+# orchestrator ended mid-try): abort it, and block its ticket, whose one try
+# is used. Runs before any other merge.
+abandon_pending_resolution() { # integration worktree
+  local wt="$1" t
+  t=$(get '[.tickets | to_entries[] | select(.value.resolve.outcome? == "pending") | .key] | first // ""')
+  [ -n "$t" ] || return 0
+  git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$(get --arg t "$t" '.tickets[$t].resolve.pre')"
+  apply '.tickets[$t].resolve.outcome = "abandoned"' --arg t "$t"
+  block "$t" "its conflict resolution never finished (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"
+}
+
+# --------------------------------------------------------------- resolved
+
+cmd_resolved() {
+  open_run "${1:-}"
+  local t="${2:-}" gave_up=
+  [ -n "$t" ] || usage
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --gave-up) [ $# -ge 2 ] || usage; gave_up=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  local wt ib n pre branch paths left markers title why
+  [ "$(get --arg t "$t" '.tickets[$t].resolve.outcome? // ""')" = pending ] \
+    || die "#$t has no conflict waiting on its resolution"
+  wt=$(integration_worktree)
+  ib=$(integration_branch)
+  n=$(get --arg t "$t" '.tickets[$t].resolve.attempt')
+  pre=$(get --arg t "$t" '.tickets[$t].resolve.pre')
+  branch=$(get --arg t "$t" '.tickets[$t].branch')
+  paths=$(get --arg t "$t" '.tickets[$t].resolve.paths | join(" ")')
+  why=$gave_up
+  if [ -z "$why" ]; then
+    if ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null; then
+      why="the merge is no longer in progress"
+    elif [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$(git -C "$MAIN" rev-parse "refs/heads/$branch")" ]; then
+      why="the merge in progress is not $branch"
+    else
+      left=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
+      markers=$(cd "$wt" && grep -l -E '^(<<<<<<<|>>>>>>>)( |$)' -- $paths 2>/dev/null | tr '\n' ' ' || true)
+      if [ -n "$left" ]; then why="still conflicted: ${left% }"
+      elif [ -n "$markers" ]; then why="conflict markers left in ${markers% }"
+      elif ! git -C "$wt" diff --quiet; then why="changes left unstaged: $(git -C "$wt" diff --name-only | tr '\n' ' ')"
+      fi
+    fi
+  fi
+  if [ -n "$why" ]; then
+    git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
+    apply '.tickets[$t].resolve |= (.outcome = "unresolved" | .why = $w)
+      | event({event: "resolve", ticket: $t, outcome: "unresolved", why: $w}; $now)' --arg t "$t" --arg w "$why"
+    block "$t" "merge conflict in $paths that /artisan-agent:resolve-conflicts could not resolve: $why"
+    state_die 6 "wave.sh: #$t not merged: $why; blocked, with $branch and its worktree kept"
+  fi
+  title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
+  git -C "$wt" commit -q --no-verify -m "Merge #$t ($title) into $ib" \
+    -m "Conflicts in $paths resolved by /artisan-agent:resolve-conflicts." >/dev/null \
+    || die "could not commit the resolved merge of #$t"
+  apply '.tickets[$t].resolve.outcome = "resolved"
+    | event({event: "resolve", ticket: $t, outcome: "resolved"}; $now)' --arg t "$t"
+  finish_merge "$t" "$n" "$wt" "$pre"
 }
 
 # ------------------------------------------------------------------- close
@@ -572,6 +758,7 @@ cmd_close() {
 
 cmd_report() {
   open_run "${1:-}"
+  halt_if_wave_failed
   jq '{
     run_id, wave: ((.orchestrators // []) | last | .wave // null),
     integration: .integration,
@@ -579,8 +766,9 @@ cmd_report() {
       ticket: $t, title: (.plan.tickets[$t].title // null), status: $k.status,
       attempts: $k.attempts, merge_commit: $k.merge_commit,
       tracker_closed: ($k.tracker_closed // false), cost_usd: $k.cost_usd,
-      blocked_reason: ($k.blocked_reason // null)}],
+      blocked_reason: ($k.blocked_reason // null), resolve: ($k.resolve // null)}],
     decisions_waiting: [.decisions[] | select(.status == "waiting")],
+    halted: (.halted // null),
     findings: (.findings | length),
     costs: .costs,
     events: (.events // [] | length)
@@ -596,6 +784,7 @@ case "$cmd" in
   status) cmd_status "$@" ;;
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
+  resolved) cmd_resolved "$@" ;;
   close) cmd_close "$@" ;;
   block)
     [ $# -eq 3 ] || usage
