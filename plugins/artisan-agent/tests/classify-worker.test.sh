@@ -14,10 +14,7 @@ setup_run() {
 }
 
 cleanup() {
-  local pid
-  for pid in $(cat "$RUN"/workers/*/runner.pid "$FAKE_CLAUDE_PID" 2>/dev/null); do
-    kill -KILL "-$pid" "$pid" 2>/dev/null || true
-  done
+  kill_test_processes
 }
 
 classify() { "$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46 "$@"; }

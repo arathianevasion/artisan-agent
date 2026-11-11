@@ -19,10 +19,7 @@ setup_run() {
 
 # Stop anything a test left running: the runner and its worker's group.
 cleanup() {
-  local pid
-  for pid in $(cat "$RUN"/workers/*/runner.pid "$FAKE_CLAUDE_PID" 2>/dev/null); do
-    kill -KILL "-$pid" "$pid" 2>/dev/null || true
-  done
+  kill_test_processes
 }
 
 run_ticket() {

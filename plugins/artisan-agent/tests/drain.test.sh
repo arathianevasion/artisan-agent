@@ -411,10 +411,7 @@ EOF
 }
 
 handoff_cleanup() {
-  local pid
-  for pid in $(cat "$RUN_DIR"/workers/*/runner.pid 2>/dev/null); do
-    kill -KILL "-$pid" "$pid" 2>/dev/null || true
-  done
+  kill_test_processes
   kill_workers
 }
 

@@ -23,3 +23,17 @@ assert_status() { # expected-status command...
   "$@" >/dev/null 2>&1 || got=$?
   [ "$want" = "$got" ] || fail "assert_status: expected exit $want from [$*], got $got"
 }
+
+# kill_test_processes: SIGKILL every live process whose command line names
+# this test's own directory, and the process group each one leads (a runner's
+# session, a worker's group). Never by a pid recorded earlier: a long suite
+# wraps pids within a minute, so a dead runner's pid may by now be another
+# process's, another suite's verifier, say, which a kill by number would end
+# without an exit record (the "verified twice" flake, #106).
+kill_test_processes() {
+  local pid
+  for pid in $(pgrep -f "$TEST_TMPDIR" 2>/dev/null); do
+    [ "$pid" != "$$" ] || continue
+    kill -KILL "-$pid" "$pid" 2>/dev/null || true
+  done
+}

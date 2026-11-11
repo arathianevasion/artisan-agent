@@ -46,10 +46,7 @@ setup_wave() { # scope-json
 }
 
 cleanup() {
-  local pid
-  for pid in $(cat "$RUN_DIR"/workers/*/runner.pid 2>/dev/null); do
-    kill -KILL "-$pid" "$pid" 2>/dev/null || true
-  done
+  kill_test_processes
   kill_workers
 }
 
@@ -74,12 +71,13 @@ EOF
 }
 
 # The verifier: a verdict in the evidence format on the criteria verify.sh
-# gave it, each met unless VERIFIER_UNMET names it. VERIFIER_MODE=garbage
-# writes something that is not a verdict.
+# gave it, after VERIFIER_SLEEP seconds, each met unless VERIFIER_UNMET names
+# it. VERIFIER_MODE=garbage writes something that is not a verdict.
 write_verifier_script() {
   export FAKE_CLAUDE_SCRIPT_VERIFIER="$TEST_TMPDIR/verifier.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF'
 set -e
+sleep "${VERIFIER_SLEEP:-0}"
 echo "$PWD" >>"$ARTISAN_RUN_DIR/../verifier-dirs"
 key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
 if [ "${VERIFIER_MODE:-}" = garbage ]; then echo '{"verdict": "pass"}' >"$ARTISAN_RESULT_FILE"; exit 0; fi
