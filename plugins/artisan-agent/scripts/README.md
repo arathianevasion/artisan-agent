@@ -7,6 +7,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `run-ticket.sh` | Launches one capped headless worker (or, with `--role orchestrator`, a wave's orchestrator; with `--role verifier`, a ticket's verifier) detached; always leaves an exit record. Refuses to launch into a run folder with no state file (exit 4) | the runner's PID, at once |
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
+| `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 
 Each script's header has its full usage.

@@ -129,6 +129,8 @@ Then the wave digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh dig
 
 A finding is a fact a worker turned up that may matter to other work (its evidence record's `findings`, logged by the sweep). Between waves, file each finding that names missing work as a new ticket on the tracker, citing the ticket that found it, **off the frontier**: no blocking edges, no wave. Then run `/artisan-agent:triage` on it before it can join any run. A ticket a worker invented mid-run hasn't been grilled, sized or checked, and an untriaged finding entering the dispatch queue is how one worker's guess becomes three more workers' work. Only once triage admits it does it get edges, and it joins a run only through its own plan step and approval. If that changes the waves, show what moved before continuing.
 
+Questions a worker filed for triage are not findings to file again: `${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md` says how a blocked ticket waits on its question while the wave carries on, how `questions.sh sync` (run it whenever `wave.sh status` says `decide`, and between waves) redispatches it with the answer, and the "pull from the run or carry on" ask when triage defers one.
+
 ### 8. The run summary
 
 When `status` says `done`, or the run halts, report:
