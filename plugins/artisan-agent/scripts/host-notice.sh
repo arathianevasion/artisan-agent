@@ -13,7 +13,7 @@
 #   10 host_configured is true and this machine is not the host: prints the
 #      one-line notice and the offer, for the Engineering chat. Do not start the
 #      run locally unless the Artisan says so; to move one, see
-#      skills/implement-plan/references/host-and-move.md
+#      ${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/host-and-move.md
 #   Either way, a leftover host.json from an old login stamp (not a host) adds a
 #   line starting "legacy:" offering `login-check.sh cleanup`.
 #
@@ -43,7 +43,7 @@ if [ -f "$HOST_FILE" ] && jq -e '.configured == true' "$HOST_FILE" >/dev/null 2>
 "$LC" legacy 2>/dev/null | grep '^legacy:' || true
 
 if [ "$configured" = true ] && [ "$is_host" = 0 ]; then
-  echo "This project's runs live on the always-on host, and this machine is not it. Start the run there? (Say yes to run it here anyway.)"
+  echo "This project's runs live on the always-on host and this machine is not it: start the run there? (It starts here only if you tell me to run it here.)"
   exit 10
 fi
 [ "$configured" = true ] && echo "here: this machine is the host"

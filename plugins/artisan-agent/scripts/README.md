@@ -11,7 +11,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 | `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login in `login.json` (never `host.json`); `legacy` and `cleanup` fix a `host.json` an old stamp made (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
-| `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first |
+| `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first (this script's own; not `wave.sh`'s 10) |
 
 Each script's header has its full usage.
 
