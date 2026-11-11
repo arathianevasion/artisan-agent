@@ -88,11 +88,9 @@ init_write() {
 }
 
 # dispatch_ticket run_dir ticket pid deadline-or-empty. Caller holds the lock.
-# Every dispatch has a deadline, so a hung worker is always stopped. A retry
-# first moves the previous attempt's result file and exit record aside to
-# results/<ticket>.attempt-<n>.*, so the sweep reads only this attempt's.
+# Every dispatch has a deadline, so a hung worker is always stopped.
 dispatch_ticket() {
-  local run_dir="$1" t="$2" pid="$3" deadline="$4" now file attempts ext
+  local run_dir="$1" t="$2" pid="$3" deadline="$4" now file
   file=$(state_file "$run_dir")
   now=$(state_now)
   jq -e --arg t "$t" '.tickets[$t] != null' "$file" >/dev/null \
@@ -104,12 +102,6 @@ dispatch_ticket() {
     [ -n "$deadline" ] \
       || state_die 1 "ticket $t has no deadline: pass one or set plan.tickets[\"$t\"].caps.deadline_seconds"
   fi
-  attempts=$(jq -r --arg t "$t" '.tickets[$t].attempts' "$file")
-  for ext in json exit.json; do
-    if [ -f "$run_dir/results/$t.$ext" ]; then
-      mv -f "$run_dir/results/$t.$ext" "$run_dir/results/$t.attempt-$attempts.$ext"
-    fi
-  done
   state_apply "$run_dir" '
     .tickets[$t] |= (
       .status = "in_flight" | .attempts += 1 | .pid = $pid

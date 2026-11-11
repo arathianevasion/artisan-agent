@@ -12,8 +12,8 @@ The state file is the record of a run's plan, progress and evidence that lets an
       state.json                   the state file
       state.lock                   the writer lock, while held (a symlink to the holder's pid)
       results/
-        <ticket>.json              a worker's result file (the result contract in implement-plan's dispatch.md)
-        <ticket>.exit.json         an exit record: the worker process ended (written by the runner, even on a crash)
+        <ticket>.<n>.result.json   attempt n's result file (the result contract in implement-plan's dispatch.md)
+        <ticket>.<n>.exit.json     attempt n's exit record: the worker ended (written by run-ticket.sh, even on a crash)
         findings/<ticket>.jsonl    the worker's findings, one JSON object per line
 ```
 
@@ -33,7 +33,7 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | Event | Call | Effect |
 |---|---|---|
 | wave starts | `wave-start <run-dir> <wave> <plugin-version> <team> <product> <individual>` | records the wave's plugin version and guardrail source commits (`-` for a level with no source) |
-| dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). A retry first moves the previous attempt's `results/<ticket>.json` and `.exit.json` to `results/<ticket>.attempt-<n>.json` and `.attempt-<n>.exit.json` |
+| dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). Attempt n's files are named `<ticket>.<n>.*`, with n the ticket's `attempts` after dispatch, so a retry never reads an earlier attempt's files |
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
 | verified | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
@@ -81,7 +81,7 @@ Top level:
 | `pid` | the worker's pid while `in_flight`, else `null` |
 | `branch` | the ticket's branch |
 | `dispatched_at`, `deadline_at` | epoch seconds of the last dispatch and its wall-clock deadline |
-| `result` | from the result file: `{status, commit, notes, file}` |
+| `result` | from the current attempt's result file: `{status, commit, notes, file}` |
 | `evidence` | the ticket's evidence, written after verification |
 | `merge_commit` | the merge commit on the integration branch |
 | `cost_usd` | from the result file (`cost_usd`, or `claude -p`'s `total_cost_usd`) |
@@ -89,7 +89,7 @@ Top level:
 
 ## The sweep
 
-`sweep.sh <run-dir>`, on every wake and at least every sweep interval (`config.yml`, default 5 minutes). For each `in_flight` ticket, first match wins:
+`sweep.sh <run-dir>`, on every wake and at least every sweep interval (`config.yml`, default 5 minutes). For each `in_flight` ticket, reading only the current attempt's files (n = `attempts`), first match wins:
 
 1. A result file: recorded. `complete` → `returned`; `blocked` → `blocked`; `failed` → a failed attempt.
 2. An exit record and no result file: a failed attempt.

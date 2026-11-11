@@ -44,8 +44,8 @@ test_a_result_file_records_the_result_and_cost() {
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 11 "$pid"
-  printf '{"ticket":"10","status":"complete","commit":"abc","total_cost_usd":1.25}' >"$RUN_DIR/results/10.json"
-  printf '{"ticket":"11","status":"blocked","notes":"needs a decision","cost_usd":0.5}' >"$RUN_DIR/results/11.json"
+  printf '{"ticket":"10","status":"complete","commit":"abc","total_cost_usd":1.25}' >"$RUN_DIR/results/10.1.result.json"
+  printf '{"ticket":"11","status":"blocked","notes":"needs a decision","cost_usd":0.5}' >"$RUN_DIR/results/11.1.result.json"
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq returned "$(state_get '.tickets["10"].status')"
   assert_eq abc "$(state_get '.tickets["10"].result.commit')"
@@ -60,7 +60,7 @@ test_an_exit_record_without_a_result_is_a_failed_attempt() {
   local pid
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
-  printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.exit.json"
+  printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.1.exit.json"
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq queued "$(state_get '.tickets["10"].status')"
   assert_contains "$(state_get '.tickets["10"].failures[0].reason')" "without a result"
@@ -128,13 +128,11 @@ test_a_retry_is_not_failed_by_the_previous_attempts_files() {
   local pid
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 9999999999
-  printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.exit.json"
-  printf '{"ticket":"10","status":"failed"}' >"$RUN_DIR/results/10.json"
+  printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.1.exit.json"
+  printf '{"ticket":"10","status":"failed"}' >"$RUN_DIR/results/10.1.result.json"
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq queued "$(state_get '.tickets["10"].status')"
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 9999999999
-  [ -f "$RUN_DIR/results/10.attempt-1.json" ] || fail "attempt 1's result not kept aside"
-  [ -f "$RUN_DIR/results/10.attempt-1.exit.json" ] || fail "attempt 1's exit record not kept aside"
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq in_flight "$(state_get '.tickets["10"].status')" "second attempt still running"
   assert_eq 1 "$(state_get '.tickets["10"].failures | length')"

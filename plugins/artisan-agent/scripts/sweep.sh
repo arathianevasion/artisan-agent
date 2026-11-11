@@ -5,9 +5,9 @@
 # Usage: sweep.sh <run-dir>
 #
 # For each ticket whose status is in_flight, in this order:
-#   1. a result file results/<ticket>.json  -> the result is recorded
+#   1. a result file results/<ticket>.<attempt>.result.json -> the result is recorded
 #        (status "complete" -> returned, "blocked" -> blocked, "failed" -> failed attempt)
-#   2. an exit record results/<ticket>.exit.json and no result -> failed attempt
+#   2. an exit record results/<ticket>.<attempt>.exit.json and no result -> failed attempt
 #   3. past its deadline -> the worker is stopped, failed attempt
 #   4. its worker pid is no longer alive -> failed attempt
 # A failed attempt sends the ticket back to queued, or, once it has used the
@@ -84,7 +84,7 @@ RESULT_FILTER='
     else .tickets[$t].status = "returned" end'
 
 sweep() {
-  local file tmp now tickets t status pid deadline result exit_record
+  local file tmp now tickets t status pid attempt deadline result exit_record
   file=$(state_file "$RUN_DIR")
   state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
   tmp=$(state_tmp "$RUN_DIR")
@@ -96,11 +96,12 @@ sweep() {
   tickets=$(jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | .key' "$tmp")
   for t in $tickets; do
     pid=$(jq -r --arg t "$t" '.tickets[$t].pid // ""' "$tmp")
+    attempt=$(jq -r --arg t "$t" '.tickets[$t].attempts' "$tmp")
     deadline=$(jq -r --arg t "$t" '.tickets[$t].deadline_at // ""' "$tmp")
-    result="$RESULTS/$t.json"
-    exit_record="$RESULTS/$t.exit.json"
+    result="$RESULTS/$t.$attempt.result.json"
+    exit_record="$RESULTS/$t.$attempt.exit.json"
     if [ -f "$result" ] && jq -e 'type == "object"' "$result" >/dev/null 2>&1; then
-      step "$RESULT_FILTER" --arg t "$t" --slurpfile rs "$result" --arg file "results/$t.json"
+      step "$RESULT_FILTER" --arg t "$t" --slurpfile rs "$result" --arg file "results/$t.$attempt.result.json"
       status=$(jq -r '.status // "complete"' "$result")
       if [ "$status" = "failed" ]; then
         step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"
