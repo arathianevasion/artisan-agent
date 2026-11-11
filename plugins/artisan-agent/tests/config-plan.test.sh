@@ -205,6 +205,8 @@ test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() 
   assert_contains "$out" "| Expected files |"
   assert_contains "$out" '| `src/up/`, `tests/up.sh` |'
   assert_contains "$out" "| none declared |"
+  # A blank line separates the table from the warning, so it isn't read as a table row.
+  assert_eq "" "$(printf '%s\n' "$out" | grep -B1 'runs alone' | head -1)" "blank line before the warning"
   assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'runs alone')" "one warning, for the undeclared ticket"
   assert_contains "$out" "#11 runs alone: no expected files, so it's treated as touching everything. Name its files to let it share a wave."
   # The Wave column is gone; the headings keep the grouping.

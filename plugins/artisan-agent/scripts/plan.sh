@@ -185,6 +185,8 @@ cmd_render() {
               + " | \($tk.expected_output // "") | "
               + (if ($tk.expected_files // []) == [] then "none declared"
                  else ($tk.expected_files | map("`" + . + "`") | join(", ")) end) + " |" ),
+          ( [.value[] | select(($p.tickets[.].expected_files // []) == [])] as $bare
+            | if ($bare | length) > 0 then "" else empty end ),
           ( .value[] as $t | select(($p.tickets[$t].expected_files // []) == [])
             | "\(ticket($t)) runs alone: no expected files, so it'"'"'s treated as touching everything. Name its files to let it share a wave." ),
           "" ),
