@@ -219,6 +219,18 @@ A fresh verifier per returned ticket, and the evidence contract it produces: in 
 
 `run-ticket.sh --role verifier` launches like a worker (detached, capped, always an exit record) but needs an id starting `verify-`, skips the scope check and never gets a writer pid. A verifier is not a ticket and takes no slot under Max Agents.
 
+## Findings
+
+`findings.sh` relays what one worker found to the workers it concerns, and files it when they have finished. The flow: `references/findings.md`. Tested in `tests/findings.test.sh`. `run-ticket.sh` starts every worker with `--name worker-<ticket>` and `--settings '{"crossSessionInbound":"accept"}'` so a relay reaches it.
+
+| Command | Does | Exit status |
+| :- | :- | :- |
+| `findings.sh pending <run-dir>` | one JSON line per (finding, ticket in its `blocks`) not yet handled: `relay` (target in flight; has `name` and `message` for `SendMessage`), `comment` (queued or blocked) or `triage` (finished or outside the run) | 0, 1 |
+| `findings.sh mark <run-dir> <from> <seq> <target> <action>` | comments on both tickets (or files a `needs-triage` ticket), then records it in `relays` and the event log; once | 0, 1, 3 |
+| `findings.sh add <run-dir> <from> <title> <why> [target...]` | a late fact from a worker's result notes, appended to its findings file once per title, then swept | 0, 1, 3 |
+
+The sweep also reads a blocked result's `design_question`: a `design` decision for the Artisan and a `slicing` entry in `lessons`.
+
 ## Guardrails
 
 `guardrails.sh` reads the three guardrail levels at the point of use; the rules are `references/guardrails.md`. Tested in `tests/guardrails.test.sh` with a local team repo and a throwaway individual home (`ARTISAN_HOME`, `ARTISAN_TEAM_CACHE`, `ARTISAN_TEAM_URL_BASE`).

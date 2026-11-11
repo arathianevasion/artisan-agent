@@ -68,7 +68,19 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
   | attempt_cost($t; .tickets[$t].attempts; ($r.cost_usd // $r.total_cost_usd // $session_cost))
   | event({event: "result", ticket: $t, attempt: .tickets[$t].attempts, status: $s}; $now)
   | if $s == "failed" then .
-    elif $s == "blocked" then .tickets[$t].status = "blocked"
+    elif $s == "blocked" then
+      .tickets[$t].status = "blocked"
+      # A worker that needed a design or interface change stopped and recorded
+      # the question: it goes to the Artisan, and the run notes a slicing lesson.
+      | if ($r.design_question | type) == "object" then
+          .decisions += [{id: ((.decisions | length) + 1), kind: "design", ticket: $t,
+                          question: ($r.design_question.question // "a design question"),
+                          recommendation: ($r.design_question.recommendation // null),
+                          status: "waiting", at: $now}]
+          | .lessons = ((.lessons // []) + [{kind: "slicing", ticket: $t, at: $now,
+              note: "Ticket \($t) could not be built without a design or interface change owned elsewhere: \($r.design_question.question // "see its result"). Slice so the design settles before the work that needs it."}])
+          | event({event: "design-question", ticket: $t}; $now)
+        else . end
     else .tickets[$t].status = "returned" end'
 
 sweep() {

@@ -47,6 +47,10 @@
 # it is not a ticket either, and it never gets a writer pid. Every session
 # gets ARTISAN_ROLE (worker, orchestrator or verifier) and ARTISAN_RUN_DIR.
 #
+# A worker (not an orchestrator or verifier) is also started with
+#   --name worker-<ticket> --settings '{"crossSessionInbound":"accept"}'
+# so the orchestrator can relay a finding to it (references/findings.md).
+#
 # Exit status: 0 launched, 1 failed to launch, 2 bad usage, 4 the ticket is
 # outside the approved scope.
 #
@@ -247,6 +251,12 @@ printf '%s\n' "$prompt" >"$worker_dir/prompt.md"
 
 claude_args=(-p "$prompt" --output-format json --max-budget-usd "$max_budget" --max-turns "$max_turns")
 [ -z "$model" ] || claude_args+=(--model "$model")
+# A worker is named, so the orchestrator can SendMessage a finding to it, and
+# accepts messages from other sessions, which a project-level setting can't
+# switch on (it is ignored); only --settings does.
+if [ "$role" = worker ]; then
+  claude_args+=(--name "worker-$ticket" --settings '{"crossSessionInbound":"accept"}')
+fi
 
 # set -m gives the worker its own process group, so it and anything it
 # leaves running can be stopped together without stopping the runner.
