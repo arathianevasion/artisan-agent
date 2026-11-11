@@ -1,0 +1,16 @@
+# Upstream (mattpocock-skills) skill names a personal copy may shadow. Used when the
+# plugin cache can't be read; scan also adds every skill found in the cache.
+codebase-design
+code-review
+diagnosing-bugs
+domain-modeling
+grilling
+implement
+pr
+prototype
+research
+tdd
+triage
+to-spec
+wizard
+writing-for-agents
