@@ -117,6 +117,7 @@ reconcile() {
         | select($tr[$t].state == "open")
         | select(($tr[$t].labels | index("ready-for-human")) == null)
         | select($s.tickets[$t].human == null)
+        | select((($s.plan.hands_on.ticket // "") | tostring) != $t)
         | select(all($tr[$t].blocked_by[];
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"

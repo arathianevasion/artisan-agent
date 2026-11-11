@@ -48,8 +48,8 @@
 #       "parked" event once.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 4 outside
-# the scope, 5 a blocker not merged, 6 refused (see done). One table of every
-# code: scripts/README.md, "Exit status".
+# the scope, 5 a blocker not merged, 6 refused (see done). Per command:
+# scripts/README.md, "Waves: the two-tier run".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, gh.
 
