@@ -106,7 +106,7 @@ reconcile() {
       }}')
   done
 
-  step '
+  step "$STATE_JQ_DEFS"'
     .tickets |= with_entries(
       if .value.status == "queued" and $tr[.key].state == "closed"
       then .value.status = "closed" else . end)
@@ -120,6 +120,7 @@ reconcile() {
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"
                  and ($s.tickets[.number].risk_gate.status? // "") != "waiting"
+                 and ((.number | tostring) as $b | $s | gate_holds($b) | not)
             else .state == "closed" end))
         | $t
       ] | .frontier |= sort_by(tonumber? // .)' --argjson tr "$tracker"

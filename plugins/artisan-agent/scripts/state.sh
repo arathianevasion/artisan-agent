@@ -90,6 +90,7 @@ init_write() {
           config: ($p.config // {}),
           overrides: ($p.overrides // {}),
           suite_command: ($p.suite_command // null),
+          checks: ($p.checks // []),
           orchestrator: ($p.orchestrator // {})
         },
         tickets: {},

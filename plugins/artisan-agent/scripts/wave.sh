@@ -337,14 +337,18 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # The Artisan's gate actions taken while the lock was held, a gate
+      # closed on the tracker, and any slice gate due (gate.sh, #65).
+      "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
+        || echo "gate.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.gate.err")" >&2
       "$SCRIPT_DIR/reconcile.sh" "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.status.err" || {
         reconciled=0
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
-      # A risk gate holds only its ticket's dependents (drain.sh gate): the
-      # run carries on while the frontier has work.
-      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate")] | length')
+      # A risk gate or a review gate holds only its tickets' dependents
+      # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
+      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
@@ -393,6 +397,8 @@ check_blockers() { # ticket
       fi
       [ "$(get --arg b "$b" '.tickets[$b].risk_gate.status? // ""')" != waiting ] \
         || state_die 5 "wave.sh: refusing #$t: its blocker #$b merged under a risk gate the Artisan hasn't cleared (drain.sh gate)"
+      ! "$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" \
+        || state_die 5 "wave.sh: refusing #$t: its blocker #$b is in a slice whose review gate the Artisan hasn't approved (gate.sh)"
     elif [ "$state" != closed ]; then
       state_die 5 "wave.sh: refusing #$t: its blocker #$b, outside this run, is still open"
     fi
@@ -709,7 +715,10 @@ cmd_close() {
   local status repo body newbody
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
-  [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" != true ] || return 0
+  if [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" = true ]; then
+    "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"
+    return 0
+  fi
   repo=$(get '.repo')
   mkdir -p "$RUN_DIR/merges"
   # The comment is the evidence contract in the state file, shown.
@@ -725,6 +734,9 @@ cmd_close() {
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"
+  # The last merge of a slice opens its review gate before anything else
+  # dispatches (gate.sh, references/review-gates.md).
+  "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"
 }
 
 # ------------------------------------------------------------------ report
