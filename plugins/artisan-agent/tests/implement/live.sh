@@ -88,7 +88,8 @@ run() {
       --output-format stream-json --verbose \
       > "$wd/session.jsonl" 2> "$wd/stderr.log"
   ) || echo "live.sh: claude exited $?" >&2
-  jq -r 'select(.type == "result") | "cost_usd=\(.total_cost_usd) turns=\(.num_turns) is_error=\(.is_error) result=\(.result | tostring | .[0:200])"' \
+  jq -rs 'map(select(.type == "result")) | last // empty
+    | "cost_usd=\(.total_cost_usd) turns=\(.num_turns) is_error=\(.is_error) result=\(.result | tostring | .[0:200])"' \
     "$wd/session.jsonl" || true
 }
 
