@@ -475,3 +475,20 @@ test_a_waiting_risk_gate_does_not_stop_the_chat_launching() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: decide"
 }
+
+test_a_hand_off_whose_launch_fails_is_taken_back() {
+  setup_run
+  export ARTISAN_WRITER_PID=$ORCH_PID
+  "$SCRIPTS/state.sh" lock "$RUN_DIR" "$ORCH_PID"
+  # A halted run refuses every launch, so the next orchestrator can't start.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.halted = {wave: 1, tickets: [], reason: "test", at: 1}'
+  assert_status 1 "$DRAIN" handoff "$RUN_DIR"
+  assert_eq null "$(state_get '.orchestrators[0].handoff')"
+  assert_eq "handoff handoff-failed" "$(state_get '[.events[].event] | join(" ")')"
+  assert_eq 1 "$(state_get '.orchestrators | length')"
+}
+
+test_the_thresholds_default_from_the_template() {
+  assert_eq "drain 30% handoff" "$("$DRAIN" decide --tier chat --percent 30 --outstanding 0)"
+  assert_eq "review 50% handoff risk-gate" "$("$DRAIN" decide --tier chat --percent 50 --outstanding 0)"
+}

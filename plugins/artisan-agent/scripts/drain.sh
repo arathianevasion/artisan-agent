@@ -3,6 +3,7 @@
 # and the orchestrator's hand-off to a fresh orchestrator for the same wave.
 # The rules, for both tiers: ${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/context-drain.md.
 #
+#   (thresholds: the run's plan.config.context, defaults 30 and 50)
 #   | Context              | Band   | Does                                                  |
 #   | under drain (30%)    | normal | dispatch                                              |
 #   | drain up to review   | drain  | dispatch nothing new; keep processing; hand off idle  |
@@ -67,6 +68,12 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 state_require_jq
 
 DEFAULT_WINDOW=200000
+
+# The drain and review thresholds' defaults, from templates/config.yml (the
+# one place defaults are written), for a run or a call that doesn't give them.
+default_threshold() { # drain_percent|review_percent
+  "$SCRIPT_DIR/config.sh" defaults | jq -r --arg k "$1" '.context[$k]'
+}
 LARGE_WINDOW=1000000
 
 usage() { state_usage "$0"; }
@@ -117,7 +124,7 @@ cmd_percent() {
 # ------------------------------------------------------------------ decide
 
 decide() { # tier percent outstanding marker drain review
-  local tier="$1" pct="$2" out="$3" marker="$4" drain="$5" review="$6" band action shown
+  local tier="$1" pct="$2" outstanding="$3" marker="$4" drain="$5" review="$6" band action shown
   if [ "$tier" = orchestrator ] && [ "$marker" = 1 ]; then
     band=compact
   elif [ "$pct" = unknown ]; then
@@ -132,7 +139,7 @@ decide() { # tier percent outstanding marker drain review
   case "$band" in
     normal | unknown) action=dispatch ;;
     compact) action=handoff ;;   # finish the step and go, agents outstanding or not
-    *) if [ "$out" -gt 0 ]; then action=process; else action=handoff; fi ;;
+    *) if [ "$outstanding" -gt 0 ]; then action=process; else action=handoff; fi ;;
   esac
   shown="$pct%"
   [ "$pct" != unknown ] || shown=-
@@ -146,12 +153,12 @@ decide() { # tier percent outstanding marker drain review
 is_percent() { printf '%s' "$1" | grep -Eq '^[0-9]+$'; }
 
 cmd_decide() {
-  local tier= pct= out= marker=0 drain=30 review=50
+  local tier= pct= outstanding= marker=0 drain= review=
   while [ $# -gt 0 ]; do
     case "$1" in
       --tier) [ $# -ge 2 ] || usage; tier=$2; shift 2 ;;
       --percent) [ $# -ge 2 ] || usage; pct=$2; shift 2 ;;
-      --outstanding) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+      --outstanding) [ $# -ge 2 ] || usage; outstanding=$2; shift 2 ;;
       --marker) marker=1; shift ;;
       --drain) [ $# -ge 2 ] || usage; drain=$2; shift 2 ;;
       --review) [ $# -ge 2 ] || usage; review=$2; shift 2 ;;
@@ -160,8 +167,10 @@ cmd_decide() {
   done
   case "$tier" in chat | orchestrator) ;; *) usage ;; esac
   [ "$pct" = unknown ] || is_percent "$pct" || usage
-  is_percent "$out" && is_percent "$drain" && is_percent "$review" || usage
-  decide "$tier" "$pct" "$out" "$marker" "$drain" "$review"
+  [ -n "$drain" ] || drain=$(default_threshold drain_percent)
+  [ -n "$review" ] || review=$(default_threshold review_percent)
+  is_percent "$outstanding" && is_percent "$drain" && is_percent "$review" || usage
+  decide "$tier" "$pct" "$outstanding" "$marker" "$drain" "$review"
 }
 
 # ------------------------------------------------------------------- check
@@ -189,22 +198,24 @@ last_orchestrator_running() {
 # Sets DECISION (the decide line), KEY and PCT.
 KEY= PCT= DECISION=
 check() { # tier transcript
-  local tier="$1" transcript="$2" out marker=0 drain review reading
-  drain=$(get '.plan.config.context.drain_percent // 30')
-  review=$(get '.plan.config.context.review_percent // 50')
+  local tier="$1" transcript="$2" outstanding marker=0 drain review reading
+  drain=$(get '.plan.config.context.drain_percent // empty')
+  [ -n "$drain" ] || drain=$(default_threshold drain_percent)
+  review=$(get '.plan.config.context.review_percent // empty')
+  [ -n "$review" ] || review=$(default_threshold review_percent)
   if [ "$tier" = orchestrator ]; then
     KEY=$(session_key)
     [ -n "$KEY" ] || die "no orchestrator in run $RUN_ID"
     [ -n "$transcript" ] || transcript=$(cat "$RUN_DIR/workers/$KEY/transcript.path" 2>/dev/null || true)
     [ ! -e "$RUN_DIR/workers/$KEY/handoff.json" ] || marker=1
-    out=$(get '([.tickets[] | select(.status == "in_flight")] | length)
+    outstanding=$(get '([.tickets[] | select(.status == "in_flight")] | length)
                + ([.tickets[] | .verifications[]? | select(.verdict == null)] | length)')
   else
-    if last_orchestrator_running; then out=1; else out=0; fi
+    if last_orchestrator_running; then outstanding=1; else outstanding=0; fi
   fi
   reading=$(percent_of "$transcript" "")
   PCT=${reading%% *}
-  DECISION=$(decide "$tier" "$PCT" "$out" "$marker" "$drain" "$review")
+  DECISION=$(decide "$tier" "$PCT" "$outstanding" "$marker" "$drain" "$review")
 }
 
 cmd_check() {
@@ -227,7 +238,7 @@ cmd_check() {
 
 cmd_handoff() {
   open_run "${1:-}"
-  local line id attempt pid me remaining band reason out
+  local line id attempt pid me remaining band reason launched
   line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt)"')
   [ -n "$line" ] || state_die 6 "drain.sh: run $RUN_ID has no orchestrator to hand off from"
   set -- $line
@@ -258,15 +269,21 @@ cmd_handoff() {
     --arg id "$id" --argjson a "$attempt" --arg reason "$reason" \
     --argjson pct "$(if [ "$PCT" = unknown ]; then echo null; else echo "$PCT"; fi)"
 
-  out=$("$SCRIPT_DIR/wave.sh" launch "$RUN_DIR" --handoff) || die "could not launch the next orchestrator; carry the wave on yourself"
-  set -- $out
+  launched=$("$SCRIPT_DIR/wave.sh" launch "$RUN_DIR" --handoff) || {
+    # Nothing handed off: take the record back, so the wave reads as this
+    # orchestrator's still, and carry on.
+    apply '(.orchestrators | length - 1) as $i | .orchestrators[$i] |= del(.handoff)
+      | event({event: "handoff-failed", id: $id, attempt: $a}; $now)' --arg id "$id" --argjson a "$attempt" || true
+    die "could not launch the next orchestrator; carry the wave on yourself"
+  }
+  set -- $launched
   if [ -n "${ARTISAN_RESULT_FILE:-}" ]; then
     jq -n --arg run "$RUN_ID" --argjson wave "$(get '((.orchestrators // []) | last | .wave) // 0')" \
       --arg from "$id.$attempt" --arg to "$1" --argjson ta "$2" --argjson tp "$3" --arg reason "$reason" \
       '{run_id: $run, wave: $wave, handoff: {from: $from, to: $to, attempt: $ta, runner_pid: $tp, reason: $reason}}' \
       >"$ARTISAN_RESULT_FILE"
   fi
-  echo "handed-off $out"
+  echo "handed-off $launched"
 }
 
 # -------------------------------------------------------------------- gate

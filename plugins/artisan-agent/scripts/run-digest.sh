@@ -55,9 +55,11 @@ if [ -z "$run_dir" ]; then
   runs="$(dirname "$common")/.artisan-agent/runs"
   [ -d "$runs" ] || exit 0
   # Newest state file first.
-  for f in $(ls -t "$runs"/*/state.json 2>/dev/null); do
+  while IFS= read -r f; do
     if is_open "$f"; then run_dir=$(dirname "$f"); break; fi
-  done
+  done <<EOF
+$(ls -t "$runs"/*/state.json 2>/dev/null)
+EOF
   [ -n "$run_dir" ] || exit 0
 else
   is_open "$run_dir/state.json" || exit 0
