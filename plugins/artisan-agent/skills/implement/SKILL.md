@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Build one ticket in the current worktree as a pipeline worker. Builds test-first at the seams the ticket names and records any new seam as a decision card. Runs code-review, fixes bugs and documented-standard violations, and records judgement-call smells as decision cards without changing them. Commits, then writes the evidence record as the result file. Use when an orchestrator dispatches a ticket ("Run /artisan-agent:implement against <ticket>"), or when the Artisan or another pipeline step asks to implement, build or work one ticket. Claude may call it.
+description: Build one ticket in the current worktree as a pipeline worker. Builds test-first at the seams the ticket names and records any new seam as a decision card. Runs mattpocock-skills:code-review, fixes bugs and documented-standard violations, and records judgement-call smells as decision cards without changing them. Commits, then writes the evidence record as the result file. Use when an orchestrator dispatches a ticket ("Run /artisan-agent:implement against <ticket>"), or when the Artisan or another pipeline step asks to implement, build or work one ticket. Claude may call it.
 ---
 
 # Implement
@@ -24,7 +24,7 @@ Take these from the prompt that invoked you:
 - **Never `git stash`.** `refs/stash` is shared by every worktree, so another worker's stash can vanish. You have your own branch; commit instead.
 - **Leave nothing running.** Run commands in the foreground. If a test needs a server or watcher, stop it before moving on. A background process outlives you and holds the run's deadline open.
 - **Commit early and often**, with honest messages saying what is and isn't done. A crash, timeout or budget cap can come at any moment; uncommitted work is unverifiable and lost.
-- **Never skip a step to save budget.** `tdd` and the full two-axis `code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
+- **Never skip a step to save budget.** `tdd` and the full two-axis `mattpocock-skills:code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
 - **Keep to the ticket.** Missing work you find goes in the record's `findings` list, not into your diff. Adding scope is controversy criterion 2.
 - **Design never goes between workers.** If the ticket can't be built without changing an interface another ticket owns, stop: record the question and finish with status `blocked`.
 
@@ -58,7 +58,7 @@ A decision that is controversial and **not** easy-to-reverse taste is not yours 
 
 ## 4. Review, then act on the remarks
 
-Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
+Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `mattpocock-skills:code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
 
 Sort every finding the review returns into one of these, and act on it:
 

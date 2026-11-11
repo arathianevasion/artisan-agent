@@ -81,7 +81,7 @@ done. You cannot predict a crash, a timeout, or an account rate limit. A
 wip commit you later build on costs nothing; an uncommitted tree at the
 moment you are killed costs everything.
 
-Run /code-review over your own diff before writing your result, and record
+Run /mattpocock-skills:code-review over your own diff before writing your result, and record
 what it says in review.remarks — including anything it finds that you
 disagree with or chose not to act on.
 EOF
@@ -95,7 +95,7 @@ Launch every ticket in the wave, then wait on all of them. Keep the log alongsid
 
 The commit-early instruction earns its place the first time a wave dies mid-flight. An agent killed by an account rate limit left ten modified files uncommitted and therefore unverifiable — the orchestrator cannot merge work it cannot vouch for, so recovering it cost a second full dispatch. Agents left to their own judgment hold a clean tree until the end.
 
-The `/code-review` instruction is the highest-value line in the whole prompt. Agents that review their own diff catch their own unmet acceptance criteria, and — more usefully — sometimes report that a test they wrote passes for the wrong reason. Neither is visible in a green suite.
+The `/mattpocock-skills:code-review` instruction is the highest-value line in the whole prompt. Agents that review their own diff catch their own unmet acceptance criteria, and — more usefully — sometimes report that a test they wrote passes for the wrong reason. Neither is visible in a green suite.
 
 A per-process wall-clock timeout is worth setting. An agent that hangs on a prompt it cannot answer will otherwise hold up the whole wave indefinitely.
 

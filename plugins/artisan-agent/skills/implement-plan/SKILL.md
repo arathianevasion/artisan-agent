@@ -7,7 +7,7 @@ description: Run a defined set of work to completion — a plan, several plans, 
 
 Run a defined set of work to done: a plan, several plans, individual tickets, a single ticket, or any combination. That set is the run's scope; anything outside it waits.
 
-`/artisan-agent:implement` runs one ticket in the session that invokes it. It has no completion step: it ends at the commit and never touches the work item, does not act on `/code-review` findings, and does not tick acceptance criteria. Even for a single ticket that leaves the work unverified and the ticket open, and for a queue it is fatal, because `to-tickets` defines the frontier as tickets whose blockers are all **closed**. If nothing closes, nothing ever unblocks, and an unattended run re-picks the same ticket forever.
+`/artisan-agent:implement` runs one ticket in the session that invokes it. It has no completion step: it ends at the commit and never touches the work item, does not act on `/mattpocock-skills:code-review` findings, and does not tick acceptance criteria. Even for a single ticket that leaves the work unverified and the ticket open, and for a queue it is fatal, because `to-tickets` defines the frontier as tickets whose blockers are all **closed**. If nothing closes, nothing ever unblocks, and an unattended run re-picks the same ticket forever.
 
 This skill is the missing layer above `/artisan-agent:implement`: it owns the dependency graph, the agent design, the dispatch, and — critically — the reconciliation. It never implements anything itself.
 
@@ -20,7 +20,7 @@ Stop and tell the Artisan which is missing rather than working around it:
 - Tickets are published — either `.scratch/<feature>/issues/NN-slug.md` or issues on a configured tracker. If not, route to `/to-tickets` first.
 - `/setup-matt-pocock-skills` has run for this repo.
 - The working tree is clean and `git worktree` is available.
-- `/artisan-agent:implement`, `/tdd`, `/code-review`, `/artisan-agent:resolve-conflicts` and `/artisan-agent:triage` are installed, because this skill and its agents all reach for them.
+- `/artisan-agent:implement`, `/tdd`, `/mattpocock-skills:code-review`, `/artisan-agent:resolve-conflicts` and `/artisan-agent:triage` are installed, because this skill and its agents all reach for them.
 - **Every gate the agents will report on has been proven capable of failing.** Run each one — test suite, typecheck, lint — against a deliberately broken file and confirm a non-zero exit, then revert. A gate that cannot fail turns every agent's report into noise for the length of the run, and nothing downstream will reveal it: the results all say "clean", the merges all stay green, and you find out only when someone reads the config. Report what each gate actually covers, in the plan, alongside the tier mapping.
 
 The last one is not ceremony. In a real run, `npm run typecheck` was `tsc --noEmit` against a root `tsconfig.json` with `"files": []` and only project references — `tsc` does not follow references, so it compiled an empty program and exited 0 unconditionally. Thirty tickets reported "typecheck clean" and every one of those claims was vacuous.
@@ -115,7 +115,7 @@ For each returned result, in this order:
    Tickets from `to-tickets` are agent-ready by construction and should never be triaged; triage is for work that arrived from someone else. A ticket an agent invented mid-run is exactly that. It has not been grilled, sized to a context window, or checked for whether it is really a tracer bullet. Run `/artisan-agent:triage` on it before it is eligible for any wave, and never let an untriaged discovery enter the dispatch queue — that is how an unattended run turns one agent's guess into three more agents' work.
 
    Only once triage has admitted it do you add blocking edges and recompute the graph. If that changes the wave structure, say so and show what moved before continuing. If triage rejects or reshapes it, that is a fine outcome and belongs in the report.
-5. **Surface review remarks.** `/code-review` remarks arrive (`review.remarks`) with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
+5. **Surface review remarks.** `/mattpocock-skills:code-review` remarks arrive (`review.remarks`) with the result and nobody acts on them by default. Collect them into the wave report rather than silently discarding them.
 
 Only after every ticket in the wave is closed or explicitly marked blocked, recompute the frontier and dispatch the next wave.
 

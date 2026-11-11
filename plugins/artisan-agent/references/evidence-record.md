@@ -19,7 +19,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `tests` | yes | `{"suite_passed": true, "command": "...", "summary": "..."}`: the full-suite run at the end, with the command and its result line. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
 | `unsure` | yes | What the worker was unsure of, one sentence each; `[]` if nothing |
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
-| `review` | yes | `{"ran": true, "remarks": [...]}`, every `code-review` remark with what was done about it (below) |
+| `review` | yes | `{"ran": true, "remarks": [...]}`, every `mattpocock-skills:code-review` remark with what was done about it (below) |
 | `findings` | yes | Work found outside the ticket: `{"title", "why", "blocks": [ticket ids]}`; `[]` if none |
 | `notes` | no | Free text for late facts: anything the orchestrator should know that fits nowhere else. One paragraph |
 
