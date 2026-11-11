@@ -63,7 +63,7 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 
 **Model.** Implementation mostly follows context and tolerates a cheaper model; the expensive reasoning happened during grilling. Default every ticket to the mid tier and escalate deliberately: when the ticket introduces a new seam or module boundary, is the first tracer bullet through a layer that doesn't exist yet, changes domain vocabulary or an ADR, or has acceptance criteria that read as judgement rather than behaviour. Use the fast tier only for mechanical migrate batches. Map tiers to model ids once, in the plan.
 
-**Expected size.** Input tokens, output tokens and minutes, judged from the body: how much it reads, how much it writes, how many layers it touches. With no history these make the estimate, so size each ticket on its own; there are no per-tier defaults.
+**Expected size.** Input tokens, output tokens and minutes, judged from the body: how much it reads, how much it writes, how many layers it touches. With no history these make the estimate, so size each ticket on its own; there are no per-tier defaults. A tiny ticket's estimate is raised to its model's minimum (`minimum_estimates`, shown in the approval as "minimum for <model>"; see Estimates in `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`).
 
 **Brief.** Under a paragraph: the seams to test at if the ticket names them, and any `GLOSSARY.md` vocabulary or ADRs it must respect. The ticket is the spec; don't copy it into the brief.
 
