@@ -29,6 +29,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+validate_list() { # a missing or empty list, or a line without a replacement, is an error
+  [ -f "$list" ] || { echo "guard.sh: no list at $list" >&2; exit 2; }
+  local n=0 name repl
+  while read -r name repl; do
+    [ -n "$repl" ] || { echo "guard.sh: $name has no replacement in $list" >&2; exit 2; }
+    n=$((n + 1))
+  done <<EOT
+$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$list" | grep -v '^$' || true)
+EOT
+  [ "$n" -gt 0 ] || { echo "guard.sh: $list is empty" >&2; exit 2; }
+}
+case "$cmd" in -h|--help|help|"") ;; *) validate_list ;; esac
+
 entries() { # prints "name replacement" lines, comments and blanks removed
   [ -f "$list" ] || { echo "guard.sh: no list at $list" >&2; exit 2; }
   sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$list" | grep -v '^$' || true
@@ -67,6 +80,6 @@ case "$cmd" in
       printf '%s\t%s /%s:%s is replaced in this pipeline. Use %s instead.\n' \
         "$name" "$MARKER" "$UPSTREAM" "$name" "$repl"
     done ;;
-  -h|--help|help|"") sed -n '2,12p' "$0" ;;
+  -h|--help|help|"") sed -n '2,11p' "$0" ;;
   *) echo "guard.sh: unknown command $cmd" >&2; exit 2 ;;
 esac

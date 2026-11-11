@@ -81,3 +81,11 @@ test_settings_json_has_hook_and_deny_rules() {
   assert_contains "$out" '"command":"/abs/block-replaced.sh"'
   assert_contains "$out" '"deny":["Skill(mattpocock-skills:implement-spec)"'
 }
+
+test_missing_empty_or_incomplete_list_fails_loudly() {
+  assert_status 2 "$GUARD" hooks-json --list "$TEST_TMPDIR/nope.list"
+  : > "$TEST_TMPDIR/empty.list"
+  assert_status 2 "$GUARD" hooks-json --list "$TEST_TMPDIR/empty.list"
+  printf 'alpha\n' > "$TEST_TMPDIR/norepl.list"
+  assert_status 2 "$GUARD" matcher --list "$TEST_TMPDIR/norepl.list"
+}
