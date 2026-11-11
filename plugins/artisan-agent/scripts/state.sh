@@ -11,7 +11,10 @@
 #   state.sh write <run-dir>                  replace the state file with stdin
 #   state.sh update <run-dir> <filter> [jq args...]
 #   state.sh wave-start <run-dir> <wave> <plugin-version> <team-sha> <product-sha> <individual-sha>
+#                                             (- for a guardrail level with no source)
 #   state.sh dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]
+#                                             (default: now + the ticket's caps.deadline_seconds;
+#                                             refused when there is neither)
 #   state.sh evidence <run-dir> <ticket> <evidence.json>
 #   state.sh merge <run-dir> <ticket> <merge-commit>
 #   state.sh decision <run-dir> <decision.json>
@@ -28,7 +31,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 state_require_jq
 
-usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { state_usage "$0"; }
 
 cmd_run_dir() {
   local id="$1" common
@@ -56,7 +59,7 @@ cmd_init() {
 init_write() {
   local run_dir="$1" plan="$2" tmp
   tmp=$(state_tmp "$run_dir")
-  jq --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" '
+  jq --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" "$STATE_JQ_DEFS"'
     . as $p
     | {
         schema_version: $v,
@@ -71,18 +74,7 @@ init_write() {
           budget_usd: ($p.budget_usd // null),
           attempts_per_ticket: ($p.attempts_per_ticket // 2)
         },
-        tickets: (
-          $p.scope | map(tostring) | map({
-            key: .,
-            value: {
-              status: "queued", attempts: 0, pid: null,
-              branch: ($p.tickets[.].branch // ("agent/" + .)),
-              dispatched_at: null, deadline_at: null,
-              result: null, evidence: null, merge_commit: null,
-              cost_usd: 0, failures: []
-            }
-          }) | from_entries
-        ),
+        tickets: {},
         integration: { branch: $p.integration_branch, merges: [] },
         findings: [],
         findings_read: {},
@@ -90,8 +82,39 @@ init_write() {
         decisions: [],
         waves: [],
         frontier: []
-      }' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }
+      }
+    | reduce .plan.scope[] as $t (.; .tickets[$t] = new_ticket($t))' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }
   state_commit "$run_dir" "$tmp"
+}
+
+# dispatch_ticket run_dir ticket pid deadline-or-empty. Caller holds the lock.
+# Every dispatch has a deadline, so a hung worker is always stopped. A retry
+# first moves the previous attempt's result file and exit record aside to
+# results/<ticket>.attempt-<n>.*, so the sweep reads only this attempt's.
+dispatch_ticket() {
+  local run_dir="$1" t="$2" pid="$3" deadline="$4" now file attempts ext
+  file=$(state_file "$run_dir")
+  now=$(state_now)
+  jq -e --arg t "$t" '.tickets[$t] != null' "$file" >/dev/null \
+    || state_die 1 "ticket $t is not in the run"
+  if [ -z "$deadline" ]; then
+    deadline=$(jq -r --arg t "$t" --argjson now "$now" \
+      '(.plan.tickets[$t].caps.deadline_seconds // null) as $s
+       | if $s == null then "" else $now + $s end' "$file")
+    [ -n "$deadline" ] \
+      || state_die 1 "ticket $t has no deadline: pass one or set plan.tickets[\"$t\"].caps.deadline_seconds"
+  fi
+  attempts=$(jq -r --arg t "$t" '.tickets[$t].attempts' "$file")
+  for ext in json exit.json; do
+    if [ -f "$run_dir/results/$t.$ext" ]; then
+      mv -f "$run_dir/results/$t.$ext" "$run_dir/results/$t.attempt-$attempts.$ext"
+    fi
+  done
+  state_apply "$run_dir" '
+    .tickets[$t] |= (
+      .status = "in_flight" | .attempts += 1 | .pid = $pid
+      | .dispatched_at = $now | .deadline_at = $deadline | .result = null)' \
+    --arg t "$t" --argjson pid "$pid" --argjson now "$now" --argjson deadline "$deadline"
 }
 
 write_stdin() {
@@ -156,15 +179,7 @@ case "$cmd" in
   dispatch)
     [ $# -ge 3 ] && [ $# -le 4 ] || usage
     state_require_run_dir "$1"
-    state_with_lock "$1" state_apply "$1" '
-      if .tickets[$t] == null then error("ticket \($t) is not in the run") else . end
-      | (.plan.tickets[$t].caps.deadline_seconds // null) as $secs
-      | .tickets[$t] |= (
-          .status = "in_flight" | .attempts += 1 | .pid = $pid
-          | .dispatched_at = $now | .result = null
-          | .deadline_at = (if $deadline != "" then ($deadline | tonumber)
-                            elif $secs != null then $now + $secs else null end))' \
-      --arg t "$2" --argjson pid "$3" --argjson now "$(state_now)" --arg deadline "${4:-}"
+    state_with_lock "$1" dispatch_ticket "$1" "$2" "$3" "${4:-}"
     ;;
   evidence)
     [ $# -eq 3 ] || usage
@@ -178,10 +193,9 @@ case "$cmd" in
   merge)
     [ $# -eq 3 ] || usage
     state_require_run_dir "$1"
-    state_with_lock "$1" state_apply "$1" '
+    state_with_lock "$1" state_apply "$1" "$STATE_JQ_DEFS"'
       if .tickets[$t] == null then error("ticket \($t) is not in the run") else . end
-      | .tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
-      | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}])' \
+      | merged($t; $sha)' \
       --arg t "$2" --arg sha "$3"
     ;;
   decision)

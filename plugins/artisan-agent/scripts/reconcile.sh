@@ -32,7 +32,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 state_require_jq
 
-[ $# -eq 1 ] || { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+[ $# -eq 1 ] || state_usage "$0"
 RUN_DIR=$(cd "$1" && pwd)
 state_require_run_dir "$RUN_DIR"
 REPO_DIR=$(cd "$RUN_DIR/../../.." && pwd)
@@ -58,23 +58,14 @@ reconcile() {
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
 
-  step() {
-    local f="$1"
-    shift
-    jq "$@" "$f" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "reconcile: jq step failed"; }
-    mv -f "$tmp.next" "$tmp"
-  }
+  step() { state_step "$tmp" "$@"; }
 
   repo=$(jq -r '.repo' "$tmp")
   integration=$(jq -r '.integration.branch' "$tmp")
 
   # Tickets added to the scope after approval get an entry.
-  step '.plan.scope as $s | reduce $s[] as $t (.;
-          if .tickets[$t] == null then .tickets[$t] = {
-            status: "queued", attempts: 0, pid: null,
-            branch: (.plan.tickets[$t].branch // ("agent/" + $t)),
-            dispatched_at: null, deadline_at: null, result: null, evidence: null,
-            merge_commit: null, cost_usd: 0, failures: []} else . end)'
+  step "$STATE_JQ_DEFS"'reduce .plan.scope[] as $t (.;
+          if .tickets[$t] == null then .tickets[$t] = new_ticket($t) else . end)'
 
   # Git: what is merged into the integration branch.
   if git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$integration" >/dev/null; then
@@ -88,8 +79,7 @@ reconcile() {
       # --no-ff merge commit, so its tip is off the first-parent line.
       case "$first_parent" in *"$tip"*) continue ;; esac
       sha=$(merge_commit_for "$integration" "$tip") || continue
-      step '.tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
-            | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}])' \
+      step "$STATE_JQ_DEFS"'merged($t; $sha)' \
         --arg t "$t" --arg sha "$sha"
     done
   fi

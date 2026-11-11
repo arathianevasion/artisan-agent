@@ -121,3 +121,38 @@ test_the_sweep_is_refused_while_another_writer_holds_the_lock() {
   "$SCRIPTS/state.sh" lock "$RUN_DIR" "$holder"
   assert_status 3 "$SCRIPTS/sweep.sh" "$RUN_DIR"
 }
+
+test_a_retry_is_not_failed_by_the_previous_attempts_files() {
+  trap kill_workers EXIT
+  init_run
+  local pid
+  pid=$(start_worker)
+  "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 9999999999
+  printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.exit.json"
+  printf '{"ticket":"10","status":"failed"}' >"$RUN_DIR/results/10.json"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq queued "$(state_get '.tickets["10"].status')"
+  "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 9999999999
+  [ -f "$RUN_DIR/results/10.attempt-1.json" ] || fail "attempt 1's result not kept aside"
+  [ -f "$RUN_DIR/results/10.attempt-1.exit.json" ] || fail "attempt 1's exit record not kept aside"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq in_flight "$(state_get '.tickets["10"].status')" "second attempt still running"
+  assert_eq 1 "$(state_get '.tickets["10"].failures | length')"
+}
+
+test_stopping_a_worker_also_stops_its_descendants() {
+  trap kill_workers EXIT
+  init_run
+  local tree grandchild
+  # A worker whose child starts a grandchild, like run-ticket.sh -> claude -> a tool.
+  bash -c 'bash -c "sleep 347 & echo \$! >\"$1/grandchild\"; wait" _ "$1" & wait' _ "$TEST_TMPDIR" >/dev/null 2>&1 &
+  tree=$!
+  printf '%s\n' "$tree" >>"$TEST_TMPDIR/.workers"
+  while [ ! -s "$TEST_TMPDIR/grandchild" ]; do sleep 0.1; done
+  grandchild=$(cat "$TEST_TMPDIR/grandchild")
+  printf '%s\n' "$grandchild" >>"$TEST_TMPDIR/.workers"
+  ARTISAN_NOW=1000 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$tree" 1100
+  ARTISAN_NOW=1200 ARTISAN_STOP_GRACE=2 "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  sleep 0.5
+  ! kill -0 "$grandchild" 2>/dev/null || fail "grandchild $grandchild survived the stop"
+}

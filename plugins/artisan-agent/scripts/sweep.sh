@@ -24,25 +24,35 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 state_require_jq
 
-[ $# -eq 1 ] || { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+[ $# -eq 1 ] || state_usage "$0"
 RUN_DIR=$1
 state_require_run_dir "$RUN_DIR"
 RESULTS="$RUN_DIR/results"
 
-# Stop a worker: TERM its children and itself, then KILL whatever is left.
+# The pid and every process descended from it.
+process_tree() {
+  local pid="$1" child
+  printf '%s\n' "$pid"
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    process_tree "$child"
+  done
+}
+
+# Stop a worker and everything it started (run-ticket.sh -> claude -> tools):
+# TERM the whole tree, then KILL whatever is left after the grace period.
 stop_worker() {
-  local pid="$1" waited=0
+  local pid="$1" tree p alive waited=0
   state_pid_alive "$pid" || return 0
-  pkill -TERM -P "$pid" 2>/dev/null || true
-  kill -TERM "$pid" 2>/dev/null || true
-  while state_pid_alive "$pid" && [ "$waited" -lt "${ARTISAN_STOP_GRACE:-5}" ]; do
+  tree=$(process_tree "$pid")
+  for p in $tree; do kill -TERM "$p" 2>/dev/null || true; done
+  while [ "$waited" -lt "${ARTISAN_STOP_GRACE:-5}" ]; do
+    alive=0
+    for p in $tree; do state_pid_alive "$p" && alive=1; done
+    [ "$alive" -eq 1 ] || return 0
     sleep 1
     waited=$((waited + 1))
   done
-  if state_pid_alive "$pid"; then
-    pkill -KILL -P "$pid" 2>/dev/null || true
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
+  for p in $tree; do kill -KILL "$p" 2>/dev/null || true; done
 }
 
 # A failed attempt for ticket $t; jq args: --arg t, --arg reason, --argjson now.
@@ -81,12 +91,7 @@ sweep() {
   cp "$file" "$tmp"
   now=$(state_now)
 
-  step() { # filter [jq args...]: transform tmp in place
-    local f="$1"
-    shift
-    jq "$@" "$f" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "sweep: jq step failed"; }
-    mv -f "$tmp.next" "$tmp"
-  }
+  step() { state_step "$tmp" "$@"; }
 
   tickets=$(jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | .key' "$tmp")
   for t in $tickets; do

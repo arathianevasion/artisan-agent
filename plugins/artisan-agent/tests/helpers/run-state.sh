@@ -22,7 +22,8 @@ make_project() {
 
 # write_plan path [scope-json] [tickets-json]
 write_plan() {
-  local scope='["10","11","12"]' tickets='{}'
+  local scope='["10","11","12"]'
+  local tickets='{"10": {"caps": {"deadline_seconds": 3600}}, "11": {"caps": {"deadline_seconds": 3600}}, "12": {"caps": {"deadline_seconds": 3600}}}'
   [ -n "${2:-}" ] && scope=$2
   [ -n "${3:-}" ] && tickets=$3
   jq -n --argjson scope "$scope" --argjson tickets "$tickets" '{

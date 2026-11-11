@@ -135,3 +135,18 @@ test_events_record_dispatch_merge_wave_evidence_decision_and_cost() {
   assert_eq 1.5 "$(state_get '.costs.total_usd')"
   assert_status 1 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 99 1
 }
+
+test_a_dispatch_without_a_deadline_is_refused() {
+  init_run '' '{"10": {"model": "mid"}}'
+  assert_status 1 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 4242
+  assert_eq queued "$(state_get '.tickets["10"].status')"
+}
+
+test_a_failed_write_changes_nothing_and_releases_the_lock() {
+  init_run
+  local before
+  before=$(state_sum)
+  assert_status 1 "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["10"] | error("boom")'
+  assert_eq "$before" "$(state_sum)"
+  [ ! -L "$RUN_DIR/state.lock" ] || fail "lock left behind by a failed write"
+}

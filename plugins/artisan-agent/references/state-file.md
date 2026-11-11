@@ -33,7 +33,7 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | Event | Call | Effect |
 |---|---|---|
 | wave starts | `wave-start <run-dir> <wave> <plugin-version> <team> <product> <individual>` | records the wave's plugin version and guardrail source commits (`-` for a level with no source) |
-| dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`) |
+| dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). A retry first moves the previous attempt's `results/<ticket>.json` and `.exit.json` to `results/<ticket>.attempt-<n>.json` and `.attempt-<n>.exit.json` |
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
 | verified | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
@@ -93,7 +93,7 @@ Top level:
 
 1. A result file: recorded. `complete` → `returned`; `blocked` → `blocked`; `failed` → a failed attempt.
 2. An exit record and no result file: a failed attempt.
-3. Past `deadline_at`: the worker and its children are stopped (TERM, then KILL after `ARTISAN_STOP_GRACE` seconds, default 5) and it is a failed attempt.
+3. Past `deadline_at`: the worker and every process descended from it are stopped (TERM, then KILL after `ARTISAN_STOP_GRACE` seconds, default 5) and it is a failed attempt.
 4. The pid is not alive: a failed attempt (a crash that wrote nothing).
 
 A failed attempt appends to `failures` and sends the ticket back to `queued`, or, once `attempts` reaches `attempts_per_ticket`, to `blocked` with an `exception` decision queued for the Artisan. The sweep then logs new complete lines of every findings file and recomputes `costs`.

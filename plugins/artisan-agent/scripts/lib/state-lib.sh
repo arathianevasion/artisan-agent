@@ -91,22 +91,22 @@ state_unlock() {
 
 # Runs "$@" with the state lock held by the writer pid. Takes the lock for the
 # call if the writer does not already hold it, and releases only what it took.
+# "$@" runs under the caller's errexit (never on the left of || or &&, where
+# bash would switch it off): a failure ends the script and the EXIT trap
+# releases the lock.
 state_with_lock() {
-  local run_dir="$1" pid took=0 status=0
+  local run_dir="$1" pid
   shift
   pid=$(state_writer_pid)
-  if [ "$(state_lock_holder "$run_dir")" != "$pid" ]; then
-    state_lock "$run_dir" "$pid" || return $?
-    took=1
-    # Release on any exit, including state_die inside "$@".
-    trap 'state_unlock "'"$run_dir"'" "'"$pid"'" || true' EXIT
+  if [ "$(state_lock_holder "$run_dir")" = "$pid" ]; then
+    "$@"
+    return 0
   fi
-  "$@" || status=$?
-  if [ "$took" -eq 1 ]; then
-    state_unlock "$run_dir" "$pid" || true
-    trap - EXIT
-  fi
-  return "$status"
+  state_lock "$run_dir" "$pid" || return $?
+  trap 'state_unlock "'"$run_dir"'" "'"$pid"'" || true' EXIT
+  "$@"
+  state_unlock "$run_dir" "$pid" || true
+  trap - EXIT
 }
 
 state_valid_file() { # path
@@ -154,8 +154,40 @@ state_apply() {
   state_commit "$run_dir" "$tmp"
 }
 
-# state_require_run_dir run_dir: exits unless it holds a valid state file.
+# state_require_run_dir run_dir: exits unless a state file exists there.
+# (Its schema version is checked when it is read.)
 state_require_run_dir() {
   [ -n "${1:-}" ] || state_die 2 "missing run folder argument"
   [ -f "$(state_file "$1")" ] || state_die 1 "no state file in $1"
 }
+
+# state_step tmp filter [jq args...]: transform a working copy in place.
+# Used by the sweep and the reconciler, which build up one rewrite in steps.
+state_step() {
+  local tmp="$1" filter="$2"
+  shift 2
+  jq "$@" "$filter" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "jq step failed"; }
+  mv -f "$tmp.next" "$tmp"
+}
+
+# state_usage script: print the script's header comment as its usage, exit 2.
+state_usage() {
+  sed -n '2,/^$/p' "$1" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+# jq definitions shared by every writer, so a ticket's shape and the merge
+# event live in one place. Prepend to a filter: "$STATE_JQ_DEFS | ...".
+#   new_ticket(t): a queued ticket entry; reads .plan.tickets for its branch
+#   merged(t; sha): the ticket merged at sha, recorded in integration.merges
+STATE_JQ_DEFS='
+  def new_ticket($t): {
+    status: "queued", attempts: 0, pid: null,
+    branch: (.plan.tickets[$t].branch // ("agent/" + $t)),
+    dispatched_at: null, deadline_at: null, result: null, evidence: null,
+    merge_commit: null, cost_usd: 0, failures: []
+  };
+  def merged($t; $sha):
+    .tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
+    | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}]);
+'
