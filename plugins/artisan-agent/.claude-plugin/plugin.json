@@ -1,0 +1,10 @@
+{
+  "name": "artisan-agent",
+  "version": "0.1.0",
+  "description": "The Artisan Agent pipeline: agents do most of the delivery, the Artisan sets the guardrails and supplies the taste. Layers on mattpocock-skills.",
+  "author": {
+    "name": "arathianevasion"
+  },
+  "repository": "https://github.com/arathianevasion/artisan-agent",
+  "dependencies": ["mattpocock-skills@claude-plugins-official"]
+}

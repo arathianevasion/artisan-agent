@@ -1,0 +1,15 @@
+{
+  "name": "artisan-agent",
+  "description": "Private marketplace for Artisan Agent: a pipeline where agents do most of the delivery and the Artisan sets the guardrails and supplies the taste.",
+  "owner": {
+    "name": "arathianevasion"
+  },
+  "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],
+  "plugins": [
+    {
+      "name": "artisan-agent",
+      "source": "./plugins/artisan-agent",
+      "description": "The Artisan Agent pipeline, layered on mattpocock-skills."
+    }
+  ]
+}

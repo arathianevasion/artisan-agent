@@ -1,0 +1,13 @@
+# Run state is working state, never committed. config.yml is committed.
+.artisan-agent/runs/
+
+# Secrets and local overrides
+.env
+.env.*
+*.pem
+*.key
+.claude/settings.local.json
+
+# Scratch and OS noise
+.scratch/
+.DS_Store
