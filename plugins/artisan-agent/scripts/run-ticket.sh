@@ -29,9 +29,11 @@
 #                                 JSON output), stderr.log, runner.log
 #
 # A ticket's attempt is refused if its worker folder already exists; pass
-# --attempt for a retry.
+# --attempt for a retry. When the run folder holds a state file, a ticket
+# outside its approved scope (plan.scope) is refused before anything starts.
 #
-# Exit status: 0 launched, 1 failed to launch, 2 bad usage.
+# Exit status: 0 launched, 1 failed to launch, 2 bad usage, 4 the ticket is
+# outside the approved scope.
 #
 # Portable to bash 3.2 (macOS) and Linux.
 
@@ -90,6 +92,11 @@ is_number "$expected_minutes" || die_usage "--expected-minutes must be a number"
 [ -z "$deadline_seconds" ] || is_count "$deadline_seconds" || die_usage "--deadline-seconds must be a positive whole number"
 [ -f "$prompt_file" ] || die_usage "no such prompt file: $prompt_file"
 [ -d "$workdir" ] || die_usage "no such workdir: $workdir"
+
+# The scope is exactly the set approved: never launch a worker outside it.
+if [ -z "$foreground" ] && [ -f "$run_dir/state.json" ]; then
+  "$(dirname "$0")/state.sh" in-scope "$run_dir" "$ticket" || exit $?
+fi
 
 mkdir -p "$run_dir"
 run_dir=$(cd "$run_dir" && pwd)

@@ -53,30 +53,27 @@ Each ticket gets its own agent spec with three parts. Design them from the ticke
 
 Map tiers to concrete model ids once, in the plan, so the mapping is visible and can be changed in one place rather than being buried per ticket.
 
+**Expected size.** Input tokens, output tokens and minutes for this ticket, judged from its body: how much it reads, how much it writes, how many layers it touches. With no history these are what the estimate is made from, so size each ticket on its own; there are no per-tier defaults.
+
 **Brief.** A short prompt that names the ticket path, the seams the agent should test at if the ticket already pre-agreed them, and any GLOSSARY.md vocabulary or ADRs it must respect. Keep it under a paragraph. The ticket is the spec; the brief is orientation, and duplicating the ticket into the brief just spends context twice.
 
 **Expected output.** What "done" looks like for this specific ticket in one or two lines, drawn from its acceptance criteria. This is what the reconciliation step in 5 checks against — a vague expected output makes the whole loop unverifiable, so if you cannot write a concrete one, the ticket is underspecified and should go back to `/to-tickets`.
 
 ### 3. Get the plan approved
 
-Present the whole plan before dispatching anything. Use this structure:
+The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11, autonomous within the run's limits); the rest is the Artisan's to approve or change.
 
-```
-## Wave 1 (parallel)
-| Ticket | Description | Model | Expected output |
-|---|---|---|---|
-| #01 | Short plain description of the ticket | mid | ... |
+1. **Write the draft** as JSON: `run_id`, `repo`, `integration_branch`, `scope` (exactly the defined set of work), `waves`, `gates`, and per ticket `title`, `model`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
+2. **Build the plan:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh build --draft <draft.json> > <plan.json>`. It reads the project config (`.artisan-agent/config.yml`; a missing key is its default), estimates each ticket in estimated dollars from the logged cost of past merged tickets times any estimate multipliers, or with no history from the model's price and the expected size, and sets each ticket's caps, the total and the budget.
+3. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed, with your tier mapping, worktree location and what each gate actually covers (from the preconditions) underneath. Wherever a plan, report or status update names a ticket, give its number and a short plain description together, such as "#01 (retry failed uploads)". A number or slug alone means nothing to a reader who hasn't memorised the queue.
+4. **Iterate until approved.** A change to the scope, waves, a model or an expected size goes into the draft; a number the Artisan overrides for this run is a `--set key=value` on the build (for example `--set max_agents=3`). Rebuild and show it again. Never edit `config.yml` for an override: it holds the project's numbers, and changing them for good is job 23, by PR.
+5. **Start the run** from the approved plan: `${CLAUDE_PLUGIN_ROOT}/scripts/state.sh init <run-dir> <plan.json>`. From here the run's numbers come from the state file's `plan.config`, not `config.yml`. A number overridden mid-run goes through `state.sh override <run-dir> <key> <value>`, which changes the state file only.
 
-## Wave 2 (blocked by #01 short description, #02 short description)
-...
+Review capacity is never inferred: it comes from Max Agents and the gates the Artisan approved. Don't size waves by what you guess the Artisan can review.
 
-Tier mapping: frontier=<id>, mid=<id>, fast=<id>
-Worktrees: <N> under ../<repo>-wt/
-```
+The approved scope is the run's scope, exactly. `state.sh dispatch` and `run-ticket.sh` refuse any ticket outside it (exit status 4); a ticket that should join gets its own plan step and approval first.
 
-Wherever a plan, report or status update names a ticket, give its number and a short plain description together, such as "#01 (retry failed uploads)". A number or slug alone means nothing to a reader who hasn't memorised the queue.
-
-Then wait. Iterate on wave composition, tier choices and briefs until the Artisan approves. Dispatch nothing before approval — an unattended run that starts from a wrong graph is far more expensive to unwind than one that starts late.
+Dispatch nothing before approval — an unattended run that starts from a wrong graph is far more expensive to unwind than one that starts late.
 
 ### 4. Dispatch a wave
 

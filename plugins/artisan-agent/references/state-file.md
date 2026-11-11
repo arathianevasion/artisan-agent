@@ -39,6 +39,7 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
 | decision waits | `decision <run-dir> <decision.json>` | adds to the decision queue |
 | orchestrator spend | `cost <run-dir> <usd>` | adds to `costs` |
+| number overridden for this run | `override <run-dir> <key> <value>` | changes `plan.config` and records `plan.overrides`; `.artisan-agent/config.yml` is never written |
 | anything else | `update <run-dir> <jq-filter> [jq args...]` | a locked, one-step jq rewrite |
 
 ## Fields
@@ -60,17 +61,20 @@ Top level:
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
 
-`plan`, copied from the approved plan by `state.sh init <run-dir> <plan.json>`. The plan file needs `run_id`, `repo`, `integration_branch` and `scope`; the rest default.
+`plan`, copied from the approved plan by `state.sh init <run-dir> <plan.json>`. The plan file needs `run_id`, `repo`, `integration_branch` and `scope`; the rest default. `state.sh` never reads `config.yml` itself: the plan step (`plan.sh build`) reads it and puts its numbers into the plan.
 
 | Field | Meaning |
 |---|---|
-| `scope` | the agreed scope: every ticket in the run. A ticket added later (triage-admitted, urgent) is added here and the reconciler gives it a `tickets` entry |
+| `scope` | the agreed scope: every ticket in the run, and the only tickets that dispatch. `state.sh dispatch` and `run-ticket.sh` refuse any other ticket with exit status 4. A ticket added later (triage-admitted, urgent) is added here, by its own approval, and the reconciler gives it a `tickets` entry |
 | `waves` | the forecast waves, `[[ticket, ...], ...]`. A forecast only: the frontier never comes from it |
-| `tickets` | per ticket: `model`, `caps` (`max_budget_usd`, `max_turns`, `deadline_seconds`), `branch` (default `agent/<ticket>`) |
+| `tickets` | per ticket: `model`, `caps` (`max_budget_usd`, `max_turns`, `deadline_seconds`), `branch` (default `agent/<ticket>`); from the plan step also `title`, `expected_output`, `expected` (`input_tokens`, `output_tokens`, `minutes`), `estimate_usd` and `estimate_basis` |
 | `gates` | the gates the Artisan approved for this run |
 | `max_agents` | Max Agents (default 5) |
 | `budget_usd` | the run's approved budget |
 | `attempts_per_ticket` | failed attempts allowed before a ticket is blocked (default 2) |
+| `estimate_usd` | the approved estimate, in estimated dollars (`budget_usd` adds the overrun allowance) |
+| `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml` |
+| `overrides` | `{<key>: {value, project}}`, one per number overridden for this run, with the project's value it replaced |
 
 `tickets.<n>`:
 
@@ -89,7 +93,7 @@ Top level:
 
 ## The sweep
 
-`sweep.sh <run-dir>`, on every wake and at least every sweep interval (`config.yml`, default 5 minutes). For each `in_flight` ticket, reading only the current attempt's files (n = `attempts`), first match wins:
+`sweep.sh <run-dir>`, on every wake and at least every sweep interval (`plan.config.sweep_minutes`, default 5 minutes). For each `in_flight` ticket, reading only the current attempt's files (n = `attempts`), first match wins:
 
 1. A result file: recorded. `complete` → `returned`; `blocked` → `blocked`; `failed` → a failed attempt.
 2. An exit record and no result file: a failed attempt.

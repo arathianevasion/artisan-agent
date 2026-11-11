@@ -19,16 +19,27 @@
 #   state.sh merge <run-dir> <ticket> <merge-commit>
 #   state.sh decision <run-dir> <decision.json>
 #   state.sh cost <run-dir> <orchestrator-usd>  add orchestrator spend
+#   state.sh override <run-dir> <key> <value>
+#                                             change one config number for this run
+#                                             only (never .artisan-agent/config.yml)
+#   state.sh in-scope <run-dir> <ticket>      exit 0 if the ticket is in the
+#                                             approved scope, 4 if not
+#
+# A dispatch of a ticket outside the approved scope (plan.scope) is refused
+# with exit status 4.
 #
 # Every write takes the lock unless ARTISAN_WRITER_PID already holds it, and
 # rewrites the file in one step. Exit status: 0 ok, 1 error, 2 usage,
-# 3 the lock is held by another live process.
+# 3 the lock is held by another live process, 4 the ticket is outside the
+# approved scope.
 
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/state-lib.sh
 . "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/config-lib.sh
+. "$SCRIPT_DIR/lib/config-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -72,7 +83,10 @@ init_write() {
           gates: ($p.gates // []),
           max_agents: ($p.max_agents // 5),
           budget_usd: ($p.budget_usd // null),
-          attempts_per_ticket: ($p.attempts_per_ticket // 2)
+          attempts_per_ticket: ($p.attempts_per_ticket // 2),
+          estimate_usd: ($p.estimate_usd // null),
+          config: ($p.config // {}),
+          overrides: ($p.overrides // {})
         },
         tickets: {},
         integration: { branch: $p.integration_branch, merges: [] },
@@ -93,6 +107,7 @@ dispatch_ticket() {
   local run_dir="$1" t="$2" pid="$3" deadline="$4" now file
   file=$(state_file "$run_dir")
   now=$(state_now)
+  require_in_scope "$run_dir" "$t"
   jq -e --arg t "$t" '.tickets[$t] != null' "$file" >/dev/null \
     || state_die 1 "ticket $t is not in the run"
   if [ -z "$deadline" ]; then
@@ -107,6 +122,16 @@ dispatch_ticket() {
       .status = "in_flight" | .attempts += 1 | .pid = $pid
       | .dispatched_at = $now | .deadline_at = $deadline | .result = null)' \
     --arg t "$t" --argjson pid "$pid" --argjson now "$now" --argjson deadline "$deadline"
+}
+
+# require_in_scope run_dir ticket: exits 4 unless the ticket is in the
+# approved scope. The scope is exactly the set approved; everything else waits.
+require_in_scope() {
+  local file
+  file=$(state_file "$1")
+  state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
+  jq -e --arg t "$2" '.plan.scope | map(tostring) | index($t) != null' "$file" >/dev/null \
+    || state_die 4 "refusing ticket $2: it is not in the approved scope ($(jq -r '.plan.scope | map(tostring) | join(", ")' "$file")); add it through a plan step first"
 }
 
 write_stdin() {
@@ -205,6 +230,18 @@ case "$cmd" in
       .costs.orchestrator_usd += $usd
       | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' \
       --argjson usd "$2"
+    ;;
+  override)
+    [ $# -eq 3 ] || usage
+    state_require_run_dir "$1"
+    state_with_lock "$1" state_apply "$1" "$CONFIG_JQ_DEFS"'
+      .plan |= run_override($key; $value | parse_value)' \
+      --arg key "$2" --arg value "$3"
+    ;;
+  in-scope)
+    [ $# -eq 2 ] || usage
+    state_require_run_dir "$1"
+    require_in_scope "$1" "$2"
     ;;
   -h | --help | help) usage ;;
   *) usage ;;
