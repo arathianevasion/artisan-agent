@@ -11,7 +11,7 @@
 #
 # Run from anywhere in the repo. Commit your change in the worktree before
 # finishing. finish refuses when the main checkout has uncommitted changes,
-# the branch has no commits, or the rebase conflicts (nothing is lost; the
+# the branch has no commits, git has no identity for the rebase, or the rebase conflicts (nothing is lost; the
 # worktree stays). Exit status: 0 ok, 1 refused or failed, 2 usage.
 
 set -euo pipefail
@@ -38,6 +38,8 @@ case "$cmd" in
       || die "the main checkout has uncommitted changes; nothing is merged"
     [ "$(git -C "$main" rev-list --count "HEAD..$branch")" -gt 0 ] || die "$branch has no new commits"
     if ! git -C "$main" merge --ff-only -q "$branch" 2>/dev/null; then
+      git -C "$wt" var GIT_COMMITTER_IDENT >/dev/null 2>&1 \
+        || die "git has no committer identity, which the rebase needs; set one (git config --global user.name/user.email), then finish again"
       base=$(git -C "$main" rev-parse HEAD)
       git -C "$wt" rebase -q "$base" >/dev/null 2>&1 \
         || { git -C "$wt" rebase --abort >/dev/null 2>&1 || true; die "$branch conflicts with the main checkout; resolve in $wt, then finish again"; }

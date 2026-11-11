@@ -283,3 +283,17 @@ test_doc_change_refuses_bad_names_and_empty_branch() {
   (cd "$REPO" && "$PLUGIN_ROOT/scripts/doc-change.sh" start e) >/dev/null
   assert_status 1 bash -c "cd '$REPO' && '$PLUGIN_ROOT/scripts/doc-change.sh' finish e"
 }
+
+test_doc_change_finish_says_so_when_git_has_no_identity() {
+  make_repo
+  local wt err
+  wt=$(cd "$REPO" && "$PLUGIN_ROOT/scripts/doc-change.sh" start noid)
+  printf 'x\n' >"$wt/n.md"; git -C "$wt" add n.md
+  git -c user.name=T -c user.email=t@example.invalid -C "$wt" commit -qm new
+  printf 'y\n' >"$REPO/o.md"; gq -C "$REPO" add o.md; gq -C "$REPO" commit -m other
+  err=$(cd "$REPO" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.useConfigOnly GIT_CONFIG_VALUE_0=true \
+    "$PLUGIN_ROOT/scripts/doc-change.sh" finish noid 2>&1) && fail "finish should refuse"
+  assert_contains "$err" "no committer identity"
+  [ -d "$wt" ] || fail "worktree must stay"
+}

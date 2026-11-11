@@ -23,6 +23,11 @@ TESTS_DIR=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_ROOT=$(cd "$TESTS_DIR/.." && pwd)
 export TESTS_DIR PLUGIN_ROOT
 
+# Tests must not depend on the machine's git identity (CI runners have none):
+# give every script a fixed one. Tests that need "no identity" unset these.
+export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
+export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+
 suite_dir=${1:-$TESTS_DIR}
 if [ ! -d "$suite_dir" ]; then
   echo "run.sh: no such directory: $suite_dir" >&2
