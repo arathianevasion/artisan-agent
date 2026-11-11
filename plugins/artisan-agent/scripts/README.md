@@ -72,3 +72,52 @@ Not covered by the script tests; to do once by hand on the machine that will run
 1. In a throwaway repo, launch a real logged-in worker with `run-ticket.sh --estimate-usd 1 --expected-minutes 150 --max-turns 60 -- --no-session-persistence --model haiku`. Use a prompt that keeps it busy cheaply for more than 2 hours, for example a foreground `sleep 540` repeated about 15 times with a file check between each. That gives a $2.00 budget and 60 turns, enough room that neither cap ends the run before the 2 hours.
 2. Close the launching terminal or chat at once.
 3. After 2 hours, check that `workers/<t>.1/runner.pid` is still alive. When it ends, check that `results/<t>.1.exit.json` exists and that `classify-worker.sh` gives the expected status.
+
+# Config and the plan step
+
+How the plan step reads the project config, estimates a run and records the numbers the Artisan approved. Tested in `tests/config-plan.test.sh`.
+
+| Script | Does | Returns |
+|---|---|---|
+| `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
+| `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
+| `plan.sh render` | Prints the one approval: waves, model and estimate per ticket, total, Max Agents and every config number | Markdown |
+
+## The project config
+
+`.artisan-agent/config.yml` is committed. Every setting and its default is in `templates/config.yml`, the one place defaults are written; `/artisan-agent:setup` copies it into a project. A key left out or left empty falls back to its default; a value of the wrong type stops the read with the key named. The file is plain YAML: maps, scalars, `[flow, lists]` and `- item` lists of scalars (`scripts/lib/yaml-subset.py`, standard-library `python3`).
+
+| Setting (ticket #55) | Key | Default |
+|---|---|---|
+| Max Agents | `max_agents` | 5 |
+| sweep | `sweep_minutes` | 5 |
+| context drain | `context.drain_percent` | 30 |
+| context review | `context.review_percent` | 50 |
+| overrun allowance | `overrun_allowance_percent` | 25 |
+| usage reserve | `usage_reserve.five_hour_reserve_percent`, `usage_reserve.seven_day_ceiling_percent` | 20, 90 |
+| stale usage reading | `stale_usage_minutes` | 10 |
+| attempts per ticket | `attempts_per_ticket` | 2 |
+| deferral review | `deferral_review_days` | 30 |
+| evidence threshold | `evidence_threshold` | 3 |
+| hands-on nudge | `hands_on_nudge_runs` | 5 |
+| areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
+| team guardrails repo | `team_guardrails_repo` | none |
+| estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
+| host configured | `host_configured` | false |
+
+## Overrides are for this run only
+
+`plan.sh build --set key=value` and, once the run has started, `state.sh override <run-dir> <key> <value>` change a number in the plan's `config` and record `{value, project}` in its `overrides`. Neither writes `config.yml`; a lasting change is job 23, made by PR. The key must be a setting above (dotted), or `estimate_multipliers.<model>`, and the value must have the setting's type. `max_agents` and `attempts_per_ticket` are kept in step at the top of the plan, where `state.sh` and the sweep read them.
+
+## Estimates
+
+In estimated dollars, per ticket, then summed; the budget is the total plus the overrun allowance.
+
+- **History.** When state files of other runs (`.artisan-agent/runs/*/state.json`, or `--history DIR`) hold merged tickets on the same model with a logged `cost_usd`: their mean cost, times `estimate_multipliers.<model>`, else `estimate_multipliers.all`, else 1.
+- **Price.** Otherwise: the model's price in `references/model-prices.json` times the ticket's expected size (`expected.input_tokens`, `expected.output_tokens`). There are no per-tier defaults: a model missing from the price table, with no history, is refused. Keep the table current; it says the date its prices were taken.
+
+Caps follow `run-ticket.sh`: `max_budget_usd` twice the estimate, `max_turns` 40 per estimated dollar (at least 20), `deadline_seconds` twice `expected.minutes`.
+
+## Scope
+
+The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <ticket>` exits 0 or 4; `state.sh dispatch` and `run-ticket.sh` (whenever its run folder holds a state file) refuse a ticket outside it with exit status 4 before anything starts.
