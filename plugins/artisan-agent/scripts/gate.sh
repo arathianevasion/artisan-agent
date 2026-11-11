@@ -72,7 +72,7 @@ die() { state_die 1 "gate.sh: $*"; }
 
 PACKET() { python3 -I "$SCRIPT_DIR/lib/packet.py" "$@"; }
 gates_dir() { mkdir -p "$RUN_DIR/gates/pending"; printf '%s\n' "$RUN_DIR/gates"; }
-jget() { jq -r "$STATE_JQ_DEFS $1" "${@:2}" "$FILE"; }
+jget() { local f="$1"; shift; jq -r "$@" "$STATE_JQ_DEFS $f" "$FILE"; } # filter [jq args]
 
 gate_def() { # id: the plan's slice gate, as JSON, or empty
   jq -c --arg id "$1" "$STATE_JQ_DEFS"' slice_gates[] | select(.id == $id)' "$FILE"
@@ -93,7 +93,7 @@ cmd_due() {
 cmd_holds() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  [ "$(jget --arg t "$2" 'gate_holds($t)')" = true ]
+  [ "$(jget 'gate_holds($t)' --arg t "$2")" = true ]
 }
 
 # --------------------------------------------------------------------- open
@@ -131,7 +131,7 @@ dependents() { # def
   printf '%s\n' "$out"
 }
 
-issue_id() { gh api "repos/$(get '.repo')/issues/$1" --jq .id; }
+issue_id() { local j; j=$(gh api "repos/$(get '.repo')/issues/$1") && jq -er .id <<<"$j"; }
 
 # blocker blocks ticket natively, once.
 add_blocker() { # ticket blocker-issue blocker-id
@@ -151,7 +151,7 @@ cmd_open() {
   if [ -n "$rec" ]; then jq -r .issue <<<"$rec"; return 0; fi
   def=$(gate_def "$id")
   [ -n "$def" ] || state_die 6 "gate.sh: no slice gate $id in the plan"
-  [ "$(jget --argjson g "$def" 'gate_due($g)')" = true ] \
+  [ "$(jget 'gate_due($g)' --argjson g "$def")" = true ] \
     || state_die 6 "gate.sh: $id is not due: not every ticket of its slice has merged"
   dir=$(gates_dir)
   repo=$(get '.repo')
@@ -444,7 +444,7 @@ cmd_sync() {
   # A gate closed on the tracker by hand is approved by whoever closed it.
   repo=$(get '.repo')
   for issue in $(get '(.review_gates // [])[] | select(.status == "open") | .issue'); do
-    state=$(gh api "repos/$repo/issues/$issue" --jq '.state' 2>/dev/null) || continue
+    state=$(gh api "repos/$repo/issues/$issue" 2>/dev/null | jq -r '.state // empty') || continue
     if [ "$(printf '%s' "$state" | tr 'A-Z' 'a-z')" = closed ]; then
       GATE=$(recorded "$issue")
       id=$(jq -r .id <<<"$GATE")
