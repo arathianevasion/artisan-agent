@@ -151,24 +151,23 @@ block() {
     | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
 }
 
-# The wave the last orchestrator runs (0 before any): a dispatch is part of it.
-WAVE_JQ='def current_wave: ((.orchestrators // []) | last | .wave) // 0;'
-
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
-# returned or waiting to retry, and every ticket dispatched in it is blocked,
-# the run halts: a decision for the Artisan, and no wave launches until they
-# resume it. Idempotent.
+# returned or waiting to retry, and every ticket dispatched in it (two or
+# more) failed, the run halts: a decision for the Artisan, and no wave
+# launches until they resume it. A ticket failed when it is blocked for any
+# reason but its worker's own design question (result status "blocked"); a
+# one-ticket wave failing is that ticket's own exception decision. Idempotent.
 halt_if_wave_failed() {
-  apply "$WAVE_JQ"'
+  apply '
     current_wave as $w
     | [.tickets | to_entries[] | select(.value.wave != null and .value.wave == $w)] as $d
-    | if $w == 0 or .halted != null or ($d | length) == 0
-         or ([$d[] | select(.value.status != "blocked")] | length) > 0 then .
+    | if $w == 0 or .halted != null or ($d | length) < 2
+         or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0 then .
       else ([$d[].key]) as $ts
         | .halted = {wave: $w, tickets: $ts, at: $now,
                      reason: "every ticket dispatched in wave \($w) failed"}
         | .decisions += [{id: ((.decisions | length) + 1), kind: "halt",
-            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))): something upstream is likely wrong. Resume the run, reslice or end it?",
+            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))): something upstream is likely wrong. Recommended: look at the blocked tickets for a shared cause (a broken base, a missing setup step, a bad spec) and fix it before resuming; resume as is, reslice or end the run?",
             status: "waiting", at: $now}]
         | event({event: "halted", wave: $w, tickets: $ts}; $now)
       end'
@@ -392,7 +391,7 @@ cmd_status() {
     echo
     echo "| Decision | Ticket | Question |"
     echo "|---|---|---|"
-    get '.decisions[] | select(.status == "waiting") | "| \(.id) (\(.kind)) | #\(.ticket // "-") | \(.question) |"'
+    get '.decisions[] | select(.status == "waiting") | "| \(.id) (\(.kind)) | \(if .ticket then "#" + .ticket else "-" end) | \(.question) |"'
   fi
 }
 
@@ -519,7 +518,7 @@ EOF
     "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" \
       "$(awk -v now="$(state_now)" -v m="$minutes" 'BEGIN { printf "%d", now + m * 120 }')"
   fi
-  apply "$WAVE_JQ"'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
+  apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
     --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
 }

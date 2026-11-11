@@ -7,7 +7,7 @@ description: Take the one try at a merge conflict in a run's integration worktre
 
 You are taking the **one try** a run gives a merge conflict before the ticket goes to the Artisan. `wave.sh merge` has stopped a `--no-ff` merge of a ticket's branch into the run's integration branch halfway, conflicts in place, in the integration worktree you are sitting in. Resolve it if both sides can keep what they meant. If they can't, say so: an honest UNRESOLVED costs the Artisan one look; a wrong resolution costs them a broken integration branch they never saw coming.
 
-You do not commit, abort, continue the merge, run the suite or touch the tracker. `wave.sh resolved` does all of that once you finish, and it checks your work: a file still unmerged, a conflict marker left behind or a change left unstaged makes it UNRESOLVED anyway, and a red suite undoes the merge.
+You do not commit, abort, continue the merge, run the suite or touch the tracker. `wave.sh resolved` does all of that once you finish, and it checks your work: a file still unmerged, a conflict marker left behind, a change left unstaged or an untracked file left behind makes it UNRESOLVED anyway, and a red suite undoes the merge.
 
 ## Inputs
 

@@ -409,6 +409,17 @@ test_an_attempt_that_did_not_complete_is_a_failed_attempt_at_merge() {
 
 # ------------------------------------------------------------------- halt
 
+test_a_one_ticket_wave_or_a_design_question_does_not_halt_the_run() {
+  setup_waves 3 1 2
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.orchestrators = [{id: "orchestrator-w1", wave: 1, attempt: 1}]
+    | .tickets["1"] |= (.status = "blocked" | .wave = 1)'
+  "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  assert_eq null "$(state_get '.halted')" "one ticket is not a whole wave"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"] |= (.status = "blocked" | .wave = 1 | .result = {status: "blocked"})'
+  "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  assert_eq null "$(state_get '.halted')" "a design question is not a failure"
+}
+
 test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   setup_waves 3 1 2 3
   printf 'FAIL="1 2"\n' >"$WAVES/ticket-1"
@@ -421,7 +432,7 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: halted"
   assert_contains "$out" "halted: every ticket dispatched in wave 1 failed (#1, #2); nothing more launches until the Artisan decides"
-  assert_contains "$out" "(halt) | #- | Wave 1 failed whole (#1, #2)"
+  assert_contains "$out" "(halt) | - | Wave 1 failed whole (#1, #2)"
   assert_eq halted "$(state_get '.events[-1].event')"
   # Nothing launches until the Artisan decides to carry on.
   local status=0

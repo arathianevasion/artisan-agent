@@ -199,6 +199,7 @@ state_usage() {
 #   merged(t; sha): the ticket merged at sha, recorded in integration.merges
 #   attempt_cost(t; n; usd): attempt n of ticket t cost usd (cost_usd is the sum)
 #   event(e; at): append e to the event log, numbered, with its time (epoch)
+#   current_wave: the last orchestrator's wave (0 before any); a dispatch is part of it
 #   failed_attempt(t; reason; at): attempt .attempts of ticket t failed; back to
 #     queued for a fresh worker, or blocked with an exception decision once it
 #     has used the run's attempts per ticket
@@ -215,6 +216,7 @@ STATE_JQ_DEFS='
     dispatched_at: null, deadline_at: null, result: null, evidence: null,
     merge_commit: null, cost_usd: 0, failures: []
   };
+  def current_wave: ((.orchestrators // []) | last | .wave) // 0;
   def failed_attempt($t; $reason; $at):
     .plan.attempts_per_ticket as $max
     | .tickets[$t] as $tk

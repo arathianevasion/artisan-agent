@@ -35,14 +35,13 @@ usage() { state_usage "$0"; }
 
 # jq: the current wave (the last orchestrator's, 0 before any) and, for a
 # candidate ticket, the first ticket in the way: {ticket, why} or null.
-WIDTH_JQ='
+WIDTH_JQ="$STATE_JQ_DEFS"'
   def files($t): .plan.tickets[$t].expected_files // null;
   def under($a; $b): $a == $b or ($b | endswith("/")) and ($a | startswith($b));
   def overlap($x; $y):
     if $x == null or $y == null then "unknown"
     else first($x[] as $a | $y[] as $b | select(under($a; $b) or under($b; $a))
                | if under($a; $b) then $a else $b end) // null end;
-  def current_wave: ((.orchestrators // []) | last | .wave) // 0;
   # Tickets the candidate must not share a wave with: in flight, or
   # dispatched in this wave (merged, blocked or waiting to retry).
   def peers($t): current_wave as $w
