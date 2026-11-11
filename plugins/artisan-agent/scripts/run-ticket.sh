@@ -113,7 +113,7 @@ if [ -z "$foreground" ]; then
     die_usage "attempt $attempt of ticket $ticket already exists ($worker_dir); pass --attempt"
   fi
   mkdir -p "$worker_dir" "$run_dir/results/findings"
-  detach nohup "$0" "${orig_args[@]}" --foreground \
+  detach nohup "$0" --foreground "${orig_args[@]}" \
     </dev/null >>"$worker_dir/runner.log" 2>&1 &
   # The runner writes its own PID once it is up; wait for it (up to 10s).
   i=0

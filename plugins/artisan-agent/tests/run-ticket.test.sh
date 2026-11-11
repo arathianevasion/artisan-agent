@@ -134,6 +134,16 @@ test_explicit_caps_override_the_computed_ones() {
 [sonnet]"
 }
 
+test_arguments_after_a_double_dash_go_to_claude() {
+  setup_run
+  launch complete -- --no-session-persistence --model haiku
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 0 "$(field "$EXIT_RECORD" exit_code)"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" "[--no-session-persistence]
+[--model]
+[haiku]"
+}
+
 test_worker_is_told_its_files_and_not_to_leave_background_commands() {
   setup_run
   launch complete
