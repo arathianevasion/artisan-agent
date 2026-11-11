@@ -115,11 +115,32 @@ edited_paths() {
     | .input.file_path' "$1/session.jsonl" 2>/dev/null
 }
 
-# True when the first edit to a path matching $2 comes before the first to $3.
-edited_before() {
+# True unless a Write/Edit to a path matching $3 comes before the first to $2.
+# (Edits made through Bash leave no path here; red_before_commit covers them.)
+not_edited_before() {
   edited_paths "$1" | awk -v a="$2" -v b="$3" '
     $0 ~ a && !ia { ia = NR } $0 ~ b && !ib { ib = NR }
-    END { exit !(ia && (!ib || ia < ib)) }'
+    END { exit !(!ib || (ia && ia < ib)) }'
+}
+
+# True when a test run failed (red) before the session's first git commit
+# finished. A Bash call that both runs the tests and commits counts its own
+# red output first, since its commands run in order.
+red_before_commit() {
+  jq -rs '
+    [.[] | select(.type == "assistant") | .message.content[]?
+      | select(.type == "tool_use" and .name == "Bash" and (.input.command | test("git( -C [^ ]+)? commit")))
+      | .id] as $commits
+    | .[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result")
+    | (if (.content | tostring | test("FAILED \\(|AssertionError|ImportError")) then "red" else empty end),
+      (if ($commits | index(.tool_use_id)) != null then "commit" else empty end)' "$1/session.jsonl" 2>/dev/null | awk '
+    $0 == "red" && !r { r = NR } $0 == "commit" && !c { c = NR }
+    END { exit !(r && (!c || r < c)) }'
+}
+
+skill_loaded() { # session skill
+  jq -e --arg s "$2" 'select(.type == "assistant") | .message.content[]?
+    | select(.type == "tool_use" and .name == "Skill" and .input.skill == $s)' "$1/session.jsonl" >/dev/null 2>&1
 }
 
 suite_passes() { (cd "$1" && python3 -m unittest -q); }
@@ -147,6 +168,8 @@ verify() {
   check "the record says the suite passed" record_says "$record" '.tests.suite_passed == true'
   check "every acceptance criterion is met" record_says "$record" '(.acceptance | length) > 0 and all(.acceptance[]; .met == true)'
   check "code-review ran" record_says "$record" '.review.ran == true'
+  check "the worker loaded mattpocock-skills:tdd" skill_loaded "$wd" mattpocock-skills:tdd
+  check "the worker loaded mattpocock-skills:code-review" skill_loaded "$wd" mattpocock-skills:code-review
 
   case "$scenario" in
     named-seam)
@@ -155,7 +178,8 @@ from text import slugify
 assert slugify("Hello, World!") == "hello-world"
 assert slugify("  --Weekly   Plan 2--  ") == "weekly-plan-2"'
       check "slugify is tested at the named seam" grep -q slugify "$repo/tests/test_text.py"
-      check "the test was written before the code (test-first)" edited_before "$wd" 'tests/test_text\.py$' '/text\.py$'
+      check "test-first: no Write/Edit to text.py before the test" not_edited_before "$wd" 'tests/test_text\.py$' '/text\.py$'
+      check "test-first: a test run failed before the first commit" red_before_commit "$wd"
       ;;
     unnamed-seam)
       check "cli.py export prints the CSV" py "$repo" '

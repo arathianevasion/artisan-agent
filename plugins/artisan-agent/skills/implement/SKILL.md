@@ -36,7 +36,7 @@ Take these from the prompt that invoked you:
 
 ## 2. Build test-first at the named seams
 
-Call the Skill tool with `tdd`.
+Before writing the first test, call the Skill tool with `mattpocock-skills:tdd` and follow it. Don't run red-green from memory: the skill carries what a good test is and where tests go.
 
 `tdd` tests only at pre-agreed seams and asks for them to be confirmed first. In this skill, **the seams the ticket names are the pre-agreed seams**, and naming them in the ticket was the confirmation. Don't ask anyone to confirm them; there may be no one to ask.
 
@@ -57,7 +57,7 @@ A decision that is controversial and **not** easy-to-reverse taste is not yours 
 
 ## 4. Review, then act on the findings
 
-Commit, then call the Skill tool with `code-review`. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
+Commit, then call the Skill tool with `mattpocock-skills:code-review`: upstream's two-axis review (Standards and Spec), not Claude Code's built-in `code-review`, which shares the short name and reviews only for bugs. Give it the base as the fixed point and the ticket as the spec source, so it has no reason to ask.
 
 Sort every finding into one of these, and act on it:
 
