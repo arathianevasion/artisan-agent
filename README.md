@@ -29,6 +29,8 @@ Installing `artisan-agent` also installs `mattpocock-skills@claude-plugins-offic
 
 The dependency resolves through the `claude-plugins-official` marketplace, which Claude Code normally registers by default. If `claude plugin marketplace list` doesn't show it, add it first with `claude plugin marketplace add anthropics/claude-plugins-official`; otherwise the install succeeds but `artisan-agent` won't load until `mattpocock-skills` is installed.
 
+Turn auto-update **on** for the `artisan-agent` marketplace (in `/plugin`, under Marketplaces), so a new release reaches every project; each run picks it up from its next wave. Keep auto-update **off** for `claude-plugins-official`: upstream changes only when the Artisan approves an update after the upstream check.
+
 Then, from any project:
 
 - `/artisan-agent:implement-plan`: run a defined set of work (a plan, several plans, individual tickets or a single ticket) to done.

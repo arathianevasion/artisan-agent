@@ -5,7 +5,7 @@ description: Understand-stage skill. Argue Claude's own suggestion on a question
 
 Take a side and argue it. The Artisan wants a real opponent, not a balanced overview. The debate runs until the Artisan makes their decision. Then summarize it.
 
-This is the pipeline's Understand-stage tool for testing a suggestion before it shapes the work: the decision belongs to the Artisan, and the summary is what they carry forward. Wherever you put something in front of the Artisan, follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`; where that file and this one differ on how to argue, this one wins, because a debate deliberately holds a position instead of offering one recommendation.
+This is the pipeline's Understand-stage tool for testing a suggestion before it shapes the work: the decision belongs to the Artisan, and the summary is what they carry forward. Wherever you put something in front of the Artisan, follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Your position is your recommendation; hold it until the Artisan decides.
 
 ## Opening
 

@@ -123,7 +123,7 @@ Only after every ticket in the wave is closed or explicitly marked blocked, reco
 
 ### 5a. Keep going
 
-Once the plan is approved the run is **unattended**. Continue through every wave without pausing for user input: reconcile, recompute, dispatch, repeat, until the queue is empty or genuinely blocked. Report at wave boundaries — but a report is not a stopping point, and neither is a status question from the Artisan.
+Once the plan is approved the run is **unattended**. Continue through every wave without pausing for the Artisan's input: reconcile, recompute, dispatch, repeat, until the queue is empty or genuinely blocked. Report at wave boundaries — but a report is not a stopping point, and neither is a status question from the Artisan.
 
 Two specific failure modes to avoid, both observed:
 
