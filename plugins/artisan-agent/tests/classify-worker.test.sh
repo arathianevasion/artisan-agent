@@ -5,6 +5,8 @@ setup_run() {
   RUN="$TEST_TMPDIR/run"
   WORKTREE="$TEST_TMPDIR/worktree"
   mkdir -p "$RUN" "$WORKTREE"
+  # An approved plan with ticket 46 in scope: nothing launches without one.
+  jq -n '{schema_version: 1, plan: {scope: ["46"]}}' >"$RUN/state.json"
   printf 'Build ticket 46.\n' >"$TEST_TMPDIR/prompt.md"
   PATH="$TESTS_DIR/fixtures/fake-claude:$PATH"
   export PATH FAKE_CLAUDE_PID="$TEST_TMPDIR/claude.pid"

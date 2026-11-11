@@ -11,6 +11,10 @@
 #   api-error   is_error true with subtype success (seen live when not logged in)
 #   nonzero     prints nothing, exits 3
 #   crash       kills itself with SIGSEGV, writing nothing
+#   script      runs the bash file in FAKE_CLAUDE_SCRIPT_ORCHESTRATOR or
+#               FAKE_CLAUDE_SCRIPT_WORKER (by $ARTISAN_ROLE) in its working
+#               directory; completes if the file exits 0, else ends without
+#               the completion line
 #   sleep       leaves a stray background `sleep` in its process group, sleeps
 #               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
 #
@@ -25,6 +29,9 @@ if [ -n "${FAKE_CLAUDE_ENV:-}" ]; then
     echo "PWD=$PWD"
     echo "ARTISAN_RESULT_FILE=${ARTISAN_RESULT_FILE:-}"
     echo "ARTISAN_FINDINGS_FILE=${ARTISAN_FINDINGS_FILE:-}"
+    echo "ARTISAN_ROLE=${ARTISAN_ROLE:-}"
+    echo "ARTISAN_WRITER_PID=${ARTISAN_WRITER_PID:-}"
+    echo "ARTISAN_RUN_DIR=${ARTISAN_RUN_DIR:-}"
   } >"$FAKE_CLAUDE_ENV"
 fi
 
@@ -69,6 +76,17 @@ ARTISAN-WORKER: complete"
     ;;
   crash)
     kill -SEGV $$
+    ;;
+  script)
+    if [ "${ARTISAN_ROLE:-worker}" = orchestrator ]; then script=${FAKE_CLAUDE_SCRIPT_ORCHESTRATOR:-}
+    else script=${FAKE_CLAUDE_SCRIPT_WORKER:-}; fi
+    if [ -n "$script" ] && bash "$script" >>"${FAKE_CLAUDE_LOG:-/dev/null}" 2>&1; then
+      result success false 6 "Ran the script.
+
+ARTISAN-WORKER: complete"
+    else
+      result success false 6 "The script failed."
+    fi
     ;;
   sleep)
     sleep 300 &

@@ -56,7 +56,7 @@ stop_worker() {
 }
 
 # A failed attempt for ticket $t; jq args: --arg t, --arg reason, --argjson now.
-FAIL_FILTER='
+FAIL_FILTER="$STATE_JQ_DEFS"'
   .plan.attempts_per_ticket as $max
   | .tickets[$t] as $tk
   | .tickets[$t] |= (
@@ -69,22 +69,25 @@ FAIL_FILTER='
         question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Bypass or defer?",
         status: "waiting", at: $now
       }]
-    else . end'
+    else . end
+  | event({event: "failed", ticket: $t, attempt: $tk.attempts, reason: $reason,
+           next: .tickets[$t].status}; $now)'
 
-RESULT_FILTER='
+RESULT_FILTER="$STATE_JQ_DEFS"'
   $rs[0] as $r
   | ($r.status // "complete") as $s
   | .tickets[$t] |= (
       .result = {status: $s, commit: ($r.commit // null), notes: ($r.notes // null),
                  file: $file}
-      | .cost_usd = ($r.cost_usd // $r.total_cost_usd // .cost_usd)
+      | .cost_usd = ($r.cost_usd // $r.total_cost_usd // $session_cost // .cost_usd)
       | .pid = null)
+  | event({event: "result", ticket: $t, attempt: .tickets[$t].attempts, status: $s}; $now)
   | if $s == "failed" then .
     elif $s == "blocked" then .tickets[$t].status = "blocked"
     else .tickets[$t].status = "returned" end'
 
 sweep() {
-  local file tmp now tickets t status pid attempt deadline result exit_record
+  local file tmp now tickets t status pid attempt deadline result exit_record session_cost
   file=$(state_file "$RUN_DIR")
   state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
   tmp=$(state_tmp "$RUN_DIR")
@@ -101,7 +104,11 @@ sweep() {
     result="$RESULTS/$t.$attempt.result.json"
     exit_record="$RESULTS/$t.$attempt.exit.json"
     if [ -f "$result" ] && jq -e 'type == "object"' "$result" >/dev/null 2>&1; then
-      step "$RESULT_FILTER" --arg t "$t" --slurpfile rs "$result" --arg file "results/$t.$attempt.result.json"
+      # The worker does not write its cost; its session's JSON output does.
+      session_cost=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$attempt/output.json" 2>/dev/null || echo null)
+      [ -n "$session_cost" ] || session_cost=null
+      step "$RESULT_FILTER" --arg t "$t" --slurpfile rs "$result" --arg file "results/$t.$attempt.result.json" \
+        --argjson now "$now" --argjson session_cost "$session_cost"
       status=$(jq -r '.status // "complete"' "$result")
       if [ "$status" = "failed" ]; then
         step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"

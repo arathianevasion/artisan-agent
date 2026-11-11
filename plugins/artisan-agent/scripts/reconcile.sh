@@ -79,8 +79,9 @@ reconcile() {
       # --no-ff merge commit, so its tip is off the first-parent line.
       case "$first_parent" in *"$tip"*) continue ;; esac
       sha=$(merge_commit_for "$integration" "$tip") || continue
-      step "$STATE_JQ_DEFS"'merged($t; $sha)' \
-        --arg t "$t" --arg sha "$sha"
+      step "$STATE_JQ_DEFS"'merged($t; $sha)
+        | event({event: "merge", ticket: $t, commit: $sha, source: "reconcile"}; $now)' \
+        --arg t "$t" --arg sha "$sha" --argjson now "$(state_now)"
     done
   fi
 

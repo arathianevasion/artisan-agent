@@ -17,6 +17,8 @@
 #                                             refused when there is neither)
 #   state.sh evidence <run-dir> <ticket> <evidence.json>
 #   state.sh merge <run-dir> <ticket> <merge-commit>
+#   state.sh closed <run-dir> <ticket>        the ticket was closed on the tracker
+#   state.sh event <run-dir> <event-json>     log any other event (an object with "event")
 #   state.sh decision <run-dir> <decision.json>
 #   state.sh cost <run-dir> <orchestrator-usd>  add orchestrator spend
 #   state.sh override <run-dir> <key> <value>
@@ -86,7 +88,9 @@ init_write() {
           attempts_per_ticket: ($p.attempts_per_ticket // 2),
           estimate_usd: ($p.estimate_usd // null),
           config: ($p.config // {}),
-          overrides: ($p.overrides // {})
+          overrides: ($p.overrides // {}),
+          suite_command: ($p.suite_command // null),
+          orchestrator: ($p.orchestrator // {})
         },
         tickets: {},
         integration: { branch: $p.integration_branch, merges: [] },
@@ -95,7 +99,8 @@ init_write() {
         costs: { workers_usd: 0, orchestrator_usd: 0, total_usd: 0 },
         decisions: [],
         waves: [],
-        frontier: []
+        frontier: [],
+        events: []
       }
     | reduce .plan.scope[] as $t (.; .tickets[$t] = new_ticket($t))' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }
   state_commit "$run_dir" "$tmp"
@@ -117,10 +122,11 @@ dispatch_ticket() {
     [ -n "$deadline" ] \
       || state_die 1 "ticket $t has no deadline: pass one or set plan.tickets[\"$t\"].caps.deadline_seconds"
   fi
-  state_apply "$run_dir" '
+  state_apply "$run_dir" "$STATE_JQ_DEFS"'
     .tickets[$t] |= (
       .status = "in_flight" | .attempts += 1 | .pid = $pid
-      | .dispatched_at = $now | .deadline_at = $deadline | .result = null)' \
+      | .dispatched_at = $now | .deadline_at = $deadline | .result = null)
+    | event({event: "dispatch", ticket: $t, attempt: .tickets[$t].attempts, pid: $pid}; $now)' \
     --arg t "$t" --argjson pid "$pid" --argjson now "$now" --argjson deadline "$deadline"
 }
 
@@ -212,8 +218,27 @@ case "$cmd" in
     state_require_run_dir "$1"
     state_with_lock "$1" state_apply "$1" "$STATE_JQ_DEFS"'
       if .tickets[$t] == null then error("ticket \($t) is not in the run") else . end
-      | merged($t; $sha)' \
-      --arg t "$2" --arg sha "$3"
+      | merged($t; $sha)
+      | event({event: "merge", ticket: $t, commit: $sha}; $now)' \
+      --arg t "$2" --arg sha "$3" --argjson now "$(state_now)"
+    ;;
+  closed)
+    [ $# -eq 2 ] || usage
+    state_require_run_dir "$1"
+    state_with_lock "$1" state_apply "$1" "$STATE_JQ_DEFS"'
+      if .tickets[$t] == null then error("ticket \($t) is not in the run") else . end
+      | if .tickets[$t].tracker_closed == true then .
+        else .tickets[$t].tracker_closed = true
+             | event({event: "closed", ticket: $t}; $now) end' \
+      --arg t "$2" --argjson now "$(state_now)"
+    ;;
+  event)
+    [ $# -eq 2 ] || usage
+    state_require_run_dir "$1"
+    printf '%s' "$2" | jq -e 'type == "object" and (.event | type == "string")' >/dev/null 2>&1 \
+      || state_die 1 "an event is a JSON object with an \"event\" string: $2"
+    state_with_lock "$1" state_apply "$1" "$STATE_JQ_DEFS"'event($e; $now)' \
+      --argjson e "$2" --argjson now "$(state_now)"
     ;;
   decision)
     [ $# -eq 2 ] || usage
