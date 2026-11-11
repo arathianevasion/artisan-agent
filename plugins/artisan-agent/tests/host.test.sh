@@ -157,3 +157,14 @@ test_the_first_wave_launch_is_refused_on_a_host_whose_login_would_expire() {
   [ ! -d "$RUN_DIR/workers" ] || [ -z "$(ls "$RUN_DIR/workers" 2>/dev/null)" ] || fail "an orchestrator was started"
   assert_eq false "$(state_get '(.orchestrators // []) | length > 0')"
 }
+
+test_a_resumed_run_is_checked_against_the_tickets_it_has_left() {
+  fake_host macos
+  init_run '["10","11","12"]' '{"10":{"expected":{"minutes":30},"caps":{"deadline_seconds":3600}},"11":{"expected":{"minutes":10},"caps":{"deadline_seconds":1200}},"12":{"caps":{"deadline_seconds":3000}}}'
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["10"].status = "merged"'
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  "$L" stamp --at 1000000 >/dev/null
+  # 10 is merged: 10 + 25 = 35 minutes left
+  assert_status 0 "$L" check --run-dir "$RUN_DIR" --margin-minutes 0 --now $((1000000 + 2592000 - 35 * 60))
+  assert_status 15 "$L" check --run-dir "$RUN_DIR" --margin-minutes 0 --now $((1000000 + 2592000 - 35 * 60 + 1))
+}

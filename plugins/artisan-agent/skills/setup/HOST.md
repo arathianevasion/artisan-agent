@@ -23,7 +23,7 @@ SSH is only for setting up and repairing the host. Workers are headless, so a pe
 
 The Engineering chat, its orchestrators and workers run on the host once it is configured. The laptop keeps the Product chat and hands-on tickets, which arrive through git. The Artisan opens sessions on the host the same way from the Claude app on a phone or from claude.ai/code or the desktop app on a laptop; each spawns in its own worktree.
 
-Before the first wave of every run on the host, `wave.sh launch` runs `login-check.sh check`: it refuses (exit 15, nothing launched) when the login would expire before the run's expected span plus a margin, and tells the Artisan to log in again and `stamp`. A machine with no `host.json` is not a host and is never checked, so without a host everything runs on the laptop unchanged.
+Before every wave launch on the host (not an orchestrator hand-off), `wave.sh launch` runs `login-check.sh check`: it refuses (exit 15, nothing launched) when the login would expire before the span of the tickets the run has left plus a margin, and tells the Artisan to log in again and `stamp`. A machine with no `host.json` is not a host and is never checked, so without a host everything runs on the laptop unchanged.
 
 To bring a run home or send it to the host, see `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/host-and-move.md`.
 

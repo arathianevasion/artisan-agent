@@ -231,7 +231,7 @@ cmd_mark() {
     sed 's/^host_configured:.*/host_configured: true/' "$cfgfile" >"$cfgfile.tmp.$$" && mv -f "$cfgfile.tmp.$$" "$cfgfile"
     echo "changed: host_configured: true in $cfgfile (commit it by PR; the config is the project's)"
   else
-    printf 'host_configured: true\n' >>"$cfgfile"
+    { [ ! -s "$cfgfile" ] || [ -z "$(tail -c1 "$cfgfile")" ] || echo; printf 'host_configured: true\n'; } >>"$cfgfile"
     echo "changed: host_configured: true added to $cfgfile (commit it by PR; the config is the project's)"
   fi
 }

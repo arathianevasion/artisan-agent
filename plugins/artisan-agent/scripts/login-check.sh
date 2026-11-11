@@ -10,7 +10,7 @@
 #       the run's expected span + the margin (default 120 minutes). A machine
 #       with no host record (host.json) is not a host: nothing is checked, exit 0.
 #       A host record with no login stamp is refused too: unknown is not safe.
-#       The span from a run folder: per forecast wave, its longest ticket
+#       The span from a run folder, tickets not yet merged or closed only: per forecast wave, its longest ticket
 #       (expected.minutes, else half its deadline), summed; with no forecast
 #       waves, every ticket in scope in turn.
 #   login-check.sh stamp [--at EPOCH] [--lifetime-days N]
@@ -40,12 +40,13 @@ fmt_time() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1"
 
 span_of_run() { # run-dir -> minutes
   jq -r '
-    (.plan.tickets // {}) as $t
-    | def mins($n): ($t[$n].expected.minutes // (($t[$n].caps.deadline_seconds // 3600) / 120));
+    (.plan.tickets // {}) as $t | (.tickets // {}) as $prog
+    | def left($n): (($prog[$n].status // "queued") | . != "merged" and . != "closed");
+    def mins($n): ($t[$n].expected.minutes // (($t[$n].caps.deadline_seconds // 3600) / 120));
     ((.plan.waves // []) | map(select(length > 0))) as $w
     | if ($w | length) > 0
-      then ([$w[] | map(mins(.)) | max // 0] | add)
-      else ([.plan.scope[]? | mins(.)] | add // 0) end
+      then ([$w[] | map(select(left(.)) | mins(.)) | max // 0] | add // 0)
+      else ([.plan.scope[]? | select(left(.)) | mins(.)] | add // 0) end
     | ceil' "$(state_file "$1")"
 }
 
@@ -101,7 +102,7 @@ cmd_stamp() {
   mkdir -p "$(dirname "$HOST_FILE")"
   [ -f "$HOST_FILE" ] || echo '{}' >"$HOST_FILE"
   tmp="$HOST_FILE.tmp.$$"
-  jq --argjson at "$at" --arg d "$days" '.login_at = $at | .login_lifetime_days = (if $d == "" then (.login_lifetime_days // 30) else ($d | tonumber) end)' "$HOST_FILE" >"$tmp"
+  jq --argjson at "$at" --arg d "$days" --argjson dl "$DEFAULT_LIFETIME_DAYS" '.login_at = $at | .login_lifetime_days = (if $d == "" then (.login_lifetime_days // $dl) else ($d | tonumber) end)' "$HOST_FILE" >"$tmp"
   mv -f "$tmp" "$HOST_FILE"
   printf 'recorded: login at %s\n' "$(fmt_time "$at")"
 }

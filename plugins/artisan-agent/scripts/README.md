@@ -207,7 +207,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 12 | the run is halted | `launch` | the Artisan decides; `launch --resume` |
 | 13 | not verified: no passing verdict for this attempt at this commit | `merge` | `verify.sh start`, then `judge` |
 | 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
-| 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a run's first wave, on a host) | log in again, `login-check.sh stamp` |
+| 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a wave launch, on a host) | log in again, `login-check.sh stamp` |
 
 # Verification and evidence
 

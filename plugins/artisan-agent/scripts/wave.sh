@@ -216,9 +216,10 @@ cmd_launch() {
   wt=$(integration_worktree)
 
   # A run on the always-on host must not outlive the claude.ai login (#69):
-  # checked once, before the run's first orchestrator (exit 15, nothing launched).
-  # A machine with no host record is not checked.
-  if [ "$(get '(.orchestrators // []) | length')" = 0 ]; then
+  # checked before every orchestrator launch but a hand-off (exit 15, nothing
+  # launched), so a run moved onto the host is checked there too, against the
+  # tickets it has left. A machine with no host record is not checked.
+  if [ "$handoff" -eq 0 ]; then
     "$SCRIPT_DIR/login-check.sh" check --run-dir "$RUN_DIR" >&2 || exit $?
   fi
 

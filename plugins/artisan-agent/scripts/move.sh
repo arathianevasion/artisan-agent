@@ -48,13 +48,6 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "move.sh: $*"; }
 
 GIT_ID="-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost"
-git_id() { # git with a fixed identity when none is configured
-  if { git config user.name && git config user.email; } >/dev/null 2>&1; then git "$@"; else
-    # shellcheck disable=SC2086
-    git $GIT_ID "$@"
-  fi
-}
-
 main_of() { # any path inside a repo -> its main checkout
   local common
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository: $1"
@@ -104,7 +97,7 @@ cmd_drain() {
 # parented on every parent given. The run folder is git-ignored, so it is built
 # with a private index, never touching the checkout.
 snapshot_commit() {
-  local main="$1" id="$2" rd="$3" newstate="$4" idx f rel blob tree args msg
+  local main="$1" id="$2" rd="$3" newstate="$4" idx f rel blob tree args
   shift 4
   idx="$TMP_DIR/index"
   rm -f "$idx"
@@ -122,9 +115,8 @@ snapshot_commit() {
   unset GIT_INDEX_FILE
   args=""
   for p in "$@"; do args="$args -p $p"; done
-  msg="Run $id: state snapshot"
   # shellcheck disable=SC2086
-  git_in "$main" commit-tree "$tree" $args -m "$msg"
+  git_in "$main" commit-tree "$tree" $args -m "Run $id: state snapshot"
 }
 
 git_in() { # main git-args... (identity fixed when the repo has none)
@@ -206,8 +198,8 @@ cmd_out() {
       | event({event: "moved-out", from: $m, branch: $b}; $now)' "$(state_file "$rd")" >"$TMP_DIR/state.json"
   local parents="$tip"
   [ -z "$prev" ] || parents="$tip $prev"
-  # shellcheck disable=SC2086
   local snap
+  # shellcheck disable=SC2086
   snap=$(snapshot_commit "$main" "$id" "$rd" "$TMP_DIR/state.json" $parents)
 
   # Push: the integration branch, unmerged ticket branches, then (FF only) the run branch.
@@ -229,8 +221,22 @@ cmd_out() {
 
 # ---------------------------------------------------------------- in
 
+rollback_claim() { # main id remote claim original-state-json: push the original (moved) state back over the claim
+  local main="$1" id="$2" remote="$3" claim="$4" orig="$5" blob tree c idx="$TMP_DIR/index.rb"
+  printf '%s' "$orig" >"$TMP_DIR/orig.json"
+  export GIT_INDEX_FILE="$idx"
+  git -C "$main" read-tree "$claim"
+  blob=$(git -C "$main" hash-object -w "$TMP_DIR/orig.json")
+  git -C "$main" update-index --add --cacheinfo "100644,$blob,.artisan-agent/runs/$id/state.json"
+  tree=$(git -C "$main" write-tree)
+  unset GIT_INDEX_FILE
+  c=$(git_in "$main" commit-tree "$tree" -p "$claim" -m "Run $id: resume failed, handed back")
+  git -C "$main" push -q "$remote" "$c:refs/heads/runs/$id" >/dev/null 2>&1
+  echo "move.sh: resuming failed; runs/$id is handed back (moved), so it can be resumed again" >&2
+}
+
 cmd_in() {
-  local id="$1" remote=origin main rd rref rstate rstatus rmach me ib wt t br tmp snap claim tree
+  local id="$1" remote=origin main rd rref rstate rstatus rmach me ib wt t br claim tree
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -282,6 +288,10 @@ cmd_in() {
   git -C "$main" push -q "$remote" "$claim:refs/heads/runs/$id" 2>&1 \
     || { echo "move.sh: another machine claimed runs/$id first; nothing changed here" >&2; exit 6; }
   git -C "$main" update-ref "$rref" "$claim"
+  # Anything that fails from here on hands the run back (moved, in transit),
+  # so a half-resumed run is never stranded as live on a machine that has no state.
+  CLAIM_TREE_STATE="$rstate"
+  trap 'rc=$?; if [ "$rc" -ne 0 ]; then rollback_claim "$main" "$id" "$remote" "$claim" "$CLAIM_TREE_STATE" || true; fi; rm -rf "$TMP_DIR"' EXIT
 
   # Branches: the integration branch and the unmerged ticket branches, as pushed.
   wt="$(dirname "$main")/$(basename "$main")-wt/run-$id"
