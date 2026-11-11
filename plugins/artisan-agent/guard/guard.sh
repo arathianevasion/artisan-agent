@@ -2,7 +2,8 @@
 # Generates everything the replaced-skill guard needs from guard/replaced-skills.list.
 # Bash 3.2-safe. Usage: guard.sh <command> [--list FILE] [--hook-command CMD]
 #   matcher        the UserPromptExpansion matcher regex
-#   hooks-json     the plugin's hooks/hooks.json (committed; a test keeps it fresh)
+#   hooks-json     the plugin's hooks/hooks.json: the replaced-skill hook plus the
+#                  main-checkout and run-lock hooks (committed; a test keeps it fresh)
 #   deny-rules     one Skill(...) deny rule per line
 #   deny-json      {"permissions":{"deny":[...]}} for project settings
 #   flag-watch     one upstream skill (plugin:name) per line for the upstream check
@@ -66,11 +67,24 @@ json_hooks_body() { # the "hooks" object value
     "$(matcher)" "$hook_command"
 }
 
+# The plugin's hook set: the replaced-skill block, plus the main-checkout and
+# run-lock hooks (protect.sh). settings-json carries only the replaced-skill
+# hook: the fallbacks for the other two are the git pre-commit hook and
+# implement-plan's own lock check (guard/README.md).
+json_plugin_hooks_body() {
+  local protect='${CLAUDE_PLUGIN_ROOT}/guard/protect.sh'
+  printf '{"UserPromptExpansion":[{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]},' \
+    "$(matcher)" "$hook_command"
+  printf '{"matcher":"^(artisan-agent:)?implement-plan$","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"
+  printf '"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"%s main-edit"}]},' "$protect"
+  printf '{"matcher":"Skill","hooks":[{"type":"command","command":"%s run-start"}]}]}' "$protect"
+}
+
 deny_array() { printf '['; deny_lines | sed 's/.*/"&"/' | join ','; printf ']'; }
 
 case "$cmd" in
   matcher) matcher; echo ;;
-  hooks-json) printf '{"hooks":%s}\n' "$(json_hooks_body)" ;;
+  hooks-json) printf '{"hooks":%s}\n' "$(json_plugin_hooks_body)" ;;
   deny-rules) deny_lines ;;
   deny-json) printf '{"permissions":{"deny":%s}}\n' "$(deny_array)" ;;
   flag-watch) names | while read -r n; do printf '%s:%s\n' "$UPSTREAM" "$n"; done ;;
@@ -80,6 +94,6 @@ case "$cmd" in
       printf '%s\t%s /%s:%s is replaced in this pipeline. Use %s instead.\n' \
         "$name" "$MARKER" "$UPSTREAM" "$name" "$repl"
     done ;;
-  -h|--help|help|"") sed -n '2,11p' "$0" ;;
+  -h|--help|help|"") sed -n '2,12p' "$0" ;;
   *) echo "guard.sh: unknown command $cmd" >&2; exit 2 ;;
 esac

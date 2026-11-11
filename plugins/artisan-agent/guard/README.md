@@ -37,3 +37,18 @@ Every replaced upstream skill we replace today is typed-only upstream (`disable-
 ## Hand checks
 
 Not done by the builder: see `interactive-checklist.md` (pilot prerequisites 2 and 3; tracked in #78).
+
+## Main-checkout protection and the run lock
+
+The same generator wires two more hooks into `hooks/hooks.json` (the shared rules are in `../references/main-checkout.md`):
+
+| Hook | Event and matcher | What it does |
+|---|---|---|
+| `protect.sh main-edit` | `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit` | denies an edit to a file in a repo's main checkout (`git-dir` equals `git-common-dir`) when the repo has a committed `.artisan-agent/config.yml` and the path is not git-ignored; the reason says to work in a worktree (`scripts/doc-change.sh`) |
+| `protect.sh run-start` | `UserPromptExpansion` for `^(artisan-agent:)?implement-plan$`, and `PreToolUse` on `Skill` (Claude calling it) | while `scripts/run-lock.sh check` reports a live holder, blocks the start and runs `queue-plan.sh`, which leaves the request as a `plan` issue via `gh` (reusing an open one with the same title) |
+
+Both fail open when they cannot tell (no `jq`, not a git repo, `gh` failing: the block message then says the issue was not filed). Their tests stub `gh`: `tests/main-checkout.test.sh`.
+
+Fallbacks, each tested with the plugin hook never invoked: `pre-commit.sh` (installed per repo by `install-pre-commit.sh`, which setup calls; it copies the hook into the repo's shared hooks dir, never overwrites a hook it did not install, and is idempotent), and `implement-plan`'s own `run-lock.sh check` precondition. `settings-json` still carries only the replaced-skill hook.
+
+To add a hook or matcher, change `json_plugin_hooks_body` in `guard.sh`, run `guard.sh hooks-json > ../hooks/hooks.json`, and run `tests/run.sh`.
