@@ -189,3 +189,17 @@ test_out_killed_after_the_push_reads_as_moved_and_the_other_machine_resumes() {
   assert_eq false "$(state_get '.location | has("pending")')"
   assert_eq "live host" "$(host "$SCRIPTS/move.sh" where "$CLONE_RUN")"
 }
+
+# bash 3.2 (macOS) gives a bare `local x` an empty value; bash 4+ (Linux CI) leaves
+# it unset, so under set -u the first move (no runs/<id> on the remote yet: the fetch
+# fails) died at "rstatus: unbound variable". 3.2 cannot show that, so pin the cause:
+# the remote-state variables are set before the fetch that may skip them.
+test_the_remote_state_is_set_before_the_fetch_that_may_fail() {
+  local var assign fetch
+  fetch=$(grep -n 'fetch -q "\$remote" "+refs/heads/runs/\$id:\$rref"' "$SCRIPTS/move.sh" | head -1 | cut -d: -f1)
+  [ -n "$fetch" ] || fail "cannot find the runs/<id> fetch in move.sh"
+  for var in prev rstate rstatus rmach; do
+    assign=$(grep -n "^ *\(.* \)\{0,1\}$var=\"\"" "$SCRIPTS/move.sh" | head -1 | cut -d: -f1)
+    [ -n "$assign" ] && [ "$assign" -lt "$fetch" ] || fail "$var is not set before the runs/<id> fetch (unbound under set -u on bash 4+)"
+  done
+}

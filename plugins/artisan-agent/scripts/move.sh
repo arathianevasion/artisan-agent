@@ -190,7 +190,9 @@ cmd_out() {
 
   # The branch may already hold this run (an earlier move): it must not be live elsewhere.
   rref="refs/remotes/$remote/runs/$id"
-  prev=""
+  # Set before the fetch: it fails on a first move (no runs/<id> yet), and bash 4+
+  # (Linux) leaves a bare `local` unset, so set -u would trip on the reads below.
+  prev="" rstate="" rstatus="" rmach=""
   if git -C "$main" fetch -q "$remote" "+refs/heads/runs/$id:$rref" 2>/dev/null; then
     prev=$(git -C "$main" rev-parse "$rref")
     rstate=$(remote_state "$main" "$rref" "$id")
