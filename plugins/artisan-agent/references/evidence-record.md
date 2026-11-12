@@ -17,6 +17,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `base` | yes | The commit the branch started from |
 | `acceptance` | yes | One entry per acceptance criterion, in the ticket's order (below) |
 | `tests` | yes | `{"suite_passed": true, "command": "...", "summary": "..."}`: the full-suite run at the end, with the command and its result line. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
+| `checks` | yes | The output of `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`, as it is: `{"recorded": true, "results": [{"command", "passed", "exit_code", "result"}], "not_run": [...]}` with the project's recorded checks, exactly those; with none recorded, `{"recorded": false, "fallback": "no recorded checks (<reason>): found <commands>", "results": [...]}`. See `${CLAUDE_PLUGIN_ROOT}/references/checks.md` |
 | `unsure` | yes | What the worker was unsure of, one sentence each; `[]` if nothing |
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
 | `review` | yes | `{"ran": true, "remarks": [...]}`, every `mattpocock-skills:code-review` remark with what was done about it (below) |
@@ -101,6 +102,12 @@ For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decisio
     }
   ],
   "tests": { "suite_passed": true, "command": "python3 -m unittest", "summary": "Ran 12 tests ... OK" },
+  "checks": {
+    "recorded": true,
+    "file": "/work/repo/CODING_STANDARDS.md",
+    "results": [{ "command": "python3 -m unittest", "passed": true, "exit_code": 0, "result": "OK" }],
+    "not_run": []
+  },
   "unsure": ["Whether amounts should export in pence or pounds; the ticket doesn't say, so pence matches storage"],
   "decisions": [
     {

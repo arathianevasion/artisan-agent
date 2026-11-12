@@ -24,8 +24,13 @@
 #
 # Usage, from the Engineering chat (or the Product chat: the Artisan can act
 # from either):
-#   gate.sh list <run-dir>
-#       the run's gates as a Markdown table.
+#   gate.sh list [<run-dir>]
+#       the open review-gate issues on the tracker, batched by job and role, as
+#       a Markdown table: every run and both chats' gates, not one run's state
+#       file (chats.sh gates). The repository is the run's, or $ARTISAN_REPO.
+#   gate.sh carried <run-dir>
+#       the decision cards left undecided on gates closed by hand on GitHub,
+#       as a Markdown table: what the end gate lists for the Artisan.
 #   gate.sh chat <run-dir> [<issue>]
 #       the compressed packet of every open gate (or one): a counts line, a
 #       row per decision with low confidence in bold, then "Keep all, or name
@@ -269,7 +274,11 @@ ACTION_FILTER='
           | .decisions |= map(if .kind == "review-gate" and .gate == $a.gate and .status == "waiting"
               then .status = "decided" | .choice = "approve" | .by = $a.by | .job = 13 | .decided_at = $now
               else . end)
-          | event({event: "gate-approved", gate: $a.gate, issue: .review_gates[$i].issue, by: $a.by}; $now)
+          | (if $a.closed_on_tracker then
+               .review_gates[$i].closed_on_tracker = true | .review_gates[$i].carried = $a.carried
+             else . end)
+          | event({event: "gate-approved", gate: $a.gate, issue: .review_gates[$i].issue, by: $a.by}
+                  + (if $a.closed_on_tracker then {closed_on_tracker: true, carried: $a.carried} else {} end); $now)
         else
           event({event: "gate-decision", gate: $a.gate, card: $a.decisions[0].card, by: $a.by}; $now)
         end
@@ -465,7 +474,7 @@ cmd_approve() {
 cmd_sync() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local f st id issue repo state
+  local f st id issue repo state carried
   # Actions the Artisan took while the lock was held.
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
@@ -480,12 +489,18 @@ cmd_sync() {
       id=$(jq -r .id <<<"$GATE")
       f=$(new_action "$id")
       jq -n --arg key "$(basename "$f" .json)" --arg g "$id" --argjson gate "$GATE" '
-        {key: $key, type: "approve", gate: $g, by: "Artisan (closed on the tracker)",
+        {key: $key, type: "approve", gate: $g, by: "Artisan (closed on the tracker)", closed_on_tracker: true,
+         carried: [$gate.cards[] | select(.card as $c | [$gate.decisions[].card] | index($c) | not) | .card],
          decisions: ([$gate.cards[] | select(.card as $c | [$gate.decisions[].card] | index($c) | not)
            | {job: (.job // 13), choice, by: "Artisan (closed on the tracker)", card, ticket, gate: $g,
               outcome: "keep", original: {choice, by}}]
            + [{job: 13, choice: "approve the slice", by: "Artisan (closed on the tracker)", gate: $g, outcome: "approve"}])}' >"$f"
+      carried=$(jq -r '.carried | length' "$f")
       fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
+      # One line on the tracker, so either chat announces it on its next sweep.
+      gh issue comment "$issue" -R "$repo" --body "Gate #$issue closed on GitHub: treated as approved; $carried undecided card$([ "$carried" = 1 ] || echo s) carried to the end gate
+
+<!-- artisan-agent:gate-closed-by-hand carried=$carried -->" >/dev/null 2>&1 || true
     fi
   done
   local num
@@ -498,10 +513,28 @@ cmd_sync() {
 # ------------------------------------------------------------- list/chat/packet
 
 cmd_list() {
+  local repo=${ARTISAN_REPO:-}
+  if [ -n "${1:-}" ]; then
+    open_run "$1"
+    repo=$(get '.repo')
+  fi
+  [ -n "$repo" ] || usage
+  "$SCRIPT_DIR/chats.sh" gates --repo "$repo"
+}
+
+cmd_carried() {
   open_run "${1:-}"
-  echo "| Gate | Issue | Slice | Status | Holds | Decisions |"
-  echo "|---|---|---|---|---|---|"
-  get '(.review_gates // [])[] | "| \(.title) | #\(.issue) | \(.tickets | map("#" + .) | join(", ")) | \(.status) | \(if .dependents == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) | \(.cards | length) cards, \([.decisions[] | select(.card != null)] | length) decided |"'
+  local n
+  n=$(get '[(.review_gates // [])[] | select(.closed_on_tracker == true) | .carried | length] | add // 0')
+  if [ "$n" -eq 0 ]; then
+    echo "No gate was closed by hand with cards left undecided."
+    return 0
+  fi
+  echo "| Gate | Card | Ticket | Decision | Chosen by |"
+  echo "|---|---|---|---|---|"
+  get '(.review_gates // [])[] | select(.closed_on_tracker == true) | . as $g
+       | $g.cards[] | select(.card as $c | $g.carried | index($c))
+       | "| #\($g.issue) (closed on GitHub) | \(.card) | #\(.ticket) | \(.question // "-") → \(.choice | gsub("\\|"; "/")) | \(.by // "-") |"'
 }
 
 view_of() { # recorded-gate-json: its view, with the cards and dependents recorded
@@ -550,6 +583,7 @@ case "$cmd" in
   open) cmd_open "$@" ;;
   holds) cmd_holds "$@" ;;
   list) cmd_list "$@" ;;
+  carried) cmd_carried "$@" ;;
   chat) cmd_chat "$@" ;;
   packet) cmd_packet "$@" ;;
   change) cmd_change "$@" ;;

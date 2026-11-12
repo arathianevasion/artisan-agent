@@ -24,7 +24,9 @@
 # Every "failed" is a failed attempt. A worker's session is judged by its
 # result text, never by its exit code alone.
 #
-# Exit status: 0 when it classified, 2 on bad usage or an unknown attempt.
+# Exit status: 0 when it classified, 2 on bad usage or an unknown attempt, 3 when
+# it could not read what it needs (an unreadable runner pid). A caller never
+# turns an error into "failed vanished": it surfaces it or retries.
 # Needs jq.
 
 set -euo pipefail
@@ -42,19 +44,41 @@ key=$ticket.$attempt
 worker_dir=$run_dir/workers/$key
 exit_record=$run_dir/results/$key.exit.json
 
+# Alive means a process that has not ended: a zombie is a finished runner.
+# (ps, not kill -0, so a test can stand in for the liveness check.)
+runner_alive() {
+  local stat
+  stat=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
+  [ -n "$stat" ] || return 1
+  case "$stat" in Z*) return 1 ;; esac
+  return 0
+}
+
 command -v jq >/dev/null 2>&1 || { echo "classify-worker.sh: needs jq" >&2; exit 2; }
 
+# The runner writes its exit record in its exit trap and then exits, so a dead
+# runner may only mean the record landed after we looked. Only a dead runner
+# with still no record is vanished: check the record again before deciding.
 if [ ! -f "$exit_record" ]; then
   if [ ! -f "$worker_dir/runner.pid" ]; then
     echo "classify-worker.sh: no attempt $attempt of ticket $ticket in $run_dir" >&2
     exit 2
   fi
-  if kill -0 "$(cat "$worker_dir/runner.pid")" 2>/dev/null; then
-    echo "running -"
-  else
+  # A pid we cannot read is an error, never a dead session.
+  runner_pid=$(cat "$worker_dir/runner.pid" 2>/dev/null) || runner_pid=
+  case "$runner_pid" in
+    '' | *[!0-9]*)
+      echo "classify-worker.sh: cannot read the runner pid in $worker_dir/runner.pid" >&2
+      exit 3 ;;
+  esac
+  if ! runner_alive "$runner_pid" && [ ! -f "$exit_record" ]; then
     echo "failed vanished"
+    exit 0
   fi
-  exit 0
+  if [ ! -f "$exit_record" ]; then
+    echo "running -"
+    exit 0
+  fi
 fi
 
 case "$(jq -r .reason "$exit_record")" in

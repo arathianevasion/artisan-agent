@@ -178,7 +178,8 @@ last_orchestrator() {
 }
 
 orchestrator_state() { # id attempt -> classify-worker.sh's line
-  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"
+  # An error is not a dead session: it stops the command, and the caller runs it again.
+  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" || state_die 1 "wave.sh: could not classify $1 attempt $2; run it again"
 }
 
 cmd_launch() {
@@ -467,7 +468,12 @@ cmd_dispatch() {
   # A fresh worker never starts while the last attempt's session is still
   # ending in its worktree (a worker can report failed before it exits).
   if [ "$n" -gt 1 ]; then
-    case "$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null || true)" in
+    # Exit 2 is "no such attempt" (a ticket held for a question never started
+    # one): nothing is running. Any other error stops the dispatch.
+    prev_rc=0
+    prev_cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null) || prev_rc=$?
+    case "$prev_rc" in 0 | 2) ;; *) state_die 1 "wave.sh: could not classify #$t attempt $((n - 1)); run it again" ;; esac
+    case "$prev_cls" in
       running*) state_die 8 "wave.sh: #$t's attempt $((n - 1)) is still ending; dispatch the retry once it has" ;;
     esac
   fi

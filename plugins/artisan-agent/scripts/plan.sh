@@ -4,7 +4,7 @@
 #
 # Usage:
 #   plan.sh build --draft FILE [--config FILE] [--history DIR] [--prices FILE]
-#                 [--set key=value]...
+#                 [--standards FILE] [--set key=value]...
 #                                 print the plan (JSON) for state.sh init
 #   plan.sh render <plan.json>    print the approval: waves, models, estimates,
 #                                 Max Agents and every config number
@@ -21,6 +21,17 @@
 #                  path): the ticket, its focus, whether it is on the critical path
 #                  and the delay it costs the run (human.sh annotate)
 #   estimate_usd   the total; budget_usd = total + overrun allowance
+#   recorded_checks the recorded checks (checks.sh json over --standards,
+#                  default CODING_STANDARDS.md at the checkout's top):
+#                  {recorded, file, commands, suite} or {recorded: false, reason}
+#   suite_command, suite_source
+#                  with checks recorded, a draft without suite_command gets
+#                  the recorded checks' suite (checks.sh suite): "recorded";
+#                  a draft naming another command keeps it as "changed", shown
+#                  as a change for the Artisan to approve. With none recorded,
+#                  the draft's command (and its optional suite_found, where it
+#                  was found) is "discovered", shown as a fallback; no command
+#                  at all is "none".
 #
 # Estimates, in estimated dollars:
 #   history   when past merged tickets on the same model have logged costs
@@ -77,8 +88,8 @@ history_json() {
 }
 
 cmd_build() {
-  local draft= config= history= prices="$PLUGIN_DIR/references/model-prices.json"
-  local sets=() cfg hist out
+  local draft= config= history= prices="$PLUGIN_DIR/references/model-prices.json" standards=
+  local sets=() cfg hist out checks suite
   history=$(runs_dir)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -86,6 +97,7 @@ cmd_build() {
       --config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
       --history) [ $# -ge 2 ] || usage; history=$2; shift 2 ;;
       --prices) [ $# -ge 2 ] || usage; prices=$2; shift 2 ;;
+      --standards) [ $# -ge 2 ] || usage; standards=$2; shift 2 ;;
       --set)
         [ $# -ge 2 ] || usage
         case "$2" in *=*) ;; *) die "--set needs key=value, got $2" ;; esac
@@ -104,9 +116,14 @@ cmd_build() {
     cfg=$("$SCRIPT_DIR/config.sh" show) || exit 1
   fi
   hist=$(history_json "$history" "$(jq -r '.run_id // ""' "$draft")")
+  # The recorded checks, read only through checks.sh.
+  local where=()
+  [ -z "$standards" ] || where=(--file "$standards")
+  checks=$("$SCRIPT_DIR/checks.sh" json ${where[@]+"${where[@]}"}) || exit 1
+  suite=$("$SCRIPT_DIR/checks.sh" suite ${where[@]+"${where[@]}"} 2>/dev/null) || suite=
 
   if ! out=$(jq -n --slurpfile d "$draft" --slurpfile prices "$prices" \
-      --argjson cfg "$cfg" --argjson hist "$hist" --args "$CONFIG_JQ_DEFS"'
+      --argjson cfg "$cfg" --argjson hist "$hist" --argjson checks "$checks" --arg suite "$suite" --args "$CONFIG_JQ_DEFS"'
     def round2: (. * 100 | round) / 100;
     def need($cond; $msg): if $cond then . else error($msg) end;
     $d[0] as $d | $prices[0].models as $price
@@ -163,6 +180,15 @@ cmd_build() {
           }))
     | .estimate_usd = ([.scope[] as $t | .tickets[$t].estimate_usd] | add | round2)
     | .budget_usd = (.estimate_usd * (1 + .config.overrun_allowance_percent / 100) | round2)
+    # The suite: the recorded checks unless the draft changes it, visibly.
+    | .recorded_checks = ({recorded: $checks.recorded, file: $checks.file, commands: [$checks.checks[].command]}
+                 + (if $checks.recorded then {suite: $suite} else {reason: $checks.reason} end))
+    | (.suite_command // "") as $s
+    | if $checks.recorded then
+        if $s == "" or $s == $suite then .suite_command = $suite | .suite_source = "recorded"
+        else .suite_source = "changed" end
+      elif $s == "" then .suite_command = null | .suite_source = "none"
+      else .suite_source = "discovered" end
   ' ${sets[@]+"${sets[@]}"} 2>&1); then
     die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
   fi
@@ -219,6 +245,18 @@ cmd_render() {
         "" end),
       "Total estimate: \($p.estimate_usd | money). Budget (estimate + \($p.config.overrun_allowance_percent)% overrun allowance): \($p.budget_usd | money).",
       "Max Agents: \($p.max_agents). Gates: \(if ($p.gates // []) == [] then "none" else ($p.gates | map(tojson) | join(", ")) end).",
+      "",
+      "### Suite command",
+      ( (($p.recorded_checks.commands // []) | map("`" + . + "`") | join(", ")) as $rec
+      | if $p.suite_source == "recorded" then
+           "`\($p.suite_command)`: the recorded checks (\($rec), from `CODING_STANDARDS.md` `## Checks`), run after every merge."
+         elif $p.suite_source == "changed" then
+           "**Changed from the recorded checks:** this run'"'"'s suite is `\($p.suite_command)`; the recorded checks (\($rec)) run `\($p.recorded_checks.suite)`. Approve the change, or drop it to run the recorded checks."
+         elif $p.suite_source == "discovered" then
+           "`\($p.suite_command)`. No recorded checks (\($p.recorded_checks.reason)): found `\($p.suite_command)`\(if $p.suite_found then " in \($p.suite_found)" else "" end). Nothing has proven it can fail; setup'"'"'s checks question records proven ones."
+         elif $p.suite_source == "none" then
+           "**None.** No recorded checks (\($p.recorded_checks.reason)) and the draft names no suite; every merge needs one, so name it before approving."
+         else "`\($p.suite_command // "none")`" end ),
       "",
       "### Every number this run uses",
       "| Setting | Value |",

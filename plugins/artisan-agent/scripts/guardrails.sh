@@ -31,6 +31,14 @@
 #       from the next wave once merged. Refuses a loosening (5): only a retro,
 #       with evidence, loosens. Refuses a --who that names an agent (2).
 #
+#   guardrails.sh loosen --level individual|product|team --who NAME --reason TEXT
+#       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID] [--pr]
+#       the retro's loosening path: lower an existing guardrail's --strict, with
+#       the evidence and who, recorded as a `loosen` move. Needs --evidence and a
+#       --strict below the current one (5 otherwise); refuses the scope floor
+#       (key scope-floor) and a defer-only gate (defer_only: true) with 7. Only a
+#       person, from a retro that showed the evidence (guardrail-health.sh).
+#
 # Environment:
 #   ARTISAN_HOME            the individual home (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent)
 #   ARTISAN_TEAM_CACHE      where the team guardrails repo is cloned (default
@@ -39,7 +47,8 @@
 #   ARTISAN_MAIN_REF        the product's main branch (default origin/main, else main)
 #
 # Exit status: 0 ok, 1 error (a source could not be fetched), 2 usage,
-# 5 a loosening, 6 merge conflict.
+# 5 a loosening (tighten) or not a loosening (loosen), 6 merge conflict,
+# 7 loosen refused: the scope floor or a defer-only gate.
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq.
 
@@ -225,7 +234,7 @@ resolve_json() {
   jq -n --argjson src "$src" --arg role "$role" --argjson recs "$(printf '%s\n' "$recs" | jq -sc '.')" '
     def rank: {product: 3, team: 2, individual: 1}[.level];
     def strict: (.strict // 0);
-    def slim: {key, level, id, value, strict: strict, version, rule: (.rule // null), scope: (.scope // null), role: (.role // null)};
+    def slim: {key, level, id, value, strict: strict, version, rule: (.rule // null), scope: (.scope // null), role: (.role // null), area: (.area // null), origin: (.origin // null), moves: (.moves // []), protected: ((.key == "scope-floor") or (.defer_only == true))};
     def classify:
       . as $g
       | ($g | map(select(.level != "individual")) | sort_by([(-(rank)), (-(strict))])) as $shared
@@ -281,7 +290,16 @@ cmd_table() {
 
 # ----------------------------------------------------------------- tighten
 
-cmd_tighten() {
+cmd_tighten() { move_guardrail tighten "$@"; }
+cmd_loosen() { move_guardrail loosen "$@"; }
+
+# move_guardrail tighten|loosen ...: write a new guardrail or move one, with
+# its origin or its move. A loosening needs evidence and an existing, lower-
+# strictness target, and is never made for the scope floor or a defer-only gate.
+move_guardrail() {
+  local mode=$1 mode_tag=""
+  shift
+  [ "$mode" != loosen ] || mode_tag=" (loosen)"
   local level="" who="" reason="" id="" key="" value="" rule="" strict="" evidence="" scope="" role="" run="" pr=0
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -303,6 +321,10 @@ cmd_tighten() {
   case "$strict" in '' | *[!0-9]*) [ -z "$strict" ] || usage ;; esac
   [ -n "$id" ] || id=$(printf %s "$key" | tr -c 'A-Za-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
   [ -n "$id" ] || usage
+  if [ "$mode" = loosen ]; then
+    [ -n "$evidence" ] || state_die 2 "guardrails.sh: a loosening records the evidence for it: pass --evidence"
+    [ -n "$strict" ] || usage
+  fi
 
   local m dir branch="" file path now date current new
   m=$(main_checkout)
@@ -337,7 +359,27 @@ cmd_tighten() {
   [ -f "$file" ] || : >"$file"
 
   current=$(jq -sc --arg id "$id" 'map(select(.id == $id)) | first // null' "$file")
-  if [ "$current" = null ]; then
+  drop_worktree() { [ -z "$branch" ] || git -C "$m" worktree remove --force "$dir" >/dev/null 2>&1 || true; }
+  if [ "$mode" = loosen ]; then
+    [ "$current" != null ] || { drop_worktree; die "no guardrail $id at the $level level to loosen"; }
+    if [ "$(jq -r '(.key == "scope-floor") or (.defer_only == true)' <<<"$current")" = true ]; then
+      drop_worktree
+      state_die 7 "guardrails.sh: $id is the scope floor or a defer-only gate; it never loosens"
+    fi
+    local cur_l
+    cur_l=$(jq -r '.strict // 0' <<<"$current")
+    if [ "$strict" -ge "$cur_l" ]; then
+      drop_worktree
+      state_die 5 "guardrails.sh: $id is at strictness $cur_l; a loosening needs a lower --strict"
+    fi
+    new=$(jq -c --arg value "$value" --arg rule "$rule" --argjson strict "$strict" --arg date "$date" \
+      --arg evidence "$evidence" --arg who "$who" --arg run "$run" '
+      . as $o | (if $value == "" then . else .value = $value end)
+      | (if $rule == "" then . else .rule = $rule end) | .strict = $strict
+      | .moves += [{date: $date, kind: "loosen", evidence: $evidence, who: $who,
+                    from: {value: $o.value, strict: ($o.strict // 0)}, to: {value: .value, strict: $strict}}
+                   + (if $run == "" then {} else {run: $run} end)]' <<<"$current")
+  elif [ "$current" = null ]; then
     [ -n "$key" ] && [ -n "$value" ] && [ -n "$rule" ] || die "a new guardrail needs --key, --value and --rule"
     new=$(jq -nc --arg id "$id" --arg key "$key" --arg value "$value" --arg rule "$rule" --arg strict "${strict:-1}" \
       --arg scope "$scope" --arg role "$role" --arg run "$run" --arg date "$date" --arg reason "$reason" --arg who "$who" '
@@ -348,7 +390,7 @@ cmd_tighten() {
     local cur
     cur=$(jq -r '.strict // 0' <<<"$current")
     [ -n "$strict" ] && [ "$strict" -gt "$cur" ] \
-      || { [ -z "$branch" ] || git -C "$m" worktree remove --force "$dir" >/dev/null 2>&1 || true
+      || { drop_worktree
            state_die 5 "guardrails.sh: $id is at strictness $cur; --strict must be higher. Only a retro, with evidence, loosens a guardrail"; }
     new=$(jq -c --arg value "$value" --arg rule "$rule" --argjson strict "$strict" --arg date "$date" \
       --arg evidence "${evidence:-$reason}" --arg who "$who" '
@@ -360,10 +402,10 @@ cmd_tighten() {
   { jq -c --arg id "$id" 'select(.id != $id)' "$file"; printf '%s\n' "$new"; } >"$file.tmp"
   mv "$file.tmp" "$file"
   if [ "$level" = individual ]; then
-    commit_in "$dir" "Guardrail $id: $reason" "$path"
+    commit_in "$dir" "Guardrail $id${mode_tag}: $reason" "$path"
     printf 'individual: committed %s in %s\n' "$id" "$dir"
   else
-    commit_in "$dir" "Guardrail $id ($level): $reason" "$path"
+    commit_in "$dir" "Guardrail $id${mode_tag} ($level): $reason" "$path"
     printf '%s: committed %s on branch %s in %s; it applies from the next wave once merged\n' "$level" "$id" "$branch" "$dir"
     if [ "$pr" = 1 ]; then
       git -C "$dir" push -q -u origin "$branch" && gh pr create --head "$branch" --title "Guardrail $id ($level)" \
@@ -384,5 +426,6 @@ case "$cmd" in
   resolve) cmd_resolve "$@" ;;
   table) cmd_table "$@" ;;
   tighten) cmd_tighten "$@" ;;
+  loosen) cmd_loosen "$@" ;;
   *) usage ;;
 esac
