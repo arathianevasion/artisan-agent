@@ -90,6 +90,8 @@ init_write() {
           config: ($p.config // {}),
           overrides: ($p.overrides // {}),
           suite_command: ($p.suite_command // null),
+          suite_source: ($p.suite_source // null),
+          recorded_checks: ($p.recorded_checks // null),
           checks: ($p.checks // []),
           orchestrator: ($p.orchestrator // {})
         },

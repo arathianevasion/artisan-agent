@@ -133,3 +133,83 @@ test_a_run_that_never_moved_is_unchanged() {
   "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event":"x"}'
   assert_eq false "$(state_get 'has("location")')"
 }
+
+# ---- two-phase out (#107): never live in two places, whenever out dies
+
+die_at() { # point: run move.sh out on the laptop with a self-kill at that point
+  ( cd "$PROJECT" && ARTISAN_MACHINE=laptop ARTISAN_MOVE_DIE_AT="$1" "$SCRIPTS/move.sh" out "$RUN_DIR" >/dev/null 2>&1 ) || true
+}
+
+remote_has_run_branch() { git -C "$REMOTE" rev-parse -q --verify refs/heads/runs/r1 >/dev/null 2>&1; }
+
+test_out_killed_after_the_local_mark_is_live_nowhere_and_a_rerun_completes_it() {
+  two_machines
+  die_at after-mark
+  # the local copy is moved, nothing claims it on the remote: live nowhere
+  assert_eq "moved laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+  if remote_has_run_branch; then fail "runs/r1 was pushed although out died before the push"; fi
+  assert_status 3 "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event":"x"}'
+  # a rerun finishes the move
+  laptop "$SCRIPTS/move.sh" out "$RUN_DIR" >/dev/null
+  remote_has_run_branch
+  assert_eq "moved laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+  assert_eq false "$(state_get '.location | has("pending")')"
+  host "$SCRIPTS/move.sh" in r1 >/dev/null
+  assert_eq "live host" "$(host "$SCRIPTS/move.sh" where "$CLONE_RUN")"
+}
+
+test_a_refused_push_restores_the_local_copy_to_live_and_reports_it() {
+  two_machines
+  mkdir -p "$PROJECT/.git/hooks"
+  cat >"$PROJECT/.git/hooks/pre-push" <<'HOOK'
+#!/bin/sh
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in refs/heads/runs/*) exit 1 ;; esac
+done
+exit 0
+HOOK
+  chmod +x "$PROJECT/.git/hooks/pre-push"
+  assert_status 6 bash -c "cd '$PROJECT' && ARTISAN_MACHINE=laptop '$SCRIPTS/move.sh' out '$RUN_DIR'"
+  assert_eq "live laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+  if remote_has_run_branch; then fail "runs/r1 was pushed although the push was refused"; fi
+  assert_eq false "$(state_get '.location | has("pending")')"
+  laptop "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event":"still-mine"}'
+  assert_eq "move-out-undone" "$(jq -r '[.events[] | select(.event | startswith("move-out")) | .event] | last' "$RUN_DIR/state.json")"
+}
+
+test_a_refused_push_keeps_the_drain_halt_so_no_wave_starts_by_surprise() {
+  two_machines
+  "$SCRIPTS/move.sh" drain "$RUN_DIR"
+  mkdir -p "$PROJECT/.git/hooks"
+  printf '#!/bin/sh\nwhile read -r a b c d; do case "$c" in refs/heads/runs/*) exit 1 ;; esac; done\nexit 0\n' >"$PROJECT/.git/hooks/pre-push"
+  chmod +x "$PROJECT/.git/hooks/pre-push"
+  assert_status 6 bash -c "cd '$PROJECT' && ARTISAN_MACHINE=laptop '$SCRIPTS/move.sh' out '$RUN_DIR'"
+  assert_eq true "$(state_get '.halted.move')"
+}
+
+test_out_killed_after_the_push_reads_as_moved_and_the_other_machine_resumes() {
+  two_machines
+  die_at after-push
+  assert_eq "moved laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+  assert_status 3 "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event":"x"}'
+  host "$SCRIPTS/move.sh" in r1 >/dev/null
+  assert_eq "live host" "$(host "$SCRIPTS/move.sh" where "$CLONE_RUN")"
+  # a rerun on the laptop only clears its marker; it does not touch the host's claim
+  laptop "$SCRIPTS/move.sh" out "$RUN_DIR" >/dev/null
+  assert_eq false "$(state_get '.location | has("pending")')"
+  assert_eq "live host" "$(host "$SCRIPTS/move.sh" where "$CLONE_RUN")"
+}
+
+# bash 3.2 (macOS) gives a bare `local x` an empty value; bash 4+ (Linux CI) leaves
+# it unset, so under set -u the first move (no runs/<id> on the remote yet: the fetch
+# fails) died at "rstatus: unbound variable". 3.2 cannot show that, so pin the cause:
+# the remote-state variables are set before the fetch that may skip them.
+test_the_remote_state_is_set_before_the_fetch_that_may_fail() {
+  local var assign fetch
+  fetch=$(grep -n 'fetch -q "\$remote" "+refs/heads/runs/\$id:\$rref"' "$SCRIPTS/move.sh" | head -1 | cut -d: -f1)
+  [ -n "$fetch" ] || fail "cannot find the runs/<id> fetch in move.sh"
+  for var in prev rstate rstatus rmach; do
+    assign=$(grep -n "^ *\(.* \)\{0,1\}$var=\"\"" "$SCRIPTS/move.sh" | head -1 | cut -d: -f1)
+    [ -n "$assign" ] && [ "$assign" -lt "$fetch" ] || fail "$var is not set before the runs/<id> fetch (unbound under set -u on bash 4+)"
+  done
+}

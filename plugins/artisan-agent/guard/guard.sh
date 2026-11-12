@@ -63,9 +63,18 @@ matcher() { printf '^%s:(%s)$' "$UPSTREAM" "$(names | join '|')"; }
 
 deny_lines() { names | while read -r n; do printf 'Skill(%s:%s)\n' "$UPSTREAM" "$n"; done; }
 
+# JSON string escaping for a value that goes between double quotes: backslash, quote, tab, LF, CR (enough for a hook command; other control characters are not handled). Only --hook-command needs it; the matcher, deny rules and ${CLAUDE_PLUGIN_ROOT} paths are fixed literals or skill names. bash 3.2-safe.
+json_escape() {
+  local s=$1 tab nl cr
+  tab=$(printf '\t'); nl=$(printf '\n'); cr=$(printf '\r')
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  s=${s//"$tab"/\\t}; s=${s//"$nl"/\\n}; s=${s//"$cr"/\\r}
+  printf '%s' "$s"
+}
+
 json_hooks_body() { # the "hooks" object value
   printf '{"UserPromptExpansion":[{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]}]}' \
-    "$(matcher)" "$hook_command"
+    "$(matcher)" "$(json_escape "$hook_command")"
 }
 
 # The plugin's hook set: the replaced-skill block, plus the main-checkout and
@@ -76,7 +85,7 @@ json_plugin_hooks_body() {
   local protect='${CLAUDE_PLUGIN_ROOT}/guard/protect.sh'
   local compact='${CLAUDE_PLUGIN_ROOT}/scripts/compact-hook.sh'
   printf '{"UserPromptExpansion":[{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]},' \
-    "$(matcher)" "$hook_command"
+    "$(matcher)" "$(json_escape "$hook_command")"
   printf '{"matcher":"^(artisan-agent:)?implement-plan$","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"
   printf '"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"%s main-edit"}]},' "$protect"
   printf '{"matcher":"Skill","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"

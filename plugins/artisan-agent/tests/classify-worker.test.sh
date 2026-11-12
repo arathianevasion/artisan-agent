@@ -111,6 +111,27 @@ test_a_runner_that_vanished_without_an_exit_record_is_a_failed_attempt() {
   assert_eq "failed vanished" "$(classify)"
 }
 
+test_a_runner_that_writes_its_exit_record_between_the_two_checks_is_classified_from_it() {
+  setup_run
+  mkdir -p "$RUN/workers/46.1" "$RUN/results" "$TEST_TMPDIR/stub"
+  echo 99999 >"$RUN/workers/46.1/runner.pid"
+  # The liveness check is the moment the runner's exit trap lands: the stub
+  # writes the exit record, then reports the runner gone.
+  printf '#!/bin/sh\necho %s >"%s"\nexit 1\n' "'{\"reason\": \"deadline\"}'" "$RUN/results/46.1.exit.json" >"$TEST_TMPDIR/stub/ps"
+  chmod +x "$TEST_TMPDIR/stub/ps"
+  assert_eq "failed deadline" "$(PATH="$TEST_TMPDIR/stub:$PATH" classify)"
+}
+
+test_a_runner_pid_that_cannot_be_read_is_an_error_not_a_vanished_session() {
+  setup_run
+  mkdir -p "$RUN/workers/46.1"
+  : >"$RUN/workers/46.1/runner.pid"
+  local out status=0
+  out=$(classify 2>/dev/null) || status=$?
+  assert_eq 3 "$status"
+  assert_eq "" "$out"
+}
+
 test_reads_the_attempt_it_is_given() {
   setup_run
   finished complete >/dev/null
