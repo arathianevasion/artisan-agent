@@ -64,7 +64,7 @@ Then `questions.sh deferred $RUN <ticket> pull` or `carry`:
 
 ## Provisional cards
 
-`questions.sh provisional $RUN` prints, as a table, every provisional card (criteria 4, 6 and 7) from tickets merged in the run that no gate has shown yet. Put it in the slice gate's packet, under the decisions made alone, and run it again with `--shown` once the packet is built so the next gate doesn't repeat them. The Artisan can approve each card or send it back.
+`questions.sh provisional $RUN` prints, as a table, every provisional card (criteria 4, 6 and 7) from tickets merged in the run that no gate has shown yet. `gate.sh open` puts it in the slice gate's packet, under the slice's own decision cards, and records the tickets it showed in `provisional_shown` itself, so the next gate doesn't repeat them (`references/review-gates.md`). Outside a gate, `--shown` does that recording. The Artisan can approve each card or send it back.
 
 ## State
 

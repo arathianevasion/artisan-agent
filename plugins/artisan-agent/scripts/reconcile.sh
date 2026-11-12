@@ -15,7 +15,7 @@
 #      labels, and its native blocked-by list;
 #   4. marks closed any queued ticket the tracker has closed without a merge;
 #   5. writes the frontier: queued tickets, open on the tracker, not labelled
-#      ready-for-human, whose blockers are all merged into the integration
+#      ready-for-human and not held for the Artisan (human.sh), whose blockers are all merged into the integration
 #      branch (blockers in the run) or closed (blockers outside it).
 # Prints the frontier, one ticket per line. Running it again on the same git
 # and tracker state changes nothing. The run folder must sit at
@@ -106,7 +106,7 @@ reconcile() {
       }}')
   done
 
-  step '
+  step "$STATE_JQ_DEFS"'
     .tickets |= with_entries(
       if .value.status == "queued" and $tr[.key].state == "closed"
       then .value.status = "closed" else . end)
@@ -116,10 +116,13 @@ reconcile() {
         | select($s.tickets[$t].status == "queued")
         | select($tr[$t].state == "open")
         | select(($tr[$t].labels | index("ready-for-human")) == null)
+        | select($s.tickets[$t].human == null)
+        | select((($s.plan.hands_on.ticket // "") | tostring) != $t)
         | select(all($tr[$t].blocked_by[];
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"
                  and ($s.tickets[.number].risk_gate.status? // "") != "waiting"
+                 and ((.number | tostring) as $b | $s | gate_holds($b) | not)
             else .state == "closed" end))
         | $t
       ] | .frontier |= sort_by(tonumber? // .)' --argjson tr "$tracker"

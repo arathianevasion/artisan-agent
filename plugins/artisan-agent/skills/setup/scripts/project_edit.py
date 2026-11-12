@@ -2,12 +2,13 @@
 """File edits for project-setup.sh. Every edit only adds: nothing that exists is
 changed or removed. Each prints "changed: ..." or "unchanged: ..." lines.
 
-  project_edit.py settings FILE DENY_JSON [HOOK_JSON]
+  project_edit.py settings FILE DENY_JSON [HOOK_JSON] [--compact-percent N]
       merge into .claude/settings.json: enable artisan-agent and mattpocock-skills,
       register our marketplace, add the Skill(...) deny rules from DENY_JSON (the
       output of guard.sh deny-json) and, only when given, the hooks from HOOK_JSON
       (guard.sh settings-json, the fallback). A value the project already set is
-      kept, even when it differs ("kept: ...").
+      kept, even when it differs ("kept: ..."). With --compact-percent, env gets
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (a string) when the project hasn't set it.
   project_edit.py section FILE HEADING LINE...
       make sure FILE has "## HEADING" and that each LINE is in that section;
       a missing section is appended at the end, missing lines at the section's end.
@@ -66,7 +67,7 @@ def write_json(path, data):
         f.write("\n")
 
 
-def cmd_settings(path, deny_path, hook_path=None):
+def cmd_settings(path, deny_path, hook_path=None, compact_percent=None):
     data = load_json(path)
     before = json.dumps(data, sort_keys=True)
     out = []
@@ -93,6 +94,15 @@ def cmd_settings(path, deny_path, hook_path=None):
     have.extend(added)
     if added:
         out.append("changed: added %d Skill deny rule(s)" % len(added))
+
+    if compact_percent:
+        env = data.setdefault("env", {})
+        key = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+        if key not in env:
+            env[key] = str(compact_percent)
+            out.append("changed: %s=%s (the Engineering chat compacts out of sight)" % (key, compact_percent))
+        elif str(env[key]) != str(compact_percent):
+            out.append("kept: %s is %s in %s; left as the project set it" % (key, json.dumps(env[key]), path))
 
     if hook_path:
         with open(hook_path) as f:
@@ -247,8 +257,16 @@ def main(argv):
     if len(argv) < 2:
         sys.exit(__doc__)
     cmd, args = argv[1], argv[2:]
-    if cmd == "settings" and len(args) in (2, 3):
-        cmd_settings(*args)
+    if cmd == "settings":
+        pct = None
+        if "--compact-percent" in args:
+            i = args.index("--compact-percent")
+            pct = args[i + 1] if i + 1 < len(args) else None
+            args = args[:i] + args[i + 2:]
+        if len(args) in (2, 3):
+            cmd_settings(*args, compact_percent=pct)
+            return
+        sys.exit(__doc__)
     elif cmd == "section" and len(args) >= 2:
         cmd_section(args[0], args[1], args[2:])
     elif cmd == "labels-doc" and len(args) == 1:

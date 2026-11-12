@@ -22,7 +22,7 @@
 #
 # `run` needs UPSTREAM_PLUGIN_DIR: a directory holding the mattpocock-skills
 # plugin (for tdd and code-review). It loads both plugins with --plugin-dir,
-# reads no user settings (--setting-sources project,local), saves no session
+# reads no user settings and runs the plugin's hooks (tests/helpers/live-hooks.sh), saves no session
 # (--no-session-persistence), and caps the session with --max-budget-usd
 # (BUDGET, default 0.50), --model (MODEL, default claude-sonnet-5-5) and a
 # wall-clock deadline (DEADLINE seconds, default 1200).
@@ -34,6 +34,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_ROOT=$(cd "$HERE/../.." && pwd)
 FIXTURES="$PLUGIN_ROOT/tests/fixtures/implement"
+. "$PLUGIN_ROOT/tests/helpers/live-hooks.sh"
 
 ticket_id() {
   case "$1" in
@@ -80,6 +81,7 @@ run() {
   base=$(cat "$wd/base")
   (
     cd "$wd/repo"
+    export ARTISAN_HOOK_PROOF="$wd/hook-proof"
     perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "${DEADLINE:-1200}" \
       claude -p "/artisan-agent:implement tickets/$id.md (ticket $id). Base: $base. Write the evidence record to $wd/results/$id.json." \
       --model "${MODEL:-claude-sonnet-5-5}" \
@@ -89,7 +91,7 @@ run() {
       --add-dir "$wd/results" \
       --plugin-dir "$PLUGIN_ROOT" \
       --plugin-dir "$UPSTREAM_PLUGIN_DIR" \
-      --setting-sources project,local \
+      $(live_hooks_args "$PLUGIN_ROOT" "$wd/hooks") \
       --no-session-persistence \
       --output-format stream-json --verbose \
       > "$wd/session.jsonl" 2> "$wd/stderr.log"
@@ -192,6 +194,7 @@ verify() {
   base=$(cat "$wd/base")
   [ "$scenario" != review-seeds ] || attempt_commits=1
 
+  check "a plugin hook fired (SessionStart line in the proof file)" live_hooks_proof_check "$wd/hook-proof"
   check "a result file exists" test -f "$record"
   check "it is an evidence record ($HERE/check-evidence-record.sh)" "$HERE/check-evidence-record.sh" "$record"
   check "status is complete" record_says "$record" '.status == "complete"'

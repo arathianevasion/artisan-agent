@@ -91,7 +91,8 @@ init_write() {
           overrides: ($p.overrides // {}),
           suite_command: ($p.suite_command // null),
           suite_source: ($p.suite_source // null),
-          checks: ($p.checks // null),
+          recorded_checks: ($p.recorded_checks // null),
+          checks: ($p.checks // []),
           orchestrator: ($p.orchestrator // {})
         },
         tickets: {},
@@ -105,6 +106,7 @@ init_write() {
         waves: [],
         frontier: [],
         orchestrators: [],
+        review_gates: [],
         halted: null,
         events: []
       }
