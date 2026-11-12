@@ -466,7 +466,8 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   assert_contains "$out" "next: halted"
   assert_contains "$out" "halted: every ticket dispatched in wave 1 failed (#1, #2); nothing more launches until the Artisan decides"
   assert_contains "$out" "(halt) | - | Wave 1 failed whole (#1, #2)"
-  assert_eq halted "$(state_get '.events[-1].event')"
+  # Halted once; each blocked ticket also has its exception gate (#70).
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "halted")] | length')"
   # Nothing launches until the Artisan decides to carry on.
   local status=0
   "$SCRIPTS/wave.sh" launch "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || status=$?

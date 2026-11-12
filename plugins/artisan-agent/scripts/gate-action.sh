@@ -593,7 +593,7 @@ cmd_parked() {
         (($open | length) + ($risk | length)) as $n
         | "parked: waiting on \($n) review\(if $n == 1 then "" else "s" end): "
           + ([$open[] | "\(.title) #\(.issue)"] + [$risk[] | "risk gate on #\(.)"] | join(", "))
-          + "; \($left | length) ticket\(if ($left | length) == 1 then "" else "s" end) wait behind \(if $n == 1 then "it" else "them" end): "
+          + "; \($left | length) ticket\(if ($left | length) == 1 then " waits" else "s wait" end) behind \(if $n == 1 then "it" else "them" end): "
           + ($left | map("#" + .) | join(", "))
       end' --argjson tr "$tracker")
   [ -n "$line" ] || return 1
