@@ -10,7 +10,8 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 | `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
-| `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
+| `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login in `login.json` (never `host.json`); `legacy` and `cleanup` fix a `host.json` an old stamp made (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
+| `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first (this script's own; not `wave.sh`'s 10) |
 
 Each script's header has its full usage.
 
@@ -114,11 +115,12 @@ How the plan step reads the project config, estimates a run and records the numb
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
+| minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
 
 ## Overrides are for this run only
 
-`plan.sh build --set key=value` and, once the run has started, `state.sh override <run-dir> <key> <value>` change a number in the plan's `config` and record `{value, project}` in its `overrides`. Neither writes `config.yml`; a lasting change is job 23, made by PR. The key must be a setting above (dotted), or `estimate_multipliers.<model>`, and the value must have the setting's type. `max_agents` and `attempts_per_ticket` are kept in step at the top of the plan, where `state.sh` and the sweep read them.
+`plan.sh build --set key=value` and, once the run has started, `state.sh override <run-dir> <key> <value>` change a number in the plan's `config` and record `{value, project}` in its `overrides`. Neither writes `config.yml`; a lasting change is job 23, made by PR. The key must be a setting above (dotted), or `estimate_multipliers.<model>` or `minimum_estimates.<model>`, and the value must have the setting's type. `max_agents` and `attempts_per_ticket` are kept in step at the top of the plan, where `state.sh` and the sweep read them.
 
 ## Estimates
 
@@ -126,6 +128,7 @@ In estimated dollars, per ticket, then summed; the budget is the total plus the 
 
 - **History.** When state files of other runs (`.artisan-agent/runs/*/state.json`, or `--history DIR`) hold merged tickets on the same model with a logged `cost_usd`: their mean cost, times `estimate_multipliers.<model>`, else `estimate_multipliers.all`, else 1.
 - **Price.** Otherwise: the model's price in `references/model-prices.json` times the ticket's expected size (`expected.input_tokens`, `expected.output_tokens`). There are no per-tier defaults: a model missing from the price table, with no history, is refused. Keep the table current; it says the date its prices were taken.
+- **Minimum.** Whichever of the two gives an estimate below `minimum_estimates.<model>` (else `.all`) is raised to it, before caps, total and budget are derived. The ticket's `estimate_basis` becomes `{mode: "minimum", model, minimum_usd, estimated_usd, was}` and the approval table's From column reads "minimum for <model>". The defaults cover every model in `references/model-prices.json`; their source is the comment in `templates/config.yml`. Override for one run with `plan.sh build --set minimum_estimates.<model>=N`.
 
 Caps follow `run-ticket.sh`: `max_budget_usd` twice the estimate, `max_turns` 40 per estimated dollar (at least 20), `deadline_seconds` twice `expected.minutes`.
 

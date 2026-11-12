@@ -10,6 +10,8 @@ fake_host() { # a fake HOME and config dir; nothing outside the scratch dir is t
   mkdir -p "$HOME" "$CLAUDE_CONFIG_DIR" "$TEST_TMPDIR/work"
 }
 
+make_host() { "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null; }
+
 test_apply_turns_on_remote_control_and_push_and_writes_the_supervisor() {
   fake_host macos
   printf '{"theme":"dark","remoteControlAtStartup":false}\n' >"$CLAUDE_CONFIG_DIR/settings.json"
@@ -109,6 +111,108 @@ test_status_is_green_only_when_every_piece_is_in_place() {
   assert_status 0 "$HOST_SETUP" status
 }
 
+# ---- one meaning each: host.json is the host, login.json the stamp (#108)
+
+HN="$PLUGIN_ROOT/scripts/host-notice.sh"
+AH() { printf '%s' "$CLAUDE_CONFIG_DIR/artisan-agent"; }
+
+test_a_stamp_on_a_non_host_makes_no_host_json() {
+  fake_host macos
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  "$L" stamp --at 1000000 >/dev/null
+  [ ! -e "$(AH)/host.json" ] || fail "stamp created host.json"
+  assert_eq 1000000 "$(jq .login_at "$(AH)/login.json")"
+  assert_contains "$("$L" check --span-minutes 100000)" "no host here"
+}
+
+test_the_expiry_check_reads_the_stamp_file_on_a_host() {
+  fake_host macos
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null
+  assert_status 15 "$L" check --span-minutes 1
+  "$L" stamp --at 1000000 >/dev/null
+  assert_eq null "$(jq .login_at "$(AH)/host.json")" "the stamp is not in host.json"
+  assert_status 0 "$L" check --span-minutes 60 --now 3500000
+  assert_status 15 "$L" check --span-minutes 60 --now 3600000
+}
+
+test_host_setup_alone_writes_host_json_and_a_rerun_changes_nothing() {
+  fake_host macos
+  "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" --name n >/dev/null
+  before=$(cat "$(AH)/host.json")
+  out=$("$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" --name n)
+  assert_contains "$out" "unchanged: host record"
+  assert_eq "$before" "$(cat "$(AH)/host.json")"
+}
+
+test_a_legacy_host_json_is_not_a_host_and_cleanup_moves_the_stamp() {
+  fake_host macos
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  mkdir -p "$(AH)"
+  echo '{"login_at":1000000,"login_lifetime_days":30}' >"$(AH)/host.json"
+  assert_contains "$("$L" legacy)" "legacy:"
+  assert_contains "$("$L" check --span-minutes 100000 2>&1)" "no host here"
+  out=$("$L" cleanup)
+  assert_contains "$out" "changed:"
+  [ ! -e "$(AH)/host.json" ] || fail "host.json left"
+  assert_eq 1000000 "$(jq .login_at "$(AH)/login.json")"
+  assert_status 1 "$L" legacy
+  assert_contains "$("$L" cleanup)" "unchanged:"
+}
+
+test_cleanup_keeps_a_real_hosts_record() {
+  fake_host macos
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null
+  jq '.login_at = 5' "$(AH)/host.json" >"$(AH)/h.tmp" && mv "$(AH)/h.tmp" "$(AH)/host.json"
+  assert_status 1 "$L" legacy
+  "$L" cleanup >/dev/null
+  assert_eq true "$(jq .configured "$(AH)/host.json")"
+  assert_eq 5 "$(jq .login_at "$(AH)/login.json")"
+}
+
+test_a_start_on_a_non_host_with_host_configured_gets_the_notice_and_exit_10() {
+  fake_host macos
+  make_project
+  printf 'host_configured: true\n' >"$PROJECT/.artisan-agent/config.yml"
+  out=$("$HN" --repo "$PROJECT" || echo "exit $?")
+  assert_contains "$out" "runs live on the always-on host"
+  assert_contains "$out" "exit 10"
+  assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'always-on host')" "one line of notice"
+}
+
+test_a_stamp_only_laptop_with_host_configured_still_gets_the_notice() {
+  fake_host macos
+  make_project
+  printf 'host_configured: true\n' >"$PROJECT/.artisan-agent/config.yml"
+  "$PLUGIN_ROOT/scripts/login-check.sh" stamp >/dev/null
+  assert_status 10 "$HN" --repo "$PROJECT"
+}
+
+test_a_start_on_the_host_is_normal() {
+  fake_host macos
+  make_project
+  printf 'host_configured: true\n' >"$PROJECT/.artisan-agent/config.yml"
+  "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null
+  assert_status 0 "$HN" --repo "$PROJECT"
+}
+
+test_host_configured_false_or_absent_starts_locally() {
+  fake_host macos
+  make_project
+  assert_eq "" "$("$HN" --repo "$PROJECT")"
+  assert_status 0 "$HN" --repo "$PROJECT"
+  printf 'host_configured: false\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_status 0 "$HN" --repo "$PROJECT"
+}
+
+test_the_notice_run_on_a_legacy_laptop_offers_cleanup() {
+  fake_host macos
+  make_project
+  mkdir -p "$(AH)"; echo '{"login_at":1}' >"$(AH)/host.json"
+  assert_contains "$("$HN" --repo "$PROJECT")" "cleanup"
+}
+
 # ---- the login-expiry check
 
 test_a_machine_with_no_host_record_is_not_checked() {
@@ -118,7 +222,7 @@ test_a_machine_with_no_host_record_is_not_checked() {
 }
 
 test_a_host_refuses_a_run_the_login_would_not_outlast() {
-  fake_host macos
+  fake_host macos; make_host
   L="$PLUGIN_ROOT/scripts/login-check.sh"
   "$L" stamp --at 1000000 >/dev/null
   # 30 days = 2592000 s; the login lasts until 3592000
@@ -139,7 +243,7 @@ test_a_host_with_no_login_stamp_refuses() {
 }
 
 test_the_span_comes_from_the_runs_forecast_waves() {
-  fake_host macos
+  fake_host macos; make_host
   init_run '["10","11","12"]' '{"10":{"expected":{"minutes":30},"caps":{"deadline_seconds":3600}},"11":{"expected":{"minutes":10},"caps":{"deadline_seconds":1200}},"12":{"caps":{"deadline_seconds":3000}}}'
   # waves [[10],[11],[12]]: 30 + 10 + 25 (half the deadline) = 65 minutes
   L="$PLUGIN_ROOT/scripts/login-check.sh"
@@ -149,7 +253,7 @@ test_the_span_comes_from_the_runs_forecast_waves() {
 }
 
 test_the_first_wave_launch_is_refused_on_a_host_whose_login_would_expire() {
-  fake_host macos
+  fake_host macos; make_host
   init_run
   "$PLUGIN_ROOT/scripts/login-check.sh" stamp --at 1 >/dev/null
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
@@ -159,7 +263,7 @@ test_the_first_wave_launch_is_refused_on_a_host_whose_login_would_expire() {
 }
 
 test_a_resumed_run_is_checked_against_the_tickets_it_has_left() {
-  fake_host macos
+  fake_host macos; make_host
   init_run '["10","11","12"]' '{"10":{"expected":{"minutes":30},"caps":{"deadline_seconds":3600}},"11":{"expected":{"minutes":10},"caps":{"deadline_seconds":1200}},"12":{"caps":{"deadline_seconds":3000}}}'
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["10"].status = "merged"'
   L="$PLUGIN_ROOT/scripts/login-check.sh"
