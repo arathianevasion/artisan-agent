@@ -5,6 +5,7 @@
 # reaches GitHub.
 
 . "$TESTS_DIR/helpers/run-state.sh"
+. "$PLUGIN_ROOT/scripts/lib/state-lib.sh"   # STATE_JQ_DEFS, for gave_up_on_3
 
 A="$PLUGIN_ROOT/scripts/gate-action.sh"
 G="$PLUGIN_ROOT/scripts/gate.sh"
@@ -257,7 +258,7 @@ test_the_exception_choices_leave_the_ticket_and_dependents_as_stated() {
       reslice)
         assert_eq "resliced closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "needs-triage,ready-for-agent" "$(labels 3)"
-        assert_eq "[3]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" ;;
+        assert_eq "[3,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "reslice: 4 keeps waiting on 3; the closed gate's edge stays" ;;
       drop)
         assert_eq "dropped closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "ready-for-agent" "$(labels 3)"
