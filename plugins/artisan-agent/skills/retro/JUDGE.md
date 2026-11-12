@@ -16,7 +16,7 @@ Write only JSON to the answer file, in this shape (empty arrays when there is no
   "port":      [{"skill": "triage", "title": "short improvement", "why": "why it is worth porting"}],
   "behaviour": [{"skill": "tdd", "change": "what changed"}],
   "artisan_md": [{"skill": "grilling", "rule": "2", "why": "what now breaks it"}],
-  "breaking":  [{"skill": "code-review", "title": "what breaks", "why": "which pipeline step fails and how"}]
+  "breaking":  [{"skill": "tdd", "title": "what breaks", "why": "which pipeline step fails and how"}]
 }
 ```
 
