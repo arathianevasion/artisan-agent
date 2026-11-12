@@ -254,6 +254,8 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh resolve [--run-dir D] [--role R]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
 | `guardrails.sh table [--run-dir D]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
+| `guardrails.sh loosen --level L --who NAME --reason TEXT --id ID --strict N --evidence TEXT` | the retro's loosening path: lowers an existing guardrail's strictness and records a `loosen` move with its evidence, who and run | 2 with no evidence or an agent `--who`, 5 when `--strict` isn't lower, 7 for the scope floor (`key: scope-floor`) or a defer-only gate (`defer_only: true`) |
+| `guardrail-health.sh health\|spot-check\|spot-check-record\|audit\|hands-on\|backstop --runs DIR...` | the retro's guardrail health (fired, bypassed or never fired, with origin), loosen and tighten proposals at the threshold, the spot-check, miss and discard audits, the hands-on question and nudge, and the backstop scan. Reads run history, changes nothing but the `spot-check` event. Rules and event shapes: `references/guardrail-health.md`; tested in `tests/guardrail-health.test.sh` | JSON, or a markdown table with `--table` |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
 ## Slice gates
