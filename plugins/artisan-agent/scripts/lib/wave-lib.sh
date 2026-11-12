@@ -81,7 +81,9 @@ check_returned() {
   if [ "$(get --arg t "$t" '.tickets[$t].human.done_at // null | . != null')" = true ]; then
     cls="completed -"
   else
-    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
+    # A classifier error is not a dead session: stop, and let the caller run it again.
+    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT") \
+      || state_die 1 "$who: could not classify #$t attempt $ATTEMPT; nothing recorded, run it again"
   fi
   case "$cls" in
     running*) state_die 8 "$who: #$t's worker is still running; wait for its exit record" ;;
