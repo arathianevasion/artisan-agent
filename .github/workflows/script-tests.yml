@@ -13,7 +13,10 @@ jobs:
     # Self-hosted runner on the owner's Linux VM; the job runs in a throwaway container.
     # macOS (and bash 3.2) is covered by the local suite gate before every merge.
     runs-on: [self-hosted, linux, cmux-vm]
-    container: ubuntu:24.04
+    container:
+      image: ubuntu:24.04
+      # An init process reaps killed children, so the process-stop tests see them gone.
+      options: --init
     steps:
       - name: Install tools
         run: |
