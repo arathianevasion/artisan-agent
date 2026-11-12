@@ -150,6 +150,10 @@ test_a_sweep_lists_open_gates_batched_by_job_and_role() {
   assert_contains "$out" "| Role | Job | Gates | Waiting |"
   assert_contains "$out" "| Engineering (QA) | 13 Check a finished slice at a review gate | #20 (slice: export, run r1); #21 (slice: billing, run r2) | 2 |"
   assert_contains "$out" "| Product | 13 Check a finished slice at a review gate | #22 (slice: design, run r2) | 1 |"
+  # A pair splitting the roles: each sees only their role's gates.
+  out=$(sweep --role Product)
+  assert_contains "$out" "#22 (slice: design, run r2)"
+  case "$out" in *"#20 (slice"*) fail "the Product role saw an Engineering gate" ;; esac
   # Both chats see the same gates, from the tracker.
   assert_contains "$(sweep --chat product)" "#20 (slice: export, run r1)"
   # And `gate.sh list` reads the tracker too, with no run folder at all.

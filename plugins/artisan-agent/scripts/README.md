@@ -320,3 +320,19 @@ Neither tier ever stops to compact (#59); the chat is compacted by Claude Code a
 | `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1, 2 |
 
 The edit itself is not scripted: the Artisan approves a drafted diff, it lands by a short PR (`doc-change.sh`, upstream `pr`) before dispatch, then `affected` names the tickets to re-check.
+
+# Two chats
+
+`chats.sh` is how the Engineering chat and the Product chat work through the tracker alone; the rules and the ownership table are in `references/two-chats.md`. Tested in `tests/chats.test.sh` (and `tests/gate.test.sh` for closing a gate by hand), with the fake `gh`.
+
+| Command | Chat | Does | Exit status |
+| :- | :- | :- | :- |
+| `chats.sh send --repo R <issue>...` | Product | "send #N and #M to engineering": a `plan` issue with those tickets as sub-issues | 0, 6 a ticket is `in-run`, closed or missing |
+| `chats.sh guard --repo R <issue>` | Product | before triaging, editing or relabelling: refuses an `in-run` ticket, naming its run | 0 free, 6 in a run |
+| `chats.sh label-run --repo R <run-dir>` | Engineering | labels every ticket in scope `in-run`, with one comment naming the run | 0, 1 |
+| `chats.sh approve-envelope --repo R <plan>` | either | records on a plan that its run envelope was approved, so queued behind the lock it starts without asking again | 0, 1 |
+| `chats.sh gates --repo R [--role R]` | either | open `review-gate` issues from the tracker, batched by job and role (`gate.sh list` calls it) | 0 |
+| `chats.sh sweep --repo R [--chat C] [--idle]` | either | gates, gates closed by hand, guardrail and plugin-version changes, the plan to start when the lock is free, waiting decisions; `ACTION` lines and, idle, a `notify:` line | 0, 1 |
+| `chats.sh due [--chat C]` | either | exit 0 when the last sweep was at least `sweep_minutes` ago | 0 due, 1 not yet |
+| `gate.sh carried <run-dir>` | Engineering | the cards left undecided on gates closed by hand, for the end gate | 0 |
+

@@ -165,3 +165,4 @@ Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/sk
 - Dispatch only on merged work. A ticket is dispatchable only when every blocker is merged into the integration branch, never when its worker merely reported `complete`; a blocker and its dependent are never in flight together. `wave.sh dispatch` enforces this.
 - Neither tier writes product code. A conflict the orchestrator can't merge comes to the Artisan as a blocked ticket.
 - Keep the chat's context small: read the status, result summaries and the tracker; never a worker's or orchestrator's transcript.
+- The tracker duties you share with the Product chat (sweep on every wake and every `sweep_minutes`, `in-run` labels with `chats.sh label-run` right after `state.sh init`, plans queued behind the lock, push notifications): `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`.

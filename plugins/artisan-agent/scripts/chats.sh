@@ -21,11 +21,12 @@
 #       Engineering chat: records on the plan issue that the Artisan approved
 #       the run envelope before the plan was queued (so a queued plan skips
 #       the approval when its turn comes).
-#   chats.sh gates --repo R
+#   chats.sh gates --repo R [--role ROLE]
 #       the open `review-gate` issues, read from the tracker, batched by job
 #       and role, as a Markdown table. Works across both chats and every run.
-#   chats.sh sweep --repo R [--chat engineering|product] [--idle] [--no-fetch]
-#                  [--project DIR]
+#       --role keeps one role's gates (a pair splitting the roles by convention).
+#   chats.sh sweep --repo R [--chat engineering|product] [--role ROLE] [--idle]
+#                  [--no-fetch] [--project DIR]
 #       The cheap check each chat makes on every wake and at least every
 #       sweep_minutes: gates (above), gates closed by hand, guardrail changes,
 #       a new plugin version, and (Engineering chat) the plan to start now
@@ -58,6 +59,7 @@ die() { state_die 1 "chats.sh: $*"; }
 REPO=${ARTISAN_REPO:-}
 CHAT=engineering
 IDLE=0
+ROLE=
 FETCH=1
 PROJECT=.
 ARGS=()
@@ -68,6 +70,7 @@ parse() {
       --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
       --chat) [ $# -ge 2 ] || usage; CHAT=$2; shift 2 ;;
       --project) [ $# -ge 2 ] || usage; PROJECT=$2; shift 2 ;;
+      --role) [ $# -ge 2 ] || usage; ROLE=$2; shift 2 ;;
       --idle) IDLE=1; shift ;;
       --no-fetch) FETCH=0; shift ;;
       --*) usage ;;
@@ -213,7 +216,7 @@ gate_lines() {
          run: ((.title | capture("\\(run (?<r>[^)]+)\\)")? | .r) // null)}
       | .role = (if .role == "" or .role == "-" then "unassigned" else .role end)
       | .job = (if (.kind | ascii_downcase) == "slice" then "13 Check a finished slice at a review gate" else "unassigned" end)
-      | .what = (.title | sub("^[A-Za-z]+ gate: "; "") | sub(" \\(run [^)]+\\)$"; ""))' | jq -s 'sort_by(.number)'
+      | .what = (.title | sub("^[A-Za-z]+ gate: "; "") | sub(" \\(run [^)]+\\)$"; ""))' | jq -s --arg role "$ROLE" 'map(select($role == "" or (.role | ascii_downcase | contains($role | ascii_downcase)))) | sort_by(.number)'
 }
 
 render_gates() { # gate-lines-json
