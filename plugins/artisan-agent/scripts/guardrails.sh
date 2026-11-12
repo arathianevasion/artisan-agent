@@ -275,8 +275,7 @@ cmd_table() {
     esac
   done
   json=$(resolve_json "$run" "$role")
-  jq -r '
-    def row: "| " + join(" | ") + " |";
+  jq -r "$(state_jq_row_def)"'
     "| Guardrail | Level | Version | Says |",
     "|---|---|---|---|",
     (.applied[] | [.id, .level, .version, "\(.key) = \(.value)"] | row),
@@ -318,7 +317,7 @@ move_guardrail() {
   case "$(printf %s "$who" | tr 'A-Z' 'a-z')" in
     agent* | worker* | orchestrator* | verifier* | claude*) state_die 2 "guardrails.sh: only a person moves a guardrail; --who $who names an agent" ;;
   esac
-  case "$strict" in '' | *[!0-9]*) [ -z "$strict" ] || usage ;; esac
+  [ -z "$strict" ] || state_is_uint "$strict" || usage
   [ -n "$id" ] || id=$(printf %s "$key" | tr -c 'A-Za-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
   [ -n "$id" ] || usage
   if [ "$mode" = loosen ]; then
