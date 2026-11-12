@@ -2,8 +2,8 @@
 # Usage: awk -f bare-local.awk file...
 # Bash 4+ leaves a bare `local x` unset, so reading it under `set -u` dies there
 # but not on bash 3.2 (#127). `local x=`, `local x="$1"` and `local -a x=()` pass.
-# Works line by line (a `local` continued with a backslash is not followed), and
-# is portable to the awk on macOS and Linux.
+# Works line by line, joining backslash continuations (reported at the first
+# line); heredoc bodies are not recognised. Portable to the awk on macOS and Linux.
 
 function is_boundary(pre,   t) {
   t = pre
@@ -39,7 +39,10 @@ function scan_word(s, i,   n, c, q, depth, w) {
 }
 
 {
-  line = $0
+  if ($0 ~ /\\$/ && FNR_START == 0) { FNR_START = FNR }
+  if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1); next }
+  line = buf $0; buf = ""
+  start = FNR_START ? FNR_START : FNR; FNR_START = 0
   n = length(line)
   q = ""
   for (i = 1; i <= n; i++) {
@@ -61,7 +64,7 @@ function scan_word(s, i,   n, c, q, depth, w) {
       scan_word(line, j)
       j = NEXT
       if (WORD ~ /^-/) continue
-      if (WORD ~ /^[A-Za-z_][A-Za-z_0-9]*$/) printf "%s:%d: %s\n", FILENAME, FNR, WORD
+      if (WORD ~ /^[A-Za-z_][A-Za-z_0-9]*$/) printf "%s:%d: %s\n", FILENAME, start, WORD
     }
     i = j
   }

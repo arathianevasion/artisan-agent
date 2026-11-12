@@ -22,7 +22,6 @@ test_every_local_in_the_plugin_has_a_value() {
   local files= hits=
   files=$(shell_files "$PLUGIN_ROOT")
   [ -n "$files" ] || fail "found no shell files under $PLUGIN_ROOT"
-  # shellcheck disable=SC2086
   hits=$(printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 awk -f "$LINT")
   [ -z "$hits" ] || fail "bare local (declare it with a value, e.g. local x=):
 $hits"
@@ -38,6 +37,13 @@ $f:3: d
 $f:4: g
 $f:5: e
 $f:6: h" "$out"
+}
+
+test_the_lint_follows_backslash_continuations() {
+  local f="$TEST_TMPDIR/cont.sh" out=
+  printf 'f() {\n  local a= \\\n    b\n  local c=1 \\\n    d=2\n}\n' > "$f"
+  out=$(awk -f "$LINT" "$f")
+  assert_eq "$f:2: b" "$out"
 }
 
 test_the_lint_passes_declarations_with_values() {
