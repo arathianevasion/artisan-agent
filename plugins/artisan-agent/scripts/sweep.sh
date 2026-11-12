@@ -86,7 +86,7 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
 sweep() {
   local file tmp now tickets t status pid attempt deadline result exit_record session_cost
   file=$(state_file "$RUN_DIR")
-  state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
+  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
   now=$(state_now)
@@ -118,7 +118,9 @@ sweep() {
     elif [ -n "$deadline" ] && [ "$now" -gt "$deadline" ]; then
       [ -n "$pid" ] && stop_worker "$pid"
       step "$FAIL_FILTER" --arg t "$t" --arg reason "past deadline; stopped" --argjson now "$now"
-    elif ! state_pid_alive "$pid"; then
+    elif ! state_pid_alive "$pid" && [ ! -f "$exit_record" ] && [ ! -f "$result" ]; then
+      # Gone, and still no record on a second look (the runner writes its
+      # exit record and then exits, so a first look can be too early).
       step "$FAIL_FILTER" --arg t "$t" --arg reason "worker gone without a result or exit record" --argjson now "$now"
     fi
   done

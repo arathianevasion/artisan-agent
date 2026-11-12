@@ -14,11 +14,11 @@ Cost surprises come with an explanation, and usage limits never waste work (#72;
 | Check | Refuses with | Prints |
 |---|---|---|
 | the run is halted | 12 | why |
-| the plan-window guard (below) | 17 | `parked <window> …` |
-| the overrun gate is open, or the projection crosses the budget | 16 | `overrun #<issue> …` |
+| the plan-window guard (below) | 18 | `parked <window> …` |
+| the overrun gate is open, or the projection crosses the budget | 17 | `overrun #<issue> …` |
 | none of these | 0 | `ok: spent $…, projected $… of $… budget` |
 
-The orchestrator treats 16 and 17 like 9 (no free slot): it dispatches nothing new, keeps waiting on, verifying, merging and closing what is in flight, and reports. The state file says why.
+The orchestrator treats 17 and 18 like 9 (no free slot): it dispatches nothing new, keeps waiting on, verifying, merging and closing what is in flight, and reports. The state file says why.
 
 ## The budget and the projection
 

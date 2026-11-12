@@ -20,7 +20,14 @@ problems=$(jq -r '
   def oneof($v; $allowed; $where):
     select(($allowed | index($v)) == null) | "\($where): \($v | tojson) is not one of \($allowed | join(", "))";
 
-  need(.; ["ticket","status","branch","commit","base","acceptance","tests","unsure","decisions","review","findings"]; "record"),
+  need(.; ["ticket","status","branch","commit","base","acceptance","tests","checks","unsure","decisions","review","findings"]; "record"),
+  (select(has("checks")) | .checks |
+    if type != "object" or (.recorded | type) != "boolean" then "checks: must be checks.sh run output, with recorded true or false"
+    elif (.results | type) != "array" then "checks: results must be an array"
+    elif .recorded == false and ((.fallback // "") | startswith("no recorded checks") | not) then "checks: no recorded checks, but no fallback saying so"
+    elif .recorded and (.results | length) == 0 then "checks: recorded checks, but none ran"
+    else (.results | to_entries[] | .key as $i | .value
+          | need(.; ["command","passed","result"]; "checks.results[\($i)]")) end),
   (select(has("status")) | oneof(.status; ["complete","blocked","failed"]; "status")),
   (select(has("acceptance")) | .acceptance |
     if type != "array" or length == 0 then "acceptance: must be a non-empty array"

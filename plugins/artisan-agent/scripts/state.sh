@@ -20,6 +20,13 @@
 #   state.sh closed <run-dir> <ticket>        the ticket was closed on the tracker
 #   state.sh event <run-dir> <event-json>     log any other event (an object with "event")
 #   state.sh decision <run-dir> <decision.json>
+#   state.sh decide <run-dir> <decision-id> <choice> [--by NAME] [--job N]
+#                  [--why W] [--level team|product|individual]
+#                  [--reach ticket|area|everywhere] [--area A]
+#                  [--confidence firm|provisional] [--redirect self|notes]
+#                                             a waiting decision decided, as a
+#                                             decision record (by default by
+#                                             Artisan); 6 when it is not waiting
 #   state.sh cost <run-dir> <orchestrator-usd>  add orchestrator spend
 #   state.sh override <run-dir> <key> <value>
 #                                             change one config number for this run
@@ -33,7 +40,7 @@
 # Every write takes the lock unless ARTISAN_WRITER_PID already holds it, and
 # rewrites the file in one step. Exit status: 0 ok, 1 error, 2 usage,
 # 3 the lock is held by another live process, 4 the ticket is outside the
-# approved scope.
+# approved scope, 6 refused (decide: no such waiting decision).
 
 set -euo pipefail
 
@@ -90,6 +97,8 @@ init_write() {
           config: ($p.config // {}),
           overrides: ($p.overrides // {}),
           suite_command: ($p.suite_command // null),
+          suite_source: ($p.suite_source // null),
+          recorded_checks: ($p.recorded_checks // null),
           checks: ($p.checks // []),
           orchestrator: ($p.orchestrator // {})
         },
@@ -107,6 +116,7 @@ init_write() {
         review_gates: [],
         overrun_gates: [],
         usage_park: null,
+        exception_gates: [],
         halted: null,
         events: []
       }
@@ -143,9 +153,50 @@ dispatch_ticket() {
 require_in_scope() {
   local file
   file=$(state_file "$1")
-  state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
+  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   jq -e --arg t "$2" '.plan.scope | map(tostring) | index($t) != null' "$file" >/dev/null \
     || state_die 4 "refusing ticket $2: it is not in the approved scope ($(jq -r '.plan.scope | map(tostring) | join(", ")' "$file")); add it through a plan step first"
+}
+
+# cmd_decide run_dir id choice [options]: the general way a waiting decision
+# is marked decided (gate actions, exceptions, design questions). The record's
+# fields are references/decision-record.md's; the decision keeps its kind.
+cmd_decide() {
+  local run_dir="$1" id="$2" choice="$3" d
+  shift 3
+  case "$id" in '' | *[!0-9]*) usage ;; esac
+  [ -n "$choice" ] || usage
+  d=$(jq -n --arg c "$choice" '{choice: $c, by: "Artisan"}')
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
+    case "$1:$2" in
+      --by:?*) d=$(jq -c --arg v "$2" '.by = $v' <<<"$d") ;;
+      --job:?*) d=$(jq -c --arg v "$2" '.job = ($v | tonumber? // $v)' <<<"$d") ;;
+      --why:?*) d=$(jq -c --arg v "$2" '.why = $v' <<<"$d") ;;
+      --level:team | --level:product | --level:individual) d=$(jq -c --arg v "$2" '.guardrail_level = $v' <<<"$d") ;;
+      --reach:ticket | --reach:area | --reach:everywhere) d=$(jq -c --arg v "$2" '.reach = $v' <<<"$d") ;;
+      --area:?*) d=$(jq -c --arg v "$2" '.area = $v' <<<"$d") ;;
+      --confidence:firm | --confidence:provisional) d=$(jq -c --arg v "$2" '.confidence = $v' <<<"$d") ;;
+      --redirect:self | --redirect:notes) d=$(jq -c --arg v "$2" '.redirect = $v' <<<"$d") ;;
+      *) usage ;;
+    esac
+    shift 2
+  done
+  [ "$(jq -r '.reach // ""' <<<"$d")" != area ] || [ "$(jq -r '.area // ""' <<<"$d")" != "" ] \
+    || state_die 2 "state.sh: a reach of area needs --area NAME"
+  state_require_run_dir "$run_dir"
+  state_with_lock "$run_dir" decide_write "$run_dir" "$id" "$d"
+}
+
+decide_write() { # run_dir id record. Caller holds the lock.
+  jq -e --argjson id "$2" 'any(.decisions[]; .id == $id and .status == "waiting")' "$(state_file "$1")" >/dev/null \
+    || state_die 6 "state.sh: decision $2 is not waiting ($(jq -r --argjson id "$2" \
+         '[.decisions[] | select(.id == $id) | .status] | first // "no such decision"' "$(state_file "$1")"))"
+  state_apply "$1" "$STATE_JQ_DEFS"'
+    decide($id; $d; $now)
+    | event({event: "decided", decision: $id, kind: (.decisions[] | select(.id == $id) | .kind),
+             choice: $d.choice, by: $d.by}; $now)' \
+    --argjson id "$2" --argjson d "$3" --argjson now "$(state_now)"
 }
 
 write_stdin() {
@@ -255,6 +306,10 @@ case "$cmd" in
     state_with_lock "$1" state_apply "$1" '
       .decisions += [$d[0] + {id: ((.decisions | length) + 1), status: "waiting", at: $now}]' \
       --slurpfile d "$2" --argjson now "$(state_now)"
+    ;;
+  decide)
+    [ $# -ge 3 ] || usage
+    cmd_decide "$@"
     ;;
   cost)
     [ $# -eq 2 ] || usage

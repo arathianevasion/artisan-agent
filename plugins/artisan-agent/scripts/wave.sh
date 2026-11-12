@@ -26,8 +26,11 @@
 #       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
 #       ticket table. "parked" (with a line naming it) means only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
-#       (human.sh parked), or dispatch is parked on plan usage (budget.sh
-#       guard: a "parked <window>" line). A waiting risk gate (drain.sh gate) holds only its
+#       (human.sh parked), or everything left waits behind open reviews
+#       ("waiting on N reviews", gate-action.sh parked), or dispatch is
+#       parked on plan usage (budget.sh guard: a "parked <window>" line,
+#       printed with the reviews line when both hold; each logs one "parked"
+#       event whose reason says which). A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -36,7 +39,7 @@
 #       merged into the integration branch or closed (5), a slot is free
 #       under Max Agents (9) and its expected files overlap no ticket in
 #       flight or in this wave (10, wave-width.sh check), and budget.sh
-#       guard passes (12 halted, 16 the overrun gate, 17 parked on plan
+#       guard passes (12 halted, 17 the overrun gate, 18 parked on plan
 #       usage); then branch a
 #       worktree from the integration tip and launch the worker with
 #       /artisan-agent:implement. A retry is a fresh worker on the same
@@ -50,7 +53,8 @@
 #       passing verdict from verify.sh for this attempt and commit; nothing
 #       changes). 11: a conflict, left in
 #       progress for its one /artisan-agent:resolve-conflicts try (then
-#       wave.sh resolved). 6: refused, or a conflict after that try was used,
+#       wave.sh resolved; the conflicted paths are a JSON array in the state
+#       file's conflict event, exactly as git reports them). 6: refused, or a conflict after that try was used,
 #       7: suite red (both mark the ticket blocked and queue a decision).
 #       An attempt that did not complete is a failed attempt: queued for a
 #       fresh worker, or blocked once it has used its attempts (6).
@@ -83,7 +87,7 @@
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
-# 16 the overrun gate holds dispatch, 17 parked on plan usage. One table of every code, with
+# 17 the overrun gate holds dispatch, 18 parked on plan usage. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -180,7 +184,8 @@ last_orchestrator() {
 }
 
 orchestrator_state() { # id attempt -> classify-worker.sh's line
-  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"
+  # An error is not a dead session: it stops the command, and the caller runs it again.
+  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" || state_die 1 "wave.sh: could not classify $1 attempt $2; run it again"
 }
 
 cmd_launch() {
@@ -329,7 +334,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o parked= usage_park=
+  local last id attempt wave pid cls next reconciled=1 waiting o parked= usage_park= reviews
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -354,6 +359,9 @@ cmd_status() {
       # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
       "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
         || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
+      # Exception gates for tickets the run gave up on (gate-action.sh, #70).
+      "$SCRIPT_DIR/gate-action.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate-action.err" \
+        || echo "gate-action.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.gate-action.err")" >&2
       # The Artisan's gate actions taken while the lock was held, a gate
       # closed on the tracker, and any slice gate due (gate.sh, #65).
       "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
@@ -369,17 +377,29 @@ cmd_status() {
         || usage_park=$("$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" 2>/dev/null | grep '^parked ' || true)
       # A risk gate or a review gate holds only its tickets' dependents
       # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
-      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length')
+      # An exception gate (an exception decision with its issue) holds only
+      # its ticket's dependents too.
+      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+                                           and (.kind != "exception" or .issue == null))] | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
       elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
+        # Parked on usage and behind open reviews too: both reasons show.
+        if [ "$reconciled" -eq 1 ] && reviews=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then
+          parked="$parked
+$reviews"
+        fi
+      elif [ "$reconciled" -eq 1 ] && parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
       # A hands-on ticket the Artisan finished waits for its verifier and merge.
       elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
-      elif [ "$(get '[.plan.scope[] as $t | .tickets[$t].status | select(. == "merged" or . == "closed")] | length')" \
+      # A ticket the Artisan took out of the run at a gate (dropped, resliced,
+      # bypassed, deferred) is finished for this run.
+      elif [ "$(get "$STATE_JQ_DEFS"' out_of_run as $o | [.plan.scope[] as $t | .tickets[$t].status
+               | select(. as $st | $st == "merged" or $st == "closed" or ($o | index($st)))] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
       elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       else next=blocked
@@ -392,7 +412,7 @@ cmd_status() {
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
   ticket_table
-  if [ "${next}" = decide ] || [ "${next}" = halted ] || [ -n "$usage_park" ] \
+  if [ "${next}" = decide ] || [ "${next}" = halted ] || [ "${next}" = parked ] \
      || { [ "$next" = launch ] && [ "$(get '[.decisions[] | select(.status == "waiting")] | length')" -gt 0 ]; }; then
     echo
     echo "| Decision | Ticket | Question |"
@@ -451,7 +471,7 @@ cmd_dispatch() {
   in_flight=$(get '[.tickets[] | select(.status == "in_flight")] | length')
   max=$(get '.plan.max_agents // 5')
   [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
-  # The plan-window guard and the budget (budget.sh, #72): 17 parked, 16 the
+  # The plan-window guard and the budget (budget.sh, #72): 18 parked, 17 the
   # overrun gate, 12 halted. Work already in flight is never stopped.
   "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
   check_blockers "$t"
@@ -467,7 +487,12 @@ cmd_dispatch() {
   # A fresh worker never starts while the last attempt's session is still
   # ending in its worktree (a worker can report failed before it exits).
   if [ "$n" -gt 1 ]; then
-    case "$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null || true)" in
+    # Exit 2 is "no such attempt" (a ticket held for a question never started
+    # one): nothing is running. Any other error stops the dispatch.
+    prev_rc=0
+    prev_cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null) || prev_rc=$?
+    case "$prev_rc" in 0 | 2) ;; *) state_die 1 "wave.sh: could not classify #$t attempt $((n - 1)); run it again" ;; esac
+    case "$prev_cls" in
       running*) state_die 8 "wave.sh: #$t's attempt $((n - 1)) is still ending; dispatch the retry once it has" ;;
     esac
   fi
@@ -514,9 +539,14 @@ EOF
     printf -- '- The Artisan has answered what blocked an earlier attempt; treat each answer as decided, and continue from the branch:\n' >>"$prompt"
     get --arg t "$t" '.tickets[$t].answers[] | "  - #\(.question): \(.answer)"' >>"$prompt"
   fi
+  # Notes the Artisan gave at an exception gate ("retry with notes", gate-action.sh).
+  if [ "$(get --arg t "$t" '(.tickets[$t].notes // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
+  fi
   if [ "$n" -gt 1 ] && [ "$(get --arg t "$t" '.tickets[$t].failures | length')" -gt 0 ]; then
     printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
-      "$(get '.plan.attempts_per_ticket // 2')" \
+      "$(get --arg t "$t" '(.plan.attempts_per_ticket // 2) + (.tickets[$t].extra_attempts // 0)')" \
       "$(get --arg t "$t" '.tickets[$t].failures | last | "\(.reason)"')" >>"$prompt"
     failure_evidence "$t" "$((n - 1))" >"$RUN_DIR/prompts/$t.$n.failure.md"
     { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"
@@ -604,6 +634,15 @@ record_session_cost() { # ticket attempt
     | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' --arg t "$1" --argjson n "$2" --argjson usd "$usd"
 }
 
+# Paths stay a list end to end: git's -z output (no quoting, no splitting on
+# spaces) becomes a JSON array, and only messages join it for display.
+unmerged_json() { # worktree
+  git -C "$1" diff -z --name-only --diff-filter=U | jq -Rs 'split("\u0000")[:-1]'
+}
+join_paths() { # JSON array -> "a b c" for messages
+  jq -r 'join(" ")' <<<"$1"
+}
+
 cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
@@ -626,18 +665,18 @@ cmd_merge() {
   pre=$(git -C "$wt" rev-parse HEAD)
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
   if ! git -C "$wt" merge --no-ff --no-edit -m "Merge #$t ($title) into $ib" "$branch" >/dev/null 2>&1; then
-    local paths
-    paths=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-    paths=${paths% }
+    local paths pjson
+    pjson=$(unmerged_json "$wt")
+    paths=$(join_paths "$pjson")
     if [ "$(get --arg t "$t" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
       git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
       block "$t" "merge conflict in ${paths:-unknown paths}; its one /artisan-agent:resolve-conflicts try is used"
       state_die 6 "wave.sh: #$t not merged: conflict in ${paths:-unknown paths}"
     fi
     # Left in progress for the one try at resolving it.
-    apply '.tickets[$t].resolve = {attempt: $n, paths: ($p | split(" ")), pre: $pre, outcome: "pending", at: $now}
-      | event({event: "conflict", ticket: $t, paths: ($p | split(" ")), next: "resolve-conflicts"}; $now)' \
-      --arg t "$t" --argjson n "$n" --arg p "$paths" --arg pre "$pre"
+    apply '.tickets[$t].resolve = {attempt: $n, paths: $p, pre: $pre, outcome: "pending", at: $now}
+      | event({event: "conflict", ticket: $t, paths: $p, next: "resolve-conflicts"}; $now)' \
+      --arg t "$t" --argjson n "$n" --argjson p "$pjson" --arg pre "$pre"
     state_die 11 "wave.sh: #$t conflicts in $paths; run /artisan-agent:resolve-conflicts once in $wt, then wave.sh resolved $RUN_DIR $t"
   fi
   finish_merge "$t" "$n" "$wt" "$pre"
@@ -693,7 +732,7 @@ cmd_resolved() {
       *) usage ;;
     esac
   done
-  local wt ib n pre branch paths left markers title why
+  local wt ib n pre branch paths pjson left markers title why p
   [ "$(get --arg t "$t" '.tickets[$t].resolve.outcome? // ""')" = pending ] \
     || die "#$t has no conflict waiting on its resolution"
   wt=$(integration_worktree)
@@ -701,7 +740,8 @@ cmd_resolved() {
   n=$(get --arg t "$t" '.tickets[$t].resolve.attempt')
   pre=$(get --arg t "$t" '.tickets[$t].resolve.pre')
   branch=$(get --arg t "$t" '.tickets[$t].branch')
-  paths=$(get --arg t "$t" '.tickets[$t].resolve.paths | join(" ")')
+  pjson=$(get --arg t "$t" '.tickets[$t].resolve.paths')
+  paths=$(join_paths "$pjson")
   why=$gave_up
   if [ -z "$why" ]; then
     if ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null; then
@@ -709,9 +749,13 @@ cmd_resolved() {
     elif [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$(git -C "$MAIN" rev-parse "refs/heads/$branch")" ]; then
       why="the merge in progress is not $branch"
     else
-      left=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-      markers=$(cd "$wt" && grep -l -E '^(<<<<<<<|>>>>>>>)( |$)' -- $paths 2>/dev/null | tr '\n' ' ' || true)
-      if [ -n "$left" ]; then why="still conflicted: ${left% }"
+      left=$(join_paths "$(unmerged_json "$wt")")
+      markers=
+      # Each recorded path, quoted: no word splitting, no glob expansion.
+      while IFS= read -r -d '' p; do
+        if grep -q -E '^(<<<<<<<|>>>>>>>)( |$)' -- "$wt/$p" 2>/dev/null; then markers="$markers$p "; fi
+      done < <(jq -j '.[] + "\u0000"' <<<"$pjson")
+      if [ -n "$left" ]; then why="still conflicted: $left"
       elif [ -n "$markers" ]; then why="conflict markers left in ${markers% }"
       elif ! git -C "$wt" diff --quiet; then why="changes left unstaged: $(git -C "$wt" diff --name-only | tr '\n' ' ')"
       elif [ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]; then

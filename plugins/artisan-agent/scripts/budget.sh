@@ -9,8 +9,8 @@
 # (wave.sh status calls guard):
 #   budget.sh guard <run-dir>
 #       may anything new dispatch? First the plan-window guard, then the
-#       budget. Prints one line: "ok ...", "parked <window> ..." (17) or
-#       "overrun #<issue> ..." (16). On the first park it records the park,
+#       budget. Prints one line: "ok ...", "parked <window> ..." (18) or
+#       "overrun #<issue> ..." (17). On the first park it records the park,
 #       queues a "usage" decision and logs "parked"; on the first projected
 #       crossing it opens the overrun gate (a review-gate issue holding the
 #       packet), queues an "overrun" decision and logs "overrun-gate". Work in
@@ -18,7 +18,7 @@
 #   budget.sh usage <run-dir>
 #       the plan-window verdict alone, read-only: "ok 5h <p>% 7d <p>%",
 #       "park five-hour|seven-day <p>% ...resets <time>" or "park unknown <why>"
-#       (exit 17 for either park).
+#       (exit 18 for either park).
 #   budget.sh project <run-dir>
 #       the projection as JSON, read-only: budget, spent, still to come,
 #       projected total, and per ticket estimate, spent, still to come, over by.
@@ -49,7 +49,7 @@
 # everything else.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 6 refused,
-# 12 the run is halted, 16 the overrun gate holds dispatch, 17 parked on plan
+# 12 the run is halted, 17 the overrun gate holds dispatch, 18 parked on plan
 # usage.
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq and, to open the gate
@@ -148,7 +148,7 @@ cmd_usage() {
   local v
   v=$(verdict)
   verdict_line "$v"
-  [ "$(jq -r .ok <<<"$v")" = true ] || exit 17
+  [ "$(jq -r .ok <<<"$v")" = true ] || exit 18
 }
 
 # park verdict-json: record the park once, with its decision and event.
@@ -180,7 +180,7 @@ clear_park() {
     end' --arg how "$1" --arg by "$2"
 }
 
-# usage_guard: 0 to carry on; otherwise prints the park and exits 17.
+# usage_guard: 0 to carry on; otherwise prints the park and exits 18.
 usage_guard() {
   local v
   v=$(verdict)
@@ -194,12 +194,12 @@ usage_guard() {
     get "$WHEN_JQ"'"parked \(.usage_park.window): \(.usage_park.why)"
       + (if .usage_park.resets_at then "; resets \(.usage_park.resets_at | when)" else "" end)
       + (if .usage_park.resume then "; the Artisan said resume: waiting for a fresh reading under the limits" else "; waiting for the Artisan (budget.sh park)" end)'
-    exit 17
+    exit 18
   fi
   [ "$(jq -r .ok <<<"$v")" = true ] && return 0
   record_park "$v"
   printf 'parked %s\n' "$(verdict_line "$v" | sed 's/^park //')"
-  exit 17
+  exit 18
 }
 
 # ------------------------------------------------------- the overrun gate
@@ -302,13 +302,13 @@ budget_guard() {
   if [ -n "$g" ]; then
     ensure_issue
     overrun_line "$(open_gate_json)"
-    exit 16
+    exit 17
   fi
   p=$(project)
   [ "$(jq -r .over <<<"$p")" = true ] || return 0
   open_overrun "$p"
   overrun_line "$(open_gate_json)"
-  exit 16
+  exit 17
 }
 
 cmd_guard() {

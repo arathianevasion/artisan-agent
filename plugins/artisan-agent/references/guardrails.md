@@ -43,8 +43,12 @@ Every conflict is in `conflicts` and `overridden`; the plan step surfaces them f
 
 ## Tightening
 
-The Artisan can tighten at any time, including mid-run in the chat: `guardrails.sh tighten --level <level> --who <name> --reason <why> ...`. A new guardrail records its origin; an existing one (`--id`, a higher `--strict`) records the move with its evidence and who. Individual is committed directly; product and team become a branch and commit in a throwaway worktree (`--pr` pushes it and opens the PR). It applies from the next wave once merged. Loosening is refused (exit 5): only a retro, with evidence, loosens.
+The Artisan can tighten at any time, including mid-run in the chat: `guardrails.sh tighten --level <level> --who <name> --reason <why> ...`. A new guardrail records its origin; an existing one (`--id`, a higher `--strict`) records the move with its evidence and who. Individual is committed directly; product and team become a branch and commit in a throwaway worktree (`--pr` pushes it and opens the PR). It applies from the next wave once merged. Loosening is refused (exit 5): only a retro, with evidence, loosens, with `guardrails.sh loosen` (below).
 
 ## The packet
 
 A packet lists the guardrails applied and their versions: `guardrails.sh table --run-dir <run folder>` prints the section (a markdown table: guardrail, level, version, what it says, then what was overridden). The version is the source commit's short hash.
+
+## Loosening
+
+Only the retro loosens, with the evidence shown to the Artisan (`references/guardrail-health.md`): `guardrails.sh loosen --level <level> --who <name> --reason <why> --id <id> --strict <lower> --evidence <text> [--run <run-id>]`. It records a `loosen` move (`from`, `to`, evidence, who, run) beside the origin, the same way a tightening does. It refuses with no evidence (2), an agent as `--who` (2), a `--strict` that isn't lower (5), and the scope floor (a guardrail with `key: scope-floor`) or a defer-only gate (`defer_only: true`) with exit 7: those never loosen.

@@ -72,7 +72,7 @@ test_projection_crossing_stops_dispatch_lets_in_flight_finish_and_raises_the_ove
   assert_eq true "$(jq -r .over <<<"$p")"
 
   out=$("$W" dispatch "$RUN_DIR" 3 2>&1) || st=$?
-  assert_eq 16 "$st" "dispatch refused by the overrun gate"
+  assert_eq 17 "$st" "dispatch refused by the overrun gate"
   assert_contains "$out" "overrun #4"
   # The gate: a review-gate issue (the fourth in the tracker), a defer-only decision, the event.
   assert_eq "Exception gate: overrun (run r1)" "$(jq -r .title "$FAKE_GH_DIR/issue-4.json")"
@@ -91,7 +91,7 @@ test_projection_crossing_stops_dispatch_lets_in_flight_finish_and_raises_the_ove
 
   # Asking again opens nothing new and still refuses.
   st=0; "$B" guard "$RUN_DIR" >/dev/null 2>&1 || st=$?
-  assert_eq 16 "$st"
+  assert_eq 17 "$st"
   [ ! -e "$FAKE_GH_DIR/issue-5.json" ] || fail "a second gate issue was opened"
   assert_eq 1 "$(state_get '[.events[] | select(.event == "overrun-gate")] | length')"
 
@@ -113,7 +113,7 @@ test_within_budget_the_guard_lets_dispatch_through() {
 test_overrun_gate_is_defer_only_with_options_complexity_and_spend_per_ticket() {
   setup_budget
   seed_overrun
-  assert_status 16 "$B" guard "$RUN_DIR"
+  assert_status 17 "$B" guard "$RUN_DIR"
   local packet body
   packet=$("$B" packet "$RUN_DIR")
   body=$(jq -r .body "$FAKE_GH_DIR/issue-4.json")
@@ -159,7 +159,7 @@ test_overrun_gate_is_defer_only_with_options_complexity_and_spend_per_ticket() {
 test_cut_scope_takes_queued_tickets_out_and_must_fit_the_budget() {
   setup_budget
   seed_overrun
-  assert_status 16 "$B" guard "$RUN_DIR"
+  assert_status 17 "$B" guard "$RUN_DIR"
   assert_status 6 "$B" overrun "$RUN_DIR" cut 2      # in flight: it finishes, it can't be cut
   assert_status 6 "$B" overrun "$RUN_DIR" cut 1      # merged
   "$B" overrun "$RUN_DIR" cut 3 >/dev/null
@@ -174,7 +174,7 @@ test_cut_scope_takes_queued_tickets_out_and_must_fit_the_budget() {
 test_stop_at_the_overrun_gate_halts_the_run() {
   setup_budget
   seed_overrun
-  assert_status 16 "$B" guard "$RUN_DIR"
+  assert_status 17 "$B" guard "$RUN_DIR"
   "$B" overrun "$RUN_DIR" stop >/dev/null
   assert_contains "$(state_get .halted.reason)" "stopped at the overrun gate"
   assert_status 12 "$B" guard "$RUN_DIR"
@@ -188,7 +188,7 @@ test_a_reading_older_than_ten_minutes_is_unknown_and_stops_dispatch() {
   usage_reading 10 20 $((11 * 60))
   local out st=0
   out=$("$W" dispatch "$RUN_DIR" 1 2>&1) || st=$?
-  assert_eq 17 "$st" "a stale reading stops dispatch"
+  assert_eq 18 "$st" "a stale reading stops dispatch"
   assert_contains "$out" "parked unknown"
   assert_contains "$out" "11 minutes old"
   assert_eq unknown "$(state_get .usage_park.window)"
@@ -205,7 +205,7 @@ test_a_reading_older_than_ten_minutes_is_unknown_and_stops_dispatch() {
   assert_contains "$out" "parked unknown"
   # Resume waits for a fresh reading under the limits, then dispatch carries on.
   "$B" park "$RUN_DIR" resume >/dev/null
-  assert_status 17 "$B" guard "$RUN_DIR"
+  assert_status 18 "$B" guard "$RUN_DIR"
   usage_reading 10 20 $((9 * 60))
   assert_status 0 "$B" guard "$RUN_DIR"
   assert_eq null "$(state_get .usage_park)"
@@ -225,7 +225,7 @@ test_five_hour_window_within_the_reserve_parks_with_resume_time_raise_and_stop()
   usage_reading 80 20
   local out st=0 when
   out=$("$B" guard "$RUN_DIR") || st=$?
-  assert_eq 17 "$st"
+  assert_eq 18 "$st"
   when=$(jq -r '.rate_limits.five_hour.resets_at | strflocaltime("%a %d %b %H:%M %Z")' "$ARTISAN_USAGE_FILE")
   assert_contains "$out" "parked five-hour 80% (limit 80%): the five-hour window is within the 20% reserve; resets $when"
   assert_eq '["resume","raise","stop"]' "$(state_get '.decisions[] | select(.kind == "usage") | .options | tostring')"
@@ -233,12 +233,12 @@ test_five_hour_window_within_the_reserve_parks_with_resume_time_raise_and_stop()
   # Resume: still over, so it waits for the reset; a fresh low reading carries on.
   out=$("$B" park "$RUN_DIR" resume)
   assert_contains "$out" "the window resets $when"
-  assert_status 17 "$B" guard "$RUN_DIR"
+  assert_status 18 "$B" guard "$RUN_DIR"
   usage_reading 5 20
   assert_status 0 "$B" guard "$RUN_DIR"
   # Parked again, then the ceiling raised: a run override, carries on at once.
   usage_reading 85 20
-  assert_status 17 "$B" guard "$RUN_DIR"
+  assert_status 18 "$B" guard "$RUN_DIR"
   assert_status 6 "$B" park "$RUN_DIR" raise 75
   out=$("$B" park "$RUN_DIR" raise 95)
   assert_contains "$out" "resumed: ok 5h 85%"
@@ -254,7 +254,7 @@ test_seven_day_window_past_ninety_parks_and_stop_halts_the_run() {
   usage_reading 10 90.5
   local out st=0 when
   out=$("$W" dispatch "$RUN_DIR" 1 2>&1) || st=$?
-  assert_eq 17 "$st"
+  assert_eq 18 "$st"
   when=$(jq -r '.rate_limits.seven_day.resets_at | strflocaltime("%a %d %b %H:%M %Z")' "$ARTISAN_USAGE_FILE")
   assert_contains "$out" "parked seven-day 90% (limit 90%): the seven-day window passed 90%; resets $when"
   assert_contains "$(state_get '.decisions[] | select(.kind == "usage") | .question')" "Resume after the reset ($when), raise the ceiling, or stop?"
@@ -267,7 +267,7 @@ test_seven_day_window_past_ninety_parks_and_stop_halts_the_run() {
 test_seven_day_raise_ceiling_resumes() {
   setup_budget
   usage_reading 10 93
-  assert_status 17 "$B" guard "$RUN_DIR"
+  assert_status 18 "$B" guard "$RUN_DIR"
   assert_status 6 "$B" park "$RUN_DIR" raise 90
   "$B" park "$RUN_DIR" raise 95 >/dev/null
   assert_eq 95 "$(state_get .plan.config.usage_reserve.seven_day_ceiling_percent)"

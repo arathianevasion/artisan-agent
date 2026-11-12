@@ -16,7 +16,12 @@
 #       attempt has a verifier running, ended but not judged, or passed (or
 #       another call is starting one), it launches nothing and prints that
 #       verifier's pid; only after an error (judge's 14) does it start the
-#       next. 8: the worker (or a verifier left from an earlier attempt) is
+#       next. The verifier is told the recorded checks (checks.sh, read from
+#       the integration worktree's CODING_STANDARDS.md, not the worker's
+#       branch) and the one command that runs them and writes their results
+#       to verify/checks/<t>.<v>.json; with none recorded, to run what it
+#       finds through the same command, which records the fallback.
+#       8: the worker (or a verifier left from an earlier attempt) is
 #       still running, or another call's verifier did not come up: call again. 6: the attempt did not complete (a failed attempt, as
 #       wave.sh merge counts it) or the result does not describe the branch
 #       tip (blocked).
@@ -31,6 +36,9 @@
 #         fail <met>/<total> blocked: <first unmet> a failed attempt, the last:
 #                                               blocked, with a decision
 #         error <reason>                        the verifier itself failed
+#       With checks recorded, a verdict without their results is an error (the
+#       verifier did not run them), and a red one makes every criterion that
+#       cites it unmet, or every criterion when none does.
 #       A fail posts the evidence comment on the ticket. Exit 0 pass, 6 fail
 #       or a second verifier failure (blocked), 8 the verifier is still
 #       running, 14 the verifier failed once: start it again.
@@ -65,7 +73,17 @@ VERIFIER_FAILURES_ALLOWED=2
 usage() { state_usage "$0"; }
 die() { state_die 1 "verify.sh: $*"; }
 
-classify() { "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"; }
+# A classifier error is never a dead session: it stops the command, and the
+# caller runs it again. Callers assign the result first (cls=$(classify ...)),
+# so the stop is not swallowed inside another command.
+classify() {
+  local out err
+  err=$(mktemp) || die "no temp file to classify $1 attempt $2"
+  out=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>"$err") \
+    || { local msg; msg=$(cat "$err"); rm -f "$err"; die "could not classify $1 attempt $2 ($msg); nothing recorded, run it again"; }
+  rm -f "$err"
+  printf '%s\n' "$out"
+}
 
 # The ticket's acceptance criteria, verbatim, as a JSON array.
 read_criteria() { # ticket
@@ -142,7 +160,8 @@ cmd_start() {
           return 0
         fi
         if [ "$3" = - ]; then # left over from an earlier attempt, not judged
-          [ "$(classify "verify-$t" "$1")" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
+          cls=$(classify "verify-$t" "$1")
+          [ "$cls" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
           die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
         fi
         ;;
@@ -165,6 +184,7 @@ cmd_start() {
   trap 'rm -rf "'"$claim"'"' EXIT
 
   local criteria base ib wt id prompt cfile repo title path expected result model estimate minutes ref suite
+  local std checks cout
   criteria=$(read_criteria "$t")
   [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
@@ -184,6 +204,14 @@ cmd_start() {
   path=$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')
   expected=$(get --arg t "$t" '.plan.tickets[$t].expected_output // "see the acceptance criteria"')
   suite=$(get '.plan.suite_command // ""')
+  # The recorded checks, read at the point of use from what the run has
+  # merged (the integration worktree), so a worker's branch can't change the
+  # checks it is judged by. Only checks.sh reads them.
+  std=$(get '.integration.worktree // ""')
+  [ -n "$std" ] && [ -d "$std" ] || std=$MAIN
+  std="$std/CODING_STANDARDS.md"
+  checks=$("$SCRIPT_DIR/checks.sh" json --file "$std") || die "could not read the recorded checks in $std"
+  cout="$RUN_DIR/verify/checks/$t.$v.json"
   result="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
   prompt="$RUN_DIR/prompts/$id.$v.md"
@@ -195,6 +223,17 @@ cmd_start() {
     printf -- '- Expected output (from the plan): %s\n' "$expected"
     [ -z "$suite" ] || printf -- '- The full suite: %s\n' "$suite"
     printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
+    if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then
+      printf -- '- The recorded checks (%s, `## Checks`; each proven to fail at setup). Run exactly these, from your checkout, with this one command. It writes their results where the judge reads them; a verdict without them is an error:\n' "$std"
+      printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
+      printf '%s' "$checks" | jq -r '.checks[] | "    - `\(.command)`"'
+      printf '  A red one makes every criterion it bears on unmet: cite it in that criterion'"'"'s evidence.checks. If you can'"'"'t tie it to any criterion, every criterion is unmet.\n'
+    else
+      printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found, one quoted argument each. It writes their results where the judge reads them and says you fell back:\n' \
+        "$(printf '%s' "$checks" | jq -r .reason)"
+      printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
+      printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
+    fi
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
   } >"$prompt"
@@ -205,9 +244,11 @@ cmd_start() {
   # Recorded before it launches, so no verifier ever runs unrecorded.
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
-      + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null}])
+      + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null,
+          checks: ($ck | {recorded, file, reason, commands: [.checks[].command], results: $co})}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
-    --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt"
+    --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
+    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid
   read_extra_args
@@ -239,6 +280,7 @@ CONTRACT_FILTER='
       commit: $commit,
       base: $base,
       verdict: (if $met == ($acc | length) then "pass" else "fail" end),
+      checks: $checks,
       criteria_met: $met,
       criteria_total: ($acc | length),
       acceptance: $acc,
@@ -310,6 +352,29 @@ cmd_judge() {
       ;;
     *) why="the verifier ended $cls" ;;
   esac
+  # The checks the verifier ran, through checks.sh run. Recorded checks it
+  # didn't run make the verdict an error; with none recorded, what it found.
+  local ck cres
+  ck=$(get -c --arg t "$t" '.tickets[$t].verifications[-1].checks // {recorded: false, reason: "not read for this verifier"}')
+  cres="$RUN_DIR/$(printf '%s' "$ck" | jq -r --arg d "verify/checks/$t.$v.json" '.results // $d')"
+  if [ -z "$why" ] && [ "$(printf '%s' "$ck" | jq -r .recorded)" = true ] \
+    && ! jq -e --argjson ck "$ck" '.recorded == true and (.results | type) == "array"
+          and [.results[].command] == $ck.commands' "$cres" >/dev/null 2>&1; then
+    why="the verifier did not run the recorded checks"
+  fi
+  if jq -e '(.results | type) == "array"' "$cres" >/dev/null 2>&1; then
+    cres=$(jq -c . "$cres")
+    # What the worker's evidence listed, beside what the verifier ran, so a
+    # worker that ran other checks than the recorded ones is visible.
+    local wrec="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+    cres=$(printf '%s' "$cres" | jq -c --slurpfile w <(jq -c '[.checks.results // [] | .[] | .command?]' "$wrec" 2>/dev/null || echo null) '
+      ($w[0] // null) as $listed
+      | . + {worker_listed: $listed}
+      + (if .recorded and $listed != null then {worker_matches: ($listed == [.results[].command])} else {} end)')
+  else
+    cres=$(printf '%s' "$ck" | jq -c '{recorded: false, reason, results: [],
+      fallback: "no recorded checks (\(.reason)): the verifier ran none it found"}')
+  fi
   if [ -n "$why" ]; then
     remove_worktree "$wt"
     apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)
@@ -331,6 +396,26 @@ cmd_judge() {
   [ ! -f "$record" ] || record_json=$(jq -c 'if type == "object" then . else error("not an object") end' "$record" 2>/dev/null || echo "$record_json")
   acc=$(python3 -I "$SCRIPT_DIR/lib/criteria.py" align "$RUN_DIR/prompts/$id.$v.criteria.json" "$verdict" "$record") \
     || die "could not line the verdict up with #$t's criteria"
+  # A red recorded check: every criterion marked met that cites it is unmet;
+  # one no criterion cites leaves no criterion shown met.
+  acc=$(printf '%s' "$acc" | jq -c --argjson res "$cres" '
+    def cited: [(.evidence | objects | .checks // []) | if type == "array" then .[] else . end | objects | .command];
+    if ($res.recorded | not) then . else
+      [$res.results[] | select(.passed | not)] as $red
+      | if ($red | length) == 0 then . else
+          ([.[] | cited[]]) as $all
+          | [$red[] | select(.command as $c | $all | index($c))] as $named
+          | map(if .met | not then . else
+              cited as $mine
+              | (if ($named | length) == 0 then $red else [$named[] | select(.command as $c | $mine | index($c))] end) as $hit
+              | if ($hit | length) == 0 then .
+                else .met = false
+                  | .evidence = ((.evidence | objects // {})
+                      + {why: ($hit | map("recorded check `\(.command)` is red: \(.result)") | join("; "))})
+                end
+            end)
+        end
+    end') || die "could not apply the recorded checks to #$t's criteria"
   shortstat=$(git -C "$MAIN" diff --shortstat "$base...$commit" | sed 's/^ *//')
   files=$(git -C "$MAIN" diff --numstat "$base...$commit" \
     | awk -F '\t' '{ printf "%s%s +%s -%s", (NR > 1 ? ", " : ""), $3, $1, $2 }')
@@ -340,7 +425,7 @@ cmd_judge() {
     --arg shortstat "$shortstat" --arg files "$files" --argjson now "$(state_now)" \
     --arg model "$(get --arg t "$t" '.tickets[$t].verifications[-1].model // ""')" \
     --slurpfile st "$FILE" --slurpfile verdict "$verdict" \
-    --argjson acc "$acc" --argjson record "$record_json" \
+    --argjson acc "$acc" --argjson record "$record_json" --argjson checks "$cres" \
     '$st[0] | ($verdict[0]) as $verdict | '"$CONTRACT_FILTER" >"$contract" \
     || die "could not build the evidence contract for #$t"
 

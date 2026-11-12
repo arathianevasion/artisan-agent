@@ -11,7 +11,7 @@ open_run() { # run-dir
   state_require_run_dir "$1"
   RUN_DIR=$(cd "$1" && pwd)
   FILE=$(state_file "$RUN_DIR")
-  state_valid_file "$FILE" || die "unreadable or wrong schema version: $FILE"
+  state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
   RUN_ID=$(basename "$RUN_DIR")
   local common
   common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
@@ -60,7 +60,7 @@ block() {
   apply '
     .tickets[$t] |= (.status = "blocked" | .pid = null | .blocked_reason = $r)
     | .decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-                      question: "Ticket \($t) is blocked: \($r). Redirect, bypass or defer?",
+                      question: "Ticket \($t) is blocked: \($r). Retry with notes, reslice, take it myself or drop; or bypass or defer its exception gate?",
                       status: "waiting", at: $now}]
     | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
 }
@@ -81,7 +81,9 @@ check_returned() {
   if [ "$(get --arg t "$t" '.tickets[$t].human.done_at // null | . != null')" = true ]; then
     cls="completed -"
   else
-    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
+    # A classifier error is not a dead session: stop, and let the caller run it again.
+    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT") \
+      || state_die 1 "$who: could not classify #$t attempt $ATTEMPT; nothing recorded, run it again"
   fi
   case "$cls" in
     running*) state_die 8 "$who: #$t's worker is still running; wait for its exit record" ;;

@@ -16,7 +16,9 @@
 #                 it does not stop
 #   review-seeds  a first attempt with a seeded bug, a seeded documented-standard
 #                 violation and a seeded judgement-call smell; the bug and the
-#                 violation get fixed, the smell becomes a decision card
+#                 violation get fixed, the smell becomes a decision card; it
+#                 also records one check, so its record must list exactly
+#                 that check and never run the Makefile's unrecorded lint
 #
 # `run` needs UPSTREAM_PLUGIN_DIR: a directory holding the mattpocock-skills
 # plugin (for tdd and code-review). It loads both plugins with --plugin-dir,
@@ -151,6 +153,10 @@ skill_loaded() { # session skill
     | select(.type == "tool_use" and .name == "Skill" and .input.skill == $s)' "$1/session.jsonl" >/dev/null 2>&1
 }
 
+# True when the record's check results name exactly the recorded checks, in order.
+checks_match() {
+  [ "$(cd "$1" && "$PLUGIN_ROOT/scripts/checks.sh" list)" = "$(jq -r '.checks.results[].command' "$2")" ]
+}
 suite_passes() { (cd "$1" && python3 -m unittest -q); }
 tree_clean() { [ -z "$(git -C "$1" status --porcelain)" ]; }
 no_stash() { [ -z "$(git -C "$1" stash list)" ]; }
@@ -200,6 +206,13 @@ verify() {
   check "the record says the suite passed" record_says "$record" '.tests.suite_passed == true'
   check "every acceptance criterion is met" record_says "$record" '(.acceptance | length) > 0 and all(.acceptance[]; .met == true)'
   check "code-review ran" record_says "$record" '.review.ran == true'
+  check "the record's checks are checks.sh run output" record_says "$record" '.checks.recorded | type == "boolean"'
+  if (cd "$repo" && "$PLUGIN_ROOT/scripts/checks.sh" list >/dev/null 2>&1); then
+    check "the record lists exactly the recorded checks" checks_match "$repo" "$record"
+    check "every recorded check passed" record_says "$record" 'all(.checks.results[]; .passed)'
+  else
+    check "the record says it fell back" record_says "$record" '.checks.recorded == false and (.checks.fallback | startswith("no recorded checks"))'
+  fi
   check "the worker loaded mattpocock-skills:tdd" skill_loaded "$wd" mattpocock-skills:tdd
   check "the worker loaded mattpocock-skills:code-review" skill_loaded "$wd" mattpocock-skills:code-review
 
@@ -250,6 +263,7 @@ assert out == "INV-001 Ada\nINV-002 Grace\n", out'
 from shop import shipping
 assert shipping(5000) == 0 and shipping(4999) == 499 and shipping(6000) == 0'
       check "the seeded standard violation is fixed: shop.py never prints" never_prints "$repo/shop.py"
+      check "the unrecorded make lint never ran (only recorded checks run)" test ! -e "$repo/ran-make-lint"
       check "the judgement-call smell is unchanged: check_address keeps its signature" \
         grep -qx 'def check_address(street, city, postcode):' "$repo/shop.py"
       check "the judgement-call smell is unchanged: delivery_label keeps its signature" \

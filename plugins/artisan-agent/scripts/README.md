@@ -8,9 +8,12 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
+| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
-| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
-| `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
+| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `upstream-check.sh` | The retro's upstream-updates check: refresh, compare, mechanical check, judgement agent, report, port tickets (`skills/retro/SKILL.md`, "Upstream check"; `tests/upstream-check.test.sh`) | lines and tables; 10 moved |
+| `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login in `login.json` (never `host.json`); `legacy` and `cleanup` fix a `host.json` an old stamp made (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
+| `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first (this script's own; not `wave.sh`'s 10) |
 
 Each script's header has its full usage.
 
@@ -29,6 +32,7 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
 | `verify/claims/<t>.<v>/` | `verify.sh start` | the claim on verifier `<v>`: one start launches it, however many run at once |
+| `verify/checks/<t>.<v>.json`, `.logs/` | the verifier, through `checks.sh run --out` | the checks it ran (recorded, or its fallback) and their full output |
 | `verify/<t>.<n>.evidence.json`, `.comment.md` | `verify.sh judge` | the evidence contract as built (also in the state file), and the comment posted on a fail |
 | `.wait-any.seen` | `wait-any.sh` | what the waiting caller has already seen |
 
@@ -43,7 +47,7 @@ The exit record:
  "output":"workers/46.1/output.json","result_file":"results/46.1.result.json"}
 ```
 
-`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is no exit record.
+`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
 
 ## Caps
 
@@ -89,7 +93,7 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
-| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents and every config number | Markdown |
+| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
 ## The project config
 
@@ -114,11 +118,12 @@ How the plan step reads the project config, estimates a run and records the numb
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
+| minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
 
 ## Overrides are for this run only
 
-`plan.sh build --set key=value` and, once the run has started, `state.sh override <run-dir> <key> <value>` change a number in the plan's `config` and record `{value, project}` in its `overrides`. Neither writes `config.yml`; a lasting change is job 23, made by PR. The key must be a setting above (dotted), or `estimate_multipliers.<model>`, and the value must have the setting's type. `max_agents` and `attempts_per_ticket` are kept in step at the top of the plan, where `state.sh` and the sweep read them.
+`plan.sh build --set key=value` and, once the run has started, `state.sh override <run-dir> <key> <value>` change a number in the plan's `config` and record `{value, project}` in its `overrides`. Neither writes `config.yml`; a lasting change is job 23, made by PR. The key must be a setting above (dotted), or `estimate_multipliers.<model>` or `minimum_estimates.<model>`, and the value must have the setting's type. `max_agents` and `attempts_per_ticket` are kept in step at the top of the plan, where `state.sh` and the sweep read them.
 
 ## Estimates
 
@@ -126,6 +131,7 @@ In estimated dollars, per ticket, then summed; the budget is the total plus the 
 
 - **History.** When state files of other runs (`.artisan-agent/runs/*/state.json`, or `--history DIR`) hold merged tickets on the same model with a logged `cost_usd`: their mean cost, times `estimate_multipliers.<model>`, else `estimate_multipliers.all`, else 1.
 - **Price.** Otherwise: the model's price in `references/model-prices.json` times the ticket's expected size (`expected.input_tokens`, `expected.output_tokens`). There are no per-tier defaults: a model missing from the price table, with no history, is refused. Keep the table current; it says the date its prices were taken.
+- **Minimum.** Whichever of the two gives an estimate below `minimum_estimates.<model>` (else `.all`) is raised to it, before caps, total and budget are derived. The ticket's `estimate_basis` becomes `{mode: "minimum", model, minimum_usd, estimated_usd, was}` and the approval table's From column reads "minimum for <model>". The defaults cover every model in `references/model-prices.json`; their source is the comment in `templates/config.yml`. Override for one run with `plan.sh build --set minimum_estimates.<model>=N`.
 
 Caps follow `run-ticket.sh`: `max_budget_usd` twice the estimate, `max_turns` 40 per estimated dollar (at least 20), `deadline_seconds` twice `expected.minutes`.
 
@@ -173,7 +179,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `wave.sh start <run-dir> [--base REF]` | Engineering chat | creates the integration branch and the run's integration worktree, `<repo>-wt/run-<run-id>` | 0, 1 |
 | `wave.sh launch <run-dir> [--resume] [--handoff]` | Engineering chat (`--handoff`: the orchestrator, through `drain.sh handoff`) | refuses while the run is halted (12) unless `--resume` records the Artisan's decision to carry on; launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs; 6 a `--handoff` from anyone but the running orchestrator that recorded it |
 | `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `parked`, `blocked`, `done`), with a ticket table | 0 |
-| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9), its expected files overlap nothing in flight or in this wave (10) and `budget.sh guard` passes (12, 16, 17); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10, 12, 16, 17 |
+| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9), its expected files overlap nothing in flight or in this wave (10) and `budget.sh guard` passes (12, 17, 18); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10, 12, 17, 18 |
 | `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try, 13 not verified |
 | `wave.sh resolved <run-dir> <ticket> [--gave-up WHY]` | orchestrator | after `/artisan-agent:resolve-conflicts`: aborts and blocks if anything is still conflicted, marked or unstaged (or it gave up), else commits the merge and runs the suite as `merge` does | 0, 6, 7 |
 | `wave-width.sh pick <run-dir>` / `check <run-dir> <ticket>` | orchestrator | the tickets to dispatch now: the smallest of Max Agents less those in flight, the frontier, and tickets with non-overlapping `expected_files`; `check` is dispatch's overlap refusal | 0, 10 |
@@ -198,7 +204,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 ## Exit status
 
-Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
+Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budget.sh`'s 17 and 18), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
 
 | Code | Means | From | Do |
 | :- | :- | :- | :- |
@@ -209,7 +215,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
 | 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
-| 7 | the suite went red after the merge (undone, blocked) | `merge`, `resolved` | carry on with the rest |
+| 7 | the suite went red after the merge (undone, blocked); for `checks.sh run`, a check failed | `merge`, `resolved`, `checks.sh run` | carry on with the rest |
 | 8 | a worker or verifier is still running or ending (from `verify.sh start`, also: another call's verifier could not launch or has not come up yet) | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
 | 9 | no free slot under Max Agents | `dispatch` | wait for a ticket to finish |
 | 10 | its expected files overlap a ticket in flight or in this wave | `dispatch`, `wave-width.sh check` | leave it for a later wave |
@@ -218,8 +224,9 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 13 | not verified: no passing verdict for this attempt at this commit | `merge` | `verify.sh start`, then `judge` |
 | 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
 | 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a wave launch, on a host) | log in again, `login-check.sh stamp` |
-| 16 | the overrun gate holds new dispatch: the projection crossed the budget | `dispatch`, `budget.sh guard` | dispatch nothing new; finish what is in flight; the Artisan answers the gate |
-| 17 | parked on plan usage: a window near its limit, or the reading unknown | `dispatch`, `budget.sh guard`, `budget.sh usage` | dispatch nothing new; finish what is in flight; the Artisan resumes, raises the ceiling or stops |
+| 16 | no checks recorded (`list`, `suite`), or nothing to run (`run`) | `checks.sh` | fall back to discovery and say so (`references/checks.md`) |
+| 17 | the overrun gate holds new dispatch: the projection crossed the budget | `dispatch`, `budget.sh guard` | dispatch nothing new; finish what is in flight; the Artisan answers the gate |
+| 18 | parked on plan usage: a window near its limit, or the reading unknown | `dispatch`, `budget.sh guard`, `budget.sh usage` | dispatch nothing new; finish what is in flight; the Artisan resumes, raises the ceiling or stops |
 
 `dispatch` (through `budget.sh guard`) also refuses with 12 while the run is halted.
 
@@ -258,6 +265,8 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh resolve [--run-dir D] [--role R]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
 | `guardrails.sh table [--run-dir D]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
+| `guardrails.sh loosen --level L --who NAME --reason TEXT --id ID --strict N --evidence TEXT` | the retro's loosening path: lowers an existing guardrail's strictness and records a `loosen` move with its evidence, who and run | 2 with no evidence or an agent `--who`, 5 when `--strict` isn't lower, 7 for the scope floor (`key: scope-floor`) or a defer-only gate (`defer_only: true`) |
+| `guardrail-health.sh health\|spot-check\|spot-check-record\|audit\|hands-on\|backstop --runs DIR...` | the retro's guardrail health (fired, bypassed or never fired, with origin), loosen and tighten proposals at the threshold, the spot-check, miss and discard audits, the hands-on question and nudge, and the backstop scan. Reads run history, changes nothing but the `spot-check` event. Rules and event shapes: `references/guardrail-health.md`; tested in `tests/guardrail-health.test.sh` | JSON, or a markdown table with `--table` |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
 ## Slice gates
@@ -273,6 +282,21 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
 | `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
 | `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
+
+## Gate actions, exception gates and parking
+
+`gate-action.sh` answers a gate (approve, redirect, bypass, defer), opens an exception gate for a ticket the run gave up on or a check that won't go green (retry with notes, reslice, take it myself, drop), and parks the run when everything left waits behind open reviews; `state.sh decide` answers any waiting decision. The rules and what each action leaves behind: `references/gate-actions.md`. Tested in `tests/gate-actions.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate-action.sh approve <run-dir> <issue>` | either chat | a review gate: `gate.sh approve`, with optional `--why`, `--confidence`, `--level`, `--reach`, `--area`; an exception gate is refused | 0, 1, 2, 6 |
+| `gate-action.sh redirect <run-dir> <issue> --notes T \| --mine` | either chat | a rework ticket in the run (`ready-for-agent`, or `ready-for-human` with `--mine`), natively blocking the dependents; the gate closes; prints the ticket | 0, 1, 2, 3, 6 |
+| `gate-action.sh bypass\|defer <run-dir> <issue>` | either chat | bypass: closed unreviewed, who recorded; defer: the dependents go ahead, the gate stays open until the end gate. Either kind of gate | 0, 1, 2, 3, 6 |
+| `gate-action.sh retry <run-dir> <issue> --notes T`, `reslice`, `take`, `drop` | either chat | an exception gate: the ticket queued with the notes and one more attempt, or out of the run (`needs-triage`), or `ready-for-human`, or dropped; the gate closes | 0, 1, 2, 3, 6 |
+| `gate-action.sh sync <run-dir>` | `wave.sh status` | opens an exception gate per `exception` decision waiting without one; bypasses one closed by hand: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate-action.sh parked <run-dir> [--record]` | `wave.sh status` | 0 and `parked: waiting on N reviews: …` when every ticket left waits behind an open gate (`next: parked`); 1 otherwise | 0, 1 |
+| `gate-action.sh chat\|list\|deferred <run-dir>` | either chat | the open exception gates with their choices; every gate; the deferred gates, for the end gate | 0 |
+| `state.sh decide <run-dir> <id> <choice> [options]` | either chat | a waiting decision decided as a decision record | 0, 1, 2, 3, 6 |
 
 ## The fake tracker
 
@@ -331,8 +355,8 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
-| `budget.sh guard <run-dir>` | both (`wave.sh dispatch`, `wave.sh status`) | the plan-window guard, then the budget: records a park (`usage` decision, `parked`) or opens the overrun gate (`review-gate` issue with the packet, `overrun` decision, `overrun-gate`) the first time | 0, 12, 16, 17 |
-| `budget.sh usage <run-dir>` / `project <run-dir>` / `packet <run-dir>` | either | read-only: the plan-window verdict; the projection as JSON; the latest overrun gate's packet | 0, 17 / 0 / 0, 1 |
+| `budget.sh guard <run-dir>` | both (`wave.sh dispatch`, `wave.sh status`) | the plan-window guard, then the budget: records a park (`usage` decision, `parked`) or opens the overrun gate (`review-gate` issue with the packet, `overrun` decision, `overrun-gate`) the first time | 0, 12, 17, 18 |
+| `budget.sh usage <run-dir>` / `project <run-dir>` / `packet <run-dir>` | either | read-only: the plan-window verdict; the projection as JSON; the latest overrun gate's packet | 0, 18 / 0 / 0, 1 |
 | `budget.sh overrun <run-dir> raise <usd> \| cut <t>... \| stop` | Engineering chat | the overrun gate's answer, one card; the gate is deferred, its only action (`--action` anything else: 6) | 0, 2, 6 |
 | `budget.sh park <run-dir> resume \| raise <percent> \| stop` | Engineering chat | the answer to a usage park | 0, 2, 6 |
 | `statusline.sh` | Claude Code's status line | writes `<home>/usage.json` and `<home>/sessions/<id>.json`, prints the line (a chained one's, if any) | 0 |
@@ -340,3 +364,19 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 | `statusline.sh window --transcript F` / `path` | `drain.sh chat`, `budget.sh` | the window captured for that session; the usage file's path | 0, 1 |
 
 `ARTISAN_USAGE_FILE` overrides the usage file (`tests/lib.sh` points every test at a fresh, low reading of its own).
+
+# Two chats
+
+`chats.sh` is how the Engineering chat and the Product chat work through the tracker alone; the rules and the ownership table are in `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`. Tested in `tests/chats.test.sh` (and `tests/gate.test.sh` for closing a gate by hand), with the fake `gh`.
+
+| Command | Chat | Does | Exit status |
+| :- | :- | :- | :- |
+| `chats.sh send --repo R <issue>...` | Product | "send #N and #M to engineering": a `plan` issue with those tickets as sub-issues | 0, 6 a ticket is `in-run`, closed or missing |
+| `chats.sh guard --repo R <issue>` | Product | before triaging, editing or relabelling: refuses an `in-run` ticket, naming its run | 0 free, 6 in a run |
+| `chats.sh label-run --repo R <run-dir>` | Engineering | labels every ticket in scope `in-run`, with one comment naming the run | 0, 1 |
+| `chats.sh approve-envelope --repo R <plan>` | either | records on a plan that its run envelope was approved, so queued behind the lock it starts without asking again | 0, 1 |
+| `chats.sh gates --repo R [--role R]` | either | open `review-gate` issues from the tracker, batched by job and role (`gate.sh list` calls it) | 0 |
+| `chats.sh sweep --repo R [--chat C] [--idle]` | either | gates, gates closed by hand, guardrail and plugin-version changes, the plan to start when the lock is free, waiting decisions; `ACTION` lines and, idle, a `notify:` line | 0, 1 |
+| `chats.sh due [--chat C]` | either | exit 0 when the last sweep was at least `sweep_minutes` ago | 0 due, 1 not yet |
+| `gate.sh carried <run-dir>` | Engineering | the cards left undecided on gates closed by hand, for the end gate | 0 |
+

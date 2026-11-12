@@ -164,6 +164,30 @@ state_valid_file() { # path
     'type == "object" and .schema_version == $v' "$1" >/dev/null 2>&1
 }
 
+# state_version_message path: why a file is refused, naming the plugin version
+# the run started on (the first entry of its waves) so the Artisan can finish
+# the run there. Never a bare "wrong schema version" (references/state-file.md,
+# Schema version).
+state_version_message() {
+  local file="$1" found started
+  if ! found=$(jq -r 'if type == "object" then (.schema_version // "none" | tostring) else "not an object" end' "$file" 2>/dev/null); then
+    printf 'unreadable state file (not JSON): %s\n' "$file"
+    return 0
+  fi
+  if [ "$found" = "not an object" ]; then
+    printf 'unreadable state file (not a JSON object): %s\n' "$file"
+    return 0
+  fi
+  started=$(jq -r '[.waves[]? | select(type == "object") | .plugin_version // empty][0] // empty' "$file" 2>/dev/null) || started=
+  printf 'unreadable state file %s: it is schema version %s and this plugin reads only version %s.' \
+    "$file" "$found" "$ARTISAN_STATE_SCHEMA_VERSION"
+  if [ -n "$started" ]; then
+    printf ' The run started on plugin version %s: finish it on that version.\n' "$started"
+  else
+    printf ' The file records no plugin version the run started on (no wave was recorded): finish it on the plugin version that created it.\n'
+  fi
+}
+
 # state_commit run_dir tmp
 # The one-step rewrite: validate the complete temp file, then rename it over
 # the state file. An interrupted writer leaves only a stray temp file; the
@@ -195,7 +219,7 @@ state_apply() {
   shift 2
   file=$(state_file "$run_dir")
   [ -f "$file" ] || { printf 'no state file at %s\n' "$file" >&2; return 1; }
-  state_valid_file "$file" || { printf 'unreadable or wrong schema version: %s\n' "$file" >&2; return 1; }
+  state_valid_file "$file" || { state_version_message "$file" >&2; return 1; }
   tmp=$(state_tmp "$run_dir")
   if ! jq "$@" "$filter" "$file" >"$tmp"; then
     rm -f "$tmp"
@@ -239,7 +263,11 @@ state_usage() {
 #   slice_gates: the plan's slice gates, each {id, slice, role, problem,
 #     solution, tickets} (references/review-gates.md)
 #   gate_due(g): every ticket of gate g merged (or closed) and the gate not
-#     yet approved
+#     yet answered (approved, bypassed, deferred or redirected: gate-action.sh)
+#   decide(id; d; at): waiting decision id decided, with the decision record d
+#     (references/decision-record.md); unchanged when it is not waiting
+#   out_of_run: the statuses that take a ticket out of the run without a
+#     merge (references/gate-actions.md); with merged and closed, it is done
 #   gate_holds(t): t is in a slice gate that is due: its dependents wait
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
@@ -256,7 +284,7 @@ STATE_JQ_DEFS='
   };
   def current_wave: ((.orchestrators // []) | last | .wave) // 0;
   def failed_attempt($t; $reason; $at):
-    .plan.attempts_per_ticket as $max
+    (.plan.attempts_per_ticket + (.tickets[$t].extra_attempts // 0)) as $max
     | .tickets[$t] as $tk
     | .tickets[$t] |= (
         .failures += [{attempt: .attempts, reason: $reason, at: $at}]
@@ -265,7 +293,7 @@ STATE_JQ_DEFS='
     | if $tk.attempts >= $max then
         .decisions += [{
           id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-          question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Bypass or defer?",
+          question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Retry with notes, reslice, take it myself or drop; or bypass or defer its exception gate?",
           status: "waiting", at: $at
         }]
       else . end
@@ -290,7 +318,11 @@ STATE_JQ_DEFS='
     . as $s
     | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")
       and any($g.tickets[]; $s.tickets[.].status? == "merged")
-      and ([($s.review_gates // [])[] | select(.id == $g.id and .status == "approved")] == []);
+      and ([($s.review_gates // [])[] | select(.id == $g.id and .status != "open")] == []);
+  def decide($id; $d; $at):
+    .decisions |= map(if .id == $id and .status == "waiting"
+      then . + $d + {status: "decided", decided_at: $at} else . end);
+  def out_of_run: ["dropped", "resliced", "bypassed", "deferred"];
   def gate_holds($t):
     . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
 '

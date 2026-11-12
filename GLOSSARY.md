@@ -169,6 +169,30 @@ A guardrail for one product and its repo.
 **Individual guardrail**:
 A guardrail carrying one Artisan's taste, which follows them into every project they work on.
 
+**Move**:
+A change to a guardrail's strictness: a tightening, which a person can make at any time, or a loosening, made only at a retro with the evidence shown. Agents propose moves; only a person makes one. Each move is recorded with its evidence and who made it.
+_Avoid_: relaxing, adjustment
+
+**Scope floor**:
+The rule that anything adding scope is never autonomous. It is a guardrail that never loosens.
+_Avoid_: scope guard
+
+**Defer-only gate**:
+A gate the Artisan can defer but never approve away or bypass, such as the overrun gate. Like the scope floor, it never loosens; its guardrail record is marked `defer_only`.
+_Avoid_: hard gate
+
+**Guardrail health**:
+The retro's view of every guardrail in force: whether it fired, was bypassed (and why) or never fired, and the loosen and tighten evidence that adds up to a proposed move.
+_Avoid_: guardrail metrics, guardrail report
+
+**Spot-check**:
+A retro question about a decision a worker made alone that no gate showed: would the Artisan have decided differently? "Differently" is tighten evidence.
+_Avoid_: sample review, audit (alone)
+
+**Backstop**:
+The retro's audit for work that reached `main` outside the pipeline: direct commits, merges with no PR or run, PRs no run opened, and tickets closed outside a run.
+_Avoid_: bypass check
+
 **Individual standards**:
 The Artisan's written taste that applies in every project: their individual guardrails, what should always come back to them, and how the pipeline speaks to them. Kept in their individual home.
 _Avoid_: personal standards, preferences

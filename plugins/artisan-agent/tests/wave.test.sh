@@ -67,6 +67,12 @@ jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit:
   decisions: [{job: 3, question: "Which file?", choice: "hello.txt", alternative: "HELLO", by: "worker 1",
                kind: "engineering taste", criterion: "4", confidence: "provisional"}],
   review: {ran: true, remarks: []}, findings: []}' >"$ARTISAN_RESULT_FILE"
+# WORKER_PARAPHRASE=1 rewords every criterion.
+if [ -n "${WORKER_PARAPHRASE:-}" ]; then
+  jq '.acceptance = [{criterion: "The file hello.txt is there", met: true, evidence: {tests: ["check.sh"]}},
+                     {criterion: "Greeting says hi", met: true, evidence: {diff: "hello.txt +1 -0"}}]' "$ARTISAN_RESULT_FILE" >"$ARTISAN_RESULT_FILE.tmp"
+  mv "$ARTISAN_RESULT_FILE.tmp" "$ARTISAN_RESULT_FILE"
+fi
 EOF
 }
 
@@ -174,6 +180,19 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "main checkout is clean"
 }
 
+test_a_worker_that_paraphrases_every_criterion_still_closes_the_ticket_ticked() {
+  setup_wave
+  export WORKER_PARAPHRASE=1
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")"
+  assert_eq "hello.txt exists|true It says hi|true" \
+    "$(state_get '[.tickets["1"].evidence.acceptance[] | "\(.criterion)|\(.claimed)"] | join(" ")')" "claims follow the ticket's wording by position"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [x] hello.txt exists"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [x] It says hi"
+}
+
 test_the_state_file_logs_each_event_in_order() {
   setup_wave
   start_and_launch
@@ -272,8 +291,10 @@ test_a_red_suite_after_merging_blocks_the_ticket_and_undoes_the_merge() {
   assert_eq exception "$(state_get '.decisions[0].kind')"
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")" "never closed"
   local out
+  # The red check raises an exception gate, and the run parks on it (#70).
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_contains "$out" "next: decide"
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "check won't go green"
   assert_contains "$out" "| Decision | Ticket | Question |"
 }
 
