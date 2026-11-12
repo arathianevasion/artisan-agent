@@ -68,12 +68,12 @@ cmd_compare() {
     . as $r | ($p[0].models) as $new
     | ( ($new | keys[]) as $m
         | ($r.models[$m]) as $old | $new[$m] as $n
-        | if $old == null then [$m, "not recorded", "$\($n.input_per_mtok) / $\($n.output_per_mtok)"]
+        | if $old == null then [$m, "not recorded", "$\($n.input_per_mtok * 1) / $\($n.output_per_mtok * 1)"]
           elif $old.input_per_mtok != $n.input_per_mtok or $old.output_per_mtok != $n.output_per_mtok
-            then [$m, "$\($old.input_per_mtok) / $\($old.output_per_mtok)", "$\($n.input_per_mtok) / $\($n.output_per_mtok)"]
+            then [$m, "$\($old.input_per_mtok * 1) / $\($old.output_per_mtok * 1)", "$\($n.input_per_mtok * 1) / $\($n.output_per_mtok * 1)"]
           else empty end ),
       ( ($r.models | keys[]) as $m | select($new[$m] == null)
-        | [$m, "$\($r.models[$m].input_per_mtok) / $\($r.models[$m].output_per_mtok)", "no longer published"] )
+        | [$m, "$\($r.models[$m].input_per_mtok * 1) / $\($r.models[$m].output_per_mtok * 1)", "no longer published"] )
     | @tsv' "$FILE")
   if [ -z "$rows" ]; then echo "no price change"; return 0; fi
   printf '## Model prices differ from the published pricing\n\n'

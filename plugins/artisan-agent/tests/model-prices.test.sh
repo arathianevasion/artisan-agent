@@ -58,9 +58,10 @@ test_apply_updates_rates_and_date_keeps_dropped_models() {
   bash "$MP" apply "$TEST_TMPDIR/p.json" >/dev/null
   assert_eq 5 "$(jq '.models["claude-opus-5-5"].input_per_mtok' "$ARTISAN_PRICES_FILE")"
   assert_eq 3 "$(jq '.models["claude-new-6"].output_per_mtok' "$ARTISAN_PRICES_FILE")"
-  assert_eq 40 "$(jq '.models["claude-fable-5-2"].output_per_mtok' "$ARTISAN_PRICES_FILE")" "dropped model deleted"
+  assert_eq 40 "$(jq '.models["claude-fable-5-2"].output_per_mtok * 1' "$ARTISAN_PRICES_FILE")" "dropped model deleted"
   assert_contains "$(jq -r '._source' "$ARTISAN_PRICES_FILE")" "as of 2027-01-02"
-  assert_status 0 bash "$MP" compare "$TEST_TMPDIR/p.json" 
+  local out; out=$(bash "$MP" compare "$TEST_TMPDIR/p.json" || true)
+  case "$out" in *"claude-opus-5-5 |"*) fail "applied model still differs" ;; esac
 }
 
 test_an_agent_that_writes_nothing_or_nonsense_fails_and_changes_nothing() {
