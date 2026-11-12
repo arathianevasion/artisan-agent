@@ -252,7 +252,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 ## Guardrails
 
-`guardrails.sh` reads the three guardrail levels at the point of use; the rules are `references/guardrails.md`. Tested in `tests/guardrails.test.sh` with a local team repo and a throwaway individual home (`ARTISAN_HOME`, `ARTISAN_TEAM_CACHE`, `ARTISAN_TEAM_URL_BASE`).
+`guardrails.sh` reads the three guardrail levels at the point of use; the rules are `references/guardrails.md`. Tested in `tests/guardrails.test.sh` with a local team repo and a throwaway individual home (`ARTISAN_HOME`, `ARTISAN_TEAM_CACHE`, `ARTISAN_TEAM_URL_BASE`; `ARTISAN_HEALTH_DIR` for the recorded health report).
 
 | Command | Does | Returns |
 |---|---|---|

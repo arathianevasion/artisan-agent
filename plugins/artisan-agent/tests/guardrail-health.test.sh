@@ -248,3 +248,11 @@ test_loosening_with_an_override_reason_records_reason_and_who_as_a_bypass() {
   assert_eq "guardrail-bypassed gr Andrew" "$(jq -r '.events[-1] | [.event, .guardrail, .by] | join(" ")' "$(R r1)/state.json")"
   assert_contains "$(jq -r '.events[-1].reason' "$(R r1)/state.json")" "the audit is a week away"
 }
+
+test_an_override_with_a_bad_run_dir_is_refused_before_anything_is_committed() {
+  setup "$(g gr kt 3)"
+  before=$(git -C "$ARTISAN_HOME" rev-parse HEAD)
+  assert_status 1 "$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e \
+    --override-reason why --run-dir "$TEST_TMPDIR/nope"
+  assert_eq "$before" "$(git -C "$ARTISAN_HOME" rev-parse HEAD)"
+}

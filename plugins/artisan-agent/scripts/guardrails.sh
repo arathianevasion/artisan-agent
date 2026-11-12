@@ -32,7 +32,8 @@
 #       with evidence, loosens. Refuses a --who that names an agent (2).
 #
 #   guardrails.sh loosen --level individual|product|team --who NAME --reason TEXT
-#       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID] [--pr]
+#       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID]
+#       [--override-reason TEXT [--run-dir D]] [--pr]
 #       the retro's loosening path: lower an existing guardrail's --strict, with
 #       the evidence and who, recorded as a `loosen` move. Needs --evidence and a
 #       --strict below the current one (5 otherwise); refuses the scope floor
@@ -50,6 +51,8 @@
 #   ARTISAN_TEAM_CACHE      where the team guardrails repo is cloned (default
 #                           ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-team)
 #   ARTISAN_TEAM_URL_BASE   prefix for the team repo's clone URL (default https://github.com/)
+#   ARTISAN_HEALTH_DIR      where `guardrail-health.sh health --record` keeps the latest report
+#                           (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health)
 #   ARTISAN_MAIN_REF        the product's main branch (default origin/main, else main)
 #
 # Exit status: 0 ok, 1 error (a source could not be fetched), 2 usage,
@@ -299,9 +302,6 @@ cmd_table() {
 cmd_tighten() { move_guardrail tighten "$@"; }
 cmd_loosen() { move_guardrail loosen "$@"; }
 
-# move_guardrail tighten|loosen ...: write a new guardrail or move one, with
-# its origin or its move. A loosening needs evidence and an existing, lower-
-# strictness target, and is never made for the scope floor or a defer-only gate.
 # health_report_for ID: prints {id, date} of the latest health report if it
 # proposes loosening ID; otherwise prints what is missing and fails.
 health_report_for() {
@@ -314,6 +314,9 @@ health_report_for() {
   jq -c '{id, date}' "$f"
 }
 
+# move_guardrail tighten|loosen ...: write a new guardrail or move one, with
+# its origin or its move. A loosening needs evidence and an existing, lower-
+# strictness target, and is never made for the scope floor or a defer-only gate.
 move_guardrail() {
   local mode=$1 mode_tag=""
   shift
@@ -343,6 +346,7 @@ move_guardrail() {
   if [ "$mode" = loosen ]; then
     [ -n "$evidence" ] || state_die 2 "guardrails.sh: a loosening records the evidence for it: pass --evidence"
     [ -n "$strict" ] || usage
+    [ -z "$run_dir" ] || [ -f "$run_dir/state.json" ] || die "no state.json in --run-dir $run_dir"
   fi
 
   local m dir branch="" file path now date current new
