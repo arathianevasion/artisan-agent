@@ -1,0 +1,666 @@
+#!/usr/bin/env bash
+# Gate actions, exception gates and parking: how the Artisan answers a gate
+# (approve, redirect, bypass, defer), the exception gate a run raises when it
+# gives up on a ticket or a check won't go green (retry with notes, reslice,
+# take it myself, drop; or bypass, defer), and the run parking when
+# everything left waits behind open reviews. The rules and what each action
+# leaves behind: ${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md. Slice
+# gates and their packet: references/review-gates.md (gate.sh).
+#
+# Usage, from either chat, on the Artisan's word (<issue> is the gate's
+# review-gate issue):
+#   gate-action.sh approve <run-dir> <issue> [--by NAME] [--why W]
+#                  [--confidence firm|provisional]
+#                  [--level team|product|individual --reach ticket|area|everywhere [--area A]]
+#       a review gate: keep all and close it (gate.sh approve). Refused (6)
+#       on an exception gate, which is bypassed or deferred, never approved.
+#   gate-action.sh redirect <run-dir> <issue> (--notes TEXT | --mine [--notes TEXT])
+#                  [--by NAME] [--why W]
+#       a review gate: send it back. --notes opens a rework ticket in this
+#       run for an agent; --mine opens it ready-for-human, for the Artisan.
+#       Either way it is a ticket of its own (its attempts are its own), it
+#       natively blocks the gate's dependents, and the gate closes as
+#       redirected. Prints the rework ticket's number.
+#   gate-action.sh bypass <run-dir> <issue> [--by NAME] [--why W]
+#       either kind: the gate closes unreviewed and its dependents go ahead;
+#       recorded with who bypassed it, for the retro. On an exception gate the
+#       ticket leaves the run and no longer blocks its dependents.
+#   gate-action.sh defer <run-dir> <issue> [--by NAME] [--why W]
+#       either kind: the dependents go ahead now; the gate stays open until
+#       the end gate (gate-action.sh deferred lists it there), where its cards
+#       can still be changed into rework tickets (gate.sh change).
+#   gate-action.sh retry <run-dir> <issue> --notes TEXT [--by NAME] [--why W]
+#   gate-action.sh reslice|take|drop <run-dir> <issue> [--by NAME] [--why W]
+#       an exception gate: the Artisan's call on the ticket. retry: queued
+#       for a fresh worker given the notes, with one more attempt. reslice:
+#       out of the run, labelled needs-triage, to be sliced again. take:
+#       labelled ready-for-human, built by the Artisan (human.sh). drop: out
+#       of the run, left open. The gate closes.
+#   gate-action.sh chat <run-dir>
+#       every open or deferred exception gate, compressed, with its choices.
+#   gate-action.sh list <run-dir>
+#       every gate of the run, both kinds, as a Markdown table.
+#   gate-action.sh deferred <run-dir>
+#       the deferred gates, as a Markdown table, for the end gate.
+#
+# Usage, from wave.sh status:
+#   gate-action.sh sync <run-dir>
+#       opens an exception gate for every exception decision waiting without
+#       one (a ticket the run gave up on, a red check, a blocked merge), and
+#       bypasses one closed by hand on the tracker. Prints "opened #<issue>
+#       <gate-id>" per gate. Exception gates are never in the plan's gates,
+#       so nothing removes them.
+#   gate-action.sh parked <run-dir> [--record]
+#       exit 0 and one line ("parked: waiting on N reviews ...") when every
+#       ticket left waits behind an open gate; 1 otherwise. --record logs a
+#       "parked" event once.
+#
+# Every action takes the state lock before it touches the tracker; while a
+# wave holds it, the action is refused (3) and nothing changes: answer again
+# once wave.sh status says the wave has ended. (gate.sh approve keeps an
+# answer given then and folds it in later.)
+#
+# Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 6 refused
+# (not a gate of this run, not open, or not an action this gate takes).
+#
+# Portable to bash 3.2 (macOS) and Linux. Needs jq and gh.
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/state-lib.sh
+. "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/wave-lib.sh
+. "$SCRIPT_DIR/lib/wave-lib.sh"
+state_require_jq
+
+usage() { state_usage "$0"; }
+die() { state_die 1 "gate-action.sh: $*"; }
+refuse() { state_die 6 "gate-action.sh: $*"; }
+
+# ------------------------------------------------------------------ helpers
+
+# hold: the state lock for this call's writer, taken before anything reaches
+# the tracker, so an action is never half recorded. Child scripts write
+# under the same pid.
+hold() {
+  local pid
+  pid=$(writer)
+  export ARTISAN_WRITER_PID=$pid
+  [ "$(state_lock_holder "$RUN_DIR")" != "$pid" ] || return 0
+  state_lock "$RUN_DIR" "$pid" 2>/dev/null \
+    || state_die 3 "gate-action.sh: the run's state lock is held (a wave is running); nothing changed. Answer again once wave.sh status says the wave has ended"
+  trap 'state_unlock "'"$RUN_DIR"'" "'"$pid"'" || true' EXIT
+}
+
+REPO=
+repo() { [ -n "$REPO" ] || REPO=$(get '.repo'); printf '%s\n' "$REPO"; }
+issue_id() { local j; j=$(gh api "repos/$(repo)/issues/$1") && jq -er .id <<<"$j"; }
+blockers_of() { gh api "repos/$(repo)/issues/$1/dependencies/blocked_by"; }
+
+# blocks ticket blocker: 0 when the blocker natively blocks the ticket, 1 when
+# it doesn't. A tracker that can't be read ends the call: never act blind.
+blocks() {
+  local b
+  b=$(blockers_of "$1") || die "could not read the blockers of #$1 from the tracker"
+  jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' <<<"$b" >/dev/null
+}
+
+add_blocker() { # ticket blocker-issue
+  local id
+  ! blocks "$1" "$2" || return 0
+  id=$(issue_id "$2") || die "could not read #$2"
+  gh api --method POST "repos/$(repo)/issues/$1/dependencies/blocked_by" -F "issue_id=$id" >/dev/null \
+    || die "could not make #$2 a blocker of #$1"
+}
+
+# remove_blocker ticket blocker: the native edge goes. 0 when it removed one,
+# 1 when there was none.
+remove_blocker() {
+  local id
+  blocks "$1" "$2" || return 1
+  id=$(issue_id "$2") || die "could not read #$2"
+  gh api --method DELETE "repos/$(repo)/issues/$1/dependencies/blocked_by/$id" >/dev/null \
+    || die "could not remove #$2 as a blocker of #$1"
+}
+
+comment() { # issue body
+  gh issue comment "$1" -R "$(repo)" --body "$2" >/dev/null || die "could not comment on #$1"
+}
+
+# GATE (recorded JSON) and KIND (exception, or the review gate's kind) of the
+# gate whose issue this is.
+GATE= KIND= LIST=
+find_gate() { # issue
+  GATE=$(jq -c --arg k "$1" '(.review_gates // [])[] | select((.issue | tostring) == $k)' "$FILE")
+  LIST=review_gates
+  if [ -z "$GATE" ]; then
+    GATE=$(jq -c --arg k "$1" '(.exception_gates // [])[] | select((.issue | tostring) == $k)' "$FILE")
+    LIST=exception_gates
+  fi
+  [ -n "$GATE" ] || refuse "#$1 is not a gate of this run"
+  KIND=$(jq -r '.kind // "slice"' <<<"$GATE")
+  case "$(jq -r .status <<<"$GATE")" in
+    open | deferred) ;;
+    *) refuse "gate #$1 is $(jq -r .status <<<"$GATE"), not open" ;;
+  esac
+}
+
+g() { jq -r "$@" <<<"$GATE"; }
+
+BY=Artisan WHY= NOTES= MINE=0
+parse_opts() {
+  BY=Artisan WHY= NOTES= MINE=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --by) [ $# -ge 2 ] && [ -n "$2" ] || usage; BY=$2; shift 2 ;;
+      --why) [ $# -ge 2 ] || usage; WHY=$2; shift 2 ;;
+      --notes) [ $# -ge 2 ] && [ -n "$2" ] || usage; NOTES=$2; shift 2 ;;
+      --mine) MINE=1; shift ;;
+      *) usage ;;
+    esac
+  done
+}
+
+# record_answer status choice field extra-filter [jq args]: one locked,
+# one-step write of the gate's answer: its status, the record kept for the
+# retro under "field", the gate's waiting decision decided as a decision
+# record, and the event. extra-filter runs first, for the ticket changes.
+record_answer() {
+  local status="$1" choice="$2" field="$3" extra="$4" job=13
+  shift 4
+  [ "$KIND" != exception ] || job=15
+  apply '
+    '"$extra"'
+    | ($rec + {by: $by, at: $now} + (if $why != "" then {why: $why} else {} end)
+       + (if $notes != "" then {notes: $notes} else {} end)) as $r
+    | (.[$list] | map(.issue | tostring) | index($issue)) as $x
+    | .[$list][$x].status = $status
+    | .[$list][$x][$field] = $r
+    | .[$list][$x].answered = ((.[$list][$x].answered // []) + [$r + {action: $choice}])
+    | ({job: $job, choice: $choice, by: $by, gate: .[$list][$x].id}
+       + (if $why != "" then {why: $why} else {} end)
+       + (if $redirect != "" then {redirect: $redirect} else {} end)) as $d
+    | ([.decisions[] | select(.status == "waiting" and (.issue | tostring) == $issue) | .id]) as $ids
+    | reduce $ids[] as $id (.; decide($id; $d; $now))
+    | event({event: "gate-\($status)", gate: .[$list][$x].id, issue: ($issue | tonumber),
+             kind: .[$list][$x].kind, choice: $choice, by: $by}; $now)' \
+    --arg list "$LIST" --arg issue "$(g .issue)" --arg status "$status" --arg choice "$choice" \
+    --arg field "$field" --argjson job "$job" --arg by "$BY" --arg why "$WHY" --arg notes "$NOTES" \
+    --arg redirect "$REDIRECT" "$@"
+}
+REDIRECT=
+
+# The dependents a gate holds that are still to run, one per line.
+open_dependents() {
+  local d st
+  for d in $(g '.dependents[]?.number'); do
+    st=$(get --arg d "$d" '.tickets[$d].status // ""')
+    case "$st" in merged | closed) continue ;; esac
+    printf '%s\n' "$d"
+  done
+}
+
+# ------------------------------------------------------ review-gate actions
+
+cmd_approve() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  find_gate "$2"
+  [ "$KIND" != exception ] \
+    || refuse "#$2 is an exception gate: it is bypassed or deferred, never approved. Choose retry with notes, reslice, take it myself or drop (gate-action.sh chat)"
+  shift
+  exec "$SCRIPT_DIR/gate.sh" approve "$RUN_DIR" "$@"
+}
+
+cmd_redirect() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" label mode title num url r from d body
+  shift 2
+  parse_opts "$@"
+  find_gate "$issue"
+  [ "$KIND" != exception ] \
+    || refuse "#$issue is an exception gate: send it back with gate-action.sh retry --notes, or take it yourself with gate-action.sh take"
+  if [ "$MINE" -eq 1 ]; then label=ready-for-human mode=self
+  else
+    [ -n "$NOTES" ] || usage
+    label=ready-for-agent mode=notes
+  fi
+  REDIRECT=$mode
+  hold
+  title="Rework: $(g .title)"
+  # A call that crashed after opening the rework ticket left it open: reuse it.
+  num=$(gh issue list -R "$(repo)" --state open --label in-run --json number,title,body \
+          | jq -r --arg t "$title" --arg mark "Redirected at review gate #$issue." \
+              '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
+  if [ -z "$num" ]; then
+    body=$(jq -rn --arg issue "$issue" --arg run "$RUN_ID" --arg notes "$NOTES" --arg why "$WHY" --arg by "$BY" \
+      --arg mode "$mode" --argjson gate "$GATE" '
+"## Parent
+
+Redirected at review gate #\($issue). In run \($run).
+
+## What to build
+
+\($by) sent the \($gate.kind // "slice") gate on \($gate.tickets | map("#" + .) | join(", ")) back"
++ (if $mode == "self" then " to build it themselves." else " with notes." end) + "
+
+" + (if $notes != "" then "> \($notes | gsub("\n"; "\n> "))\n\n" else "" end)
++ (if $why != "" then "Why: \($why)\n\n" else "" end) + "## Acceptance criteria
+
+- [ ] " + (if $notes != "" then $notes | split("\n") | first else "The slice is as the Artisan wants it, by their own judgement" end) + "
+- [ ] The full suite passes
+"')
+    url=$(gh issue create -R "$(repo)" --title "$title" --label "$label" --label in-run --body "$body") \
+      || die "could not open the rework ticket"
+    num=${url##*/}
+  fi
+  for d in $(open_dependents); do add_blocker "$d" "$num"; done
+  comment "$issue" "Redirected by $BY$( [ "$mode" = self ] && echo ": they will build it themselves" || echo " with notes"). Rework ticket #$num joins this run; $( [ -n "$(g '.dependents[]?')" ] && g '.dependents | map("#" + .number) | join(", ")' || echo nothing) wait(s) for it.${WHY:+ Why: $WHY}"
+  gh issue close "$issue" -R "$(repo)" >/dev/null || die "could not close #$issue"
+  from=$(g '.tickets[0]')
+  record_answer redirected "redirect" redirect '
+    ($num | tostring) as $r
+    | .plan.scope = ((.plan.scope + [$r]) | unique)
+    | .plan.tickets[$r] = ((.plan.tickets[$from] // {}) | del(.branch, .slice, .ticket_path)
+        + {title: $title, rework_of: $from, gate: $gid})
+    | (if .tickets[$r] == null then .tickets[$r] = new_ticket($r) else . end)
+    | ((.review_gates // []) | map(.id) | index($gid)) as $i
+    | .review_gates[$i].reworks = ((.review_gates[$i].reworks // []) + [{card: null, ticket: $r}] | unique)
+    | event({event: "rework", ticket: $r, from: $from, gate: $gid, card: null}; $now)' \
+    --argjson num "$num" --arg from "$from" --arg title "$title" --arg gid "$(g .id)" \
+    --argjson rec "{\"mode\": \"$mode\", \"ticket\": \"$num\"}"
+  echo "$num"
+}
+
+# ----------------------------------------------------------- either kind
+
+# release: the dependents go ahead. A review gate's issue stops blocking
+# them; an exception gate's ticket and issue do. Prints the edges removed as
+# JSON, kept on the gate so the retro and the end gate can see them.
+release() {
+  local d b out='[]' blockers
+  blockers=$(g .issue)
+  [ "$KIND" != exception ] || blockers="$blockers $(g .ticket)"
+  for d in $(open_dependents); do
+    for b in $blockers; do
+      if remove_blocker "$d" "$b"; then
+        out=$(jq -c --arg d "$d" --arg b "$b" '. + [{dependent: $d, blocker: $b}]' <<<"$out")
+      fi
+    done
+  done
+  printf '%s\n' "$out"
+}
+
+cmd_bypass() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" released=[] extra='.'
+  shift 2
+  parse_opts "$@"
+  find_gate "$issue"
+  REDIRECT=
+  hold
+  # A review gate's closed issue no longer blocks; an exception gate's ticket
+  # leaves the run, so its own edges to the dependents go too.
+  [ "$KIND" != exception ] || released=$(release)
+  if [ "$KIND" = exception ]; then
+    gh issue edit "$(g .ticket)" -R "$(repo)" --remove-label in-run >/dev/null 2>&1 || true
+    comment "$(g .ticket)" "Taken out of run $RUN_ID at exception gate #$issue: bypassed by $BY. Its dependents go ahead without it.${WHY:+ Why: $WHY}"
+    extra='.tickets[$t] |= (.status = "bypassed" | .pid = null)'
+  fi
+  comment "$issue" "Bypassed by $BY: closed without review.${WHY:+ Why: $WHY} Recorded for the retro."
+  gh issue close "$issue" -R "$(repo)" >/dev/null || die "could not close #$issue"
+  record_answer bypassed bypass bypass "$extra" --arg t "$(g '.ticket // ""')" \
+    --argjson rec "{\"released\": $released}"
+  echo "bypassed #$issue by $BY; $(dependents_line) go(es) ahead"
+}
+
+cmd_defer() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" released extra='.'
+  shift 2
+  parse_opts "$@"
+  find_gate "$issue"
+  [ "$(g .status)" = open ] || refuse "gate #$issue is already deferred"
+  REDIRECT=
+  hold
+  released=$(release)
+  if [ "$KIND" = exception ]; then
+    extra='.tickets[$t] |= (.status = "deferred" | .pid = null)'
+  fi
+  comment "$issue" "Deferred by $BY: $(dependents_line) go(es) ahead now; this gate stays open until the end gate.${WHY:+ Why: $WHY}"
+  record_answer deferred defer deferral "$extra" --arg t "$(g '.ticket // ""')" \
+    --argjson rec "{\"released\": $released}"
+  echo "deferred #$issue by $BY; it stays open until the end gate"
+}
+
+dependents_line() {
+  local d
+  d=$(g 'if (.dependents // []) == [] then "" else .dependents | map("#" + .number) | join(", ") end')
+  printf '%s\n' "${d:-nothing}"
+}
+
+# -------------------------------------------------- exception-gate choices
+
+exception_only() { # issue
+  find_gate "$1"
+  [ "$KIND" = exception ] \
+    || refuse "#$1 is a $KIND gate: answer it with approve, redirect, bypass or defer"
+}
+
+close_exception() { # issue what
+  comment "$1" "$2"
+  gh issue close "$1" -R "$(repo)" >/dev/null || die "could not close #$1"
+}
+
+cmd_retry() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" t
+  shift 2
+  parse_opts "$@"
+  [ -n "$NOTES" ] || usage
+  exception_only "$issue"
+  t=$(g .ticket)
+  REDIRECT=notes
+  hold
+  close_exception "$issue" "Retry with notes, by $BY: #$t goes to a fresh worker with one more attempt.
+> $NOTES"
+  record_answer decided "retry with notes" outcome '
+    .tickets[$t] |= (.status = "queued" | .pid = null | del(.blocked_reason)
+      | .extra_attempts = ((.extra_attempts // 0) + 1)
+      | .notes = ((.notes // []) + [{note: $notes, issue: ($issue | tonumber), by: $by, at: $now}]))' \
+    --arg t "$t" --argjson rec '{}'
+  echo "#$t queued for a fresh worker with your notes (attempt $(( $(get --arg t "$t" '.tickets[$t].attempts') + 1 )))"
+}
+
+cmd_take() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" t prev
+  shift 2
+  parse_opts "$@"
+  exception_only "$issue"
+  t=$(g .ticket)
+  REDIRECT=self
+  hold
+  gh issue edit "$t" -R "$(repo)" --add-label ready-for-human --remove-label ready-for-agent >/dev/null \
+    || die "could not label #$t ready-for-human"
+  # The last worker's worktree has the branch checked out; free it for the
+  # Artisan's own worktree (human.sh). One with uncommitted work stays.
+  prev=$(get --arg t "$t" '.tickets[$t].worktree // ""')
+  if [ -n "$prev" ] && [ -d "$prev" ]; then
+    git -C "$MAIN" worktree remove "$prev" 2>/dev/null \
+      || echo "gate-action.sh: $prev has uncommitted work and stays; human.sh needs the branch free" >&2
+  fi
+  close_exception "$issue" "Taken by $BY: #$t is ready-for-human; they build it in their own worktree from the integration branch, and it goes through the same verifier, suite and merge.${WHY:+ Why: $WHY}"
+  record_answer decided "take it myself" outcome '
+    .tickets[$t] |= (.status = "queued" | .pid = null | del(.blocked_reason))' --arg t "$t" --argjson rec '{}'
+  echo "#$t is yours: human.sh sets up its worktree at the next wave.sh status"
+}
+
+out_of_run() { # choice status label-to-add tracker-note
+  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t
+  t=$(g .ticket)
+  REDIRECT=
+  hold
+  if [ -n "$label" ]; then
+    gh issue edit "$t" -R "$(repo)" --add-label "$label" --remove-label in-run >/dev/null || die "could not relabel #$t"
+  else
+    gh issue edit "$t" -R "$(repo)" --remove-label in-run >/dev/null || die "could not relabel #$t"
+  fi
+  comment "$t" "Taken out of run $RUN_ID at exception gate #$issue by $BY: $note${WHY:+ Why: $WHY}"
+  close_exception "$issue" "$choice, by $BY: #$t leaves the run. $note"
+  record_answer decided "$choice" outcome '.tickets[$t] |= (.status = $st | .pid = null)' \
+    --arg t "$t" --arg st "$status" --argjson rec '{}'
+  echo "#$t $status: it leaves the run$( [ -n "$(open_dependents)" ] && echo "; $(dependents_line) still wait(s) on it" )"
+}
+
+cmd_reslice() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2"
+  shift 2
+  parse_opts "$@"
+  exception_only "$issue"
+  out_of_run "$issue" reslice resliced needs-triage "labelled needs-triage to be sliced again; the new tickets join a run through their own plan step."
+}
+
+cmd_drop() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2"
+  shift 2
+  parse_opts "$@"
+  exception_only "$issue"
+  out_of_run "$issue" drop dropped "" "dropped from the run; the ticket stays open."
+}
+
+# ------------------------------------------------------- opening, syncing
+
+# Why a ticket stopped, as the exception gate's kind of exception.
+reason_of() { # ticket
+  get --arg t "$1" '.tickets[$t] as $k
+    | if ($k.blocked_reason // "") | test("suite failed") then "red-check"
+      elif ($k.failures | length) >= (.plan.attempts_per_ticket + ($k.extra_attempts // 0)) then "gave-up"
+      else "blocked" end'
+}
+
+exception_body() { # gate-json
+  jq -rn --argjson gt "$1" --slurpfile s "$FILE" '
+    $s[0] as $s | $gt.ticket as $t | $s.tickets[$t] as $k | $s.plan.tickets[$t] as $p
+    | "| Gate | Role needed | Ticket | Tickets blocked |",
+    "|---|---|---|---|",
+    "| exception | Engineering | #\($t) (\($p.title // "untitled")) | \(if $gt.dependents == [] then "nothing" else $gt.dependents | map("#" + .number + " (" + (.title // "untitled") + ")") | join(", ") end) |",
+    "",
+    "**\($gt.headline)**",
+    "",
+    "- **Problem:** \($p.expected_output // $p.title // "see the ticket")",
+    "- **Why it stopped:** \($k.blocked_reason // ($k.failures | last | .reason) // "see the run")",
+    "- **Cost so far:** $\($k.cost_usd // 0) against an estimate of $\($p.estimate_usd // "?")",
+    "",
+    "## Attempts",
+    "",
+    "| Attempt | Why it failed |",
+    "|---|---|",
+    (if ($k.failures // []) == [] then "| - | none failed: it was blocked |" else ($k.failures[] | "| \(.attempt) | \(.reason | gsub("\\|"; "/")) |") end),
+    "",
+    (if $k.suite.log then "The suite log: `\($k.suite.log)` in the run folder.\n" else empty end),
+    "## Your call",
+    "",
+    "Exception gates are never removed. Decide what happens to the ticket, or bypass or defer the gate.",
+    "",
+    "| Say | Does |",
+    "|---|---|",
+    "| retry with notes | a fresh worker on the same branch, given your notes and one more attempt |",
+    "| reslice | leaves the run labelled `needs-triage`, to be sliced again |",
+    "| take it myself | labelled `ready-for-human`; you build it in your own worktree |",
+    "| drop | leaves the run; the ticket stays open and its dependents keep waiting |",
+    "| bypass | leaves the run; its dependents go ahead without it; recorded with who |",
+    "| defer | its dependents go ahead now; this gate stays open until the end gate |"'
+}
+
+open_exception() { # decision-json
+  local dec="$1" did t reason title headline deps='[]' d st gate num url body attempts
+  did=$(jq -r .id <<<"$dec")
+  t=$(jq -r .ticket <<<"$dec")
+  [ "$(get --arg id "exception-$did" '[(.exception_gates // [])[] | select(.id == $id)] | length')" -eq 0 ] || return 0
+  reason=$(reason_of "$t")
+  attempts=$(get --arg t "$t" '.tickets[$t].attempts')
+  case "$reason" in
+    gave-up) title="Exception gate: run $RUN_ID gave up on #$t after $attempts attempts"
+             headline="The run gave up on #$t after $attempts attempts." ;;
+    red-check) title="Exception gate: #$t's check won't go green (run $RUN_ID)"
+               headline="A check on #$t won't go green." ;;
+    *) title="Exception gate: #$t is blocked (run $RUN_ID)"
+       headline="#$t is blocked: $(get --arg t "$t" '.tickets[$t].blocked_reason // "see the run"')." ;;
+  esac
+  # The in-run tickets still to run that #t blocks natively.
+  for d in $(get '.plan.scope[]'); do
+    [ "$d" != "$t" ] || continue
+    st=$(get --arg d "$d" '.tickets[$d].status // ""')
+    case "$st" in queued | blocked) ;; *) continue ;; esac
+    if blocks "$d" "$t"; then
+      deps=$(jq -c --arg d "$d" --arg title "$(get --arg d "$d" '.plan.tickets[$d].title // ""')" \
+        '. + [{number: $d, title: (if $title == "" then null else $title end)}]' <<<"$deps")
+    fi
+  done
+  gate=$(jq -nc --arg id "exception-$did" --arg t "$t" --arg title "$title" --arg headline "$headline" \
+    --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" \
+    '{id: $id, kind: "exception", reason: $reason, title: $title, headline: $headline, ticket: $t,
+      tickets: [$t], decision: $did, dependents: $deps, cards: []}')
+  num=$(gh issue list -R "$(repo)" --state open --label review-gate --json number,title \
+          | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
+  if [ -z "$num" ]; then
+    body=$(exception_body "$gate")
+    url=$(gh issue create -R "$(repo)" --title "$title" --label review-gate --body "$body") \
+      || die "could not open the exception gate for #$t"
+    num=${url##*/}
+  fi
+  for d in $(jq -r '.[].number' <<<"$deps"); do add_blocker "$d" "$num"; done
+  apply '
+    if any((.exception_gates // [])[]; .id == $g.id) then .
+    else .exception_gates = ((.exception_gates // []) + [$g + {issue: $num, status: "open", opened_at: $now}])
+      | .decisions |= map(if .id == $g.decision then . + {issue: $num, gate: $g.id} else . end)
+      | event({event: "gate-opened", gate: $g.id, kind: "exception", issue: $num, tickets: [$g.ticket],
+               dependents: ($g.dependents | map(.number))}; $now)
+    end' --argjson g "$gate" --argjson num "$num"
+  echo "opened #$num exception-$did"
+}
+
+cmd_sync() {
+  [ $# -eq 1 ] || usage
+  open_run "$1"
+  local issue state dec
+  hold
+  # An exception gate closed by hand on the tracker is bypassed by whoever closed it.
+  for issue in $(get '(.exception_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue'); do
+    state=$(gh api "repos/$(repo)/issues/$issue" 2>/dev/null | jq -r '.state // empty' | tr 'A-Z' 'a-z') || continue
+    [ "$state" = closed ] || continue
+    find_gate "$issue"
+    BY="Artisan (closed on the tracker)" WHY= NOTES= REDIRECT=
+    local released
+    released=$(release)
+    gh issue edit "$(g .ticket)" -R "$(repo)" --remove-label in-run >/dev/null 2>&1 || true
+    record_answer bypassed bypass bypass '.tickets[$t] |= (.status = "bypassed" | .pid = null)' \
+      --arg t "$(g .ticket)" --argjson rec "{\"released\": $released}"
+  done
+  # Every exception decision waiting without its gate, for a ticket still blocked.
+  while IFS= read -r dec; do
+    [ -n "$dec" ] || continue
+    open_exception "$dec"
+  done < <(jq -c '. as $s | .decisions[] | select(.kind == "exception" and .status == "waiting"
+                    and .issue == null and .ticket != null and $s.tickets[.ticket].status == "blocked")' "$FILE")
+}
+
+# ------------------------------------------------------------------ parking
+
+cmd_parked() {
+  open_run "${1:-}"
+  local record=0 t tracker='{}' line
+  [ "${2:-}" != --record ] || record=1
+  # Quick refusals from the state file alone: work still moving, work ready,
+  # a decision that isn't a gate, or no gate open.
+  [ "$(get '
+    ([.tickets[] | select(.status == "in_flight" or .status == "returned")] | length) == 0
+    and ((.frontier // []) | length) == 0
+    and ([.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+          and (.kind != "exception" or .issue == null))] | length) == 0
+    and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
+         + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0')" = true ] || return 1
+  for t in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "queued") | $t'); do
+    tracker=$(jq -c --arg t "$t" --argjson b "$(blockers_of "$t" || echo null)" \
+      '. + {($t): ($b // null | if . == null then null else [.[] | select((.state | ascii_downcase) == "open") | .number | tostring] end)}' <<<"$tracker")
+  done
+  line=$(get "$STATE_JQ_DEFS"'
+    . as $s
+    | [($s.review_gates // [])[], ($s.exception_gates // [])[] | select(.status == "open")] as $open
+    | ($open | map(.issue | tostring)) as $gi
+    | [$s.tickets | to_entries[] | select(.value.risk_gate.status? == "waiting") | .key] as $risk
+    | out_of_run as $o
+    | [$s.plan.scope[] | select(($s.tickets[.].status) as $st | $st != "merged" and $st != "closed" and ($o | index($st) | not))] as $left
+    | [($s.exception_gates // [])[] | select(.status == "open") | .ticket] as $held0
+    | (reduce range(0; ($left | length) + 1) as $_ ($held0;
+        . as $h | ($h + [$left[] | select(. as $t | $s.tickets[$t].status == "queued" and $tr[$t] != null
+            and any($tr[$t][]; . as $b | ($gi | index($b)) or ($h | index($b)) or ($risk | index($b))
+                                         or ($s | gate_holds($b)))) ]) | unique)) as $held
+    | if $tr | any(.[]; . == null) then empty
+      elif ($left | length) == 0 or any($left[]; . as $t | $held | index($t) | not) then empty
+      else
+        (($open | length) + ($risk | length)) as $n
+        | "parked: waiting on \($n) review\(if $n == 1 then "" else "s" end): "
+          + ([$open[] | "\(.title) #\(.issue)"] + [$risk[] | "risk gate on #\(.)"] | join(", "))
+          + "; \($left | length) ticket\(if ($left | length) == 1 then "" else "s" end) wait behind \(if $n == 1 then "it" else "them" end): "
+          + ($left | map("#" + .) | join(", "))
+      end' --argjson tr "$tracker")
+  [ -n "$line" ] || return 1
+  echo "$line"
+  if [ "$record" -eq 1 ]; then
+    apply '(.events | last) as $last
+      | if $last.event == "parked" and $last.detail == $line then .
+        else event({event: "parked", reason: "reviews", detail: $line}; $now) end' --arg line "$line"
+  fi
+}
+
+# --------------------------------------------------------- chat and lists
+
+cmd_chat() {
+  open_run "${1:-}"
+  local any
+  any=$(get '[(.exception_gates // [])[] | select(.status == "open" or .status == "deferred")] | length')
+  if [ "$any" -eq 0 ]; then echo "No exception gate is open."; return 0; fi
+  get '(.exception_gates // [])[] | select(.status == "open" or .status == "deferred")
+    | "\(.title) #\(.issue)\(if .status == "deferred" then " (deferred)" else "" end): \(.headline) Holds \(if .dependents == [] then "nothing" else .dependents | map("#" + .number) | join(", ") end)."'
+  echo
+  echo "| Choice | Does |"
+  echo "|---|---|"
+  echo "| retry with notes | a fresh worker given your notes, one more attempt |"
+  echo "| reslice | out of the run, labelled needs-triage |"
+  echo "| take it myself | ready-for-human, built by you |"
+  echo "| drop | out of the run; its dependents keep waiting |"
+  echo "| bypass | out of the run; its dependents go ahead |"
+  echo "| defer | its dependents go ahead; the gate waits for the end gate |"
+}
+
+cmd_list() {
+  open_run "${1:-}"
+  echo "| Gate | Issue | Kind | Tickets | Status | Holds |"
+  echo "|---|---|---|---|---|---|"
+  get '[(.review_gates // [])[], (.exception_gates // [])[]] | sort_by(.opened_at // 0)[]
+    | "| \(.title) | #\(.issue) | \(.kind // "slice") | \(.tickets | map("#" + .) | join(", ")) | \(.status) | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
+}
+
+cmd_deferred() {
+  open_run "${1:-}"
+  if [ "$(get '[(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "deferred")] | length')" -eq 0 ]; then
+    echo "No gate is deferred."
+    return 0
+  fi
+  echo "| Gate | Issue | Kind | Deferred by | Why | Went ahead |"
+  echo "|---|---|---|---|---|---|"
+  get '[(.review_gates // [])[], (.exception_gates // [])[]] | .[] | select(.status == "deferred")
+    | "| \(.title) | #\(.issue) | \(.kind // "slice") | \(.deferral.by) | \(.deferral.why // "-") | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
+}
+
+[ $# -ge 1 ] || usage
+cmd=$1
+shift
+case "$cmd" in
+  approve) cmd_approve "$@" ;;
+  redirect) cmd_redirect "$@" ;;
+  bypass) cmd_bypass "$@" ;;
+  defer) cmd_defer "$@" ;;
+  retry) cmd_retry "$@" ;;
+  reslice) cmd_reslice "$@" ;;
+  take) cmd_take "$@" ;;
+  drop) cmd_drop "$@" ;;
+  sync) cmd_sync "$@" ;;
+  parked) cmd_parked "$@" ;;
+  chat) cmd_chat "$@" ;;
+  list) cmd_list "$@" ;;
+  deferred) cmd_deferred "$@" ;;
+  *) usage ;;
+esac
