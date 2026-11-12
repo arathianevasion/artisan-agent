@@ -227,6 +227,7 @@ test_a_run_started_through_implement_plan_labels_every_ticket_once() {
   setup_chats
   ticket 2
   "$C" label-run "$RUN_DIR"
+  "$C" label-run "$RUN_DIR"
   for t in 1 2; do
     assert_contains "$(jq -r '.labels[].name' "$FAKE_GH_DIR/issue-$t.json")" in-run
     assert_eq 1 "$(grep -c "artisan-agent:run r1" "$FAKE_GH_DIR/comments-$t.md")"
@@ -234,23 +235,25 @@ test_a_run_started_through_implement_plan_labels_every_ticket_once() {
 }
 
 test_a_plan_started_at_once_records_no_envelope_approval() {
+  # Nothing but approve-envelope writes the mark, and a started plan never calls it.
   setup_chats
   ticket 345
   local plan out
   plan=$("$C" send 345)
-  [ ! -f "$FAKE_GH_DIR/comments-$plan.md" ] || ! grep -q "envelope-approved" "$FAKE_GH_DIR/comments-$plan.md" \
-    || fail "recorded an approval nobody gave"
+  assert_eq 0 "$(cat "$FAKE_GH_DIR"/comments-"$plan".md 2>/dev/null | grep -c "envelope-approved" || true)"
   out=$(sweep)
   assert_contains "$out" "ACTION start-plan $plan approve-envelope"
 }
 
-test_the_two_skills_name_each_call_at_its_step() {
-  local ip tp
-  ip=$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
-  tp=$(cat "$PLUGIN_ROOT/skills/to-plan/SKILL.md")
-  assert_contains "$ip" "chats.sh label-run"
-  assert_contains "$ip" "chats.sh approve-envelope"
-  assert_contains "$ip" "envelope-approved"
-  assert_contains "$tp" "chats.sh approve-envelope"
-  [ -f "$PLUGIN_ROOT/skills/implement-plan/references/labels-and-envelope.md" ] || fail "reference missing"
+test_the_skills_name_each_call_inside_the_step_that_makes_it() {
+  local ip tp step3 step6 step5
+  ip="$PLUGIN_ROOT/skills/implement-plan/SKILL.md"
+  tp="$PLUGIN_ROOT/skills/to-plan/SKILL.md"
+  step3=$(awk '/^### 3\./{f=1;next} /^### 4\./{f=0} f' "$ip")
+  assert_contains "$step3" "chats.sh approve-envelope"
+  assert_contains "$step3" "ACTION start-plan <issue> envelope-approved"
+  assert_contains "$step3" "chats.sh label-run"
+  assert_contains "$step3" "before the first wave launches"
+  step5=$(awk '/^### 5\. Get approval/{f=1;next} /^### 6\./{f=0} f' "$tp")
+  assert_contains "$step5" "chats.sh approve-envelope"
 }
