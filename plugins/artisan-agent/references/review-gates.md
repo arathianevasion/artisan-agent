@@ -69,7 +69,7 @@ Answering needs only the choice. Why, confidence, guardrail level, reach and red
 | change card N to X | `gate.sh change <run> <issue> N "X" [--why W]` | a rework ticket (`Rework #<t>: <question>`, labelled `ready-for-agent` and `in-run`, its criterion the new choice) joins the run: in scope, `queued`, the original's model, caps and estimate. Its cost counts against the approved budget, which the change doesn't raise (raising it is the overrun gate's, #72). A repeat after a crash reuses the open rework ticket rather than opening a second. It natively blocks the slice's dependents too, so they wait for the rework as well as the gate. It is a ticket of its own, so it never counts against the original's attempts. Event `rework`. The gate stays open; approving keeps the other cards |
 | make card N a guardrail | `gate.sh guardrail <run> <issue> N <team\|product\|individual> <ticket\|area\|everywhere> [--area A]` | the card is kept with `guardrail_level` and `reach`, and a `guardrail` lesson is noted for the retro, where `guardrails.sh tighten` writes it (job 21) |
 
-A card is decided once: a second answer on it is refused (6). Redirect, bypass and defer are #70's.
+A card is decided once: a second answer on it is refused (6). Redirect, bypass and defer, the optional fields on approve, and answering a deferred gate at the end gate: `references/gate-actions.md` (`gate-action.sh`).
 
 **Every decision recorded at a gate keeps its job and who made it.** A card's decision is the decision record with the card's own `job` (the job it would have been had a person made it), `choice`, `by` (the Artisan), and `card`, `ticket`, `gate`, `outcome` (`keep` or `change`) and `original` (`{choice, by}`: the worker's choice and the worker). The gate's own decision is job 13, `approve the slice`.
 
@@ -77,4 +77,4 @@ A card is decided once: a second answer on it is refused (6). Redirect, bypass a
 
 ## State
 
-`review_gates`: `[{id, kind, slice, title, role, issue, tickets, dependents: [{number, title}], cards, status: open|approved, opened_at, approved_at?, decisions, reworks: [{card, ticket}]}]`. A `review-gate` entry in `decisions` (`gate`, `issue`). `plan.checks`. `lessons` entries of kind `guardrail`. Events `gate-opened`, `gate-decision`, `rework`, `gate-approved`. Details in `references/state-file.md`.
+`review_gates`: `[{id, kind, slice, title, role, issue, tickets, dependents: [{number, title}], cards, status: open|approved|redirected|bypassed|deferred, opened_at, approved_at?, decisions, reworks: [{card, ticket}]}]` (the last three statuses, and the records they carry: `references/gate-actions.md`). A `review-gate` entry in `decisions` (`gate`, `issue`). `plan.checks`. `lessons` entries of kind `guardrail`. Events `gate-opened`, `gate-decision`, `rework`, `gate-approved`. Details in `references/state-file.md`.
