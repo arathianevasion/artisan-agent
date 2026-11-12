@@ -242,7 +242,8 @@ cmd_out() {
   # live. Phase two: the push. If it is refused, this copy goes back to live;
   # if this process dies in between, running out again finishes or undoes it.
   if [ "$pending" = 0 ]; then
-    jq --arg c "$snap" '.location.commit = $c | .location.pending = true' "$TMP_DIR/state.json" >"$(state_tmp "$rd")"
+    # The pushed snapshot has the drain halt cleared; this copy keeps it until the push lands.
+    jq --arg c "$snap" --argjson h "$(get '.halted')" '.location.commit = $c | .location.pending = true | .halted = $h' "$TMP_DIR/state.json" >"$(state_tmp "$rd")"
     ARTISAN_MOVING=1 state_commit "$rd" "$(state_tmp "$rd")"
   fi
   [ "${ARTISAN_MOVE_DIE_AT:-}" != after-mark ] || kill -KILL $$ # test hook (tests/move.test.sh)
@@ -254,7 +255,7 @@ cmd_out() {
 
 out_finish() { # run-dir id integration-branch snapshot: the push landed; clear the pending marker
   local rd="$1"
-  jq 'del(.location.pending)' "$(state_file "$rd")" >"$(state_tmp "$rd")"
+  jq 'del(.location.pending) | .halted = (if .halted.move == true then null else .halted end)' "$(state_file "$rd")" >"$(state_tmp "$rd")"
   ARTISAN_MOVING=1 state_commit "$rd" "$(state_tmp "$rd")"
   printf 'moved %s: pushed %s and runs/%s (%s); resume it with: move.sh in %s\n' "$2" "$3" "$2" "$4" "$2"
 }

@@ -177,6 +177,16 @@ HOOK
   assert_eq "move-out-undone" "$(jq -r '[.events[] | select(.event | startswith("move-out")) | .event] | last' "$RUN_DIR/state.json")"
 }
 
+test_a_refused_push_keeps_the_drain_halt_so_no_wave_starts_by_surprise() {
+  two_machines
+  "$SCRIPTS/move.sh" drain "$RUN_DIR"
+  mkdir -p "$PROJECT/.git/hooks"
+  printf '#!/bin/sh\nwhile read -r a b c d; do case "$c" in refs/heads/runs/*) exit 1 ;; esac; done\nexit 0\n' >"$PROJECT/.git/hooks/pre-push"
+  chmod +x "$PROJECT/.git/hooks/pre-push"
+  assert_status 6 bash -c "cd '$PROJECT' && ARTISAN_MACHINE=laptop '$SCRIPTS/move.sh' out '$RUN_DIR'"
+  assert_eq true "$(state_get '.halted.move')"
+}
+
 test_out_killed_after_the_push_reads_as_moved_and_the_other_machine_resumes() {
   two_machines
   die_at after-push
