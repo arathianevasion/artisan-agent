@@ -23,5 +23,5 @@ Each was run by hand in a throwaway repo with an open run `r1`, the plugin loade
 
 ## What these runs found
 
-- With `--setting-sources project,local`, Claude Code loads a `--plugin-dir` plugin's skills but never runs its hooks. `tests/live-run/live.sh` uses that flag, so its sessions run without the drain hooks.
+- With `--setting-sources project,local`, Claude Code loads a `--plugin-dir` plugin's skills but never runs its hooks. `tests/live-run/live.sh` used that flag; since #105 every live harness gets its hooks from `tests/helpers/live-hooks.sh` (a `--settings` file) and fails if no hook fired.
 - `claude -p` didn't autocompact even with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (context at 14 to 18%, threshold set lower). So whether a headless orchestrator's automatic compaction fires the hook (the "autocompact at 70%" backstop) is a hand check for #78. Every compaction runs the same `PreCompact` hook path, and the manual one is proven above.
