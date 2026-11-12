@@ -89,7 +89,7 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
-| `plan.sh render` | Prints the one approval: waves, model and estimate per ticket, total, Max Agents and every config number | Markdown |
+| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents and every config number | Markdown |
 
 ## The project config
 
@@ -101,6 +101,9 @@ How the plan step reads the project config, estimates a run and records the numb
 | sweep | `sweep_minutes` | 5 |
 | context drain | `context.drain_percent` | 30 |
 | context review | `context.review_percent` | 50 |
+| chat warning | `chat_context.warn_percent` | 30 |
+| chat automatic compaction | `chat_context.compact_percent` | 40 |
+| chat expected window (tokens) | `chat_context.window_tokens` | 1000000 |
 | overrun allowance | `overrun_allowance_percent` | 25 |
 | usage reserve | `usage_reserve.five_hour_reserve_percent`, `usage_reserve.seven_day_ceiling_percent` | 20, 90 |
 | stale usage reading | `stale_usage_minutes` | 10 |
@@ -186,7 +189,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 **The lock passes with the work.** The chat holds the state lock between waves with its own session's pid. `wave.sh launch` records the orchestrator, then `run-ticket.sh --lock-from` makes the orchestrator's runner take the lock over before its session starts and export its pid to the session as `ARTISAN_WRITER_PID`. When the orchestrator exits, the lock is stale, and `wave.sh status` takes it back for the chat. A worker never gets a writer pid.
 
-**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir … --setting-sources project,local --no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`.
+**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir …`, the flags from `tests/helpers/live-hooks.sh` and `--no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`. `ARTISAN_HOOK_PROOF` (a file path) makes `compact-hook.sh` append one line per hook run, so a live harness can prove a plugin hook fired (#105).
 
 ## Exit status
 
@@ -199,7 +202,7 @@ Every exit code `wave.sh` and `verify.sh` use, in one table: a number means the 
 | 2 | bad usage | all | fix the call |
 | 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, any write | wait |
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
-| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`) | `dispatch` | leave it for a later wave |
+| 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
 | 7 | the suite went red after the merge (undone, blocked) | `merge`, `resolved` | carry on with the rest |
 | 8 | a worker or verifier is still running or ending (from `verify.sh start`, also: another call's verifier could not launch or has not come up yet) | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
@@ -248,6 +251,20 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
+## Slice gates
+
+`gate.sh` opens a slice's review gate once every ticket of the slice has merged, and takes the Artisan's answers; `lib/packet.py` renders the packet. The rules, the packet and the answers: `references/review-gates.md`. Tested in `tests/gate.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate.sh sync <run-dir>` | both (`wave.sh close`, `wave.sh status`) | folds in answers given while the lock was held, approves a gate closed by hand on the tracker, opens every gate that is due: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate.sh due <run-dir>` / `open <run-dir> <gate-id>` | orchestrator | the gates due; open one: the packet, the `review-gate` issue natively blocking only the slice's dependents, a `review-gate` decision; prints the issue (again, on a repeat) | 0, 1, 6 not due |
+| `gate.sh holds <run-dir> <ticket>` | `wave.sh dispatch` | `held` when the ticket's slice gate is due and not approved, else `free`; dispatch refuses its dependents (5) on anything but `free`, so an error holds | 0, 1 |
+| `gate.sh chat <run-dir> [<issue>]` / `packet` / `list` | Engineering chat | the compressed packet; the full one; a table of the run's gates | 0 |
+| `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
+| `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
+| `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
+
 ## The fake tracker
 
 `tests/fixtures/fake-gh/gh` answers the `gh` calls the run makes (`api` issue and blocked-by reads, `issue view`, `list`, `comment`, `edit`, `close`) from a folder (`FAKE_GH_DIR`) of `issue-<n>.json` and `blocked_by-<n>.json` files, so tests and live trials never reach GitHub.
@@ -258,13 +275,14 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 # Context drain and resume
 
-Neither tier ever stops to compact (#59). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
+Neither tier ever stops to compact (#59); the chat is compacted by Claude Code at 40% and never asks the Artisan to (#104). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
 | `drain.sh percent --transcript F [--window N]` | either | the context used, from the transcript's last main-thread usage record against the model's window: `<percent> <used> <window>`, or `unknown` | 0, 2 |
 | `drain.sh decide --tier T --percent P --outstanding N [--marker] [--drain P] [--review P]` | either | the bands alone: `<band> <percent>% <dispatch\|process\|handoff>[ risk-gate]` | 0, 2 |
-| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat, a running orchestrator | 0, 1 |
+| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat tier, a running orchestrator (the chat itself uses `drain.sh chat`) | 0, 1 |
+| `drain.sh chat <run-dir> --transcript F` | chat | the chat's context: `ok <percent>%` (30 or under), `warn <percent>%` (the chat ends its message with a one-line warning), `warn ask <percent>%` (past 55% with no compaction: also the one fallback `/compact` ask, printed once; the marker `chat-compact-asked` in the run folder is cleared by a reading back under the line), `unknown -`. Thresholds and window: `chat_context.*` in the plan config (defaults 30, 40, 1,000,000) | 0, 2 |
 | `drain.sh handoff <run-dir>` | orchestrator | records the hand-off, launches the next orchestrator for the same wave (`wave.sh launch --handoff`), writes the hand-off report as the result file: `handed-off <id> <attempt> <pid>`, or `none` when nothing is left | 0, 1, 6 not the running orchestrator |
 | `drain.sh gate <run-dir> <ticket> <percent>` | orchestrator | a risk gate on a merge processed at the review band: its dependents wait for it (`wave.sh dispatch` 5, off the frontier), nothing else does; a `risk-gate` decision | 0, 4, 6 not merged |
 | `drain.sh gate-cleared <run-dir> <ticket> [--by NAME]` | chat | the Artisan cleared it | 0, 6 no gate waiting |

@@ -55,10 +55,12 @@ RUN=$REPO/.artisan-agent/runs/live1
 export FAKE_GH_DIR=$WD/tracker
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
-# No --setting-sources here: with "project,local" Claude Code (2.1.322) loads a
-# --plugin-dir plugin's skills but never runs its hooks, and the hooks are what
-# this proves. User settings are read, never written.
-export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT"
+# The hooks are what this proves, and a bare project-and-local settings source list
+# stops them running (2.1.322), so tests/helpers/live-hooks.sh registers them
+# through --settings and keeps the Artisan's user settings out.
+. "$PLUGIN_ROOT/tests/helpers/live-hooks.sh"
+export ARTISAN_HOOK_PROOF=$WD/hook-proof
+export ARTISAN_CLAUDE_ARGS="--plugin-dir $PLUGIN_ROOT $(live_hooks_args "$PLUGIN_ROOT" "$WD/hooks")"
 export ARTISAN_MAX_BUDGET_USD=$BUDGET
 
 failures=0
@@ -154,6 +156,7 @@ done
 
 check "the first orchestrator's PreCompact hook left the hand-off marker" test -f "$RUN/workers/orchestrator-w1.1/handoff.json"
 check "the hook blocked the compaction (exit 2)" test "$hook_rc" = 2
+check "a plugin hook fired (SessionStart line in the proof file)" live_hooks_proof_check "$ARTISAN_HOOK_PROOF"
 check "the first orchestrator's SessionStart hook recorded its transcript" test -s "$RUN/workers/orchestrator-w1.1/transcript.path"
 check "the first orchestrator recorded its hand-off" jq -e '.orchestrators[0].handoff.reason | test("compaction")' "$RUN/state.json"
 check "it wrote the hand-off report as its result" jq -e '.handoff.to == "orchestrator-w1"' "$RUN/results/orchestrator-w1.1.result.json"

@@ -246,11 +246,12 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
   out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Wave 1"
   assert_contains "$out" "### Wave 2"
-  assert_contains "$out" "| #10 (Retry failed uploads) | 1 | claude-sonnet-5-5 | \$5.00 |"
-  assert_contains "$out" "| #11 (Billing tab) | 2 | claude-opus-5-5 | \$5.00 |"
+  assert_contains "$out" "| #10 (Retry failed uploads) | claude-sonnet-5-5 | \$5.00 |"
+  assert_contains "$out" "| #11 (Billing tab) | claude-opus-5-5 | \$5.00 |"
   assert_contains "$out" "Total estimate: \$10.00"
   assert_contains "$out" "Max Agents: 5"
   for key in max_agents sweep_minutes context.drain_percent context.review_percent \
+    chat_context.warn_percent chat_context.compact_percent chat_context.window_tokens \
     overrun_allowance_percent usage_reserve.five_hour_reserve_percent \
     usage_reserve.seven_day_ceiling_percent stale_usage_minutes attempts_per_ticket \
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \
@@ -258,6 +259,30 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
     minimum_estimates.all host_configured; do
     assert_contains "$out" "| $key |" "setting $key in the approval"
   done
+}
+
+test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["10"].expected_files = ["src/up/", "tests/up.sh"]' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  local out; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "| Expected files |"
+  assert_contains "$out" '| `src/up/`, `tests/up.sh` |'
+  assert_contains "$out" "| none declared |"
+  # A blank line separates the table from the warning, so it isn't read as a table row.
+  assert_eq "" "$(printf '%s\n' "$out" | grep -B1 'runs alone' | head -1)" "blank line before the warning"
+  assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'runs alone')" "one warning, for the undeclared ticket"
+  assert_contains "$out" "#11 runs alone: no expected files, so it's treated as touching everything. Name its files to let it share a wave."
+  # The Wave column is gone; the headings keep the grouping.
+  ! printf "%s" "$out" | grep -qF -- "| Wave |" || fail "unexpected: ""| Wave |"
+  assert_contains "$out" "### Wave 2"
+  # A fully declared plan prints no warning.
+  jq '.tickets["11"].expected_files = ["src/billing/"]' "$TEST_TMPDIR/d2.json" >"$TEST_TMPDIR/d3.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d3.json") >"$TEST_TMPDIR/plan3.json"
+  out=$(plan render "$TEST_TMPDIR/plan3.json")
+  ! printf "%s" "$out" | grep -qF -- "runs alone" || fail "unexpected: ""runs alone"
+  ! printf "%s" "$out" | grep -qF -- "none declared" || fail "unexpected: ""none declared"
 }
 
 # --------------------------------------------------------------- overrides
