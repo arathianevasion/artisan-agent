@@ -71,15 +71,13 @@ if [ ! -f "$exit_record" ]; then
       echo "classify-worker.sh: cannot read the runner pid in $worker_dir/runner.pid" >&2
       exit 3 ;;
   esac
+  if ! runner_alive "$runner_pid" && [ ! -f "$exit_record" ]; then
+    echo "failed vanished"
+    exit 0
+  fi
   if [ ! -f "$exit_record" ]; then
-    if runner_alive "$runner_pid"; then
-      echo "running -"
-      exit 0
-    fi
-    if [ ! -f "$exit_record" ]; then
-      echo "failed vanished"
-      exit 0
-    fi
+    echo "running -"
+    exit 0
   fi
 fi
 
