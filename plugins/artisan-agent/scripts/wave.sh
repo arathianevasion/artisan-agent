@@ -26,7 +26,8 @@
 #       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
 #       ticket table. "parked" (with a line naming it) means only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
-#       (human.sh parked). A waiting risk gate (drain.sh gate) holds only its
+#       (human.sh parked), or everything left waits behind open reviews
+#       ("waiting on N reviews", gate-action.sh parked). A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -177,7 +178,8 @@ last_orchestrator() {
 }
 
 orchestrator_state() { # id attempt -> classify-worker.sh's line
-  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"
+  # An error is not a dead session: it stops the command, and the caller runs it again.
+  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" || state_die 1 "wave.sh: could not classify $1 attempt $2; run it again"
 }
 
 cmd_launch() {
@@ -351,6 +353,9 @@ cmd_status() {
       # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
       "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
         || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
+      # Exception gates for tickets the run gave up on (gate-action.sh, #70).
+      "$SCRIPT_DIR/gate-action.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate-action.err" \
+        || echo "gate-action.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.gate-action.err")" >&2
       # The Artisan's gate actions taken while the lock was held, a gate
       # closed on the tracker, and any slice gate due (gate.sh, #65).
       "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
@@ -362,16 +367,23 @@ cmd_status() {
       [ -z "${id:-}" ] || halt_if_wave_failed
       # A risk gate or a review gate holds only its tickets' dependents
       # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
-      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length')
+      # An exception gate (an exception decision with its issue) holds only
+      # its ticket's dependents too.
+      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+                                           and (.kind != "exception" or .issue == null))] | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
+      elif [ "$reconciled" -eq 1 ] && parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
       # A hands-on ticket the Artisan finished waits for its verifier and merge.
       elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
-      elif [ "$(get '[.plan.scope[] as $t | .tickets[$t].status | select(. == "merged" or . == "closed")] | length')" \
+      # A ticket the Artisan took out of the run at a gate (dropped, resliced,
+      # bypassed, deferred) is finished for this run.
+      elif [ "$(get "$STATE_JQ_DEFS"' out_of_run as $o | [.plan.scope[] as $t | .tickets[$t].status
+               | select(. as $st | $st == "merged" or $st == "closed" or ($o | index($st)))] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
       elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       else next=blocked
@@ -384,7 +396,7 @@ cmd_status() {
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
   ticket_table
-  if [ "${next}" = decide ] || [ "${next}" = halted ] \
+  if [ "${next}" = decide ] || [ "${next}" = halted ] || [ "${next}" = parked ] \
      || { [ "$next" = launch ] && [ "$(get '[.decisions[] | select(.status == "waiting")] | length')" -gt 0 ]; }; then
     echo
     echo "| Decision | Ticket | Question |"
@@ -456,7 +468,12 @@ cmd_dispatch() {
   # A fresh worker never starts while the last attempt's session is still
   # ending in its worktree (a worker can report failed before it exits).
   if [ "$n" -gt 1 ]; then
-    case "$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null || true)" in
+    # Exit 2 is "no such attempt" (a ticket held for a question never started
+    # one): nothing is running. Any other error stops the dispatch.
+    prev_rc=0
+    prev_cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$((n - 1))" 2>/dev/null) || prev_rc=$?
+    case "$prev_rc" in 0 | 2) ;; *) state_die 1 "wave.sh: could not classify #$t attempt $((n - 1)); run it again" ;; esac
+    case "$prev_cls" in
       running*) state_die 8 "wave.sh: #$t's attempt $((n - 1)) is still ending; dispatch the retry once it has" ;;
     esac
   fi
@@ -503,9 +520,14 @@ EOF
     printf -- '- The Artisan has answered what blocked an earlier attempt; treat each answer as decided, and continue from the branch:\n' >>"$prompt"
     get --arg t "$t" '.tickets[$t].answers[] | "  - #\(.question): \(.answer)"' >>"$prompt"
   fi
+  # Notes the Artisan gave at an exception gate ("retry with notes", gate-action.sh).
+  if [ "$(get --arg t "$t" '(.tickets[$t].notes // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
+  fi
   if [ "$n" -gt 1 ] && [ "$(get --arg t "$t" '.tickets[$t].failures | length')" -gt 0 ]; then
     printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
-      "$(get '.plan.attempts_per_ticket // 2')" \
+      "$(get --arg t "$t" '(.plan.attempts_per_ticket // 2) + (.tickets[$t].extra_attempts // 0)')" \
       "$(get --arg t "$t" '.tickets[$t].failures | last | "\(.reason)"')" >>"$prompt"
     failure_evidence "$t" "$((n - 1))" >"$RUN_DIR/prompts/$t.$n.failure.md"
     { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"

@@ -7,6 +7,7 @@
 # (default: this script's own directory; subdirectories are not searched).
 # Each test runs in its own bash process with `set -euo pipefail`, lib.sh's
 # assertions, and a fresh empty working directory that is removed afterwards.
+# No ARTISAN_* variable from the caller reaches a test; tests set their own.
 # Tests can read:
 #   TESTS_DIR    this harness's directory
 #   PLUGIN_ROOT  the plugin's root directory
@@ -65,6 +66,9 @@ for file in "$suite_dir"/*.test.sh; do
     marker="$markdir/passed"
     output=$(cd "$tmp" && TEST_TMPDIR="$tmp" "$BASH" -c '
       set -euo pipefail
+      # Clear every ARTISAN_* variable the caller has, by prefix, so a suite
+      # run inside a real worker never reaches that worker'"'"'s run (#121).
+      for v in $(compgen -v ARTISAN_); do unset "$v"; done
       source "$TESTS_DIR/lib.sh"
       source "$1"
       "$2"

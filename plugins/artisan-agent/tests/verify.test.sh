@@ -124,6 +124,25 @@ test_v_a_verifier_that_fails_is_started_again_once_then_the_ticket_is_blocked() 
   assert_eq 6 "$JUDGE_STATUS" "judging again says blocked, not start again"
 }
 
+test_v_a_classifier_error_does_not_record_an_error_verdict_or_start_a_second_verifier() {
+  setup_wave
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  # Take the exit record away and empty the pid: the classifier can't read
+  # the verifier's state, which must not look like a dead verifier.
+  mv "$RUN_DIR/results/verify-1.1.exit.json" "$TEST_TMPDIR/exit.json"
+  : >"$RUN_DIR/workers/verify-1.1/runner.pid"
+  JUDGE_STATUS=0
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >"$TEST_TMPDIR/judge.out" 2>"$TEST_TMPDIR/judge.err" || JUDGE_STATUS=$?
+  assert_eq 1 "$JUDGE_STATUS" "an error, not exit 14 (verifier failed, start again)"
+  assert_contains "$(cat "$TEST_TMPDIR/judge.err")" "could not classify"
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')" "no second verifier"
+  assert_eq "null" "$(state_get '.tickets["1"].verifications[0].verdict')" "no error verdict"
+  if "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1; then fail "start launched another verifier over an unclassifiable one"; fi
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')"
+}
+
 test_v_judging_twice_says_the_same_and_writes_nothing() {
   setup_wave
   returned_ticket
