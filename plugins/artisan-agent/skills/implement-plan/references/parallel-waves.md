@@ -49,7 +49,7 @@ On exit 11 the merge is stopped halfway in the integration worktree, conflicts i
 Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fails when the worker reports `failed`, exits without a result, passes its deadline, vanishes, ends without completing (no completion line, a cap hit), or its verifier finds a criterion unmet; the sweep, `verify.sh` or `wave.sh merge` counts it. A verifier that itself fails (crashes, writes no verdict) uses up no attempt: it is started once more, then the ticket is blocked.
 
 - **First failure:** the ticket goes back to `queued`. Dispatch it again in the same wave with `wave.sh dispatch`. That is a **fresh worker**: a new session in a new worktree on the same branch, so the first attempt's commits are there to build on, and its prompt carries the failure evidence (`prompts/<t>.<n>.failure.md`): why the attempt counted as failed, how it ended, what its evidence record said (unmet criteria, what it was unsure of, its notes), what the verifier found unmet, if it got that far, its commits, and the end of its last reply and its stderr. Exit 8 means the failed session is still ending: wait and dispatch again.
-- **Second failure:** the ticket is blocked with an exception decision for the Artisan, and the next `wave.sh status` opens its exception gate (`${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`). Never dispatch it a third time unless the Artisan chooses "retry with notes" there, which grants one more attempt.
+- **Second failure:** the ticket is blocked with an exception decision for the Artisan. Never dispatch it a third time.
 
 A conflict the try couldn't resolve, a red suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan.
 

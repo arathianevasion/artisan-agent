@@ -60,7 +60,7 @@ block() {
   apply '
     .tickets[$t] |= (.status = "blocked" | .pid = null | .blocked_reason = $r)
     | .decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-                      question: "Ticket \($t) is blocked: \($r). Retry with notes, reslice, take it myself or drop; or bypass or defer its exception gate?",
+                      question: "Ticket \($t) is blocked: \($r). Redirect, bypass or defer?",
                       status: "waiting", at: $now}]
     | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
 }

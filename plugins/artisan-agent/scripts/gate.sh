@@ -42,7 +42,6 @@
 #       for the retro.
 #   gate.sh approve <run-dir> <issue> [--by NAME] [--why W]
 #                   [--confidence firm|provisional]
-#                   [--level team|product|individual --reach ticket|area|everywhere [--area A]]
 #       "keep all": every card not yet decided is kept, the decisions are
 #       posted on the issue, the issue closes and the dependents are free to
 #       dispatch in the next wave.
@@ -53,12 +52,6 @@
 #
 # Every decision recorded carries its job and who made it (--by, default
 # Artisan); the card's own job for a card, job 13 for the gate.
-#
-# A deferred gate (gate-action.sh defer) is still answered here at the end
-# gate: approve, change and guardrail take it as they take an open one, and a
-# change on it opens a rework ticket without blocking the dependents, which
-# already ran. Redirect, bypass, defer, exception gates and parking:
-# gate-action.sh (references/gate-actions.md).
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held (sync and
 # open only; the Artisan's actions are kept and folded in later), 6 refused
@@ -221,8 +214,7 @@ GATE=
 open_gate() { # issue
   GATE=$(recorded "$1")
   [ -n "$GATE" ] || state_die 6 "gate.sh: #$1 is not a gate of this run"
-  case "$(jq -r .status <<<"$GATE")" in open|deferred) ;;
-    *) state_die 6 "gate.sh: gate #$1 is $(jq -r .status <<<"$GATE"), not open" ;; esac
+  [ "$(jq -r .status <<<"$GATE")" = open ] || state_die 6 "gate.sh: gate #$1 is $(jq -r .status <<<"$GATE"), not open"
 }
 
 # Cards already decided: in the state file, or in an action not yet folded in.
@@ -304,23 +296,19 @@ new_action() { # gate-id type by: a fresh action file's path
   printf '%s\n' "$f"
 }
 
-parse_opts() { # sets BY WHY CONF AREA LEVEL REACH
-  BY=Artisan WHY= CONF= AREA= LEVEL= REACH=
+parse_opts() { # sets BY WHY CONF AREA
+  BY=Artisan WHY= CONF= AREA=
   while [ $# -gt 0 ]; do
     case "$1" in
       --by) [ $# -ge 2 ] || usage; BY=$2; shift 2 ;;
       --why) [ $# -ge 2 ] || usage; WHY=$2; shift 2 ;;
       --confidence) [ $# -ge 2 ] || usage; CONF=$2; shift 2 ;;
       --area) [ $# -ge 2 ] || usage; AREA=$2; shift 2 ;;
-      --level) [ $# -ge 2 ] || usage; LEVEL=$2; shift 2 ;;
-      --reach) [ $# -ge 2 ] || usage; REACH=$2; shift 2 ;;
       *) usage ;;
     esac
   done
   [ -n "$BY" ] || usage
   case "$CONF" in ""|firm|provisional) ;; *) usage ;; esac
-  case "$LEVEL" in ""|team|product|individual) ;; *) usage ;; esac
-  case "$REACH" in ""|ticket|area|everywhere) ;; *) usage ;; esac
 }
 
 # A decision in the shape of references/decision-record.md, from a card.
@@ -372,10 +360,7 @@ At the slice gate the Artisan changed a decision #\(.ticket) made alone.
 "' <<<"$card")") || die "could not open the rework ticket"
   num=${url##*/}
   gid=$(issue_id "$num") || die "could not read #$num"
-  # A deferred gate's dependents already ran: the rework doesn't hold them.
-  if [ "$(jq -r .status <<<"$GATE")" = open ]; then
-    for d in $(jq -r '.dependents[].number' <<<"$GATE"); do add_blocker "$d" "$num" "$gid"; done
-  fi
+  for d in $(jq -r '.dependents[].number' <<<"$GATE"); do add_blocker "$d" "$num" "$gid"; done
   dec=$(decision_from "$card" change "$choice" | jq -c --argjson r "$num" '. + {rework: ($r | tostring)}')
   gh issue comment "$issue" -R "$repo" --body "Card $n changed by $BY: \"$choice\". Rework ticket #$num, in this run; the slice's dependents wait for it too." >/dev/null \
     || echo "gate.sh: could not comment on #$issue" >&2
@@ -433,7 +418,6 @@ cmd_approve() {
   local issue="$2" gid decided keeps f repo
   shift 2
   parse_opts "$@"
-  [ "$REACH" != area ] || [ -n "$AREA" ] || state_die 2 "gate.sh: a reach of area needs --area NAME"
   open_gate "$issue"
   gid=$(jq -r .id <<<"$GATE")
   repo=$(get '.repo')
@@ -443,13 +427,10 @@ cmd_approve() {
      | {job: (.job // 13), choice, by: $by, card, ticket, gate: $g, outcome: "keep", original: {choice, by}}]' <<<"$GATE")
   f=$(new_action "$gid")
   jq -n --arg key "$(basename "$f" .json)" --arg g "$gid" --arg by "$BY" --argjson keeps "$keeps" \
-    --arg why "$WHY" --arg conf "$CONF" --arg level "$LEVEL" --arg reach "$REACH" --arg area "$AREA" '
+    --arg why "$WHY" --arg conf "$CONF" '
     {key: $key, type: "approve", gate: $g, by: $by,
      decisions: ($keeps + [{job: 13, choice: "approve the slice", by: $by, gate: $g, outcome: "approve"}
-       + (if $why != "" then {why: $why} else {} end) + (if $conf != "" then {confidence: $conf} else {} end)
-       + (if $level != "" then {guardrail_level: $level} else {} end)
-       + (if $reach != "" then {reach: $reach} else {} end)
-       + (if $area != "" then {area: $area} else {} end)])}' >"$f.tmp"
+       + (if $why != "" then {why: $why} else {} end) + (if $conf != "" then {confidence: $conf} else {} end)])}' >"$f.tmp"
   mv "$f.tmp" "$f.new"
   decisions_comment "$gid" "$f.new" >"$f.comment.md"
   gh issue comment "$issue" -R "$repo" --body-file "$f.comment.md" >/dev/null || die "could not comment on #$issue"

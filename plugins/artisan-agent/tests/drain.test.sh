@@ -497,11 +497,10 @@ test_a_waiting_risk_gate_does_not_stop_the_chat_launching() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: launch"
   assert_contains "$out" "(risk-gate) | #10 |"
-  # Nothing else to dispatch: the run parks on the Artisan's review (#70).
+  # Nothing else to dispatch: the gate is the Artisan's to decide.
   stub_issue 12 closed
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_contains "$out" "next: parked"
-  assert_contains "$out" "parked: waiting on 1 review: risk gate on #10; 1 ticket waits behind it: #11"
+  assert_contains "$out" "next: decide"
 }
 
 test_a_hand_off_whose_launch_fails_is_taken_back() {

@@ -300,8 +300,7 @@ test_merges_are_serial_with_the_suite_after_each_and_a_red_suite_blocks_only_its
   assert_eq "2" "$(state_get '[.decisions[] | select(.status == "waiting") | .ticket] | join(" ")')"
   (cd "$INTEGRATION" && [ ! -e BROKEN ]) || fail "the red merge was not undone"
   assert_eq "merge merge" "$(state_get '[.events[] | select(.event == "merge") | .event] | join(" ")')"
-  # #2's red check raised its exception gate; with nothing else left, the run parks on it (#70).
-  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: parked"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
 }
 
 # A seeded conflict: tickets 1 and 2 both write greeting.txt, though each
@@ -504,8 +503,7 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   assert_contains "$out" "next: halted"
   assert_contains "$out" "halted: every ticket dispatched in wave 1 failed (#1, #2); nothing more launches until the Artisan decides"
   assert_contains "$out" "(halt) | - | Wave 1 failed whole (#1, #2)"
-  # Halted once; each blocked ticket also has its exception gate (#70).
-  assert_eq 1 "$(state_get '[.events[] | select(.event == "halted")] | length')"
+  assert_eq halted "$(state_get '.events[-1].event')"
   # Nothing launches until the Artisan decides to carry on.
   local status=0
   "$SCRIPTS/wave.sh" launch "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || status=$?

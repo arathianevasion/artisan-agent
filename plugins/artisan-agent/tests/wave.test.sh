@@ -291,10 +291,8 @@ test_a_red_suite_after_merging_blocks_the_ticket_and_undoes_the_merge() {
   assert_eq exception "$(state_get '.decisions[0].kind')"
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")" "never closed"
   local out
-  # The red check raises an exception gate, and the run parks on it (#70).
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_contains "$out" "next: parked"
-  assert_contains "$out" "check won't go green"
+  assert_contains "$out" "next: decide"
   assert_contains "$out" "| Decision | Ticket | Question |"
 }
 
