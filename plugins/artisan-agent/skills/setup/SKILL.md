@@ -24,7 +24,8 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/machine-setup.sh`. It 
    - `personal-plugin-skill`: the personal `implement-plan` or `debate-me`, which now live in the plugin.
 3. **Offer the removals in one batch.** Recommend yes for all of them, give the reason per kind in a line, and say that nothing is deleted: skill copies go to the skills trash and can be moved back. If the personal copy of an upstream skill was customised on purpose, the Artisan says no for that one. A no leaves the item alone; it will be offered again on the next run.
 4. **Apply only the yeses:** `machine-setup.sh remove ID...` with the ids the Artisan approved. A project-install is removed with `claude plugin uninstall <plugin> --scope <scope>` run in that project's path. If the project folder is gone, the script recreates it, uninstalls from there and removes it again (see Stray install whose project is gone).
-5. **Report in one summary:** what was created, what changed, what was removed and where it went, and what the Artisan declined.
+5. **Install the status-line capture:** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh install`. It writes plan usage and the context window to the individual home every minute, which the usage guard and the context gauge read; a status line the Artisan already has keeps showing (chained). Rerun it after a plugin update. Why and what it writes: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`.
+6. **Report in one summary:** what was created, what changed, what was removed and where it went, and what the Artisan declined.
 
 ## Auto-update
 
