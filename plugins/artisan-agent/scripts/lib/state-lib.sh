@@ -164,6 +164,30 @@ state_valid_file() { # path
     'type == "object" and .schema_version == $v' "$1" >/dev/null 2>&1
 }
 
+# state_version_message path: why a file is refused, naming the plugin version
+# the run started on (the first entry of its waves) so the Artisan can finish
+# the run there. Never a bare "wrong schema version" (references/state-file.md,
+# Schema version).
+state_version_message() {
+  local file="$1" found started
+  if ! found=$(jq -r 'if type == "object" then (.schema_version // "none" | tostring) else "not an object" end' "$file" 2>/dev/null); then
+    printf 'unreadable state file (not JSON): %s\n' "$file"
+    return 0
+  fi
+  if [ "$found" = "not an object" ]; then
+    printf 'unreadable state file (not a JSON object): %s\n' "$file"
+    return 0
+  fi
+  started=$(jq -r '[.waves[]? | select(type == "object") | .plugin_version // empty][0] // empty' "$file" 2>/dev/null) || started=
+  printf 'unreadable state file %s: it is schema version %s and this plugin reads only version %s.' \
+    "$file" "$found" "$ARTISAN_STATE_SCHEMA_VERSION"
+  if [ -n "$started" ]; then
+    printf ' The run started on plugin version %s: finish it on that version.\n' "$started"
+  else
+    printf ' The file records no plugin version the run started on (no wave was recorded): finish it on the plugin version that created it.\n'
+  fi
+}
+
 # state_commit run_dir tmp
 # The one-step rewrite: validate the complete temp file, then rename it over
 # the state file. An interrupted writer leaves only a stray temp file; the
@@ -195,7 +219,7 @@ state_apply() {
   shift 2
   file=$(state_file "$run_dir")
   [ -f "$file" ] || { printf 'no state file at %s\n' "$file" >&2; return 1; }
-  state_valid_file "$file" || { printf 'unreadable or wrong schema version: %s\n' "$file" >&2; return 1; }
+  state_valid_file "$file" || { state_version_message "$file" >&2; return 1; }
   tmp=$(state_tmp "$run_dir")
   if ! jq "$@" "$filter" "$file" >"$tmp"; then
     rm -f "$tmp"

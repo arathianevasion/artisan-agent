@@ -92,7 +92,7 @@ cmd_pick() {
 cmd=$1
 state_require_run_dir "$2"
 FILE=$(state_file "$2")
-state_valid_file "$FILE" || state_die 1 "wave-width.sh: unreadable or wrong schema version: $FILE"
+state_valid_file "$FILE" || state_die 1 "wave-width.sh: $(state_version_message "$FILE")"
 case "$cmd" in
   pick) [ $# -eq 2 ] || usage; cmd_pick "$FILE" ;;
   check) [ $# -eq 3 ] || usage; cmd_check "$FILE" "$3" ;;
