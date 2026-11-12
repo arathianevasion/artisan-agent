@@ -21,6 +21,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_ROOT=$(cd "$HERE/../.." && pwd)
+. "$PLUGIN_ROOT/tests/helpers/live-hooks.sh"
 cmd=${1:-}
 wd=${2:-}
 [ -n "$wd" ] || { sed -n '2,19p' "$0" >&2; exit 2; }
@@ -42,6 +43,7 @@ run() {
   git_quiet -C "$wd/repo" checkout -q -b agent/05
   (
     cd "$wd/repo"
+    export ARTISAN_HOOK_PROOF="$wd/hook-proof"
     export FAKE_GH_DIR="$wd/tracker" ARTISAN_FINDINGS_FILE="$wd/results/findings/05.jsonl" ARTISAN_RUN_ID=live
     export PATH="$PLUGIN_ROOT/tests/fixtures/fake-gh:$PATH"
     perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "${DEADLINE:-1200}" \
@@ -52,7 +54,7 @@ run() {
       --allowedTools Bash Skill Agent Read Write Edit Glob Grep \
       --add-dir "$wd/results" --add-dir "$wd/tracker" \
       --plugin-dir "$PLUGIN_ROOT" --plugin-dir "$UPSTREAM_PLUGIN_DIR" \
-      --setting-sources project,local --no-session-persistence \
+      $(live_hooks_args "$PLUGIN_ROOT" "$wd/hooks") --no-session-persistence \
       --output-format stream-json --verbose >"$wd/session.jsonl" 2>"$wd/stderr.log"
   ) || echo "live.sh: claude exited $?" >&2
   jq -rs 'map(select(.type == "result")) | last // empty
@@ -69,6 +71,7 @@ check() { # description command...
 verify() {
   local rec="$wd/results/05.json" q
   q=$(ls "$wd"/tracker/issue-*.json 2>/dev/null | head -1)
+  check "a plugin hook fired (SessionStart line in the proof file)" live_hooks_proof_check "$wd/hook-proof"
   check "a question ticket was filed" test -n "$q"
   check "it is labelled needs-triage" jq -e '[.labels[].name] | index("needs-triage")' "$q"
   check "it has options, a recommendation and the Always ask criterion" \
