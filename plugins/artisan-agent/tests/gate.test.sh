@@ -334,8 +334,10 @@ test_a_run_holds_the_dependent_at_the_gate_and_releases_it_on_keep_all() {
   run_wave 2
   assert_eq merged "$(state_get '.tickets["3"].status')"
   assert_eq "queued 0" "$(state_get '.tickets["2"] | "\(.status) \(.attempts)"')"
+  # Only gated work is left: the run parks on the review (#70).
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_contains "$out" "next: decide"
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "parked: waiting on 1 review: Slice gate: greeting (run r1) #$num; 1 ticket waits behind it: #2"
   # The chat shows the compressed packet; keep all releases 2.
   assert_contains "$("$G" chat "$RUN_DIR")" "Keep all, or name one to change."
   "$G" approve "$RUN_DIR" "$num" >/dev/null

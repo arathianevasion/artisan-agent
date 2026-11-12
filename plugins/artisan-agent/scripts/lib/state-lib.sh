@@ -263,7 +263,11 @@ state_usage() {
 #   slice_gates: the plan's slice gates, each {id, slice, role, problem,
 #     solution, tickets} (references/review-gates.md)
 #   gate_due(g): every ticket of gate g merged (or closed) and the gate not
-#     yet approved
+#     yet answered (approved, bypassed, deferred or redirected: gate-action.sh)
+#   decide(id; d; at): waiting decision id decided, with the decision record d
+#     (references/decision-record.md); unchanged when it is not waiting
+#   out_of_run: the statuses that take a ticket out of the run without a
+#     merge (references/gate-actions.md); with merged and closed, it is done
 #   gate_holds(t): t is in a slice gate that is due: its dependents wait
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
@@ -280,7 +284,7 @@ STATE_JQ_DEFS='
   };
   def current_wave: ((.orchestrators // []) | last | .wave) // 0;
   def failed_attempt($t; $reason; $at):
-    .plan.attempts_per_ticket as $max
+    (.plan.attempts_per_ticket + (.tickets[$t].extra_attempts // 0)) as $max
     | .tickets[$t] as $tk
     | .tickets[$t] |= (
         .failures += [{attempt: .attempts, reason: $reason, at: $at}]
@@ -289,7 +293,7 @@ STATE_JQ_DEFS='
     | if $tk.attempts >= $max then
         .decisions += [{
           id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
-          question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Bypass or defer?",
+          question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Retry with notes, reslice, take it myself or drop; or bypass or defer its exception gate?",
           status: "waiting", at: $at
         }]
       else . end
@@ -314,7 +318,11 @@ STATE_JQ_DEFS='
     . as $s
     | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")
       and any($g.tickets[]; $s.tickets[.].status? == "merged")
-      and ([($s.review_gates // [])[] | select(.id == $g.id and .status == "approved")] == []);
+      and ([($s.review_gates // [])[] | select(.id == $g.id and .status != "open")] == []);
+  def decide($id; $d; $at):
+    .decisions |= map(if .id == $id and .status == "waiting"
+      then . + $d + {status: "decided", decided_at: $at} else . end);
+  def out_of_run: ["dropped", "resliced", "bypassed", "deferred"];
   def gate_holds($t):
     . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
 '

@@ -273,6 +273,21 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
 | `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
 
+## Gate actions, exception gates and parking
+
+`gate-action.sh` answers a gate (approve, redirect, bypass, defer), opens an exception gate for a ticket the run gave up on or a check that won't go green (retry with notes, reslice, take it myself, drop), and parks the run when everything left waits behind open reviews; `state.sh decide` answers any waiting decision. The rules and what each action leaves behind: `references/gate-actions.md`. Tested in `tests/gate-actions.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate-action.sh approve <run-dir> <issue>` | either chat | a review gate: `gate.sh approve`, with optional `--why`, `--confidence`, `--level`, `--reach`, `--area`; an exception gate is refused | 0, 1, 2, 6 |
+| `gate-action.sh redirect <run-dir> <issue> --notes T \| --mine` | either chat | a rework ticket in the run (`ready-for-agent`, or `ready-for-human` with `--mine`), natively blocking the dependents; the gate closes; prints the ticket | 0, 1, 2, 3, 6 |
+| `gate-action.sh bypass\|defer <run-dir> <issue>` | either chat | bypass: closed unreviewed, who recorded; defer: the dependents go ahead, the gate stays open until the end gate. Either kind of gate | 0, 1, 2, 3, 6 |
+| `gate-action.sh retry <run-dir> <issue> --notes T`, `reslice`, `take`, `drop` | either chat | an exception gate: the ticket queued with the notes and one more attempt, or out of the run (`needs-triage`), or `ready-for-human`, or dropped; the gate closes | 0, 1, 2, 3, 6 |
+| `gate-action.sh sync <run-dir>` | `wave.sh status` | opens an exception gate per `exception` decision waiting without one; bypasses one closed by hand: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate-action.sh parked <run-dir> [--record]` | `wave.sh status` | 0 and `parked: waiting on N reviews: …` when every ticket left waits behind an open gate (`next: parked`); 1 otherwise | 0, 1 |
+| `gate-action.sh chat\|list\|deferred <run-dir>` | either chat | the open exception gates with their choices; every gate; the deferred gates, for the end gate | 0 |
+| `state.sh decide <run-dir> <id> <choice> [options]` | either chat | a waiting decision decided as a decision record | 0, 1, 2, 3, 6 |
+
 ## The fake tracker
 
 `tests/fixtures/fake-gh/gh` answers the `gh` calls the run makes (`api` issue and blocked-by reads, `issue view`, `list`, `comment`, `edit`, `close`) from a folder (`FAKE_GH_DIR`) of `issue-<n>.json` and `blocked_by-<n>.json` files, so tests and live trials never reach GitHub.
