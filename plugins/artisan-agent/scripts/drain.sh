@@ -384,7 +384,7 @@ cmd_gate_cleared() {
     .tickets[$t].risk_gate.status = "cleared"
     | .tickets[$t].risk_gate.cleared_at = $now
     | .decisions |= map(if .kind == "risk-gate" and .ticket == $t and .status == "waiting"
-                        then .status = "decided" | .choice = "clear" | .by = $by | .decided_at = $now
+                        then .status = "decided" | .choice = "clear" | .by = $by | .job = 13 | .changed = false | .decided_at = $now
                         else . end)
     | event({event: "risk-gate-cleared", ticket: $t, by: $by}; $now)' \
     --arg t "$t" --arg by "$by"
