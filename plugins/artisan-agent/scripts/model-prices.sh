@@ -12,10 +12,10 @@
 #       published pricing and writes <work-dir>/published.json, in the file's own shape
 #   model-prices.sh compare <published.json>
 #       recorded against published: one table row per model that differs, is new or is
-#       no longer published. Exit 0 same, 10 differs, 1 unreadable
+#       not in the published answer (the agent may simply not have found it). Exit 0 same, 10 differs, 1 unreadable
 #   model-prices.sh apply <published.json>
 #       after the Artisan says yes: sets each published model's rates and the "as of"
-#       date in the file's _source. A model no longer published is kept, never deleted
+#       date in the file's _source. A model absent from the answer is kept, never deleted
 #
 # Nothing changes until `apply`; the file is only ever rewritten with the Artisan's yes.
 # Environment: ARTISAN_PRICES_FILE (default references/model-prices.json),
@@ -73,7 +73,7 @@ cmd_compare() {
             then [$m, "$\($old.input_per_mtok * 1) / $\($old.output_per_mtok * 1)", "$\($n.input_per_mtok * 1) / $\($n.output_per_mtok * 1)"]
           else empty end ),
       ( ($r.models | keys[]) as $m | select($new[$m] == null)
-        | [$m, "$\($r.models[$m].input_per_mtok * 1) / $\($r.models[$m].output_per_mtok * 1)", "no longer published"] )
+        | [$m, "$\($r.models[$m].input_per_mtok * 1) / $\($r.models[$m].output_per_mtok * 1)", "not in the published answer (kept)"] )
     | @tsv' "$FILE")
   if [ -z "$rows" ]; then echo "no price change"; return 0; fi
   printf '## Model prices differ from the published pricing\n\n'

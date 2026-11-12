@@ -39,7 +39,7 @@ test_a_changed_new_and_dropped_model_are_tabled_and_offered() {
   assert_eq 10 "$rc" "exit"
   assert_contains "$out" "| claude-opus-5-5 | \$4 / \$20 | \$5 / \$25 |"
   assert_contains "$out" "| claude-new-6 | not recorded | \$1 / \$3 |"
-  assert_contains "$out" "| claude-fable-5-2 | \$8 / \$40 | no longer published |"
+  assert_contains "$out" "| claude-fable-5-2 | \$8 / \$40 | not in the published answer (kept) |"
   assert_contains "$out" "Update model prices?"
   case "$out" in *"claude-sonnet-5-5 |"*) fail "unchanged model listed" ;; esac
 }
@@ -58,7 +58,7 @@ test_apply_updates_rates_and_date_keeps_dropped_models() {
   bash "$MP" apply "$TEST_TMPDIR/p.json" >/dev/null
   assert_eq 5 "$(jq '.models["claude-opus-5-5"].input_per_mtok' "$ARTISAN_PRICES_FILE")"
   assert_eq 3 "$(jq '.models["claude-new-6"].output_per_mtok' "$ARTISAN_PRICES_FILE")"
-  assert_eq 40 "$(jq '.models["claude-fable-5-2"].output_per_mtok * 1' "$ARTISAN_PRICES_FILE")" "dropped model deleted"
+  assert_eq 40 "$(jq '.models["claude-fable-5-2"].output_per_mtok * 1' "$ARTISAN_PRICES_FILE")" "model absent from the answer was deleted"
   assert_contains "$(jq -r '._source' "$ARTISAN_PRICES_FILE")" "as of 2027-01-02"
   local out; out=$(bash "$MP" compare "$TEST_TMPDIR/p.json" || true)
   case "$out" in *"claude-opus-5-5 |"*) fail "applied model still differs" ;; esac
