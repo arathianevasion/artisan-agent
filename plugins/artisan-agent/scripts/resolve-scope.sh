@@ -56,8 +56,8 @@ body_blockers() { # number what(ticket|plan)
   local n=$1 what=$2 body b st out='[]'
   body=$(gh issue view "$n" -R "$REPO" --json body --jq '.body // ""') || die "cannot read the blockers of $what #$n: cannot read its body"
   for b in $(printf '%s\n' "$body" | awk '
-    !seen && tolower($0) ~ /^[[:space:]]*(#+[[:space:]]*)?blocked by:?/ { seen = 1; head = ($0 ~ /^[[:space:]]*#/); print; next }
-    seen && head && /^[[:space:]]*#/ { exit }
+    !seen && tolower($0) ~ /^[[:space:]]*(#+[[:space:]]*)?blocked by:?/ { seen = 1; head = ($0 ~ /^[[:space:]]*#+[[:space:]]/); print; next }
+    seen && head && /^[[:space:]]*#+[[:space:]]/ { exit }
     seen && head { print; next }
     seen { exit }' | grep -oE '#[0-9]+' | tr -d '#'); do
     st=$(gh issue view "$b" -R "$REPO" --json state --jq '.state | ascii_downcase') \

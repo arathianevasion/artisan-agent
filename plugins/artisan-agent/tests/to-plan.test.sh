@@ -527,12 +527,12 @@ set_body() { # issue body
 test_resolve_scope_reads_a_blocked_by_heading_section_where_there_are_no_native_dependencies() {
   use_fake_gh
   rm -f "$FAKE_GH_DIR"/blocked_by-*.json
-  set_body 2 "## What\nx\n\n## Blocked by\n\n- #1\n- #44 (done)\n* #5\n\n## Acceptance criteria\n- [ ] sees #3 here"
+  set_body 2 "## What\nx\n\n## Blocked by\n\n- #1\n- #44 (done)\n* #5\n#4\n\n## Acceptance criteria\n- [ ] sees #3 here"
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
   fail_gh_on '*dependencies/blocked_by*' "gh: Not Found (HTTP 404)"
   local out; out=$("$RS" --repo local/sample 1 2)
   assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
-  assert_eq "[1,5]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "open refs under the heading only; #44 closed, #3 is under another heading"
+  assert_eq "[1,5,4]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "open refs under the heading only (a bare #4 line is a ref, not a heading); #44 closed, #3 is under another heading"
 }
 
 test_resolve_scope_reads_a_plan_issues_body_blockers_where_there_are_no_native_dependencies() {
