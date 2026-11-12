@@ -39,3 +39,18 @@ test_each_test_starts_in_its_own_empty_directory() {
   assert_eq "$TEST_TMPDIR" "$(pwd -P)"
   assert_eq "" "$(ls -A)"
 }
+
+test_a_test_that_sets_an_exit_trap_then_dies_is_reported_failed() {
+  local out status=0
+  out=$("$TESTS_DIR/run.sh" "$FIXTURES/exit-trap-dies" 2>&1) || status=$?
+  assert_eq 1 "$status" "exit status"
+  assert_contains "$out" "FAIL sample: test_trap_then_unbound_variable"
+  assert_contains "$out" "0 passed, 1 failed"
+}
+
+test_a_test_with_an_exit_trap_that_passes_is_still_ok() {
+  local out status=0
+  out=$("$TESTS_DIR/run.sh" "$FIXTURES/exit-trap-passes" 2>&1) || status=$?
+  assert_eq 0 "$status" "exit status"
+  assert_contains "$out" "ok   sample: test_trap_then_passes"
+}

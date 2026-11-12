@@ -67,7 +67,7 @@ cmd_comment() {
       "| Criterion | Met | Evidence |", "|---|---|---|",
       ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" else "no" end) | \(.evidence | ev | cell) |"),
       "",
-      "- **Suite:** \(if $e.tests then "`\($e.tests.command // "-")` → \($e.tests.summary // "-" | cell)" else "not reported" end)",
+      "- **Tests the worker ran:** \(if $e.tests then ((if ($e.tests.files // []) | length > 0 then "\($e.tests.files | map("`\(.)`") | join(", ")): " else "" end) + "`\($e.tests.command // "-")` → \($e.tests.summary // "-" | cell) (the full suite runs at the merge gate)") else "not reported" end)",
       "- **Checks:** " + (if $e.checks == null then "not reported"
          else ($e.checks.results // [] | map("`\(.command)` \(if .passed then "passed" else "**red**" end)\(if (.result // "") != "" then " (\(.result | cell))" else "" end)") | join("; ")) as $ran
            | if $e.checks.recorded then "the recorded checks, run by the verifier: \($ran)"

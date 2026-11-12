@@ -69,6 +69,31 @@ test_the_checker_rejects_a_malformed_record_and_names_each_problem() {
   assert_contains "$out" "review.remarks[0]: not_acted needs why"
 }
 
+test_the_record_names_the_test_files_run_and_leaves_the_full_suite_to_the_merge_gate() {
+  local out status=0
+  example_record | jq -e '.tests.files | type == "array" and length > 0' >/dev/null || fail "the example names no test files"
+  example_record | jq -r '.tests.full_suite' | grep -q "merge gate" || fail "the example does not leave the full suite to the merge gate"
+  example_record | jq 'del(.tests.files)' > nofiles.json
+  out=$("$CHECK" nofiles.json) || status=$?
+  assert_eq 1 "$status" "checker exit status"
+  assert_contains "$out" "tests: files must name the test files run"
+  example_record | jq '.tests.full_suite = "ran it"' > badsuite.json
+  out=$("$CHECK" badsuite.json) || status=$?
+  assert_contains "$out" "tests: full_suite must say the full suite is left to the merge gate"
+  assert_contains "$(cat "$EVIDENCE")" '`tests.files`'
+}
+
+test_the_skill_runs_covering_tests_not_the_full_suite_and_never_ends_a_turn_to_wait() {
+  local body
+  body=$(cat "$SKILL")
+  case "$body" in *"the full suite once the ticket is built"*|*"Run the full suite again"*|*"1. Run the full suite, then"*)
+    fail "SKILL.md still tells a worker to run the full suite" ;;
+  esac
+  assert_contains "$body" "merge gate"
+  assert_contains "$body" "ends the session"
+  assert_contains "$body" "Never end a turn"
+}
+
 test_the_checker_rejects_a_file_that_is_not_json() {
   echo "status: complete" > notes.txt
   assert_status 1 "$CHECK" notes.txt
