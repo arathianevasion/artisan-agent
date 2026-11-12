@@ -10,9 +10,9 @@ permissions:
 jobs:
   script-tests:
     name: Script tests (Linux)
-    # Self-hosted runner on the owner's Linux VM; the job runs in a throwaway container.
+    # GitHub-hosted runner; the job runs in a throwaway container.
     # macOS (and bash 3.2) is covered by the local suite gate before every merge.
-    runs-on: [self-hosted, linux, cmux-vm]
+    runs-on: ubuntu-latest
     container: ubuntu:24.04
     steps:
       - name: Install tools
