@@ -14,8 +14,10 @@
 #       branch, the run's unmerged ticket branches and the run's state folder
 #       to the runs/<run-id> branch (the folder is git-ignored, so the branch
 #       carries it as a snapshot commit on top of the integration tip). The
-#       run's `location` becomes "moved" here and in the pushed state: this
-#       copy refuses every write, so the run is live nowhere until `in`.
+#       run's `location` becomes "moved" here first (push pending), then the
+#       run branch is pushed: a refused push puts this copy back to live, and
+#       a death in between is finished or undone by running `out` again. At
+#       no instant are two copies live; until `in` the run is live nowhere.
 #   move.sh in <run-id> [--remote NAME]
 #       from a clone of the same repo: fetch runs/<run-id>, put the state
 #       folder, the integration branch (with its worktree) and the ticket
@@ -137,7 +139,7 @@ remote_state() { # main remote-ref id -> the state json on that ref, or nothing
 # ---------------------------------------------------------------- out
 
 cmd_out() {
-  local rd="$1" remote=origin wait=0 id main ib tip rref prev rstate rstatus rmach me out
+  local rd="$1" remote=origin wait=0 id main ib tip rref prev rstate rstatus rmach me out snap
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -148,7 +150,16 @@ cmd_out() {
   done
   RUN_DIR=$rd
   state_require_run_dir "$rd"
-  state_location_guard "$rd" || exit 3
+  # A copy left "moved, push pending" by an out that died is finished (or
+  # undone) by running out again; any other moved copy is refused as before.
+  local pending=0
+  if [ "$(get '.location.status // ""')" = moved ] && [ "$(get '.location.pending // false')" = true ] \
+    && [ "$(get '.location.machine // ""')" = "$(state_machine_id)" ]; then
+    pending=1
+    export ARTISAN_MOVING=1
+  else
+    state_location_guard "$rd" || exit 3
+  fi
   id=$(get .run_id)
   main=$(main_of "$rd")
   me=$(state_machine_id)
@@ -179,44 +190,82 @@ cmd_out() {
 
   # The branch may already hold this run (an earlier move): it must not be live elsewhere.
   rref="refs/remotes/$remote/runs/$id"
-  prev=""
+  # Set before the fetch: it fails on a first move (no runs/<id> yet), and bash 4+
+  # (Linux) leaves a bare `local` unset, so set -u would trip on the reads below.
+  prev="" rstate="" rstatus="" rmach=""
   if git -C "$main" fetch -q "$remote" "+refs/heads/runs/$id:$rref" 2>/dev/null; then
     prev=$(git -C "$main" rev-parse "$rref")
     rstate=$(remote_state "$main" "$rref" "$id")
     rstatus=$(printf '%s' "$rstate" | jq -r '.location.status // empty' 2>/dev/null || true)
     rmach=$(printf '%s' "$rstate" | jq -r '.location.machine // empty' 2>/dev/null || true)
-    if [ "$rstatus" = live ] && [ "$rmach" != "$me" ]; then
-      printf 'the run is live on %s according to %s/runs/%s; it is not moved from here\n' "$rmach" "$remote" "$id" >&2
-      exit 5
+  fi
+  snap=""
+  if [ "$pending" = 1 ]; then
+    snap=$(get '.location.commit // ""')
+    # The push already landed (the copy died after it): only the marker is left to clear.
+    if [ -n "$snap" ] && [ -n "$prev" ] && git -C "$main" merge-base --is-ancestor "$snap" "$prev" 2>/dev/null; then
+      out_finish "$rd" "$id" "$ib" "$snap"
+      return 0
     fi
+    [ -n "$snap" ] || { out_undo "$rd" "$me"; die "a move was left half done with no snapshot; the run is live here again"; }
+  fi
+  if [ "$rstatus" = live ] && [ "$rmach" != "$me" ]; then
+    [ "$pending" = 0 ] || out_undo "$rd" "$me"
+    printf 'the run is live on %s according to %s/runs/%s; it is not moved from here\n' "$rmach" "$remote" "$id" >&2
+    exit 5
   fi
 
-  # The new state, then the snapshot commit carrying it.
-  jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
-      .halted = (if .halted.move == true then null else .halted end)
-      | .location = {status: "moved", machine: $m, branch: $b, at: $now}
-      | event({event: "moved-out", from: $m, branch: $b}; $now)' "$(state_file "$rd")" >"$TMP_DIR/state.json"
-  local parents="$tip"
-  [ -z "$prev" ] || parents="$tip $prev"
-  local snap
-  # shellcheck disable=SC2086
-  snap=$(snapshot_commit "$main" "$id" "$rd" "$TMP_DIR/state.json" $parents)
+  if [ "$pending" = 0 ]; then
+    # The new state, then the snapshot commit carrying it.
+    jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
+        .halted = (if .halted.move == true then null else .halted end)
+        | .location = {status: "moved", machine: $m, branch: $b, at: $now}
+        | event({event: "moved-out", from: $m, branch: $b}; $now)' "$(state_file "$rd")" >"$TMP_DIR/state.json"
+    local parents="$tip"
+    [ -z "$prev" ] || parents="$tip $prev"
+    # shellcheck disable=SC2086
+    snap=$(snapshot_commit "$main" "$id" "$rd" "$TMP_DIR/state.json" $parents)
+  fi
 
-  # Push: the integration branch, unmerged ticket branches, then (FF only) the run branch.
-  git -C "$main" push -q "$remote" "refs/heads/$ib:refs/heads/$ib" 2>&1 || { echo "move.sh: the push of $ib was refused" >&2; exit 6; }
+  # Push the integration branch and the unmerged ticket branches first: a refusal
+  # here changes nothing, because this copy is still live.
+  git -C "$main" push -q "$remote" "refs/heads/$ib:refs/heads/$ib" 2>&1 || { [ "$pending" = 0 ] || out_undo "$rd" "$me"; echo "move.sh: the push of $ib was refused" >&2; exit 6; }
   local t br
   for t in $(jq -r '.tickets | to_entries[] | select(.value.status != "merged" and .value.status != "closed") | .key' "$(state_file "$rd")"); do
     br=$(jq -r --arg t "$t" '.tickets[$t].branch' "$(state_file "$rd")")
     git -C "$main" rev-parse -q --verify "refs/heads/$br" >/dev/null || continue
-    git -C "$main" push -q "$remote" "refs/heads/$br:refs/heads/$br" 2>&1 || { echo "move.sh: the push of $br was refused" >&2; exit 6; }
+    git -C "$main" push -q "$remote" "refs/heads/$br:refs/heads/$br" 2>&1 || { [ "$pending" = 0 ] || out_undo "$rd" "$me"; echo "move.sh: the push of $br was refused" >&2; exit 6; }
   done
-  git -C "$main" push -q "$remote" "$snap:refs/heads/runs/$id" 2>&1 \
-    || { echo "move.sh: runs/$id was refused (the run was moved or claimed elsewhere first); nothing changed here" >&2; exit 6; }
 
-  # Only now does this copy stop being live.
-  jq --arg c "$snap" '.location.commit = $c' "$TMP_DIR/state.json" >"$(state_tmp "$rd")"
+  # Two-phase marker. Phase one: this copy stops being live (moved, push
+  # pending) BEFORE the run branch is pushed, so at no instant are two copies
+  # live. Phase two: the push. If it is refused, this copy goes back to live;
+  # if this process dies in between, running out again finishes or undoes it.
+  if [ "$pending" = 0 ]; then
+    # The pushed snapshot has the drain halt cleared; this copy keeps it until the push lands.
+    jq --arg c "$snap" --argjson h "$(get '.halted')" '.location.commit = $c | .location.pending = true | .halted = $h' "$TMP_DIR/state.json" >"$(state_tmp "$rd")"
+    ARTISAN_MOVING=1 state_commit "$rd" "$(state_tmp "$rd")"
+  fi
+  [ "${ARTISAN_MOVE_DIE_AT:-}" != after-mark ] || kill -KILL $$ # test hook (tests/move.test.sh)
+  git -C "$main" push -q "$remote" "$snap:refs/heads/runs/$id" 2>&1 \
+    || { out_undo "$rd" "$me"; echo "move.sh: runs/$id was refused (the run was moved or claimed elsewhere first); this copy is live again, nothing changed on $remote" >&2; exit 6; }
+  [ "${ARTISAN_MOVE_DIE_AT:-}" != after-push ] || kill -KILL $$ # test hook
+  out_finish "$rd" "$id" "$ib" "$snap"
+}
+
+out_finish() { # run-dir id integration-branch snapshot: the push landed; clear the pending marker
+  local rd="$1"
+  jq 'del(.location.pending) | .halted = (if .halted.move == true then null else .halted end)' "$(state_file "$rd")" >"$(state_tmp "$rd")"
   ARTISAN_MOVING=1 state_commit "$rd" "$(state_tmp "$rd")"
-  printf 'moved %s: pushed %s and runs/%s (%s); resume it with: move.sh in %s\n' "$id" "$ib" "$id" "$snap" "$id"
+  printf 'moved %s: pushed %s and runs/%s (%s); resume it with: move.sh in %s\n' "$2" "$3" "$2" "$4" "$2"
+}
+
+out_undo() { # run-dir machine: the push did not land; this copy is live again
+  local rd="$1" me="$2"
+  jq --arg m "$me" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
+      .location = {status: "live", machine: $m, at: $now}
+      | event({event: "move-out-undone", machine: $m}; $now)' "$(state_file "$rd")" >"$(state_tmp "$rd")"
+  ARTISAN_MOVING=1 state_commit "$rd" "$(state_tmp "$rd")"
 }
 
 # ---------------------------------------------------------------- in
