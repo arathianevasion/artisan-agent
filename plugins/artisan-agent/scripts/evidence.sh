@@ -8,7 +8,8 @@
 # Usage:
 #   evidence.sh comment <run-dir> <ticket>
 #       the ticket's evidence comment, Markdown: verdict, each criterion with
-#       its evidence, the suite, diff stats, cost against the estimate, what
+#       its evidence, the suite, the checks the verifier ran (the recorded
+#       ones, or its fallback), diff stats, cost against the estimate, what
 #       the worker was unsure of, the decisions it made alone, and the
 #       contract itself as JSON. wave.sh close posts it.
 #   evidence.sh digest <run-dir> [--wave N | --all]
@@ -36,7 +37,7 @@ cmd=$1 run_dir=$2
 shift 2
 state_require_run_dir "$run_dir"
 FILE=$(state_file "$run_dir")
-state_valid_file "$FILE" || state_die 1 "evidence.sh: unreadable or wrong schema version: $FILE"
+state_valid_file "$FILE" || state_die 1 "evidence.sh: $(state_version_message "$FILE")"
 
 # Shared: a table cell, a dollar figure, a ticket's name.
 DEFS='
@@ -67,6 +68,12 @@ cmd_comment() {
       ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" else "no" end) | \(.evidence | ev | cell) |"),
       "",
       "- **Suite:** \(if $e.tests then "`\($e.tests.command // "-")` → \($e.tests.summary // "-" | cell)" else "not reported" end)",
+      "- **Checks:** " + (if $e.checks == null then "not reported"
+         else ($e.checks.results // [] | map("`\(.command)` \(if .passed then "passed" else "**red**" end)\(if (.result // "") != "" then " (\(.result | cell))" else "" end)") | join("; ")) as $ran
+           | if $e.checks.recorded then "the recorded checks, run by the verifier: \($ran)"
+             else ($e.checks.fallback // "no recorded checks" | cell) + (if $ran != "" then ": \($ran)" else "" end) end
+         end)
+        + (if $e.checks.worker_matches == false then ". **The worker'"'"'s evidence listed other checks:** \($e.checks.worker_listed | map("`" + . + "`") | join(", ") | cell)" else "" end),
       "- **Diff:** \(if ($e.diff.summary // "") == "" then "no changes" else $e.diff.summary end)",
       "- **Cost:** \($e.cost.total_usd | usd) (worker \($e.cost.worker_usd | usd), verifier \($e.cost.verifier_usd | usd)) against an estimate of \($e.cost.estimate_usd | usd)",
       "",

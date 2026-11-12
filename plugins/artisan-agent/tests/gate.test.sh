@@ -257,6 +257,40 @@ test_a_gate_closed_on_the_tracker_by_hand_is_approved_at_the_next_sync() {
   assert_eq "Artisan (closed on the tracker)" "$(state_get '.review_gates[0].decisions[-1].by')"
 }
 
+test_a_gate_closed_by_hand_is_announced_in_one_line_and_its_cards_carry_to_the_end_gate() {
+  setup_gate
+  merged_with_evidence 1
+  local num cards out
+  num=$("$G" open "$RUN_DIR" slice-1)
+  cards=$(state_get '.review_gates[0].cards | length')
+  [ "$cards" -ge 1 ] || fail "the seeded gate has no decision cards"
+  gh issue close "$num" -R local/sample
+  # The Product chat reads the line from the tracker alone, after the Engineering chat's sweep.
+  out=$(ARTISAN_REPO=local/sample "$SCRIPTS/chats.sh" sweep --chat engineering --no-fetch --project "$PROJECT")
+  assert_contains "$out" "Gate #$num closed on GitHub: treated as approved; $cards undecided card"
+  assert_eq "$cards" "$(state_get '.review_gates[0].carried | length')"
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+  assert_contains "$(state_get '.events[-1].event')" gate-approved
+  out=$(ARTISAN_REPO=local/sample "$SCRIPTS/chats.sh" sweep --chat product --no-fetch --project "$PROJECT")
+  assert_contains "$out" "Gate #$num closed on GitHub: treated as approved"
+  # The end gate lists the cards the Artisan never decided.
+  out=$("$G" carried "$RUN_DIR")
+  assert_contains "$out" "| #$num (closed on GitHub) | 1 |"
+}
+
+test_gate_list_reads_the_tracker_across_runs_not_the_state_file() {
+  setup_gate
+  merged_with_evidence 1
+  local num out
+  num=$("$G" open "$RUN_DIR" slice-1)
+  # A gate another run opened: in no state file here.
+  jq -n '{number: 90, title: "Slice gate: other (run r9)", state: "open", labels: [{name: "review-gate"}],
+    body: "| Gate | Role needed | Slice | Tickets blocked |\n|---|---|---|---|\n| slice | Product | #5 | - |"}' >"$FAKE_GH_DIR/issue-90.json"
+  out=$("$G" list "$RUN_DIR")
+  assert_contains "$out" "#$num (slice: greeting, run r1)"
+  assert_contains "$out" "| Product | 13 Check a finished slice at a review gate | #90 (slice: other, run r9) | 1 |"
+}
+
 # ------------------------------------------------------- the run, end to end
 
 write_role_scripts() {

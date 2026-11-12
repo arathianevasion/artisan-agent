@@ -354,3 +354,137 @@ test_v_the_orchestrator_brief_reads_verdicts_not_transcripts_or_diffs() {
   assert_contains "$(cat "$v")" "evidence-contract.md"
   assert_contains "$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")" "evidence.sh digest"
 }
+
+# ------------------------------------------------ the recorded checks (#98)
+
+# record_checks: the project records `sh check.sh` (fails when BROKEN exists)
+# in CODING_STANDARDS.md `## Checks`, as setup writes it, before the run starts.
+record_checks() {
+  printf '# Coding standards\n\n## Checks\n\n- `sh check.sh`: proven to fail on 2026-11-01, breaking: created BROKEN\n' \
+    >"$PROJECT/CODING_STANDARDS.md"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "checks"
+}
+
+# A verifier that runs the command its prompt gives ("    $ ..."), with
+# VERIFIER_FOUND after -- when set, then answers like the default one, citing
+# `sh check.sh` on the criteria VERIFIER_CITES names (default: every one).
+write_checking_verifier() {
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF2'
+set -e
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+cmd=$(sed -n 's/^    \$ //p' "$ARTISAN_RUN_DIR/prompts/$key.md")
+if [ -n "${VERIFIER_FOUND:-}" ]; then eval "$cmd"' -- "$VERIFIER_FOUND"' >/dev/null || true
+else eval "$cmd" >/dev/null || true; fi
+jq --arg cites "${VERIFIER_CITES:-}" '{verdict: "pass", acceptance: [.[] | {criterion: ., met: true,
+    evidence: (if $cites == "" or . == $cites then {checks: [{command: "sh check.sh", result: "suite ok"}]} else {diff: "hello.txt +1 -0"} end)}],
+  unsure: [], notes: "checked by behaviour"}' "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+EOF2
+}
+
+test_v_with_checks_recorded_the_verifier_runs_exactly_them_and_the_evidence_shows_them() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  # The worker's branch rewrites the standards: the checks still come from the run.
+  export WORKER_FILE=CODING_STANDARDS.md
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  local prompt
+  prompt=$(cat "$RUN_DIR/prompts/verify-1.1.md")
+  assert_contains "$prompt" "The recorded checks ("
+  assert_contains "$prompt" '    - `sh check.sh`'
+  assert_contains "$prompt" "scripts/checks.sh run --file"
+  assert_eq true "$(state_get '.tickets["1"].evidence.checks.recorded')"
+  assert_eq "sh check.sh:true" "$(state_get '.tickets["1"].evidence.checks.results | map("\(.command):\(.passed)") | join(" ")')"
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" \
+    '- **Checks:** the recorded checks, run by the verifier: `sh check.sh` passed (suite ok)'
+}
+
+test_v_a_recorded_check_seeded_red_makes_the_criteria_that_cite_it_unmet() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  export WORKER_FILE=BROKEN VERIFIER_CITES="It says hi"
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq 6 "$JUDGE_STATUS"
+  assert_eq "fail 1/2 retry: It says hi" "$JUDGE_OUT"
+  assert_eq "true false" "$(state_get '[.tickets["1"].evidence.acceptance[].met] | map(tostring) | join(" ")')"
+  assert_contains "$(state_get '.tickets["1"].evidence.acceptance[1].evidence.why')" 'recorded check `sh check.sh` is red'
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" '`sh check.sh` **red**'
+}
+
+test_v_a_red_recorded_check_no_criterion_cites_leaves_none_met() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  export WORKER_FILE=BROKEN VERIFIER_CITES="nothing cites it"
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "fail 0/2 retry: hello.txt exists" "$JUDGE_OUT"
+}
+
+test_v_a_verifier_that_skips_the_recorded_checks_has_failed() {
+  setup_wave
+  record_checks
+  returned_ticket   # the default verifier runs no checks
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq 14 "$JUDGE_STATUS"
+  assert_eq "error the verifier did not run the recorded checks" "$JUDGE_OUT"
+}
+
+test_v_with_no_checks_recorded_the_verifier_falls_back_and_says_what_it_found() {
+  setup_wave
+  write_checking_verifier
+  export VERIFIER_FOUND="sh check.sh"
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  assert_contains "$(cat "$RUN_DIR/prompts/verify-1.1.md")" "No recorded checks (no CODING_STANDARDS.md)"
+  assert_eq 'no recorded checks (no CODING_STANDARDS.md): found `sh check.sh`' "$(state_get '.tickets["1"].evidence.checks.fallback')"
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" \
+    '- **Checks:** no recorded checks (no CODING_STANDARDS.md): found `sh check.sh`: `sh check.sh` passed'
+}
+
+test_v_a_verifier_that_reports_no_fallback_is_still_named_as_one() {
+  setup_wave
+  returned_ticket   # no checks recorded, and the default verifier runs none
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  assert_eq 'no recorded checks (no CODING_STANDARDS.md): the verifier ran none it found' "$(state_get '.tickets["1"].evidence.checks.fallback')"
+}
+
+test_v_the_contract_flags_a_worker_that_listed_other_checks_than_the_recorded_ones() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  # The default worker's record lists no checks at all.
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq false "$(state_get '.tickets["1"].evidence.checks.worker_matches')"
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" "**The worker's evidence listed other checks:**"
+}
+
+test_v_results_that_are_not_exactly_the_recorded_checks_are_not_a_run_of_them() {
+  setup_wave
+  record_checks
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF2'
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+mkdir -p "$ARTISAN_RUN_DIR/verify/checks"
+echo '{"recorded": true, "results": [{"command": "true", "passed": true, "result": ""}]}' >"$ARTISAN_RUN_DIR/verify/checks/1.1.json"
+jq '{verdict: "pass", acceptance: [.[] | {criterion: ., met: true}]}' "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+EOF2
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "error the verifier did not run the recorded checks" "$JUDGE_OUT"
+}

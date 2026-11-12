@@ -86,7 +86,7 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
 sweep() {
   local file tmp now tickets t status pid attempt deadline result exit_record session_cost
   file=$(state_file "$RUN_DIR")
-  state_valid_file "$file" || state_die 1 "unreadable or wrong schema version: $file"
+  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
   now=$(state_now)
