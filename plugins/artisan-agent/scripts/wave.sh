@@ -23,8 +23,10 @@
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
-#       "next: <launch|wait|halted|decide|blocked|done>", then a
-#       ticket table. A waiting risk gate (drain.sh gate) holds only its
+#       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
+#       ticket table. "parked" (with a line naming it) means only a hands-on
+#       ticket the Artisan is building, and work behind it, is left
+#       (human.sh parked). A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -45,7 +47,8 @@
 #       passing verdict from verify.sh for this attempt and commit; nothing
 #       changes). 11: a conflict, left in
 #       progress for its one /artisan-agent:resolve-conflicts try (then
-#       wave.sh resolved). 6: refused, or a conflict after that try was used,
+#       wave.sh resolved; the conflicted paths are a JSON array in the state
+#       file's conflict event, exactly as git reports them). 6: refused, or a conflict after that try was used,
 #       7: suite red (both mark the ticket blocked and queue a decision).
 #       An attempt that did not complete is a failed attempt: queued for a
 #       fresh worker, or blocked once it has used its attempts (6).
@@ -323,7 +326,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o
+  local last id attempt wave pid cls next reconciled=1 waiting o parked=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -345,6 +348,9 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
+      "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
+        || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
       # The Artisan's gate actions taken while the lock was held, a gate
       # closed on the tracker, and any slice gate due (gate.sh, #65).
       "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
@@ -363,13 +369,17 @@ cmd_status() {
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
+      # A hands-on ticket the Artisan finished waits for its verifier and merge.
+      elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
       elif [ "$(get '[.plan.scope[] as $t | .tickets[$t].status | select(. == "merged" or . == "closed")] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
+      elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       else next=blocked
       fi
       ;;
   esac
   echo "next: $next"
+  [ "$next" != parked ] || echo "$parked"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
@@ -428,6 +438,8 @@ cmd_dispatch() {
   local status in_flight max
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
+  [ "$(get --arg t "$t" '.tickets[$t].human == null')" = true ] \
+    || die "#$t is a hands-on ticket, held for the Artisan (human.sh); it is never dispatched to a worker"
   in_flight=$(get '[.tickets[] | select(.status == "in_flight")] | length')
   max=$(get '.plan.max_agents // 5')
   [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
@@ -581,6 +593,15 @@ record_session_cost() { # ticket attempt
     | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)' --arg t "$1" --argjson n "$2" --argjson usd "$usd"
 }
 
+# Paths stay a list end to end: git's -z output (no quoting, no splitting on
+# spaces) becomes a JSON array, and only messages join it for display.
+unmerged_json() { # worktree
+  git -C "$1" diff -z --name-only --diff-filter=U | jq -Rs 'split("\u0000")[:-1]'
+}
+join_paths() { # JSON array -> "a b c" for messages
+  jq -r 'join(" ")' <<<"$1"
+}
+
 cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
@@ -603,18 +624,18 @@ cmd_merge() {
   pre=$(git -C "$wt" rev-parse HEAD)
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
   if ! git -C "$wt" merge --no-ff --no-edit -m "Merge #$t ($title) into $ib" "$branch" >/dev/null 2>&1; then
-    local paths
-    paths=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-    paths=${paths% }
+    local paths pjson
+    pjson=$(unmerged_json "$wt")
+    paths=$(join_paths "$pjson")
     if [ "$(get --arg t "$t" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
       git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
       block "$t" "merge conflict in ${paths:-unknown paths}; its one /artisan-agent:resolve-conflicts try is used"
       state_die 6 "wave.sh: #$t not merged: conflict in ${paths:-unknown paths}"
     fi
     # Left in progress for the one try at resolving it.
-    apply '.tickets[$t].resolve = {attempt: $n, paths: ($p | split(" ")), pre: $pre, outcome: "pending", at: $now}
-      | event({event: "conflict", ticket: $t, paths: ($p | split(" ")), next: "resolve-conflicts"}; $now)' \
-      --arg t "$t" --argjson n "$n" --arg p "$paths" --arg pre "$pre"
+    apply '.tickets[$t].resolve = {attempt: $n, paths: $p, pre: $pre, outcome: "pending", at: $now}
+      | event({event: "conflict", ticket: $t, paths: $p, next: "resolve-conflicts"}; $now)' \
+      --arg t "$t" --argjson n "$n" --argjson p "$pjson" --arg pre "$pre"
     state_die 11 "wave.sh: #$t conflicts in $paths; run /artisan-agent:resolve-conflicts once in $wt, then wave.sh resolved $RUN_DIR $t"
   fi
   finish_merge "$t" "$n" "$wt" "$pre"
@@ -670,7 +691,7 @@ cmd_resolved() {
       *) usage ;;
     esac
   done
-  local wt ib n pre branch paths left markers title why
+  local wt ib n pre branch paths pjson left markers title why p
   [ "$(get --arg t "$t" '.tickets[$t].resolve.outcome? // ""')" = pending ] \
     || die "#$t has no conflict waiting on its resolution"
   wt=$(integration_worktree)
@@ -678,7 +699,8 @@ cmd_resolved() {
   n=$(get --arg t "$t" '.tickets[$t].resolve.attempt')
   pre=$(get --arg t "$t" '.tickets[$t].resolve.pre')
   branch=$(get --arg t "$t" '.tickets[$t].branch')
-  paths=$(get --arg t "$t" '.tickets[$t].resolve.paths | join(" ")')
+  pjson=$(get --arg t "$t" '.tickets[$t].resolve.paths')
+  paths=$(join_paths "$pjson")
   why=$gave_up
   if [ -z "$why" ]; then
     if ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null; then
@@ -686,9 +708,13 @@ cmd_resolved() {
     elif [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$(git -C "$MAIN" rev-parse "refs/heads/$branch")" ]; then
       why="the merge in progress is not $branch"
     else
-      left=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-      markers=$(cd "$wt" && grep -l -E '^(<<<<<<<|>>>>>>>)( |$)' -- $paths 2>/dev/null | tr '\n' ' ' || true)
-      if [ -n "$left" ]; then why="still conflicted: ${left% }"
+      left=$(join_paths "$(unmerged_json "$wt")")
+      markers=
+      # Each recorded path, quoted: no word splitting, no glob expansion.
+      while IFS= read -r -d '' p; do
+        if grep -q -E '^(<<<<<<<|>>>>>>>)( |$)' -- "$wt/$p" 2>/dev/null; then markers="$markers$p "; fi
+      done < <(jq -j '.[] + "\u0000"' <<<"$pjson")
+      if [ -n "$left" ]; then why="still conflicted: $left"
       elif [ -n "$markers" ]; then why="conflict markers left in ${markers% }"
       elif ! git -C "$wt" diff --quiet; then why="changes left unstaged: $(git -C "$wt" diff --name-only | tr '\n' ' ')"
       elif [ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]; then

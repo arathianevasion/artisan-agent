@@ -1,16 +1,31 @@
 # The dependency list: upstream skills (mattpocock-skills) the pipeline uses
-# and keeps. One name per line. The upstream check confirms each still exists
-# and that its disable-model-invocation flag is unchanged. A skill is never on
-# both this list and replaced-skills.list.
+# and keeps. One name per line, each with a one-line comment on the line above
+# saying who uses it. The upstream check confirms each still exists and that
+# its disable-model-invocation flag is unchanged. Every name must exist
+# upstream: never one of our own skills (to-plan is ours), and never a name on
+# replaced-skills.list. guard.test.sh enforces all three.
+
+# /artisan-agent:grill and /artisan-agent:triage sit on its questioning loop.
 grilling
+# /artisan-agent:grill and /artisan-agent:triage update GLOSSARY.md and ADRs through it.
 domain-modeling
+# /artisan-agent:craft, /artisan-agent:to-spec and /artisan-agent:to-plan slice into tickets with it.
 to-tickets
-to-plan
+# /artisan-agent:craft hands a map-shaped goal to it.
+wayfinder
+# /artisan-agent:implement builds test-first with it.
 tdd
+# /artisan-agent:implement and implement-plan review the diff with it.
 code-review
+# /artisan-agent:craft routes hard bugs to it.
 diagnosing-bugs
+# /artisan-agent:grill and wayfinder spike unknowns with it.
 research
+# /artisan-agent:grill and wayfinder prototype design questions with it.
 prototype
+# Kept per spec #44 for design-vocabulary work; no plugin skill calls it by name yet.
 codebase-design
+# Kept for skill-authoring: plugin skill edits follow it.
 writing-for-agents
+# Project setup and the ADR check write PR bodies through it.
 pr

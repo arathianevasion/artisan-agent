@@ -11,7 +11,7 @@ open_run() { # run-dir
   state_require_run_dir "$1"
   RUN_DIR=$(cd "$1" && pwd)
   FILE=$(state_file "$RUN_DIR")
-  state_valid_file "$FILE" || die "unreadable or wrong schema version: $FILE"
+  state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
   RUN_ID=$(basename "$RUN_DIR")
   local common
   common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
@@ -77,7 +77,12 @@ check_returned() {
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
   ATTEMPT=$(get --arg t "$t" '.tickets[$t].attempts')
-  cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
+  # A hands-on ticket the Artisan finished (human.sh) has no worker session.
+  if [ "$(get --arg t "$t" '.tickets[$t].human.done_at // null | . != null')" = true ]; then
+    cls="completed -"
+  else
+    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
+  fi
   case "$cls" in
     running*) state_die 8 "$who: #$t's worker is still running; wait for its exit record" ;;
     completed*) ;;
