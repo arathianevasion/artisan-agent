@@ -11,7 +11,7 @@
 #       script that keeps `claude remote-control --spawn worktree` alive in a
 #       tmux session, run at login/boot by a launchd agent (macOS) or a systemd
 #       user unit + timer (Linux), written but loaded only with --load;
-#       host.json in the individual home. A file that differs from what it
+#       host.json in the individual home (only apply writes it). A file that differs from what it
 #       would write is kept ("kept:"), never overwritten.
 #   host-setup.sh trust DIR                     is DIR's workspace trust granted? (exit 0 trusted, 1 not)
 #   host-setup.sh gh                            are gh credentials present? (exit 0, 1)
@@ -183,10 +183,11 @@ cmd_apply() {
   write_launcher "$workdir" "$name"
   write_service
   mkdir -p "$HOME_DIR"
-  [ -f "$HOME_DIR/host.json" ] || echo '{}' >"$HOME_DIR/host.json"
-  jq --arg w "$workdir" --arg n "$name" --arg s "$SESSION" '.workdir = $w | .name = $n | .tmux_session = $s | .configured = true' \
-    "$HOME_DIR/host.json" >"$HOME_DIR/host.json.tmp.$$" && mv -f "$HOME_DIR/host.json.tmp.$$" "$HOME_DIR/host.json"
-  echo "changed: host record $HOME_DIR/host.json (workdir $workdir)"
+  # host.json is "this machine is the host": only this writes it (#108).
+  local cur=$HOME_DIR/host.json new="$HOME_DIR/host.json.tmp.$$"
+  { if [ -f "$cur" ]; then cat "$cur"; else echo '{}'; fi; } | jq --arg w "$workdir" --arg n "$name" --arg s "$SESSION" '.workdir = $w | .name = $n | .tmux_session = $s | .configured = true' >"$new"
+  if [ -f "$cur" ] && cmp -s "$new" "$cur"; then rm -f "$new"; echo "unchanged: host record $cur"
+  else mv -f "$new" "$cur"; echo "changed: host record $cur (workdir $workdir)"; fi
   [ "$load" = 0 ] || load_service
   [ "$load" = 1 ] || echo "todo: load the supervisor once: host-setup.sh apply --load (it survives a reboot from then on)"
   echo "todo: grant workspace trust once, interactively: cd $workdir && claude (accept the trust prompt), then host-setup.sh trust $workdir"
@@ -257,7 +258,8 @@ cmd_status() {
   if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION" 2>/dev/null; then echo "ok: tmux session $SESSION is running"; else echo "todo: tmux session $SESSION is not running (the supervisor starts it)"; bad=1; fi
   if [ -n "$workdir" ]; then cmd_trust "$workdir" || bad=1; else echo "todo: no workdir recorded: host-setup.sh apply --workdir D"; bad=1; fi
   cmd_gh || bad=1
-  login=$(jq -r '.login_at // empty' "$HOME_DIR/host.json" 2>/dev/null || true)
+  login=$(jq -r '.login_at // empty' "$HOME_DIR/login.json" 2>/dev/null || true)
+  [ -n "$login" ] || login=$(jq -r '.login_at // empty' "$HOME_DIR/host.json" 2>/dev/null || true)
   if [ -n "$login" ]; then echo "ok: login recorded (login-check.sh checks it before each run)"; else echo "todo: no login recorded: log in, then login-check.sh stamp"; bad=1; fi
   return "$bad"
 }

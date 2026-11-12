@@ -164,6 +164,69 @@ test_the_all_multiplier_applies_to_models_without_their_own() {
   assert_eq 8 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")"
 }
 
+# tiny_draft path: one Sonnet ticket far under any minimum, one Opus ticket above it.
+tiny_draft() {
+  jq -n '{
+    run_id: "r1", repo: "owner/repo", integration_branch: "run/r1",
+    scope: ["10", "11"], waves: [["10", "11"]], gates: [],
+    tickets: {
+      "10": {title: "Typo", model: "claude-sonnet-5-5",
+             expected: {input_tokens: 100000, output_tokens: 5000, minutes: 10}},
+      "11": {title: "Billing tab", model: "claude-opus-5-5",
+             expected: {input_tokens: 1000000, output_tokens: 50000, minutes: 45}}
+    }}' >"$1"
+}
+
+test_an_estimate_below_the_models_minimum_is_raised_to_it() {
+  make_project
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  # Sonnet: 0.1M x $2 + 0.005M x $10 = $0.25, under the $0.50 minimum.
+  assert_eq 0.5 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq minimum "$(jq -r '.tickets["10"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  assert_eq 0.25 "$(jq '.tickets["10"].estimate_basis.estimated_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq 1 "$(jq '.tickets["10"].caps.max_budget_usd' "$TEST_TMPDIR/plan.json")" "twice the minimum"
+  assert_eq 20 "$(jq '.tickets["10"].caps.max_turns' "$TEST_TMPDIR/plan.json")"
+  # Opus: $5.00, above its $1.00 minimum: unchanged.
+  assert_eq 5 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq price "$(jq -r '.tickets["11"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  # Total and budget use the floored numbers: 0.5 + 5 = 5.5, + 25%.
+  assert_eq 5.5 "$(jq .estimate_usd "$TEST_TMPDIR/plan.json")"
+  assert_eq 6.88 "$(jq .budget_usd "$TEST_TMPDIR/plan.json")"
+  local out
+  out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "| #10 (Typo) | claude-sonnet-5-5 | \$0.50 | minimum for claude-sonnet-5-5 (estimated \$0.25) |"
+  assert_contains "$out" "| minimum_estimates.claude-sonnet-5-5 | 0.5 |"
+}
+
+test_the_floor_applies_to_history_estimates_and_falls_back_to_all() {
+  make_project
+  seed_history old1 20 claude-sonnet-5-5 0.1 merged
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["11"].model = "claude-other-1"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  seed_history old2 21 claude-other-1 0.2 merged
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq 0.5 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq history "$(jq -r '.tickets["10"].estimate_basis.was.mode' "$TEST_TMPDIR/plan.json")"
+  assert_eq 0.5 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")" "the all minimum"
+}
+
+test_a_minimum_can_be_overridden_for_one_run_and_every_priced_model_has_a_default() {
+  make_project
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" \
+    --set minimum_estimates.claude-sonnet-5-5=0.2) >"$TEST_TMPDIR/plan.json"
+  assert_eq 0.25 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")" "above the lowered minimum"
+  assert_eq price "$(jq -r '.tickets["10"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "| minimum_estimates.claude-sonnet-5-5 | 0.2 (this run only; project: 0.5) |"
+  assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "config.yml untouched"
+  assert_status 1 sh -c "cd '$PROJECT' && '$SCRIPTS/plan.sh' build --draft '$TEST_TMPDIR/draft.json' --set minimum_estimates.claude-sonnet-5-5=-1"
+  local m
+  for m in $(jq -r '.models | keys[]' "$PLUGIN_ROOT/references/model-prices.json"); do
+    [ "$(config defaults | jq --arg m "$m" '.minimum_estimates[$m] > 0')" = true ] || fail "no default minimum for $m"
+  done
+}
+
 test_a_model_with_no_price_and_no_history_is_refused() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
@@ -192,7 +255,8 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
     overrun_allowance_percent usage_reserve.five_hour_reserve_percent \
     usage_reserve.seven_day_ceiling_percent stale_usage_minutes attempts_per_ticket \
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \
-    team_guardrails_repo estimate_multipliers host_configured; do
+    team_guardrails_repo estimate_multipliers minimum_estimates.claude-sonnet-5-5 \
+    minimum_estimates.all host_configured; do
     assert_contains "$out" "| $key |" "setting $key in the approval"
   done
 }
@@ -309,4 +373,81 @@ test_run_ticket_never_launches_a_worker_outside_the_approved_scope() {
   assert_contains "$(cat "$TEST_TMPDIR/err")" "not in the approved scope"
   [ ! -e "$RUN_DIR/workers/99.1" ] || fail "a worker folder was created"
   [ ! -e "$TEST_TMPDIR/claude-ran" ] || fail "claude ran"
+}
+
+# ---------------------------------------------- the suite from recorded checks (#98)
+
+# record_checks: CODING_STANDARDS.md as setup leaves it, with two proven checks.
+record_checks() {
+  cat >"$PROJECT/CODING_STANDARDS.md" <<'MD'
+# Coding standards
+
+## Always ask
+
+- New dependencies
+
+## Checks
+
+- `sh test.sh`: proven to fail on 2026-11-01, breaking: flipped an assertion
+- `sh lint.sh`: proven to fail on 2026-11-01, breaking: added an unused variable
+MD
+}
+
+test_with_checks_recorded_the_suite_runs_them_and_the_approval_shows_it() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq "( sh test.sh ) && ( sh lint.sh )" "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"
+  assert_eq recorded "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_eq '["sh test.sh","sh lint.sh"]' "$(jq -c .recorded_checks.commands "$TEST_TMPDIR/plan.json")"
+  local view
+  view=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$view" "### Suite command"
+  assert_contains "$view" '`( sh test.sh ) && ( sh lint.sh )`: the recorded checks (`sh test.sh`, `sh lint.sh`'
+  # The suite really runs them: red when one is.
+  printf 'exit 0\n' >"$PROJECT/test.sh"; printf 'exit 1\n' >"$PROJECT/lint.sh"
+  if (cd "$PROJECT" && sh -c "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"); then fail "the suite ignored a red check"; fi
+  # It reaches the state file, where wave.sh merge reads it.
+  "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
+  assert_eq "( sh test.sh ) && ( sh lint.sh )" "$(jq -r .plan.suite_command "$RUN_DIR/state.json")"
+  assert_eq recorded "$(jq -r .plan.suite_source "$RUN_DIR/state.json")"
+}
+
+test_a_different_suite_command_is_shown_as_a_change_to_approve() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.suite_command = "make everything"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq "make everything" "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"
+  assert_eq changed "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" \
+    '**Changed from the recorded checks:** this run'"'"'s suite is `make everything`; the recorded checks (`sh test.sh`, `sh lint.sh`) run `( sh test.sh ) && ( sh lint.sh )`. Approve the change'
+  # Naming the recorded suite itself is no change.
+  jq '.suite_command = "( sh test.sh ) && ( sh lint.sh )"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d3.json"
+  assert_eq recorded "$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d3.json" | jq -r .suite_source)"
+}
+
+test_with_no_checks_recorded_the_plan_says_it_fell_back_and_names_what_was_found() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.suite_command = "npm test" | .suite_found = "package.json scripts.test"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq discovered "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
+  assert_eq false "$(jq -r .recorded_checks.recorded "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" \
+    'No recorded checks (no CODING_STANDARDS.md): found `npm test` in package.json scripts.test.'
+  # And with nothing found either, the approval says so rather than staying quiet.
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan2.json"
+  assert_eq none "$(jq -r .suite_source "$TEST_TMPDIR/plan2.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "**None.** No recorded checks (no CODING_STANDARDS.md)"
+}
+
+test_standards_names_the_file_the_checks_are_read_from() {
+  make_project
+  record_checks
+  mv "$PROJECT/CODING_STANDARDS.md" "$TEST_TMPDIR/standards.md"
+  write_draft "$TEST_TMPDIR/draft.json"
+  assert_eq recorded "$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --standards "$TEST_TMPDIR/standards.md" | jq -r .suite_source)"
 }

@@ -32,7 +32,12 @@ The run folder is always in the main checkout, never a worktree: `state.sh run-d
 
 ## Rules
 
-- **Schema version.** `schema_version` is `1`. Every script refuses to read or write a file with another version. A change to the shape bumps it and updates this page.
+- **Schema version.** `schema_version` is `1`. Every script refuses to read or write a file whose version is not the one it knows. Only a **breaking** change bumps it:
+  - **No bump:** adding an optional field that older scripts ignore and newer scripts treat as defaulted when it is missing. Every field in "Optional fields" below was added this way.
+  - **Bump:** removing or renaming a field, changing a field's meaning or type, or making an optional field required.
+  - **A bump ships with one of two things:** a migration that brings an older run's state file forward on read, or a refusal that names the plugin version the run started on (the first entry of `waves` with a `plugin_version`, which `wave-start` records) and tells the Artisan to finish the run on that version. Never a bare "wrong schema version". `state_version_message` in `scripts/lib/state-lib.sh` writes that refusal for every script. A run with no wave recorded gets the same refusal without a version to name.
+
+  Why additive changes must not bump: every script refuses any version but an exact match, and plugin auto-update applies a new version from a run's next wave, so a bump in an ordinary release would strand runs in progress between waves. `tests/state-compat.test.sh` holds the rule: a version-1 file with an unknown extra field is accepted, and one missing each optional field is read with the defaults below.
 - **One writer.** A writer holds `state.lock`, a symlink whose target is its pid. The orchestrator holds it while a wave runs, the chat between waves. `wave.sh launch` hands the chat's lock to the orchestrator's runner (`run-ticket.sh --lock-from`) before the orchestrator's session starts, the runner exports its own pid to that session as `ARTISAN_WRITER_PID`, and once the orchestrator exits the lock is stale and `wave.sh status` takes it back for the chat. Otherwise: take it with `state.sh lock <run-dir> <pid>` using a long-lived pid (the session's process, not a one-off shell) and export `ARTISAN_WRITER_PID=<pid>` so every script call writes under it. A call with no lock held takes it for itself and releases it. Anyone else is refused with exit status `3` and the holder's pid. A lock whose pid is dead is stale; the next writer removes it and carries on.
 - **One-step rewrite.** Every write produces the whole new file as a temp file in the run folder, checks it is valid JSON of this schema version, and renames it over `state.json`. An interrupted writer leaves a stray `.state.json.tmp.<pid>` and the previous state file untouched. A write that changes nothing is skipped, so the file is only rewritten when an event happened.
 - **Files are the truth, git and the tracker are the facts.** Result files, exit records and findings files say what workers did; git says what is merged; the tracker says what is open and what blocks what. The state file is rebuilt from them by the sweep and the reconciler, and running either twice on the same inputs changes nothing.
@@ -97,6 +102,8 @@ Top level:
 | `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml` |
 | `overrides` | `{<key>: {value, project}}`, one per number overridden for this run, with the project's value it replaced |
 | `suite_command` | the full suite, run with `sh -c` in the integration worktree after every merge |
+| `suite_source` | where the suite came from (`plan.sh build`): `recorded` (the project's recorded checks), `changed` (the Artisan approved another command), `discovered` (no recorded checks; found by the chat) or `none` |
+| `recorded_checks` | the recorded checks at plan time (`checks.sh json`): `{recorded, file, commands, suite}`, or `{recorded: false, reason}`; `references/checks.md` |
 | `checks` | `[{command, covers, proven_to_fail}]`: the checks the plan step proved capable of failing, shown in each gate's packet |
 | `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, $1, the longest ticket deadline plus 30 minutes) |
 
@@ -125,13 +132,46 @@ Top level:
 | `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
+## Optional fields
+
+Fields scripts treat as absent-means-default, so a state file from before the field (or from a newer plugin that adds more) is still version 1. Fields not listed here (`schema_version`, `run_id`, `repo`, `plan.scope`, `plan.tickets`, `tickets`, `integration.branch`, `costs`, `decisions`, `frontier`, `findings`, and each ticket's `status`, `attempts`, `branch`) are required.
+
+| Field | Default when missing |
+|---|---|
+| `events` | `[]`; the first event written is `seq` 1 |
+| `orchestrators` | `[]`; `current_wave` is 0 |
+| `findings_read` | `{}`; no finding line is read yet |
+| `relays` | `[]` |
+| `lessons` | `[]` |
+| `review_gates` | `[]` |
+| `halted` | `null`: the run is not halted |
+| `waves` | `[]`: no wave started, so no starting plugin version to name |
+| `location` | absent: the run is live on this machine (`Where a run lives`) |
+| `provisional_shown` | `[]` |
+| `integration.worktree`, `integration.base` | absent until `wave.sh start` makes the integration worktree |
+| `plan.gates` | `[]` |
+| `plan.overrides` | `{}` |
+| `plan.suite_command` | `null`: no suite is run after a merge |
+| `plan.checks` | `[]` |
+| `plan.orchestrator` | `{}`: the orchestrator defaults apply (`claude-sonnet-5-5`, $1, the longest ticket deadline plus 30 minutes) |
+| `attempt_costs` | `{}` (ticket field) |
+| `verifications` | `[]` (ticket field) |
+| `worktree`, `base` | absent (ticket fields): no worktree for the current attempt |
+| `suite` | absent (ticket field): no merge attempted |
+| `tracker_closed` | `false` (ticket field) |
+| `wave` | `0` (ticket field) |
+| `resolve`, `risk_gate`, `blocked_reason` | absent (ticket fields) |
+| `questions`, `answers` | `[]` (ticket fields) |
+
+#54 added `events`, `plan.suite_command`, `plan.orchestrator`, the ticket's `tracker_closed`, and (with the two-tier scripts) `integration.worktree`, `integration.base`, the ticket's `worktree`, `base` and `suite`. It also let a ticket's `cost_usd` fall back to the session's `total_cost_usd` when the result file has none. Reviewed in #96: none of these changed the meaning or type of a field that existed before (the cost fallback only fills a value that was `null`), so none needed a bump.
+
 ## Where a run lives
 
 A run is live on one machine at a time. Until it first moves, its state file has no `location`. `scripts/move.sh` (`skills/implement-plan/references/host-and-move.md`) writes `location: {status: "moved"|"live", machine, branch: "runs/<run-id>", at, commit?}`. `moved` means pushed to its `runs/<run-id>` branch and in transit; `live` names the machine that claimed it. `state_lock` (`scripts/lib/state-lib.sh`) refuses with exit 3 every writer on a copy that is `moved`, or `live` on another machine (`ARTISAN_MACHINE`, default `hostname -s`), so the lock travels with the state. `move.sh` writes under `ARTISAN_MOVING=1`, which skips that refusal. Its events: `moved-out` (`from`, `branch`) and `moved-in` (`to`, `branch`). `move.sh drain` sets `halted` with `move: true`, which `move.sh out` and `in` clear.
 
 ## The event log
 
-Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), `finding` (`from`, `seq`, `target`, `action`), `design-question` (`ticket`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole, and `handoff` (`id`, `attempt`, `wave`, `reason`, `percent`), `handoff-failed` (`id`, `attempt`: the next orchestrator didn't launch, the hand-off record was taken back), `risk-gate` (`ticket`, `percent`) and `risk-gate-cleared` (`ticket`, `by`) for the context drain, and, for worker questions, `asked` (`ticket`, `question`), `answered` (`ticket`, `question`, `next`), `deferred-question`, `pulled` and `provisional-shown`, and, for slice gates, `gate-opened` (`gate`, `issue`, `tickets`, `dependents`), `gate-decision` (`gate`, `card`, `by`), `rework` (`ticket`, `from`, `gate`, `card`) and `gate-approved` (`gate`, `issue`, `by`), and, for hands-on tickets (`scripts/human.sh`), `human-start` (`ticket`, `worktree`, `base`), `human-done` (`ticket`, `attempt`, `commit`), `human-feedback` (`ticket`, `attempt`: the verifier failed it and it went back to the Artisan) and `parked` (`reason: "human"`, `detail`). A hands-on ticket carries `human: {worktree, branch, base, focus, started_at, done_at, rounds, feedback}`; each round the Artisan says "done" counts as an attempt, and a ticket with a `human` record is never dispatched or on the frontier. A top-level `provisional_shown` lists the tickets whose provisional cards a packet has shown. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
+Every event that changes a ticket is appended to `events` in the same one-step rewrite as the change, so the log and the fields can't disagree: `dispatch` (`ticket`, `attempt`, `pid`), `result` (`ticket`, `attempt`, `status`), `verify` and `verified` (above), `failed` (`ticket`, `attempt`, `reason`, `next`), `blocked` (`ticket`, `reason`), `merge` (`ticket`, `commit`, and `source: "reconcile"` when the reconciler found it in git), `closed` (`ticket`), `conflict` (`ticket`, `paths`, `next`), `resolve` (`ticket`, `outcome`, `why?`), `finding` (`from`, `seq`, `target`, `action`), `design-question` (`ticket`), plus `integration`, `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `references/guardrails.md`) for the run's own steps, `halted` (`wave`, `tickets`) and `resumed` (`wave`) for the run as a whole, and `handoff` (`id`, `attempt`, `wave`, `reason`, `percent`), `handoff-failed` (`id`, `attempt`: the next orchestrator didn't launch, the hand-off record was taken back), `risk-gate` (`ticket`, `percent`) and `risk-gate-cleared` (`ticket`, `by`) for the context drain, and, for worker questions, `asked` (`ticket`, `question`), `answered` (`ticket`, `question`, `next`), `deferred-question`, `pulled` and `provisional-shown`, and, for slice gates, `gate-opened` (`gate`, `issue`, `tickets`, `dependents`), `gate-decision` (`gate`, `card`, `by`), `rework` (`ticket`, `from`, `gate`, `card`) and `gate-approved` (`gate`, `issue`, `by`), and, for hands-on tickets (`scripts/human.sh`), `human-start` (`ticket`, `worktree`, `base`), `human-done` (`ticket`, `attempt`, `commit`), `human-feedback` (`ticket`, `attempt`: the verifier failed it and it went back to the Artisan) and `parked` (`reason: "human"`, `detail`). A hands-on ticket carries `human: {worktree, branch, base, focus, started_at, done_at, rounds, feedback}`; each round the Artisan says "done" counts as an attempt, and a ticket with a `human` record is never dispatched or on the frontier. The retro's guardrail health reads `guardrail-fired` (`guardrail`, `area?`), `guardrail-bypassed` (`guardrail`, `reason`, `by`), `gate-decision` (its `outcome` and `area`), `shipped-bug` (`area`, `ticket`) and `spot-check` (`ticket`, `card`, `answer`: `same` or `differently`, `area?`, written by `guardrail-health.sh spot-check-record`), as `references/guardrail-health.md` says. A top-level `provisional_shown` lists the tickets whose provisional cards a packet has shown. `seq` counts from 1; `at` is epoch seconds. A state file from before the log has no `events`; the first event starts it. Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
 
 ## The sweep
 

@@ -19,7 +19,7 @@ config_yaml_json() {
 #     type is an error naming the key.
 #   override($key; $value): the effective config (.) with one setting changed
 #     for this run. The key must be a setting (a dotted path to a number,
-#     true/false or text), or a model under estimate_multipliers; the value
+#     true/false or text), or a model under estimate_multipliers or minimum_estimates; the value
 #     must have the setting's type. Errors name what is wrong.
 #   run_override($key; $value): a plan, or the plan in a state file (.), with one
 #     setting overridden for this run: .config changed, .overrides[$key] =
@@ -35,6 +35,10 @@ CONFIG_JQ_DEFS='
     . as $v
     | if ($d | type) == "object" and ($path | length) > 0 and ($path[-1] == "areas") then
         (if ($v | type) == "object" then . else error("areas must be a map of named path sets") end)
+      elif ($path == ["minimum_estimates"]) then
+        (if ($v | type) != "object" then error("minimum_estimates must be a map of model to dollars")
+         elif ([$v[] | select(type != "number" or . < 0)] | length) > 0 then error("minimum_estimates values must be numbers, not negative")
+         else . end)
       elif ($path == ["estimate_multipliers"]) then
         (if ($v | type) != "object" then error("estimate_multipliers must be a map of model to number")
          elif ([$v[] | select(type != "number" or . <= 0)] | length) > 0 then error("estimate_multipliers values must be positive numbers")
@@ -58,6 +62,9 @@ CONFIG_JQ_DEFS='
     | if ($p | length) == 2 and $p[0] == "estimate_multipliers" then
         (if ($value | type) == "number" and $value > 0 then setpath($p; $value)
          else error("estimate_multipliers.\($p[1]) must be a positive number") end)
+      elif ($p | length) == 2 and $p[0] == "minimum_estimates" then
+        (if ($value | type) == "number" and $value >= 0 then setpath($p; $value)
+         else error("minimum_estimates.\($p[1]) must be a number, not negative") end)
       elif ([leaves] | index([$p])) == null then
         error("\($key) is not a setting; settings are: \([leaves | join(".")] | join(", "))")
       elif (getpath($p) | kind) != ($value | kind) then
