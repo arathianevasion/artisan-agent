@@ -105,6 +105,8 @@ init_write() {
         frontier: [],
         orchestrators: [],
         review_gates: [],
+        overrun_gates: [],
+        usage_park: null,
         halted: null,
         events: []
       }
