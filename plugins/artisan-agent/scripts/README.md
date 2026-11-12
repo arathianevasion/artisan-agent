@@ -92,9 +92,9 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
+| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
 **The draft's shape.** Per ticket in scope: `title`, `model`, `blocked_by`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). `blocked_by` is required: the ticket numbers of its open blockers, copied from `resolve-scope.sh`'s `tickets[].blocked_by` (native dependencies, or the body's "Blocked by" line where the tracker has none; a blocker outside the scope is kept). `[]` is valid; a ticket with no `blocked_by` field makes `plan.sh build` exit 1. The critical path, a hands-on pick's delay and parking all read it. `plan.sh` makes no tracker calls.
-| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
 ## The project config
 
