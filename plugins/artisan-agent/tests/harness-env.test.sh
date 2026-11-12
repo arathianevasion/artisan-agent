@@ -16,7 +16,8 @@ EOF
   echo before > findings; echo before > result
   ARTISAN_FINDINGS_FILE=$PWD/findings ARTISAN_RESULT_FILE=$PWD/result \
     ARTISAN_RUN_DIR=$PWD/rundir ARTISAN_ADDED_LATER_X=1 \
-    bash "$TESTS_DIR/run.sh" suite >/dev/null 2>&1 || fail "probe suite failed (variable leaked)"
+    bash "$TESTS_DIR/run.sh" suite > out 2>&1 || fail "probe suite failed (variable leaked): $(cat out)"
+  assert_contains "$(cat out)" "1 passed, 0 failed" "probe did not run"
   assert_eq before "$(cat findings)" "findings file touched"
   assert_eq before "$(cat result)" "result file touched"
   [ ! -e rundir/leak ] || fail "run dir touched"
