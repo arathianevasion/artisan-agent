@@ -190,3 +190,13 @@ test_upstream_notes_are_read_where_the_retro_delivers_them() {
   assert_contains "$(grep -n 'upstream-notes.md' "$PLUGIN_ROOT/skills/retro/scripts/retro.sh")" 'HOME_DIR/upstream-notes.md'
   assert_contains "$(grep -n 'upstream-notes.md' "$PLUGIN_ROOT/scripts/upstream-check.sh")" 'HOME_DIR/upstream-notes.md'
 }
+
+test_file_ports_twice_files_nothing_twice_and_keeps_empty_fields() {
+  setup_env; mk_upstream ""; stub_claude; fake_tracker
+  export JUDGE_JSON='{"port":[{"skill":"triage","title":"batch labels","why":""}],"behaviour":[],"artisan_md":[],"breaking":[]}'
+  bash "$UC" run "$TEST_TMPDIR/w" >/dev/null
+  bash "$UC" file-ports "$TEST_TMPDIR/w" >/dev/null
+  assert_contains "$(cat "$FAKE_GH_DIR/issue-2.json")" "batch labels"
+  assert_contains "$(bash "$UC" file-ports "$TEST_TMPDIR/w")" "already filed"
+  [ ! -e "$FAKE_GH_DIR/issue-3.json" ] || fail "a duplicate ticket was filed"
+}

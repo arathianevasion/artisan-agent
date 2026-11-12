@@ -170,6 +170,8 @@ cmd_mechanical() {
   [ "$fails" -eq 0 ]
 }
 
+moved_field() { cut -f"$2" "$1/moved.tsv"; } # work-dir field-number of moved.tsv
+
 block_file() { printf '%s/upstream-block.json' "$HOME_DIR"; }
 
 cmd_run() {
@@ -178,7 +180,8 @@ cmd_run() {
   mkdir -p "$work"
   rm -f "$work/mechanical.txt" "$work/judgement.json" "$work/report.md"
   line=$(cmd_status) && { echo "$line"; return 0; } || [ $? -eq 10 ] || exit 1
-  IFS=$'\t' read -r _ old new oldtree url <<<"$line"
+  old=$(printf '%s' "$line" | cut -f2); new=$(printf '%s' "$line" | cut -f3)
+  oldtree=$(printf '%s' "$line" | cut -f4); url=$(printf '%s' "$line" | cut -f5)
   # A breaking change withheld at an earlier retro stays withheld until its ticket closes.
   if [ -f "$(block_file)" ] && [ "$(jq -r .sha "$(block_file)")" = "$new" ]; then
     blocked=$(jq -r .ticket "$(block_file)")
@@ -232,7 +235,7 @@ cmd_report() {
   [ -d "$work" ] || usage
   mech="$work/mechanical.txt"; j="$work/judgement.json"
   [ -f "$mech" ] && [ -f "$j" ] || die "report needs $mech and $j"
-  IFS=$'\t' read -r _ old new _ _ <"$work/moved.tsv"
+  old=$(moved_field "$work" 2); new=$(moved_field "$work" 3)
   fails=$(grep -c '^FAIL ' "$mech" || true)
   {
     printf '## Upstream moved: %s to %s\n\n' "$(short "$old")" "$(short "$new")"
@@ -297,20 +300,29 @@ others() { # other plugins installed from this marketplace whose pinned commit m
   printf '%s\n' "$rows" | table 'Plugin|Installed|Pinned now'
 }
 
+file_ticket() { # label-for-output title body -> prints "<label> #<n>"
+  printf '%s #%s\n' "$1" "$("$GH" issue create -R "$PIPELINE_REPO" --label needs-triage --title "$2" --body "$3" | sed 's#.*/##')"
+}
+
 cmd_file_ports() {
-  local work=${1:-} j new
+  local work=${1:-} j new i n skill title why rule done
   [ -f "$work/judgement.json" ] || usage
-  j="$work/judgement.json"; IFS=$'\t' read -r _ _ new _ _ <"$work/moved.tsv"
-  jq -r '.port[] | [.skill, .title, .why] | @tsv' "$j" | while IFS=$'\t' read -r skill title why; do
-    "$GH" issue create -R "$PIPELINE_REPO" --label needs-triage \
-      --title "Port from upstream $(short "$new"): $title" \
-      --body "Upstream \`$skill\` improved: $why"$'\n\n'"Found by the upstream-updates check; see the retro." | sed 's#.*/##' | sed "s/^/port #/"
+  j="$work/judgement.json"; new=$(moved_field "$work" 3); done="$work/ports-filed"
+  [ ! -e "$done" ] || { echo "already filed (see $done)"; return 0; }
+  # jq -r per field, never a tab split: tab is IFS whitespace, so an empty field would collapse.
+  n=$(jq '.port | length' "$j"); i=0
+  while [ "$i" -lt "$n" ]; do
+    skill=$(jq -r ".port[$i].skill" "$j"); title=$(jq -r ".port[$i].title" "$j"); why=$(jq -r ".port[$i].why" "$j")
+    file_ticket port "Port from upstream $(short "$new"): $title" "Upstream \`$skill\` improved: $why"$'\n\n'"Found by the upstream-updates check; see the retro." | tee -a "$done"
+    i=$((i + 1))
   done
-  jq -r '.artisan_md[] | [.skill, .rule, .why] | @tsv' "$j" | while IFS=$'\t' read -r skill rule why; do
-    "$GH" issue create -R "$PIPELINE_REPO" --label needs-triage \
-      --title "Upstream $(short "$new"): kept skill $skill starts breaking ARTISAN.md ($rule)" \
-      --body "$why" | sed 's#.*/##' | sed "s/^/artisan-md #/"
+  n=$(jq '.artisan_md | length' "$j"); i=0
+  while [ "$i" -lt "$n" ]; do
+    skill=$(jq -r ".artisan_md[$i].skill" "$j"); rule=$(jq -r ".artisan_md[$i].rule" "$j"); why=$(jq -r ".artisan_md[$i].why" "$j")
+    file_ticket artisan-md "Upstream $(short "$new"): kept skill $skill starts breaking ARTISAN.md (rule $rule)" "$why" | tee -a "$done"
+    i=$((i + 1))
   done
+  [ -e "$done" ] || : >"$done"
 }
 
 cmd=${1:-}; [ $# -gt 0 ] && shift
