@@ -85,7 +85,6 @@ Top level:
 | `frontier` | top-level | tickets dispatchable now, as last computed by the reconciler |
 | `review_gates` | top-level | every review gate opened: `{id, kind, slice, title, role, issue, tickets, dependents, cards, status: open\|approved\|redirected\|bypassed\|deferred, opened_at, approved_at?, decisions, reworks}`; each decision a decision record with its job and who made it (`references/review-gates.md`); a redirect, bypass or deferral adds `redirect`, `bypass` or `deferral` (`{by, at, why?, notes?, released?, mode?, ticket?}`) and `answered`, every action in order (`references/gate-actions.md`) |
 | `exception_gates` | top-level | every exception gate opened (`scripts/gate-action.sh`): `{id: "exception-<decision id>", kind: "exception", reason: gave-up\|red-check\|blocked, title, headline, ticket, tickets, decision, dependents, issue, status: open\|decided\|bypassed\|deferred, opened_at, outcome?, bypass?, deferral?, answered}` (`references/gate-actions.md`) |
-| `end_gate` | top-level | the end gate and the PRs to `main`: `{status: open\|approved\|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], ended_at}` (`references/end-gate.md`) |
 | `halted` | top-level | `null`, or, once a wave failed whole, `{wave, tickets, reason, at}`. `wave.sh launch` refuses while it is set; `--resume` (the Artisan's decision) sets it back to `null` |
 | `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`, plus `cost_usd` once `wave.sh status` has seen it end, and `handoff` (`{reason, percent, at}`) when it handed its wave to the next one (`drain.sh handoff`; `skills/implement-plan/references/context-drain.md`). Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
@@ -170,6 +169,10 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `questions`, `answers` | `[]` (ticket fields) |
 
 #54 added `events`, `plan.suite_command`, `plan.orchestrator`, the ticket's `tracker_closed`, and (with the two-tier scripts) `integration.worktree`, `integration.base`, the ticket's `worktree`, `base` and `suite`. It also let a ticket's `cost_usd` fall back to the session's `total_cost_usd` when the result file has none. Reviewed in #96: none of these changed the meaning or type of a field that existed before (the cost fallback only fills a value that was `null`), so none needed a bump.
+
+## The end gate
+
+Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], ended_at}`.
 
 ## Where a run lives
 
