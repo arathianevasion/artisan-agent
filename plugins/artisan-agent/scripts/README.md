@@ -10,7 +10,8 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
-| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `upstream-check.sh` | The retro's upstream-updates check: refresh, compare, mechanical check, judgement agent, report, port tickets (`skills/retro/SKILL.md`, "Upstream check"; `tests/upstream-check.test.sh`) | lines and tables; 10 moved |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login in `login.json` (never `host.json`); `legacy` and `cleanup` fix a `host.json` an old stamp made (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
 | `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first (this script's own; not `wave.sh`'s 10) |
 
@@ -46,7 +47,7 @@ The exit record:
  "output":"workers/46.1/output.json","result_file":"results/46.1.result.json"}
 ```
 
-`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is no exit record.
+`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
 
 ## Caps
 
@@ -277,6 +278,21 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
 | `gate.sh change <run-dir> <issue> <card> <choice>` | Engineering chat | a rework ticket in the run; prints its number | 0, 1, 6 |
 | `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
+
+## Gate actions, exception gates and parking
+
+`gate-action.sh` answers a gate (approve, redirect, bypass, defer), opens an exception gate for a ticket the run gave up on or a check that won't go green (retry with notes, reslice, take it myself, drop), and parks the run when everything left waits behind open reviews; `state.sh decide` answers any waiting decision. The rules and what each action leaves behind: `references/gate-actions.md`. Tested in `tests/gate-actions.test.sh`, end to end with the fake `claude` and the fake `gh`.
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate-action.sh approve <run-dir> <issue>` | either chat | a review gate: `gate.sh approve`, with optional `--why`, `--confidence`, `--level`, `--reach`, `--area`; an exception gate is refused | 0, 1, 2, 6 |
+| `gate-action.sh redirect <run-dir> <issue> --notes T \| --mine` | either chat | a rework ticket in the run (`ready-for-agent`, or `ready-for-human` with `--mine`), natively blocking the dependents; the gate closes; prints the ticket | 0, 1, 2, 3, 6 |
+| `gate-action.sh bypass\|defer <run-dir> <issue>` | either chat | bypass: closed unreviewed, who recorded; defer: the dependents go ahead, the gate stays open until the end gate. Either kind of gate | 0, 1, 2, 3, 6 |
+| `gate-action.sh retry <run-dir> <issue> --notes T`, `reslice`, `take`, `drop` | either chat | an exception gate: the ticket queued with the notes and one more attempt, or out of the run (`needs-triage`), or `ready-for-human`, or dropped; the gate closes | 0, 1, 2, 3, 6 |
+| `gate-action.sh sync <run-dir>` | `wave.sh status` | opens an exception gate per `exception` decision waiting without one; bypasses one closed by hand: `opened #<issue> <gate-id>` | 0, 1, 3 |
+| `gate-action.sh parked <run-dir> [--record]` | `wave.sh status` | 0 and `parked: waiting on N reviews: …` when every ticket left waits behind an open gate (`next: parked`); 1 otherwise | 0, 1 |
+| `gate-action.sh chat\|list\|deferred <run-dir>` | either chat | the open exception gates with their choices; every gate; the deferred gates, for the end gate | 0 |
+| `state.sh decide <run-dir> <id> <choice> [options]` | either chat | a waiting decision decided as a decision record | 0, 1, 2, 3, 6 |
 
 ## The fake tracker
 

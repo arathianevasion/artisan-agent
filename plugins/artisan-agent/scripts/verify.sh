@@ -73,7 +73,17 @@ VERIFIER_FAILURES_ALLOWED=2
 usage() { state_usage "$0"; }
 die() { state_die 1 "verify.sh: $*"; }
 
-classify() { "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>/dev/null || echo "failed vanished"; }
+# A classifier error is never a dead session: it stops the command, and the
+# caller runs it again. Callers assign the result first (cls=$(classify ...)),
+# so the stop is not swallowed inside another command.
+classify() {
+  local out err
+  err=$(mktemp) || die "no temp file to classify $1 attempt $2"
+  out=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>"$err") \
+    || { local msg; msg=$(cat "$err"); rm -f "$err"; die "could not classify $1 attempt $2 ($msg); nothing recorded, run it again"; }
+  rm -f "$err"
+  printf '%s\n' "$out"
+}
 
 # The ticket's acceptance criteria, verbatim, as a JSON array.
 read_criteria() { # ticket
@@ -150,7 +160,8 @@ cmd_start() {
           return 0
         fi
         if [ "$3" = - ]; then # left over from an earlier attempt, not judged
-          [ "$(classify "verify-$t" "$1")" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
+          cls=$(classify "verify-$t" "$1")
+          [ "$cls" != "running -" ] || state_die 8 "verify.sh: #$t's verifier $1 is still running"
           die "#$t's verifier $1 has ended but is not judged yet; run verify.sh judge"
         fi
         ;;
