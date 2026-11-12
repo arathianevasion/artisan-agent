@@ -244,7 +244,7 @@ packet() { # gate-json
 
 # open_overrun projection-json: record the gate once and open its issue.
 open_overrun() {
-  local p="$1" n id title dir body repo num url
+  local p="$1" n id title
   n=$(( $(get '(.overrun_gates // []) | length') + 1 ))
   id="overrun-$n"
   title="Exception gate: overrun (run $RUN_ID)"

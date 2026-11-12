@@ -50,10 +50,13 @@ die() { printf 'statusline.sh: %s\n' "$*" >&2; exit 1; }
 
 now() { date +%s; }
 
-# write_atomic path: stdin to a temp file beside path, then a rename.
+# write_atomic path: stdin to a temp file beside path, then a rename. Empty
+# input (the jq feeding it failed) replaces nothing.
 write_atomic() {
   local tmp="$1.tmp.$$"
-  cat >"$tmp" && mv -f "$tmp" "$1"
+  cat >"$tmp" && [ -s "$tmp" ] && mv -f "$tmp" "$1" && return 0
+  rm -f "$tmp"
+  return 1
 }
 
 # The window: what Claude Code reports, else the model's (1M for a [1m]

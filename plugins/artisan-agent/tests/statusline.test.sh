@@ -64,6 +64,10 @@ test_capture_never_fails_the_status_line() {
   out=$(printf 'not json' | "$S")
   assert_contains "$out" "artisan-agent"
   [ ! -e "$USAGE" ] || fail "nothing is written from bad input"
+  # Input jq can't shape never empties the last reading.
+  session_json claude-sonnet-5-5 200000 30 50 | "$S" >/dev/null
+  printf '{"session_id":"s1","rate_limits":{"five_hour":"odd"}}' | "$S" >/dev/null
+  assert_eq 30 "$(jq -r .rate_limits.five_hour.used_percentage "$USAGE")"
 }
 
 test_install_points_settings_at_the_capture_every_minute_and_chains_the_old_line() {
