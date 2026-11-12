@@ -23,8 +23,10 @@
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
-#       "next: <launch|wait|halted|decide|blocked|done>", then a
-#       ticket table. A waiting risk gate (drain.sh gate) holds only its
+#       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
+#       ticket table. "parked" (with a line naming it) means only a hands-on
+#       ticket the Artisan is building, and work behind it, is left
+#       (human.sh parked). A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -324,7 +326,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o
+  local last id attempt wave pid cls next reconciled=1 waiting o parked=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -346,6 +348,9 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
+      "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
+        || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
       # The Artisan's gate actions taken while the lock was held, a gate
       # closed on the tracker, and any slice gate due (gate.sh, #65).
       "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.gate.err" \
@@ -364,13 +369,17 @@ cmd_status() {
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
+      # A hands-on ticket the Artisan finished waits for its verifier and merge.
+      elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
       elif [ "$(get '[.plan.scope[] as $t | .tickets[$t].status | select(. == "merged" or . == "closed")] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
+      elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       else next=blocked
       fi
       ;;
   esac
   echo "next: $next"
+  [ "$next" != parked ] || echo "$parked"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
@@ -429,6 +438,8 @@ cmd_dispatch() {
   local status in_flight max
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
+  [ "$(get --arg t "$t" '.tickets[$t].human == null')" = true ] \
+    || die "#$t is a hands-on ticket, held for the Artisan (human.sh); it is never dispatched to a worker"
   in_flight=$(get '[.tickets[] | select(.status == "in_flight")] | length')
   max=$(get '.plan.max_agents // 5')
   [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
