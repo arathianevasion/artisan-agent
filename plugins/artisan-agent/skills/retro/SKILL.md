@@ -34,6 +34,10 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/retro/scripts/retro.sh` (usage at it
 7. **Deliver:** `retro deliver <run> retro/decisions.json --pr`. Kept lessons land in their homes (below), each with its origin (run, date, role, the evidence). Rerunning it delivers nothing twice.
 8. **Report** in one table: lesson, home, where it landed (the PR link, the individual-home commit, the ticket link). Then the satisfaction triggers handled and the motivation, if updated.
 
+## Upstream check
+
+Every retro, after the lessons are delivered, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/upstream-check.sh" refresh` then `... run <run>/retro/upstream` (usage and files at the script's top; the judgement agent's brief is `JUDGE.md`). With upstream unchanged it prints "no upstream change" and runs nothing else: say that in one line. With upstream moved it runs the mechanical check (a script) and the judgement check (an agent), and prints tables of port candidates, behaviour changes and kept skills that start breaking `ARTISAN.md`. A breaking change files a pipeline ticket and withholds the offer; otherwise it ends "Update upstream to X?", with other moved plugins from the marketplace to offer the same way. Show the tables as printed, ask once, and on yes run `file-ports <run>/retro/upstream` (one pipeline ticket per improvement worth porting). It reads the replaced and dependency lists from the guard and the individual home's `upstream-notes.md`. Tests: `tests/upstream-check.test.sh`.
+
 ## Homes
 
 | Kind | Home | Delivered as |
