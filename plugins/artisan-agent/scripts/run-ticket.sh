@@ -244,6 +244,7 @@ Notes from the ticket runner:
 - Write your result file to $result_file (also in \$ARTISAN_RESULT_FILE).
 - Append any findings, one JSON object per line, to $findings_file (also in \$ARTISAN_FINDINGS_FILE).
 - Do not leave background commands running. Anything still running when you finish is stopped.
+- Never end a turn to wait for something (a test run, a command): in a headless session, ending the turn ends the session. Run it in the foreground, to the end. Don't run the whole test suite; run the test files covering your change. The merge gate runs the full suite.
 - Only when $done_what, end your final reply with this line on its own:
 $COMPLETION_LINE
   If you could not finish, leave that line out and say why."

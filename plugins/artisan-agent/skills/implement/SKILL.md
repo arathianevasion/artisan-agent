@@ -22,6 +22,8 @@ Take these from the prompt that invoked you:
 ## Worker rules
 
 - **Never `git stash`.** `refs/stash` is shared by every worktree, so another worker's stash can vanish. You have your own branch; commit instead.
+- **Never end a turn to wait.** In a headless session, ending your turn ends the session, and with it any chance to write the record. Run everything in the foreground, to the end.
+- **Don't run the full suite.** Run the test files that cover the code you changed, plus the project's fast checks (typecheck, lint, syntax), in the foreground. The full suite runs once per merge at the merge gate (`wave.sh merge` / `wave.sh resolved`), which is where it can take as long as it needs.
 - **Leave nothing running.** Run commands in the foreground. If a test needs a server or watcher, stop it before moving on. A background process outlives you and holds the run's deadline open.
 - **Commit early and often**, with honest messages saying what is and isn't done. A crash, timeout or budget cap can come at any moment; uncommitted work is unverifiable and lost.
 - **Never skip a step to save budget.** `tdd` and the full two-axis `mattpocock-skills:code-review`, sub-agents included, are part of every ticket's cost, and the Artisan trusts the record because they ran. If you really are about to run out, commit what you have and write the record with status `failed` and what's left in `notes`. Don't hand in a record that is `complete` with a step missing.
@@ -47,7 +49,7 @@ When the work needs a test at a public boundary the ticket does not name (a new 
 - If the seam changes the design or interface of something another ticket owns, or the ticket or an "Always ask" item says to ask, don't choose it. Stop and file the question (step 3), then finish with status `blocked`.
 - Otherwise, including when it is a new public interface, a new module or a new boundary that only your ticket introduces, **carry on**: build it test-first like a named seam and record a decision card for it (step 3). Don't stop for it, even though it is hard to reverse. Name controversy criterion 3 in the card when other code will come to depend on it; the card is what makes the Artisan see it, and a later risk gate fires on it (the orchestrator's job, not yours). Where no criterion applies, it is engineering taste.
 
-Run typechecks and single test files as you go, and the full suite once the ticket is built. Commit.
+Run typechecks and the test files that cover your change as you go, and once more when the ticket is built; not the full suite (the merge gate runs it). Commit.
 
 ## 3. Record the decisions you made alone
 
@@ -82,10 +84,10 @@ Where a fix would itself meet a controversy criterion or an "Always ask" item, d
 
 `review.remarks` holds what the review found. A problem you found and fixed yourself while building isn't a review remark; mention it in `notes` if it matters.
 
-Run the full suite again after the fixes and commit. One review pass is enough. Run a second only when the fixes changed more code than the findings pointed at.
+Run the covering test files again after the fixes and commit. One review pass is enough. Run a second only when the fixes changed more code than the findings pointed at.
 
 ## 5. Finish
 
-1. Run the full suite, then the checks: `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`. With checks recorded it runs exactly those and prints their results; with none recorded, pass the commands you found after `--` (`checks.sh run -- 'npm test' 'npm run lint'`: one quoted argument per command), and its output says `no recorded checks (…): found …`. Its JSON output goes into the record's `checks` as it is. The working tree must be clean and every change committed.
+1. Run the test files covering your change, then the checks: `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`. With checks recorded it runs exactly those and prints their results; with none recorded, pass the commands you found after `--` (`checks.sh run -- 'npm test' 'npm run lint'`: one quoted argument per command), and its output says `no recorded checks (…): found …`. Its JSON output goes into the record's `checks` as it is. The record's `tests` names the test files you ran (`tests.files`) and says the full suite is left to the merge gate. The working tree must be clean and every change committed.
 2. Write the evidence record to the result path, in the shape in `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md`. **Write it even if you failed or are blocked.** A missing result file looks exactly like a crash.
 3. End with one line: status, commit and result path.
