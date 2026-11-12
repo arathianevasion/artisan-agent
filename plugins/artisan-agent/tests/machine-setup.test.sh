@@ -42,7 +42,7 @@ test_init_creates_individual_home_as_git_repo_and_is_a_noop_on_rerun() {
   [ -f "$h/satisfaction.jsonl" ] && [ ! -s "$h/satisfaction.jsonl" ] || fail "satisfaction record not empty"
   assert_contains "$(cat "$h/CODING_STANDARDS.md")" "## Always ask"
   assert_eq "" "$(git -C "$h" status --porcelain)" "home committed"
-  local before after out
+  local before= after= out=
   before=$(snapshot); out=$("$SCRIPT" init); after=$(snapshot)
   assert_eq "$before" "$after" "rerun changed files"
   assert_contains "$out" "unchanged: individual home"
@@ -71,7 +71,7 @@ d=json.load(open(sys.argv[1]));print(d["claude-plugins-official"]["autoUpdate"],
 
 test_scan_offers_each_seeded_item_and_changes_nothing() {
   seed_machine
-  local before after out
+  local before= after= out=
   before=$(snapshot); out=$("$SCRIPT" scan); after=$(snapshot)
   assert_eq "$before" "$after" "scan modified files"
   assert_contains "$out" "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj"
@@ -127,7 +127,7 @@ json.dump(d,open(p,"w"))' "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json" "$
 
 test_remove_uninstalls_when_project_path_is_gone_and_leaves_no_folder_behind() {
   seed_gone_project
-  local out
+  local out=
   out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE") || fail "remove failed: $out"
   assert_contains "$out" "uninstalled: artisan-agent@artisan-agent (project)"
   assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "$GONE plugin uninstall artisan-agent@artisan-agent --scope project"
@@ -150,7 +150,7 @@ test_remove_keeps_recreated_folder_that_the_uninstall_filled_and_reports_failure
 
 # A directory holding only the named tools (as stubs), to stand in for PATH.
 path_with() { # dir tool...
-  local d=$1 t; shift; mkdir -p "$d"
+  local d=$1 t=; shift; mkdir -p "$d"
   for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$d/$t"; chmod +x "$d/$t"; done
 }
 

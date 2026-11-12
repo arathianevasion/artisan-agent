@@ -51,7 +51,7 @@ die() { state_die 1 "move.sh: $*"; }
 
 GIT_ID="-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost"
 main_of() { # any path inside a repo -> its main checkout
-  local common
+  local common=
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not inside a git repository: $1"
   dirname "$common"
 }
@@ -61,7 +61,7 @@ get() { jq -r "$1" "$(state_file "$RUN_DIR")"; }
 # ---------------------------------------------------------------- idle
 
 idle_report() { # run-dir: prints what is still running, one line each
-  local rd="$1" f pid holder me
+  local rd="$1" f= pid= holder= me=
   jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | "ticket #\(.key) is in flight"' "$(state_file "$rd")"
   for f in "$rd"/workers/*/runner.pid; do
     [ -f "$f" ] || continue
@@ -77,7 +77,7 @@ idle_report() { # run-dir: prints what is still running, one line each
 }
 
 cmd_idle() {
-  local out
+  local out=
   state_require_run_dir "$1"
   out=$(idle_report "$1")
   [ -z "$out" ] || { printf '%s\n' "$out"; exit 4; }
@@ -99,7 +99,7 @@ cmd_drain() {
 # parented on every parent given. The run folder is git-ignored, so it is built
 # with a private index, never touching the checkout.
 snapshot_commit() {
-  local main="$1" id="$2" rd="$3" newstate="$4" idx f rel blob tree args
+  local main="$1" id="$2" rd="$3" newstate="$4" idx= f= rel= blob= tree= args=
   shift 4
   idx="$TMP_DIR/index"
   rm -f "$idx"
@@ -139,7 +139,7 @@ remote_state() { # main remote-ref id -> the state json on that ref, or nothing
 # ---------------------------------------------------------------- out
 
 cmd_out() {
-  local rd="$1" remote=origin wait=0 id main ib tip rref prev rstate rstatus rmach me out snap
+  local rd="$1" remote=origin wait=0 id= main= ib= tip= rref= prev= rstate= rstatus= rmach= me= out= snap=
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -230,7 +230,7 @@ cmd_out() {
   # Push the integration branch and the unmerged ticket branches first: a refusal
   # here changes nothing, because this copy is still live.
   git -C "$main" push -q "$remote" "refs/heads/$ib:refs/heads/$ib" 2>&1 || { [ "$pending" = 0 ] || out_undo "$rd" "$me"; echo "move.sh: the push of $ib was refused" >&2; exit 6; }
-  local t br
+  local t= br=
   for t in $(jq -r '.tickets | to_entries[] | select(.value.status != "merged" and .value.status != "closed") | .key' "$(state_file "$rd")"); do
     br=$(jq -r --arg t "$t" '.tickets[$t].branch' "$(state_file "$rd")")
     git -C "$main" rev-parse -q --verify "refs/heads/$br" >/dev/null || continue
@@ -271,7 +271,7 @@ out_undo() { # run-dir machine: the push did not land; this copy is live again
 # ---------------------------------------------------------------- in
 
 rollback_claim() { # main id remote claim original-state-json: push the original (moved) state back over the claim
-  local main="$1" id="$2" remote="$3" claim="$4" orig="$5" blob tree c idx="$TMP_DIR/index.rb"
+  local main="$1" id="$2" remote="$3" claim="$4" orig="$5" blob= tree= c= idx="$TMP_DIR/index.rb"
   printf '%s' "$orig" >"$TMP_DIR/orig.json"
   export GIT_INDEX_FILE="$idx"
   git -C "$main" read-tree "$claim"
@@ -285,7 +285,7 @@ rollback_claim() { # main id remote claim original-state-json: push the original
 }
 
 cmd_in() {
-  local id="$1" remote=origin main rd rref rstate rstatus rmach me ib wt t br claim tree
+  local id="$1" remote=origin main= rd= rref= rstate= rstatus= rmach= me= ib= wt= t= br= claim= tree=
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -326,7 +326,7 @@ cmd_in() {
       | .tickets |= map_values(if has("worktree") then .worktree = null else . end)
       | .integration |= del(.worktree)
       | event({event: "moved-in", to: $m, branch: $b}; $now)' >"$TMP_DIR/state.json"
-  local idx="$TMP_DIR/index" blob
+  local idx="$TMP_DIR/index" blob=
   export GIT_INDEX_FILE="$idx"
   git -C "$main" read-tree "$rref"
   blob=$(git -C "$main" hash-object -w "$TMP_DIR/state.json")
@@ -366,7 +366,7 @@ cmd_in() {
 }
 
 cmd_where() {
-  local m
+  local m=
   state_require_run_dir "$1"
   RUN_DIR=$1
   m=$(get '.location.machine // ""')

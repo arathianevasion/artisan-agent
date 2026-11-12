@@ -54,7 +54,7 @@ state_require_jq
 usage() { state_usage "$0"; }
 
 cmd_run_dir() {
-  local id="$1" common
+  local id="$1" common=
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || state_die 1 "not inside a git repository"
   printf '%s/.artisan-agent/runs/%s\n' "$(dirname "$common")" "$id"
@@ -77,7 +77,7 @@ cmd_init() {
 }
 
 init_write() {
-  local run_dir="$1" plan="$2" tmp
+  local run_dir="$1" plan="$2" tmp=
   tmp=$(state_tmp "$run_dir")
   jq --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" "$STATE_JQ_DEFS"'
     . as $p
@@ -125,7 +125,7 @@ init_write() {
 # dispatch_ticket run_dir ticket pid deadline-or-empty. Caller holds the lock.
 # Every dispatch has a deadline, so a hung worker is always stopped.
 dispatch_ticket() {
-  local run_dir="$1" t="$2" pid="$3" deadline="$4" now file
+  local run_dir="$1" t="$2" pid="$3" deadline="$4" now= file=
   file=$(state_file "$run_dir")
   now=$(state_now)
   require_in_scope "$run_dir" "$t"
@@ -149,7 +149,7 @@ dispatch_ticket() {
 # require_in_scope run_dir ticket: exits 4 unless the ticket is in the
 # approved scope. The scope is exactly the set approved; everything else waits.
 require_in_scope() {
-  local file
+  local file=
   file=$(state_file "$1")
   state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   jq -e --arg t "$2" '.plan.scope | map(tostring) | index($t) != null' "$file" >/dev/null \
@@ -160,7 +160,7 @@ require_in_scope() {
 # is marked decided (gate actions, exceptions, design questions). The record's
 # fields are references/decision-record.md's; the decision keeps its kind.
 cmd_decide() {
-  local run_dir="$1" id="$2" choice="$3" d
+  local run_dir="$1" id="$2" choice="$3" d=
   shift 3
   case "$id" in '' | *[!0-9]*) usage ;; esac
   [ -n "$choice" ] || usage
@@ -198,7 +198,7 @@ decide_write() { # run_dir id record. Caller holds the lock.
 }
 
 write_stdin() {
-  local run_dir="$1" tmp
+  local run_dir="$1" tmp=
   tmp=$(state_tmp "$run_dir")
   cat >"$tmp"
   state_commit "$run_dir" "$tmp"

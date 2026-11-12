@@ -31,7 +31,7 @@ RESULTS="$RUN_DIR/results"
 
 # The pid and every process descended from it.
 process_tree() {
-  local pid="$1" child
+  local pid="$1" child=
   printf '%s\n' "$pid"
   for child in $(pgrep -P "$pid" 2>/dev/null || true); do
     process_tree "$child"
@@ -41,7 +41,7 @@ process_tree() {
 # Stop a worker and everything it started (run-ticket.sh -> claude -> tools):
 # TERM the whole tree, then KILL whatever is left after the grace period.
 stop_worker() {
-  local pid="$1" tree p alive waited=0
+  local pid="$1" tree= p= alive= waited=0
   state_pid_alive "$pid" || return 0
   tree=$(process_tree "$pid")
   for p in $tree; do kill -TERM "$p" 2>/dev/null || true; done
@@ -84,7 +84,7 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
     else .tickets[$t].status = "returned" end'
 
 sweep() {
-  local file tmp now tickets t status pid attempt deadline result exit_record session_cost
+  local file= tmp= now= tickets= t= status= pid= attempt= deadline= result= exit_record= session_cost=
   file=$(state_file "$RUN_DIR")
   state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   tmp=$(state_tmp "$RUN_DIR")
@@ -126,7 +126,7 @@ sweep() {
   done
 
   # Findings: append lines beyond what has been read, per ticket.
-  local f ticket total seen
+  local f= ticket= total= seen=
   for f in "$RESULTS"/findings/*.jsonl; do
     [ -f "$f" ] || continue
     ticket=$(basename "$f" .jsonl)

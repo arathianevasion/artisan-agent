@@ -63,7 +63,7 @@ die() { printf 'plan.sh: %s\n' "$*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
 runs_dir() {
-  local common
+  local common=
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
   printf '%s/.artisan-agent/runs\n' "$(dirname "$common")"
 }
@@ -71,7 +71,7 @@ runs_dir() {
 # history_json dir run-id: [{model, cost}] for every merged ticket with a
 # logged cost in another run's state file.
 history_json() {
-  local dir="$1" run_id="$2" f
+  local dir="$1" run_id="$2" f=
   {
     if [ -n "$dir" ] && [ -d "$dir" ]; then
       for f in "$dir"/*/state.json; do
@@ -90,7 +90,7 @@ history_json() {
 
 cmd_build() {
   local draft= config= history= prices="$PLUGIN_DIR/references/model-prices.json" standards=
-  local sets=() cfg hist out checks suite
+  local sets=() cfg= hist= out= checks= suite=
   history=$(runs_dir)
   while [ $# -gt 0 ]; do
     case "$1" in

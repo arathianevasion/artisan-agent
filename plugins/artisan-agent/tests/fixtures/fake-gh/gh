@@ -35,7 +35,7 @@ printf '%s\n' "$*" >>"$FAKE_GH_DIR/calls"
 issue_file() { printf '%s/issue-%s.json\n' "$FAKE_GH_DIR" "$1"; }
 need_issue() { [ -f "$(issue_file "$1")" ] || { echo "gh: issue #$1 not found (HTTP 404)" >&2; exit 1; }; }
 set_field() { # n jq-filter [args]
-  local f n=$1
+  local f= n=$1
   f=$(issue_file "$n")
   shift
   jq "$@" "$f" >"$f.tmp" && mv "$f.tmp" "$f"

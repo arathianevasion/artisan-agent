@@ -18,7 +18,7 @@ unlogged_session() { # config-dir extra-args...
 }
 
 test_no_live_harness_passes_setting_sources_project_local() {
-  local h
+  local h=
   for h in $HARNESSES; do
     if grep -q -e '--setting-sources[ =]*project,local' "$TESTS_DIR/$h"; then
       fail "$h passes --setting-sources project,local: plugin hooks never run under it"
@@ -27,7 +27,7 @@ test_no_live_harness_passes_setting_sources_project_local() {
 }
 
 test_every_live_harness_uses_the_helper_and_checks_the_hook_proof() {
-  local h
+  local h=
   for h in $HARNESSES; do
     grep -q 'helpers/live-hooks.sh' "$TESTS_DIR/$h" || fail "$h does not source helpers/live-hooks.sh"
     grep -q 'live_hooks_args' "$TESTS_DIR/$h" || fail "$h does not use live_hooks_args"
@@ -37,7 +37,7 @@ test_every_live_harness_uses_the_helper_and_checks_the_hook_proof() {
 }
 
 test_the_helper_registers_the_plugins_hooks_with_absolute_paths() {
-  local args f
+  local args= f=
   . "$HELPER"
   args=$(live_hooks_args "$PLUGIN_ROOT" "$TEST_TMPDIR/h")
   f=$TEST_TMPDIR/h/plugin-hooks.settings.json

@@ -10,7 +10,7 @@ newest_changelog_version() {
 }
 
 test_plugin_version_is_semver() {
-  local version
+  local version=
   version=$(manifest_version)
   printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' \
     || fail "plugin.json version [$version] is not semver"

@@ -56,7 +56,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
 run_dir() { [ -f "$1/state.json" ] || die "no state file in $1"; (cd "$1" && pwd); }
 main_of() { # the main checkout that holds a run folder
-  local common
+  local common=
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "$1 is not in a git repo"
   dirname "$common"
 }
@@ -68,7 +68,7 @@ ident() { # a commit identity only when git has none (CI, fresh machines)
   printf '%s\n' -c user.name=Artisan-Agent -c user.email=artisan-agent@localhost
 }
 commit_in() { # dir message paths...
-  local dir=$1 msg=$2 id
+  local dir=$1 msg=$2 id=
   shift 2
   id=$(ident "$dir")
   git -C "$dir" add -- "$@"
@@ -86,7 +86,7 @@ misses_since_last() { # main out
 }
 
 cmd_facts() {
-  local rd; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
+  local rd=; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
   misses_since_last "$(main_of "$rd")" "$rd/retro/misses.jsonl"
   py facts "$rd/state.json" "$PLUGIN_ROOT/references/jobs.md" "$rd/retro/actions.jsonl" "$rd/retro/misses.jsonl" >"$rd/retro/facts.json.tmp"
   mv "$rd/retro/facts.json.tmp" "$rd/retro/facts.json"
@@ -94,7 +94,7 @@ cmd_facts() {
 }
 
 cmd_check() {
-  local rd threshold combined; rd=$(run_dir "$1")
+  local rd= threshold= combined=; rd=$(run_dir "$1")
   [ -f "$rd/retro/lessons.json" ] || die "no retro/lessons.json in $rd: run prepare first"
   threshold=$(jq -r '.plan.config.evidence_threshold // 3' "$rd/state.json")
   combined="$rd/retro/.combined.json"
@@ -120,7 +120,7 @@ motivation_file() { # repo -> a temp file holding the recorded motivation, or no
 }
 
 cmd_render() {
-  local rd main mot; rd=$(run_dir "$1"); main=$(main_of "$rd")
+  local rd= main= mot=; rd=$(run_dir "$1"); main=$(main_of "$rd")
   [ -f "$rd/retro/checked.json" ] || die "no retro/checked.json: run check first"
   [ -f "$rd/retro/facts.json" ] || cmd_facts "$rd" >/dev/null
   py questions "$HOME_DIR/ARTISAN.md" "$PLUGIN_ROOT/ARTISAN.md" >"$rd/retro/questions.json"
@@ -134,7 +134,7 @@ cmd_render() {
 }
 
 cmd_add_lesson() {
-  local rd n; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
+  local rd= n=; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
   n=$(( $( [ -f "$rd/retro/added.jsonl" ] && wc -l <"$rd/retro/added.jsonl" || echo 0) + 1 ))
   jq -c --arg id "A$n" '{id: $id} + . + {source: "artisan"}' <<<"$2" >>"$rd/retro/added.jsonl" \
     || die "the lesson is not a JSON object"
@@ -142,7 +142,7 @@ cmd_add_lesson() {
 }
 
 cmd_satisfaction() {
-  local rd run project out rec trig; rd=$(run_dir "$1"); need_home
+  local rd= run= project= out= rec= trig=; rd=$(run_dir "$1"); need_home
   [ -f "$2" ] || die "no answers file: $2"
   run=$(run_id "$rd"); project=$(jq -r '.repo // "unknown"' "$rd/state.json")
   [ -f "$rd/retro/facts.json" ] || cmd_facts "$rd" >/dev/null
@@ -166,13 +166,13 @@ cmd_satisfaction() {
 }
 
 cmd_motivation() {
-  local rd; rd=$(run_dir "$1"); [ "${2:-}" = update ] || usage; need_home
+  local rd=; rd=$(run_dir "$1"); [ "${2:-}" = update ] || usage; need_home
   ARTISAN_RUN_ID=$(run_id "$rd") ARTISAN_INDIVIDUAL_HOME=$HOME_DIR \
     bash "$PLUGIN_ROOT/skills/setup/scripts/project-setup.sh" motivation update "$(main_of "$rd")"
 }
 
 cmd_prepare() {
-  local rd main chat="" model=claude-sonnet-5-5 budget=1.00 prompt
+  local rd= main= chat="" model=claude-sonnet-5-5 budget=1.00 prompt=
   rd=$(run_dir "$1"); shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -215,14 +215,14 @@ origin_line() { jq -r --arg run "$RUN" --arg repo "$PROJECT" --arg d "$(today)" 
   '"Origin: run \($run) of \($repo), \($d); role \(.role); \(.why)"' "$1"; }
 
 base_ref() {
-  local r
+  local r=
   if r=$(git -C "$MAIN" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); then echo "$r"; return; fi
   if git -C "$MAIN" rev-parse -q --verify refs/remotes/origin/main >/dev/null; then echo origin/main; return; fi
   git -C "$MAIN" rev-parse --abbrev-ref HEAD
 }
 
 project_lessons() { # worktree-making, one commit per lesson, one PR
-  local ids=$1 pr=$2 wt branch base id lf path n=0
+  local ids=$1 pr=$2 wt= branch= base= id= lf= path= n=0
   [ -n "$ids" ] || return 0
   branch="retro/$RUN"; wt="$(dirname "$MAIN")/$(basename "$MAIN")-wt/retro-$RUN"
   if [ ! -d "$wt" ]; then
@@ -250,7 +250,7 @@ project_lessons() { # worktree-making, one commit per lesson, one PR
   fi
   printf 'project\t%s\t%s\n' "$branch" "$wt"
   if [ "$pr" = 1 ] && ! delivered pr pr; then
-    local body url
+    local body= url=
     body=$(jq -r --arg run "$RUN" '"Lessons kept at the retro of run \($run). Merging this PR is the approval; there is no retro issue.\n\n| # | Lesson | Home | Role | Reach |\n|---|---|---|---|---|\n" +
       ([.lessons[] | select(.delivery == "project")] | map("| \(.id) | \(.lesson) | \(.home) | \(.role) | \(.scope) |") | join("\n"))' "$CHECKED")
     git -C "$wt" push -q -u origin "$branch" >/dev/null 2>&1 || die "could not push $branch"
@@ -271,7 +271,7 @@ home_file_for() { # kind -> the individual standards file and section a generali
 }
 
 cmd_deliver() {
-  local pr=0 decisions ids_project="" id kind dec lf f
+  local pr=0 decisions= ids_project="" id= kind= dec= lf= f=
   RD=$(run_dir "$1"); decisions=$2; shift 2
   [ "${1:-}" = --pr ] && pr=1
   [ -f "$decisions" ] || die "no decisions file: nothing changes until the Artisan answers"
@@ -288,7 +288,7 @@ cmd_deliver() {
     case "$kind" in
       pipeline)
         if ! delivered "$id" pipeline; then
-          local url
+          local url=
           if url=$("$GH" issue create -R "$PIPELINE_REPO" --title "$(jq -r .ticket.title "$lf")" --label needs-triage \
               --body "$(printf '> *This was generated by AI during the retro.*\n\n%s\n\n%s\n\n%s' \
                 "$(jq -r .lesson "$lf")" "$(jq -r .ticket.body "$lf")" "$(origin_line "$lf")")"); then
@@ -318,7 +318,7 @@ cmd_deliver() {
     if [ "$dec" = yes ] && [ "$(jq -r '.promotable // false' "$lf")" = true ] && ! delivered "$id" promoted; then
       need_home
       f=$(home_file_for "$kind"); local section=${f#*|}; f=${f%%|*}
-      local what; what=$(jq -r 'if .kind == "mechanical" then "\(.lesson) [check: \(.change.path)]" else .lesson end' "$lf")
+      local what=; what=$(jq -r 'if .kind == "mechanical" then "\(.lesson) [check: \(.change.path)]" else .lesson end' "$lf")
       py promote "$HOME_DIR/$f" "$section" "- $what ($(origin_line "$lf" | sed 's/^Origin: /from /'))"
       commit_in "$HOME_DIR" "$(printf 'Promote retro lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" "$f"
       mark "$id" promoted "$HOME_DIR/$f"; printf 'promoted\t%s\t%s\n' "$id" "$HOME_DIR/$f"

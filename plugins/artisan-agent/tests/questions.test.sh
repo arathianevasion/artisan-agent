@@ -30,7 +30,7 @@ setup_questions() {
   git_quiet -C "$PROJECT" commit -m "suite"
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
-  local n
+  local n=
   for n in 1 2; do
     jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "open", labels: [{name: "in-run"}], body: "- [ ] it works"}' >"$FAKE_GH_DIR/issue-$n.json"
   done
@@ -67,7 +67,7 @@ blocked_with_question() {
 
 test_a_worker_files_a_needs_triage_ticket_with_question_options_recommendation_and_criterion() {
   setup_questions
-  local n body
+  local n= body=
   n=$(file_blocking 1)
   assert_eq 3 "$n"
   body=$(jq -r .body "$FAKE_GH_DIR/issue-$n.json")
@@ -83,7 +83,7 @@ test_a_worker_files_a_needs_triage_ticket_with_question_options_recommendation_a
 
 test_an_always_ask_item_names_itself_as_the_criterion() {
   setup_questions
-  local n
+  local n=
   n=$("$Q" file --ticket 1 --criterion always-ask --question "Rename the public flag?" \
     --option "Rename" --option "Keep" --recommendation "Keep" --split --repo local/sample)
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$n.json")" 'an "Always ask" item'
@@ -122,7 +122,7 @@ test_a_ticket_that_cant_finish_is_blocked_by_the_new_ticket_while_the_wave_carri
   assert_eq returned "$(state_get '.tickets["2"].status')"
   [ ! -e "$FAKE_GH_DIR/blocked_by-2.json" ] || fail "ticket 2 was blocked too"
   # Asking twice changes nothing.
-  local before
+  local before=
   before=$(state_sum)
   "$Q" block "$RUN_DIR" 1
   assert_eq "$before" "$(state_sum)"
@@ -156,7 +156,7 @@ test_an_answer_from_triage_redispatches_the_ticket_with_it() {
   echo 'exit 0' >"$script"
   export FAKE_CLAUDE_SCRIPT_WORKER=$script
   "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
-  local prompt
+  local prompt=
   prompt=$(cat "$RUN_DIR/prompts/1.2.md")
   assert_contains "$prompt" "The Artisan has answered"
   assert_contains "$prompt" "#$Q1: Write the six lines ourselves."
@@ -201,7 +201,7 @@ test_pulling_the_ticket_defers_it_with_the_finding_and_leaves_the_run() {
   assert_eq deferred "$(state_get '.tickets["1"].status')"
   assert_eq '["2"]' "$(state_get '.plan.scope | tostring')"
   assert_eq resolved "$(state_get '[.decisions[] | select(.kind == "defer-question")][0].status')"
-  local labels
+  local labels=
   labels=$(jq -r '[.labels[].name] | join(",")' "$FAKE_GH_DIR/issue-1.json")
   assert_contains "$labels" deferred
   case "$labels" in *in-run*) fail "in-run stayed on a ticket pulled from the run" ;; esac
@@ -222,7 +222,7 @@ test_carrying_on_redispatches_the_ticket_with_not_now() {
   assert_eq "not now" "$(state_get '.tickets["1"].answers[0].answer')"
   assert_eq '["1","2"]' "$(state_get '.plan.scope | tostring')"
   assert_eq "[]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-1.json")"
-  local labels
+  local labels=
   labels=$(jq -r '[.labels[].name] | join(",")' "$FAKE_GH_DIR/issue-1.json")
   assert_contains "$labels" in-run
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
@@ -240,7 +240,7 @@ test_a_reversible_taste_choice_is_a_provisional_card_at_the_next_slice_gate() {
         {question: "Which file name?", choice: "hello.txt", alternative: "HELLO", criterion: "4", confidence: "provisional"},
         {question: "Add a column?", choice: "No", alternative: "Yes", criterion: "2", confidence: "provisional"},
         {question: "Sure thing", choice: "x", alternative: "y", criterion: "4", confidence: "firm"}]}'
-  local out
+  local out=
   out=$("$Q" provisional "$RUN_DIR")
   assert_contains "$out" "| Ticket | Question | Picked | Alternative | Criterion | Confidence |"
   assert_contains "$out" "| #1 | Which file name? | hello.txt | HELLO | 4 | provisional |"

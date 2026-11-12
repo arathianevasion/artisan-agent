@@ -69,7 +69,7 @@ check() { # description command...
 }
 
 verify() {
-  local rec="$wd/results/05.json" q
+  local rec="$wd/results/05.json" q=
   q=$(ls "$wd"/tracker/issue-*.json 2>/dev/null | head -1)
   check "a plugin hook fired (SessionStart line in the proof file)" live_hooks_proof_check "$wd/hook-proof"
   check "a question ticket was filed" test -n "$q"

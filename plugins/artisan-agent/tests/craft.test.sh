@@ -4,7 +4,7 @@
 CRAFT="$PLUGIN_ROOT/skills/craft/SKILL.md"
 
 test_craft_names_wayfinder_and_to_tickets_in_full() {
-  local body; body=$(cat "$CRAFT")
+  local body=; body=$(cat "$CRAFT")
   assert_contains "$body" '/mattpocock-skills:wayfinder'
   assert_contains "$body" '/mattpocock-skills:to-tickets'
   # Never the bare form: a "/wayfinder" or "/to-tickets" not preceded by ":".
@@ -14,16 +14,16 @@ test_craft_names_wayfinder_and_to_tickets_in_full() {
 }
 
 test_craft_names_our_replacements() {
-  local body; body=$(cat "$CRAFT")
+  local body=; body=$(cat "$CRAFT")
   for s in grill to-spec to-plan implement-plan; do
     assert_contains "$body" "/artisan-agent:$s"
   done
 }
 
 test_craft_has_the_route_test_in_order() {
-  local body; body=$(cat "$CRAFT")
+  local body=; body=$(cat "$CRAFT")
   assert_contains "$body" 'propose the bigger route'
-  local a b c
+  local a= b= c=
   a=$(grep -n 'Can the destination' "$CRAFT" | head -1 | cut -d: -f1 || true)
   b=$(grep -n 'Does it need more than one ticket' "$CRAFT" | head -1 | cut -d: -f1 || true)
   c=$(grep -n 'a \*\*Bug\*\* if something is broken' "$CRAFT" | head -1 | cut -d: -f1 || true)
@@ -32,7 +32,7 @@ test_craft_has_the_route_test_in_order() {
 }
 
 test_craft_files_straight_to_ready_for_agent_and_cites_existing_files() {
-  local body; body=$(cat "$CRAFT")
+  local body=; body=$(cat "$CRAFT")
   assert_contains "$body" 'ready-for-agent'
   assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/ARTISAN.md'
   [ -f "$PLUGIN_ROOT/ARTISAN.md" ] || fail "ARTISAN.md missing"

@@ -107,7 +107,7 @@ last_usage() { # transcript
 }
 
 percent_of() { # transcript window-or-empty -> "<percent> <used> <window>" or "unknown"
-  local line used model window
+  local line= used= model= window=
   [ -n "$1" ] && [ -f "$1" ] || { echo unknown; return 0; }
   line=$(last_usage "$1" || true)
   [ -n "$line" ] || { echo unknown; return 0; }
@@ -138,7 +138,7 @@ cmd_percent() {
 # ------------------------------------------------------------------ decide
 
 decide() { # tier percent outstanding marker drain review
-  local tier="$1" pct="$2" outstanding="$3" marker="$4" drain="$5" review="$6" band action shown
+  local tier="$1" pct="$2" outstanding="$3" marker="$4" drain="$5" review="$6" band= action= shown=
   if [ "$tier" = orchestrator ] && [ "$marker" = 1 ]; then
     band=compact
   elif [ "$pct" = unknown ]; then
@@ -199,7 +199,7 @@ session_key() {
 }
 
 last_orchestrator_running() {
-  local line
+  local line=
   line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt)"')
   [ -n "$line" ] || return 1
   set -- $line
@@ -212,7 +212,7 @@ last_orchestrator_running() {
 # Sets DECISION (the decide line), KEY and PCT.
 KEY= PCT= DECISION=
 check() { # tier transcript
-  local tier="$1" transcript="$2" outstanding marker=0 drain review reading
+  local tier="$1" transcript="$2" outstanding= marker=0 drain= review= reading=
   drain=$(get '.plan.config.context.drain_percent // empty')
   [ -n "$drain" ] || drain=$(default_threshold drain_percent)
   review=$(get '.plan.config.context.review_percent // empty')
@@ -252,7 +252,7 @@ cmd_check() {
 
 cmd_handoff() {
   open_run "${1:-}"
-  local line id attempt pid me remaining band reason launched
+  local line= id= attempt= pid= me= remaining= band= reason= launched=
   line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt)"')
   [ -n "$line" ] || state_die 6 "drain.sh: run $RUN_ID has no orchestrator to hand off from"
   set -- $line
@@ -305,7 +305,7 @@ cmd_handoff() {
 CHAT_ASK_MARGIN=15
 
 chat_setting() { # key: the run's plan config, else the default
-  local v
+  local v=
   v=$(get --arg k "$1" '.plan.config.chat_context[$k] // empty')
   [ -n "$v" ] || v=$("$SCRIPT_DIR/config.sh" defaults | jq -r --arg k "$1" '.chat_context[$k]')
   printf '%s\n' "$v"
@@ -314,7 +314,7 @@ chat_setting() { # key: the run's plan config, else the default
 cmd_chat() {
   open_run "${1:-}"
   shift
-  local transcript= warn compact window reading pct marker state
+  local transcript= warn= compact= window= reading= pct= marker= state=
   while [ $# -gt 0 ]; do
     case "$1" in
       --transcript) [ $# -ge 2 ] || usage; transcript=$2; shift 2 ;;

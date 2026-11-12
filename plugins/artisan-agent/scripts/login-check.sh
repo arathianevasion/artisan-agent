@@ -70,7 +70,7 @@ span_of_run() { # run-dir -> minutes
 }
 
 cmd_check() {
-  local span="" margin=120 now expires login_at days need rd="" src
+  local span="" margin=120 now= expires= login_at= days= need= rd="" src=
   while [ $# -gt 0 ]; do
     case "$1" in
       --run-dir) [ $# -ge 2 ] || usage; rd=$2; shift 2 ;;
@@ -110,7 +110,7 @@ cmd_check() {
 }
 
 cmd_stamp() {
-  local at="" days="" tmp
+  local at="" days="" tmp=
   while [ $# -gt 0 ]; do
     case "$1" in
       --at) [ $# -ge 2 ] || usage; at=$2; shift 2 ;;
@@ -138,7 +138,7 @@ cmd_legacy() {
 }
 
 cmd_cleanup() { # move a stamp out of host.json into login.json
-  local tmp
+  local tmp=
   if [ ! -f "$HOST_FILE" ] || ! jq -e 'has("login_at") or has("login_lifetime_days")' "$HOST_FILE" >/dev/null 2>&1; then
     echo "unchanged: no login stamp in $HOST_FILE"
     return 0

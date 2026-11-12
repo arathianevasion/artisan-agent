@@ -14,7 +14,7 @@ bare_pattern() {
 }
 
 test_no_bare_clashing_skill_names() {
-  local name hits
+  local name= hits=
   for name in $CLASHING; do
     # Only the phrase "built-in `<name>`" may name the built-in on purpose.
     hits=$(grep -rnE "$(bare_pattern "$name")" "$PLUGIN_ROOT/skills" "$PLUGIN_ROOT/references" \
@@ -25,7 +25,7 @@ $hits"
 }
 
 test_the_check_catches_a_bare_name() {
-  local f="$TEST_TMPDIR/SKILL.md" pat
+  local f="$TEST_TMPDIR/SKILL.md" pat=
   pat=$(bare_pattern code-review)
   printf 'Run /code-review now.\n' > "$f"
   grep -qE "$pat" "$f" || fail "pattern missed a bare name"

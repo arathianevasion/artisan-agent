@@ -33,7 +33,7 @@ test_proposed_plans_end_at_slices_show_estimates_and_keep_blockers_first() {
   assert_eq "upload" "$(jq -r '.plans[0].slice' "$PLANS")"
   assert_eq "billing, export" "$(jq -r '.plans[1].slice' "$PLANS")"
   "$TP" check "$PLANS" --graph "$GRAPH"
-  local view; view=$("$TP" render "$PLANS" --graph "$GRAPH")
+  local view=; view=$("$TP" render "$PLANS" --graph "$GRAPH")
   assert_contains "$view" "| Plan 1 | upload | 2 | \$4.00 of \$6.00 | nothing |"
   assert_contains "$view" "| Plan 2 | billing, export | 3 | \$6.00 of \$6.00 | Plan 1 |"
 }
@@ -68,7 +68,7 @@ JSON
 
 test_every_proposal_over_many_budgets_has_blockers_in_the_same_or_an_earlier_plan() {
   sample_graph
-  local b
+  local b=
   for b in 1 2 3 4 5 6 7 8 9 10 11; do
     "$TP" propose --graph "$GRAPH" --budget "$b" >"$TEST_TMPDIR/p.json"
     "$TP" check "$TEST_TMPDIR/p.json" --graph "$GRAPH" || fail "budget $b gave an invalid proposal"
@@ -114,7 +114,7 @@ test_split_moves_tickets_into_a_new_plan_after_the_original() {
 test_split_that_puts_a_blocker_after_its_dependent_is_refused_and_changes_nothing() {
   sample_graph
   "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
-  local before; before=$(cat "$PLANS")
+  local before=; before=$(cat "$PLANS")
   # Moving 3 (blocks 4) out of plan 2 into a new plan after it puts 3 behind 4.
   assert_status 1 "$TP" split "$PLANS" --graph "$GRAPH" 2 3
   assert_contains "$("$TP" split "$PLANS" --graph "$GRAPH" 2 3 2>&1 || true)" "#4 (plan 2) would run before its blocker #3 (plan 3)"
@@ -153,7 +153,7 @@ JSON
   "$TP" reorder "$PLANS" --graph "$GRAPH" 2,3,1
   assert_eq "2" "$(plan_of "$PLANS" 0)"
   assert_eq "1" "$(plan_of "$PLANS" 2)"
-  local before; before=$(cat "$PLANS")
+  local before=; before=$(cat "$PLANS")
   assert_status 1 "$TP" reorder "$PLANS" --graph "$GRAPH" 3,2,1
   assert_eq "$before" "$(cat "$PLANS")"
   assert_status 1 "$TP" reorder "$PLANS" --graph "$GRAPH" 1,2
@@ -171,7 +171,7 @@ test_move_a_ticket_between_plans() {
 test_the_approval_view_shows_every_tickets_acceptance_criteria_and_estimate() {
   sample_graph
   "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
-  local view; view=$("$TP" render "$PLANS" --graph "$GRAPH")
+  local view=; view=$("$TP" render "$PLANS" --graph "$GRAPH")
   assert_contains "$view" "| #1 (Upload endpoint) | none | \$2.00 | ☐ accepts a file<br>☐ rejects 10 MB+ |"
   assert_contains "$view" "☐ shows percent"
   assert_contains "$view" "☐ downloads a CSV"
@@ -186,7 +186,7 @@ test_the_view_warns_about_a_split_slice_and_an_outside_blocker() {
   "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
   "$TP" split "$PLANS" --graph "$GRAPH" 2 4,5      # billing now spans plans 2 and 3
   jq '.tickets["1"].external_blockers = ["90"]' "$GRAPH" >"$GRAPH.tmp" && mv "$GRAPH.tmp" "$GRAPH"
-  local view; view=$("$TP" render "$PLANS" --graph "$GRAPH")
+  local view=; view=$("$TP" render "$PLANS" --graph "$GRAPH")
   assert_contains "$view" '| Slice "billing" | split across plans 2, 3'
   assert_contains "$view" "| #1 (Upload endpoint) | waits on #90"
 }
@@ -198,7 +198,7 @@ use_fake_gh() {
   mkdir -p "$FAKE_GH_DIR"
   PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
   export PATH
-  local n
+  local n=
   for n in 1 2 3 4 5; do
     jq -n --argjson n "$n" --arg t "ticket $n" \
       '{number: $n, id: (1000 + $n), title: $t, state: "open", labels: [],
@@ -245,7 +245,7 @@ test_publish_needs_approval_and_a_valid_plan() {
 test_publish_creates_plan_issues_with_sub_issues_and_native_blocking() {
   publish_sample
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >"$TEST_TMPDIR/out" 2>"$TEST_TMPDIR/err"
-  local p1 p2
+  local p1= p2=
   p1=$(jq -r '.plans[0].issue' "$PLANS"); p2=$(jq -r '.plans[1].issue' "$PLANS")
   [ "$p1" -gt 60 ] && [ "$p2" -gt "$p1" ] || fail "plan issue numbers $p1 $p2"
   assert_eq '["plan"]' "$(jq -c '[.labels[].name]' "$FAKE_GH_DIR/issue-$p1.json")"
@@ -264,7 +264,7 @@ test_a_ticket_that_already_has_a_parent_keeps_it_unless_told_to_replace_it() {
   echo 44 >"$FAKE_GH_DIR/parent-1"; echo '[1]' >"$FAKE_GH_DIR/sub_issues-44.json"
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved 2>"$TEST_TMPDIR/err" >/dev/null
   assert_contains "$(cat "$TEST_TMPDIR/err")" "#1 stays under its existing parent"
-  local p1; p1=$(jq -r '.plans[0].issue' "$PLANS")
+  local p1=; p1=$(jq -r '.plans[0].issue' "$PLANS")
   assert_eq "[2]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-$p1.json")"
   assert_eq "[1]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-44.json")" "the spec lost its child without --replace-parent"
 }
@@ -273,7 +273,7 @@ test_replace_parent_moves_the_ticket_under_its_plan() {
   publish_sample
   echo 44 >"$FAKE_GH_DIR/parent-1"; echo '[1]' >"$FAKE_GH_DIR/sub_issues-44.json"
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved --replace-parent >/dev/null 2>&1
-  local p1; p1=$(jq -r '.plans[0].issue' "$PLANS")
+  local p1=; p1=$(jq -r '.plans[0].issue' "$PLANS")
   assert_eq "[1,2]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-$p1.json")"
   assert_eq "[]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-44.json")"
 }
@@ -281,7 +281,7 @@ test_replace_parent_moves_the_ticket_under_its_plan() {
 test_publish_twice_creates_nothing_new() {
   publish_sample
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >/dev/null 2>&1
-  local creates; creates=$(grep -c '^issue create' "$FAKE_GH_DIR/calls")
+  local creates=; creates=$(grep -c '^issue create' "$FAKE_GH_DIR/calls")
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >/dev/null 2>&1
   assert_eq "$creates" "$(grep -c '^issue create' "$FAKE_GH_DIR/calls")" "second publish created issues"
 }
@@ -303,14 +303,14 @@ scope_tracker() {
 
 test_a_plan_issue_stands_for_its_tickets() {
   scope_tracker
-  local out; out=$("$RS" --repo local/sample "$P1")
+  local out=; out=$("$RS" --repo local/sample "$P1")
   assert_eq "1,2" "$(jq -r '.tickets | map(.number) | join(",")' <<<"$out")"
   assert_eq "$P1" "$(jq -r '.tickets[0].from' <<<"$out")"
 }
 
 test_several_plans_and_single_tickets_mix_without_duplicates() {
   scope_tracker
-  local out; out=$("$RS" --repo local/sample "$P2" 1 "#3" "$P1")
+  local out=; out=$("$RS" --repo local/sample "$P2" 1 "#3" "$P1")
   # Order named: plan 2's tickets, then 1, then plan 1's remaining (2).
   assert_eq "3,4,5,1,2" "$(jq -r '.tickets | map(.number) | join(",")' <<<"$out")"
   assert_eq "$P2" "$(jq -r '.tickets[0].from' <<<"$out")"
@@ -319,7 +319,7 @@ test_several_plans_and_single_tickets_mix_without_duplicates() {
 
 test_a_single_ticket_is_its_own_scope() {
   scope_tracker
-  local out; out=$("$RS" --repo local/sample 4)
+  local out=; out=$("$RS" --repo local/sample 4)
   assert_eq "4" "$(jq -r '.tickets | map(.number) | join(",")' <<<"$out")"
   assert_eq "null" "$(jq -c '.tickets[0].from' <<<"$out")"
 }
@@ -327,7 +327,7 @@ test_a_single_ticket_is_its_own_scope() {
 test_closed_tickets_are_skipped_and_outside_blocking_plans_reported() {
   scope_tracker
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-2.json"
-  local out; out=$("$RS" --repo local/sample "$P2")
+  local out=; out=$("$RS" --repo local/sample "$P2")
   assert_eq "[]" "$(jq -c '.skipped' <<<"$out")"
   assert_eq "[{\"plan\":$P2,\"blocker\":$P1}]" "$(jq -c '.outside_blockers' <<<"$out")"
   out=$("$RS" --repo local/sample "$P1")
@@ -341,7 +341,7 @@ test_a_plan_issue_with_a_task_list_and_no_sub_issues_still_resolves() {
   use_fake_gh
   jq -n '{number: 70, id: 1070, title: "Plan 1: x", state: "open", labels: [{name: "plan"}],
           body: "## Tickets\n- [ ] #1 (ticket 1)\n- [x] #2 (ticket 2)\n"}' >"$FAKE_GH_DIR/issue-70.json"
-  local out; out=$("$RS" --repo local/sample 70)
+  local out=; out=$("$RS" --repo local/sample 70)
   assert_eq "1,2" "$(jq -r '.tickets | map(.number) | join(",")' <<<"$out")"
 }
 
@@ -367,7 +367,7 @@ test_to_plan_skill_has_frontmatter_and_cites_the_shared_files() {
   [ "$(sed -n 1p "$SKILL")" = "---" ] || fail "no frontmatter"
   grep -q '^name: to-plan$' "$SKILL" || fail "name"
   grep -q '^description: .\{20,\}' "$SKILL" || fail "description"
-  local body; body=$(cat "$SKILL")
+  local body=; body=$(cat "$SKILL")
   assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/ARTISAN.md'
   assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh'
   assert_contains "$body" "to-plan.sh split"
@@ -383,13 +383,13 @@ test_to_plan_skill_shows_tickets_as_tables_and_never_in_lists() {
 }
 
 test_to_plan_skill_uses_glossary_words() {
-  local hits
+  local hits=
   hits=$(grep -n -i -w 'batch\|milestone\|sprint\|workflow' "$SKILL" || true)
   assert_eq "" "$hits"
 }
 
 test_implement_plan_resolves_plan_issues_and_points_at_the_reference() {
-  local skill; skill=$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
+  local skill=; skill=$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
   assert_contains "$skill" 'scripts/resolve-scope.sh'
   assert_contains "$skill" 'references/plan-issues.md'
   [ -f "$PLUGIN_ROOT/skills/implement-plan/references/plan-issues.md" ] || fail "reference missing"
@@ -503,7 +503,7 @@ test_resolve_scope_returns_each_tickets_open_blockers_even_outside_the_scope() {
   echo '[1,44]' >"$FAKE_GH_DIR/blocked_by-2.json"
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
   echo '[1,5]' >"$FAKE_GH_DIR/blocked_by-3.json"
-  local out; out=$("$RS" --repo local/sample 1 2 3)
+  local out=; out=$("$RS" --repo local/sample 1 2 3)
   assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
   assert_eq "[1]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "closed blocker 44 left out"
   assert_eq "[1,5]" "$(jq -c '.tickets[2].blocked_by' <<<"$out")" "open blocker 5 is outside the scope but listed"
@@ -515,7 +515,7 @@ test_resolve_scope_falls_back_to_the_body_line_where_there_are_no_native_depende
   jq '.body = "Blocked by: #1, #44\n\n## What\nx"' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-2.json"
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
   fail_gh_on '*dependencies/blocked_by*' "gh: Not Found (HTTP 404)"
-  local out; out=$("$RS" --repo local/sample 1 2)
+  local out=; out=$("$RS" --repo local/sample 1 2)
   assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
   assert_eq "[1]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "closed #44 left out"
 }

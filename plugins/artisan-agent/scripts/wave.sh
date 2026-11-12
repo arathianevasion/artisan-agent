@@ -132,7 +132,7 @@ halt_if_wave_failed() {
 cmd_start() {
   open_run "${1:-}"
   shift
-  local base= ib wt sha
+  local base= ib= wt= sha=
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] || usage; base=$2; shift 2 ;;
@@ -169,7 +169,7 @@ cmd_start() {
 # Last orchestrator: "id attempt wave pid", or nothing. Its pid is its
 # runner's, from the runner's own pid file ("-" before it has one).
 last_orchestrator() {
-  local line pid
+  local line= pid=
   line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt) \(.wave)"')
   [ -n "$line" ] || return 0
   set -- $line
@@ -196,7 +196,7 @@ cmd_launch() {
       *) usage ;;
     esac
   done
-  local wt last id attempt wave pid cls me deadline minutes prompt runner
+  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner=
   wave=1 attempt=1
   last=$(last_orchestrator)
   if [ -n "$last" ]; then
@@ -315,7 +315,7 @@ ticket_table() {
 
 # An ended orchestrator's spend, from its session's output, counted once.
 record_orchestrator_cost() { # id attempt
-  local usd
+  local usd=
   usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true)
   [ -n "$usd" ] || return 0
   apply '(.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
@@ -328,7 +328,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o parked=
+  local last= id= attempt= wave= pid= cls= next= reconciled=1 waiting= o= parked=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -411,7 +411,7 @@ cmd_status() {
 # blocker in the run) or closed (one outside it). The tracker says what blocks
 # what; git says what is merged. Refuses with 5, or 1 if either can't be read.
 check_blockers() { # ticket
-  local t="$1" repo ib tip blockers b state status sha
+  local t="$1" repo= ib= tip= blockers= b= state= status= sha=
   repo=$(get '.repo')
   ib=$(integration_branch)
   tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib") || die "no integration branch $ib"
@@ -447,7 +447,7 @@ cmd_dispatch() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  local status in_flight max
+  local status= in_flight= max=
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
   [ "$(get --arg t "$t" '.tickets[$t].human == null')" = true ] \
@@ -458,7 +458,7 @@ cmd_dispatch() {
   check_blockers "$t"
   "$SCRIPT_DIR/wave-width.sh" check "$RUN_DIR" "$t" || exit $?
 
-  local ib base branch n wt prev repo title path expected estimate minutes model turns deadline prompt pid ref
+  local ib= base= branch= n= wt= prev= repo= title= path= expected= estimate= minutes= model= turns= deadline= prompt= pid= ref=
   ib=$(integration_branch)
   base=$(git -C "$MAIN" rev-parse "refs/heads/$ib")
   branch=$(get --arg t "$t" '.tickets[$t].branch')
@@ -560,7 +560,7 @@ EOF
 # a few lines from each source, never a transcript.
 failure_evidence() {
   local t="$1" p="$2" w="$RUN_DIR/workers/$1.$2" res="$RUN_DIR/results/$1.$2.result.json"
-  local exitf="$RUN_DIR/results/$1.$2.exit.json" branch base log
+  local exitf="$RUN_DIR/results/$1.$2.exit.json" branch= base= log=
   echo "## Failure evidence from attempt $p"
   echo
   get --arg t "$t" --argjson p "$p" '.tickets[$t].failures[] | select(.attempt == $p) | "- Why it counted as failed: \(.reason)"'
@@ -607,7 +607,7 @@ failure_evidence() {
 # The sweep can record a result before the session has written its JSON
 # output; once the attempt has ended, take its cost from there.
 record_session_cost() { # ticket attempt
-  local usd
+  local usd=
   usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$1.$2/output.json" 2>/dev/null || true)
   [ -n "$usd" ] || return 0
   apply 'attempt_cost($t; $n; $usd)
@@ -628,7 +628,7 @@ cmd_merge() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local n branch wt ib suite pre title
+  local n= branch= wt= ib= suite= pre= title=
   check_returned wave.sh "$t" "not merged"
   n=$ATTEMPT
   branch=$(get --arg t "$t" '.tickets[$t].branch')
@@ -646,7 +646,7 @@ cmd_merge() {
   pre=$(git -C "$wt" rev-parse HEAD)
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
   if ! git -C "$wt" merge --no-ff --no-edit -m "Merge #$t ($title) into $ib" "$branch" >/dev/null 2>&1; then
-    local paths pjson
+    local paths= pjson=
     pjson=$(unmerged_json "$wt")
     paths=$(join_paths "$pjson")
     if [ "$(get --arg t "$t" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
@@ -666,7 +666,7 @@ cmd_merge() {
 # The suite after a merge commit is made: green records the merge, red undoes
 # it and blocks the ticket (7).
 finish_merge() { # ticket attempt worktree pre-merge-commit
-  local t="$1" n="$2" wt="$3" pre="$4" suite log sha worker_wt
+  local t="$1" n="$2" wt="$3" pre="$4" suite= log= sha= worker_wt=
   suite=$(get '.plan.suite_command')
   mkdir -p "$RUN_DIR/merges"
   log="$RUN_DIR/merges/$t.$n.suite.log"
@@ -692,7 +692,7 @@ finish_merge() { # ticket attempt worktree pre-merge-commit
 # orchestrator ended mid-try): abort it, and block its ticket, whose one try
 # is used. Runs before any other merge.
 abandon_pending_resolution() { # integration worktree
-  local wt="$1" t
+  local wt="$1" t=
   t=$(get '[.tickets | to_entries[] | select(.value.resolve.outcome? == "pending") | .key] | first // ""')
   [ -n "$t" ] || return 0
   git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$(get --arg t "$t" '.tickets[$t].resolve.pre')"
@@ -713,7 +713,7 @@ cmd_resolved() {
       *) usage ;;
     esac
   done
-  local wt ib n pre branch paths pjson left markers title why p
+  local wt= ib= n= pre= branch= paths= pjson= left= markers= title= why= p=
   [ "$(get --arg t "$t" '.tickets[$t].resolve.outcome? // ""')" = pending ] \
     || die "#$t has no conflict waiting on its resolution"
   wt=$(integration_worktree)
@@ -768,7 +768,7 @@ cmd_close() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local status repo body newbody
+  local status= repo= body= newbody=
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
   if [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" = true ]; then

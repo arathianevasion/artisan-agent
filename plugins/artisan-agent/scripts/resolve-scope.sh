@@ -91,7 +91,7 @@ done
 
 # Each ticket's open blockers.
 ticket_blockers() { # number: prints a JSON array of open blocker numbers
-  local n=$1 deps err body b st out='[]'
+  local n=$1 deps= err= body= b= st= out='[]'
   if deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>&1); then
     jq -c '[.[] | select((.state | ascii_downcase) == "open") | .number]' <<<"$deps" \
       || die "cannot read the blockers of #$n: unreadable answer"

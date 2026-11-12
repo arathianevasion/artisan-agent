@@ -5,7 +5,7 @@ UC="$PLUGIN_ROOT/scripts/upstream-check.sh"
 
 # mk_tree DIR [flag-for-triage]: a tiny upstream with every dependency and replaced skill.
 mk_tree() {
-  local d=$1 n flag
+  local d=$1 n= flag=
   mkdir -p "$d/docs/agents"
   for n in $(sed -e 's/#.*//' "$PLUGIN_ROOT/guard/dependencies.list" | grep -v '^$') \
            $(bash "$PLUGIN_ROOT/guard/guard.sh" flag-watch | sed 's/^mattpocock-skills://'); do
@@ -56,7 +56,7 @@ mech() { bash "$UC" mechanical --old "$TEST_TMPDIR/old" --new "$1"; }
 
 test_unchanged_upstream_reports_no_change_and_runs_no_checks() {
   setup_env same
-  local out
+  local out=
   # A stub claude that would leave a mark if the judgement agent ran.
   printf '#!/bin/bash\ntouch "%s/claude-ran"\n' "$TEST_TMPDIR" >"$TEST_TMPDIR/claude"; chmod +x "$TEST_TMPDIR/claude"
   out=$(ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/claude" bash "$UC" run "$TEST_TMPDIR/w")
@@ -73,7 +73,7 @@ test_identical_trees_pass_the_mechanical_check() {
 
 test_a_removed_dependency_skill_fails() {
   setup_env; mk_tree "$TEST_TMPDIR/n"; rm -rf "$TEST_TMPDIR/n/skills/engineering/tdd"
-  local out; out=$(mech "$TEST_TMPDIR/n" || true)
+  local out=; out=$(mech "$TEST_TMPDIR/n" || true)
   assert_contains "$out" "FAIL dependency tdd"
   assert_status 1 mech "$TEST_TMPDIR/n"
 }
@@ -81,7 +81,7 @@ test_a_removed_dependency_skill_fails() {
 test_a_flipped_flag_on_a_replaced_skill_fails() {
   setup_env; mk_tree "$TEST_TMPDIR/n"
   sed -i.bak '/^disable-model-invocation/d' "$TEST_TMPDIR/n/skills/engineering/triage/SKILL.md"
-  local out; out=$(mech "$TEST_TMPDIR/n" || true)
+  local out=; out=$(mech "$TEST_TMPDIR/n" || true)
   assert_contains "$out" "FAIL flag triage disable-model-invocation was true, now false"
   assert_status 1 mech "$TEST_TMPDIR/n"
 }
@@ -95,7 +95,7 @@ test_a_flipped_flag_on_a_dependency_skill_fails() {
 test_a_renamed_docs_agents_file_fails() {
   setup_env; mk_tree "$TEST_TMPDIR/n"
   mv "$TEST_TMPDIR/n/docs/agents/domain.md" "$TEST_TMPDIR/n/docs/agents/context.md"
-  local out; out=$(mech "$TEST_TMPDIR/n" || true)
+  local out=; out=$(mech "$TEST_TMPDIR/n" || true)
   assert_contains "$out" "FAIL docs-agents domain.md"
   assert_status 1 mech "$TEST_TMPDIR/n"
 }
@@ -103,7 +103,7 @@ test_a_renamed_docs_agents_file_fails() {
 test_a_renamed_label_fails() {
   setup_env; mk_tree "$TEST_TMPDIR/n"
   sed -i.bak 's/| `wontfix`   /| `rejected`  /' "$TEST_TMPDIR/n/docs/agents/triage-labels.md"
-  local out; out=$(mech "$TEST_TMPDIR/n" || true)
+  local out=; out=$(mech "$TEST_TMPDIR/n" || true)
   assert_contains "$out" "FAIL label wontfix"
   assert_status 1 mech "$TEST_TMPDIR/n"
 }
@@ -112,8 +112,8 @@ test_it_reads_the_guards_lists_not_its_own() {
   # Adding a name to the guard's flag-watch list is enough to watch its flag.
   setup_env; mk_tree "$TEST_TMPDIR/n"
   for s in implement; do :; done
-  local out; out=$(mech "$TEST_TMPDIR/n")
-  local n
+  local out=; out=$(mech "$TEST_TMPDIR/n")
+  local n=
   for n in $(bash "$PLUGIN_ROOT/guard/guard.sh" flag-watch | sed 's/^mattpocock-skills://') \
            $(sed -e 's/#.*//' "$PLUGIN_ROOT/guard/dependencies.list" | grep -v '^$'); do
     assert_contains "$out" " $n"
@@ -143,7 +143,7 @@ test_moved_upstream_lists_ports_and_behaviour_changes_and_offers_the_update() {
   setup_env; mk_upstream ""; stub_claude; fake_tracker
   printf '# notes\n- watch triage\n' >"$ARTISAN_HOME/upstream-notes.md"
   export JUDGE_JSON='{"port":[{"skill":"triage","title":"batch labels","why":"fewer calls"}],"behaviour":[{"skill":"tdd","change":"asks for seams first"}],"artisan_md":[],"breaking":[]}'
-  local out; out=$(bash "$UC" run "$TEST_TMPDIR/w")
+  local out=; out=$(bash "$UC" run "$TEST_TMPDIR/w")
   assert_contains "$out" "Improvements worth porting"
   assert_contains "$out" "| triage | batch labels | fewer calls |"
   assert_contains "$out" "| tdd | asks for seams first |"
@@ -158,7 +158,7 @@ test_moved_upstream_lists_ports_and_behaviour_changes_and_offers_the_update() {
 test_a_breaking_change_files_a_ticket_and_withholds_the_offer() {
   setup_env; mk_upstream 'rm -rf skills/engineering/tdd'; stub_claude; fake_tracker
   export JUDGE_JSON='{"port":[],"behaviour":[],"artisan_md":[],"breaking":[]}'
-  local out; out=$(bash "$UC" run "$TEST_TMPDIR/w")
+  local out=; out=$(bash "$UC" run "$TEST_TMPDIR/w")
   assert_contains "$out" "no longer exists"
   assert_contains "$out" "Filed pipeline ticket #2"
   case "$out" in *"Update upstream to"*) fail "the update was offered" ;; esac
@@ -172,7 +172,7 @@ test_a_breaking_change_files_a_ticket_and_withholds_the_offer() {
 test_a_breaking_judgement_entry_also_blocks() {
   setup_env; mk_upstream ""; stub_claude; fake_tracker
   export JUDGE_JSON='{"port":[],"behaviour":[{"skill":"tdd","change":"x"}],"artisan_md":[],"breaking":[{"skill":"tdd","title":"output renamed","why":"implement parses it"}]}'
-  local out; out=$(bash "$UC" run "$TEST_TMPDIR/w")
+  local out=; out=$(bash "$UC" run "$TEST_TMPDIR/w")
   assert_contains "$out" "Filed pipeline ticket #2"
   assert_contains "$(cat "$FAKE_GH_DIR/issue-2.json")" "output renamed"
 }

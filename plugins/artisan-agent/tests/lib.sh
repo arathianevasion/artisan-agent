@@ -31,7 +31,7 @@ assert_status() { # expected-status command...
 # process's, another suite's verifier, say, which a kill by number would end
 # without an exit record (the "verified twice" flake, #106).
 kill_test_processes() {
-  local pid
+  local pid=
   for pid in $(pgrep -f "$TEST_TMPDIR" 2>/dev/null); do
     [ "$pid" != "$$" ] || continue
     kill -KILL "-$pid" "$pid" 2>/dev/null || true

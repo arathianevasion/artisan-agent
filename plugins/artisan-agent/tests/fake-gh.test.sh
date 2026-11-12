@@ -9,7 +9,7 @@ setup_fake_gh() {
 
 test_issue_list_on_an_empty_tracker_prints_an_empty_list_and_exits_zero() {
   setup_fake_gh
-  local out status=0
+  local out= status=0
   out=$(gh issue list --json number) || status=$?
   assert_eq 0 "$status" "exit status"
   assert_eq "[]" "$out"
@@ -17,7 +17,7 @@ test_issue_list_on_an_empty_tracker_prints_an_empty_list_and_exits_zero() {
 
 test_issue_list_filters_on_an_empty_tracker_also_print_an_empty_list() {
   setup_fake_gh
-  local out status=0 args
+  local out= status=0 args=
   for args in "--label plan" "--state closed" "--state all" "--state open --label review-gate"; do
     status=0
     # shellcheck disable=SC2086
@@ -29,7 +29,7 @@ test_issue_list_filters_on_an_empty_tracker_also_print_an_empty_list() {
 
 test_issue_list_without_json_on_an_empty_tracker_prints_nothing_and_exits_zero() {
   setup_fake_gh
-  local out status=0
+  local out= status=0
   out=$(gh issue list) || status=$?
   assert_eq 0 "$status" "exit status"
   assert_eq "" "$out"

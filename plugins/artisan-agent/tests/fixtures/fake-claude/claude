@@ -37,7 +37,7 @@ if [ -n "${FAKE_CLAUDE_ENV:-}" ]; then
 fi
 
 result() { # subtype is_error num_turns text
-  local text
+  local text=
   text=$(printf '%s' "$4" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR > 1 ? "\\n" : ""), $0}')
   printf '{"type":"result","subtype":"%s","is_error":%s,"num_turns":%s,"total_cost_usd":0.01,"result":"%s"}\n' \
     "$1" "$2" "$3" "$text"

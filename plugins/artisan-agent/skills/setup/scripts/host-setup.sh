@@ -49,7 +49,7 @@ host_os() {
 # write_file path mode: stdin to path unless it already has exactly that content.
 # A file that differs is kept, never overwritten.
 write_file() {
-  local path="$1" mode="$2" tmp
+  local path="$1" mode="$2" tmp=
   tmp=$(mktemp)
   cat >"$tmp"
   if [ -f "$path" ]; then
@@ -64,7 +64,7 @@ write_file() {
 }
 
 cmd_check() {
-  local missing=0 t hint
+  local missing=0 t= hint=
   for t in claude git gh jq tmux perl; do
     command -v "$t" >/dev/null 2>&1 && continue
     case "$t" in
@@ -81,7 +81,7 @@ cmd_check() {
 }
 
 set_settings() { # <config>/settings.json: two booleans on, other keys kept
-  local f="$CFG/settings.json" tmp
+  local f="$CFG/settings.json" tmp=
   mkdir -p "$CFG"
   [ -f "$f" ] || echo '{}' >"$f"
   jq -e 'type == "object"' "$f" >/dev/null 2>&1 || { echo "failed: $f is not a JSON object; fix it and rerun"; return 1; }
@@ -113,7 +113,7 @@ EOF
 }
 
 write_service() { # supervisor files for this OS
-  local l os
+  local l= os=
   l=$(launcher_path)
   os=$(host_os)
   if [ "$os" = macos ]; then
@@ -195,7 +195,7 @@ cmd_apply() {
 }
 
 cmd_trust() { # DIR
-  local dir="${1:-}" f
+  local dir="${1:-}" f=
   [ -n "$dir" ] || usage
   [ -d "$dir" ] || { echo "todo: no such directory: $dir"; return 1; }
   dir=$(cd "$dir" && pwd -P)
@@ -216,7 +216,7 @@ cmd_gh() {
 }
 
 cmd_mark() {
-  local repo="$PWD" common cfgfile
+  local repo="$PWD" common= cfgfile=
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
@@ -238,7 +238,7 @@ cmd_mark() {
 }
 
 cmd_status() {
-  local workdir="" bad=0 f="$CFG/settings.json" login
+  local workdir="" bad=0 f="$CFG/settings.json" login=
   while [ $# -gt 0 ]; do
     case "$1" in
       --workdir) [ $# -ge 2 ] || usage; workdir=$2; shift 2 ;;

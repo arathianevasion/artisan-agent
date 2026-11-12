@@ -55,7 +55,7 @@ edit_event() { # file [cwd]
 
 test_edit_in_main_checkout_is_refused_with_where_to_work() {
   make_repo
-  local out
+  local out=
   out=$(edit_event "$REPO/doc.md" | "$PROTECT" main-edit)
   assert_contains "$out" '"permissionDecision":"deny"'
   assert_contains "$out" "main checkout"
@@ -97,7 +97,7 @@ run_start_event() { # skill [event]
 
 test_second_run_while_lock_held_is_refused_and_left_as_plan_issue() {
   make_repo; stub_gh; hold_lock
-  local out
+  local out=
   out=$(run_start_event artisan-agent:implement-plan | "$PROTECT" run-start)
   assert_contains "$out" '"decision":"block"'
   assert_contains "$out" "run r1"
@@ -116,7 +116,7 @@ test_a_retried_request_does_not_file_a_second_plan_issue() {
 
 test_claude_calling_the_skill_is_refused_too() {
   make_repo; stub_gh; hold_lock
-  local out
+  local out=
   out=$(run_start_event artisan-agent:implement-plan tool | "$PROTECT" run-start)
   assert_contains "$out" '"permissionDecision":"deny"'
   assert_contains "$out" "run r1"
@@ -137,7 +137,7 @@ test_a_failing_gh_still_refuses_and_says_so() {
   make_repo; hold_lock
   mkdir -p "$TEST_TMPDIR/bin"; printf '#!/bin/bash\nexit 1\n' >"$TEST_TMPDIR/bin/gh"; chmod +x "$TEST_TMPDIR/bin/gh"
   PATH="$TEST_TMPDIR/bin:$PATH"
-  local out
+  local out=
   out=$(run_start_event implement-plan | "$PROTECT" run-start)
   assert_contains "$out" '"decision":"block"'
   assert_contains "$out" "failed"
@@ -159,7 +159,7 @@ test_pre_commit_refuses_in_main_checkout_and_allows_in_a_worktree() {
   "$PLUGIN_ROOT/guard/install-pre-commit.sh" "$REPO" >/dev/null
   printf 'two\n' >>"$REPO/doc.md"
   git -C "$REPO" add doc.md
-  local err
+  local err=
   err=$(git -c user.name=T -c user.email=t@example.invalid -C "$REPO" commit -m x 2>&1) && fail "commit in the main checkout was allowed"
   assert_contains "$err" "main checkout"
   assert_contains "$err" "worktree"
@@ -207,7 +207,7 @@ test_run_lock_check_reports_holder_and_ignores_stale_locks() {
   ln -s 999999 "$REPO/.artisan-agent/runs/r0/state.lock"
   assert_status 0 "$RL" check "$REPO"
   hold_lock
-  local out rc=0
+  local out= rc=0
   out=$("$RL" check "$REPO") || rc=$?
   assert_eq 3 "$rc"
   assert_eq "r1 $HOLDER_PID" "$out"
@@ -246,7 +246,7 @@ test_queue_plan_files_a_plan_issue_via_gh() {
 
 test_doc_change_goes_through_a_branch_worktree_and_fast_forwards_main() {
   make_repo
-  local wt before
+  local wt= before=
   before=$(git -C "$REPO" rev-parse HEAD)
   wt=$(cd "$REPO" && "$PLUGIN_ROOT/scripts/doc-change.sh" start fix)
   [ -d "$wt" ] || fail "no worktree"
@@ -265,7 +265,7 @@ test_doc_change_goes_through_a_branch_worktree_and_fast_forwards_main() {
 
 test_doc_change_finish_rebases_when_main_moved_and_refuses_a_dirty_main() {
   make_repo
-  local wt
+  local wt=
   wt=$(cd "$REPO" && "$PLUGIN_ROOT/scripts/doc-change.sh" start two)
   printf 'x\n' >"$wt/new.md"; git -C "$wt" add new.md
   git -c user.name=T -c user.email=t@example.invalid -C "$wt" commit -qm new
@@ -286,7 +286,7 @@ test_doc_change_refuses_bad_names_and_empty_branch() {
 
 test_doc_change_finish_says_so_when_git_has_no_identity() {
   make_repo
-  local wt err
+  local wt= err=
   wt=$(cd "$REPO" && "$PLUGIN_ROOT/scripts/doc-change.sh" start noid)
   printf 'x\n' >"$wt/n.md"; git -C "$wt" add n.md
   git -c user.name=T -c user.email=t@example.invalid -C "$wt" commit -qm new
@@ -303,7 +303,7 @@ test_doc_change_finish_says_so_when_git_has_no_identity() {
 # else is still refused.
 test_resuming_the_open_run_passes_the_run_lock() {
   make_repo; stub_gh; hold_lock
-  local args
+  local args=
   for args in "" "  " resume r1 "resume r1"; do
     assert_eq "" "$(jq -cn --arg c "$REPO" --arg a "$args" \
       '{hook_event_name:"UserPromptExpansion",command_name:"artisan-agent:implement-plan",command_args:$a,cwd:$c}' \
@@ -313,7 +313,7 @@ test_resuming_the_open_run_passes_the_run_lock() {
       | "$PROTECT" run-start)" "called [$args]"
   done
   # Typed bare, the hook sees no arguments, only the prompt.
-  local p
+  local p=
   for p in "/artisan-agent:implement-plan" "/implement-plan resume" "/artisan-agent:implement-plan r1"; do
     assert_eq "" "$(jq -cn --arg c "$REPO" --arg p "$p" \
       '{hook_event_name:"UserPromptExpansion",command_name:"artisan-agent:implement-plan",prompt:$p,cwd:$c}' \

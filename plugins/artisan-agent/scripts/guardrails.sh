@@ -89,7 +89,7 @@ git_id() { # a commit identity only if the machine has none
     || printf -- '-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost'
 }
 commit_in() { # dir message paths...
-  local dir=$1 msg=$2 ident
+  local dir=$1 msg=$2 ident=
   shift 2
   ident=$(cd "$dir" && git_id)
   # shellcheck disable=SC2086
@@ -99,7 +99,7 @@ commit_in() { # dir message paths...
 }
 
 main_checkout() { # from a run dir or the current directory
-  local common
+  local common=
   common=$(git -C "${1:-.}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || die "not inside a git repository"
   dirname "$common"
@@ -122,7 +122,7 @@ team_dir() { printf '%s/%s\n' "$TEAM_CACHE" "$(printf %s "$1" | tr / _)"; }
 
 # fetch_team repo -> the clone's directory, at origin/main
 fetch_team() {
-  local repo=$1 dir
+  local repo=$1 dir=
   dir=$(team_dir "$repo")
   mkdir -p "$TEAM_CACHE"
   if [ -d "$dir/.git" ]; then
@@ -139,7 +139,7 @@ fetch_team() {
 
 # sources_json main-checkout fetch(1|0)
 sources_json() {
-  local m=$1 fetch=$2 repo tdir tc="" pc="" ic="" ref dirty=false
+  local m=$1 fetch=$2 repo= tdir= tc="" pc="" ic="" ref= dirty=false
   repo=$(team_repo "$m")
   if [ -n "$repo" ]; then
     if [ "$fetch" = 1 ]; then tdir=$(fetch_team "$repo"); else tdir=$(team_dir "$repo"); fi
@@ -171,7 +171,7 @@ cmd_sources() {
 # --------------------------------------------------------------- wave-start
 
 queue_conflict() { # run-dir ref
-  local d
+  local d=
   d=$(mktemp "${TMPDIR:-/tmp}/guardrail-decision.XXXXXX")
   jq -n --arg r "$2" '{id: 0, kind: "exception",
     question: "Main changed a product guardrail but would not merge into the integration branch (\($r)). Resolve the conflict, then launch the wave again.",
@@ -182,7 +182,7 @@ queue_conflict() { # run-dir ref
 
 cmd_wave_start() {
   [ $# -eq 2 ] || usage
-  local run=$1 wave=$2 m src wt ib ref pc tip version merged=false changed
+  local run=$1 wave=$2 m= src= wt= ib= ref= pc= tip= version= merged=false changed=
   state_require_run_dir "$run"
   run=$(cd "$run" && pwd)
   m=$(main_checkout "$run")
@@ -223,7 +223,7 @@ read_level() {
 
 # resolve_json run-dir role
 resolve_json() {
-  local run=$1 role=$2 m src tdir repo recs
+  local run=$1 role=$2 m= src= tdir= repo= recs=
   if [ -n "$run" ]; then
     state_require_run_dir "$run"
     m=$(main_checkout "$run")
@@ -276,7 +276,7 @@ cmd_resolve() {
 }
 
 cmd_table() {
-  local run="" role="" json
+  local run="" role="" json=
   while [ $# -gt 0 ]; do
     case "$1" in
       --run-dir) [ $# -ge 2 ] || usage; run=$2; shift 2 ;;
@@ -349,7 +349,7 @@ move_guardrail() {
     [ -z "$run_dir" ] || [ -f "$run_dir/state.json" ] || die "no state.json in --run-dir $run_dir"
   fi
 
-  local m dir branch="" file path now date current new
+  local m= dir= branch="" file= path= now= date= current= new=
   m=$(main_checkout)
   now=$(state_now)
   date=$(jq -rn --argjson n "$now" '$n | todate')
@@ -360,7 +360,7 @@ move_guardrail() {
     product | team)
       branch="guardrail/$id-$now"
       if [ "$level" = product ]; then
-        local ref
+        local ref=
         ref=$(main_ref "$m")
         [ -n "$ref" ] || die "the product has no main branch"
         dir="$(dirname "$m")/$(basename "$m")-wt/guardrail-$id"
@@ -368,7 +368,7 @@ move_guardrail() {
         git -C "$m" worktree add -q -b "$branch" "$dir" "$ref" >/dev/null 2>&1 || die "could not add a worktree for $branch"
         path=$PRODUCT_FILE
       else
-        local repo tdir
+        local repo= tdir=
         repo=$(team_repo "$m")
         [ -n "$repo" ] || die "no team_guardrails_repo in .artisan-agent/config.yml"
         tdir=$(fetch_team "$repo")
@@ -389,7 +389,7 @@ move_guardrail() {
       drop_worktree
       state_die 7 "guardrails.sh: $id is the scope floor or a defer-only gate; it never loosens"
     fi
-    local cur_l
+    local cur_l=
     cur_l=$(jq -r '.strict // 0' <<<"$current")
     if [ "$strict" -ge "$cur_l" ]; then
       drop_worktree
@@ -416,7 +416,7 @@ move_guardrail() {
       + (if $scope == "" then {} else {scope: $scope} end) + (if $role == "" then {} else {role: $role} end)
       + {origin: ({date: $date, reason: $reason, who: $who} + (if $run == "" then {} else {run: $run} end)), moves: []}')
   else
-    local cur
+    local cur=
     cur=$(jq -r '.strict // 0' <<<"$current")
     [ -n "$strict" ] && [ "$strict" -gt "$cur" ] \
       || { drop_worktree

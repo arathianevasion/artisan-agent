@@ -33,7 +33,7 @@ done
 
 validate_list() { # a missing or empty list, or a line without a replacement, is an error
   [ -f "$list" ] || { echo "guard.sh: no list at $list" >&2; exit 2; }
-  local n=0 name repl
+  local n=0 name= repl=
   while read -r name repl; do
     [ -n "$repl" ] || { echo "guard.sh: $name has no replacement in $list" >&2; exit 2; }
     n=$((n + 1))
@@ -52,7 +52,7 @@ entries() { # prints "name replacement" lines, comments and blanks removed
 names() { entries | while read -r name _; do printf '%s\n' "$name"; done; }
 
 join() { # join lines of stdin with $1
-  local sep=$1 out="" line
+  local sep=$1 out="" line=
   while IFS= read -r line; do
     if [ -z "$out" ]; then out=$line; else out="$out$sep$line"; fi
   done
@@ -65,7 +65,7 @@ deny_lines() { names | while read -r n; do printf 'Skill(%s:%s)\n' "$UPSTREAM" "
 
 # JSON string escaping for a value that goes between double quotes: backslash, quote, tab, LF, CR (enough for a hook command; other control characters are not handled). Only --hook-command needs it; the matcher, deny rules and ${CLAUDE_PLUGIN_ROOT} paths are fixed literals or skill names. bash 3.2-safe.
 json_escape() {
-  local s=$1 tab nl cr
+  local s=$1 tab= nl= cr=
   tab=$(printf '\t'); nl=$(printf '\n'); cr=$(printf '\r')
   s=${s//\\/\\\\}; s=${s//\"/\\\"}
   s=${s//"$tab"/\\t}; s=${s//"$nl"/\\n}; s=${s//"$cr"/\\r}

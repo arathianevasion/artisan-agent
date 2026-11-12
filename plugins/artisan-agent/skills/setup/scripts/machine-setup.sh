@@ -24,7 +24,7 @@ json() { python3 -I "$HERE/machine_json.py" "$@"; }
 upstream_names() {
   {
     grep -v '^#' "$HERE/../upstream-skills.txt" 2>/dev/null || true
-    local f
+    local f=
     for f in "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/SKILL.md \
              "$PLUGINS"/cache/claude-plugins-official/mattpocock-skills/*/skills/*/*/SKILL.md; do
       if [ -f "$f" ]; then basename "$(dirname "$f")"; fi
@@ -53,7 +53,7 @@ standards_file() { # title
 }
 
 cmd_init() {
-  local f path paths="" ident="" did=0 tools_rc=0
+  local f= path= paths="" ident="" did=0 tools_rc=0
   cmd_check || tools_rc=1   # report now, still set up; the exit status stays non-zero at the end
   mkdir -p "$HOME_DIR"
   for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md satisfaction.jsonl; do
@@ -88,7 +88,7 @@ cmd_init() {
 }
 
 cmd_scan() {
-  local up name pid scope ppath ver value
+  local up= name= pid= scope= ppath= ver= value=
   up=$(upstream_names)
   json installs "$CFG" | while IFS=$'\037' read -r pid scope ppath ver; do
     printf 'project-install:%s:%s:%s\tproject-install\t%s %s-scope install (version %s) at %s; projects should only enable it\n' \
@@ -110,7 +110,7 @@ cmd_scan() {
 }
 
 trash_skill() {
-  local name=$1 dest
+  local name=$1 dest=
   [ -e "$CFG/skills/$name" ] || { echo "skipped: $name is already gone"; return 0; }
   mkdir -p "$TRASH"
   dest=$TRASH/$name.$(date +%Y%m%d%H%M%S)
@@ -123,7 +123,7 @@ trash_skill() {
 # run inside the project's path. When that folder is gone, recreate it (only the missing
 # levels), run the CLI's own uninstall, then remove the levels we created if still empty.
 uninstall_in_project() { # plugin scope path
-  local pid=$1 scope=$2 ppath=$3 d created="" recreated=0 rc=0
+  local pid=$1 scope=$2 ppath=$3 d= created="" recreated=0 rc=0
   if [ ! -d "$ppath" ]; then
     d=$ppath
     while [ ! -d "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
@@ -152,7 +152,7 @@ EOF_CREATED
 }
 
 cmd_remove() {
-  local id kind rest pid scope ppath status=0
+  local id= kind= rest= pid= scope= ppath= status=0
   [ $# -gt 0 ] || { echo "remove: no ids given; nothing removed" >&2; return 0; }
   for id in "$@"; do
     kind=${id%%:*}

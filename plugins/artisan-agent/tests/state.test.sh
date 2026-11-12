@@ -5,7 +5,7 @@
 test_init_writes_every_documented_field_with_schema_version() {
   init_run
   assert_eq 1 "$(state_get .schema_version)"
-  local key
+  local key=
   for key in run_id repo plan tickets integration findings costs decisions waves frontier; do
     assert_eq true "$(state_get "has(\"$key\")")" "top-level field $key"
   done
@@ -23,7 +23,7 @@ test_every_field_in_the_reference_is_written_by_init() {
   # The reference documents the shape once; init must produce exactly its
   # top-level fields, so the two cannot drift apart.
   init_run
-  local documented written
+  local documented= written=
   documented=$(sed -n 's/^| `\([a-z_]*\)` | top-level |.*/\1/p' "$PLUGIN_ROOT/references/state-file.md" | sort | tr '\n' ' ')
   written=$(state_get 'keys[]' | sort | tr '\n' ' ')
   assert_eq "$written" "$documented" "top-level fields in references/state-file.md vs init"
@@ -44,7 +44,7 @@ test_init_refuses_to_overwrite_an_existing_run() {
 test_run_dir_is_in_the_main_checkout_even_from_a_worktree() {
   make_project
   git_quiet -C "$PROJECT" worktree add -b agent/10 "$TEST_TMPDIR/wt10"
-  local from_wt
+  local from_wt=
   from_wt=$(cd "$TEST_TMPDIR/wt10" && "$SCRIPTS/state.sh" run-dir r1)
   assert_eq "$(cd "$PROJECT" && pwd -P)/.artisan-agent/runs/r1" "$from_wt"
 }
@@ -52,7 +52,7 @@ test_run_dir_is_in_the_main_checkout_even_from_a_worktree() {
 test_a_second_writer_is_refused_while_the_lock_is_held() {
   trap kill_workers EXIT
   init_run
-  local holder before
+  local holder= before=
   holder=$(start_worker)
   "$SCRIPTS/state.sh" lock "$RUN_DIR" "$holder"
   before=$(state_sum)
@@ -69,7 +69,7 @@ test_a_second_writer_is_refused_while_the_lock_is_held() {
 
 test_a_stale_lock_from_a_dead_process_is_recovered() {
   init_run
-  local dead
+  local dead=
   sleep 0 &
   dead=$!
   wait "$dead"
@@ -82,7 +82,7 @@ test_a_stale_lock_from_a_dead_process_is_recovered() {
 
 test_an_interrupted_write_leaves_the_previous_state_file_intact() {
   init_run
-  local before fifo writer
+  local before= fifo= writer=
   before=$(cat "$RUN_DIR/state.json")
   fifo="$TEST_TMPDIR/feed"
   mkfifo "$fifo"
@@ -103,7 +103,7 @@ test_an_interrupted_write_leaves_the_previous_state_file_intact() {
 
 test_a_write_of_the_wrong_schema_version_is_refused() {
   init_run
-  local before
+  local before=
   before=$(state_sum)
   assert_status 1 sh -c "jq '.schema_version = 99' '$RUN_DIR/state.json' | '$SCRIPTS/state.sh' write '$RUN_DIR'"
   assert_status 1 sh -c "printf '{\"schema_version\": 1, ' | '$SCRIPTS/state.sh' write '$RUN_DIR'"
@@ -144,7 +144,7 @@ test_a_dispatch_without_a_deadline_is_refused() {
 
 test_a_failed_write_changes_nothing_and_releases_the_lock() {
   init_run
-  local before
+  local before=
   before=$(state_sum)
   assert_status 1 "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["10"] | error("boom")'
   assert_eq "$before" "$(state_sum)"

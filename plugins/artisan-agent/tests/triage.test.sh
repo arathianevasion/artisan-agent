@@ -4,7 +4,7 @@ SCRIPTS="$PLUGIN_ROOT/skills/triage/scripts"
 
 test_record_miss_appends_readable_json_line() {
   ARTISAN_AGENT_DIR="$TEST_TMPDIR/state" "$SCRIPTS/record-miss.sh" '#12' 3 "do" "defer" 'adds a "dependency"'
-  local f="$TEST_TMPDIR/state/triage/misses.jsonl" line
+  local f="$TEST_TMPDIR/state/triage/misses.jsonl" line=
   line=$(cat "$f")
   assert_contains "$line" '"ticket":12'
   assert_contains "$line" '"recommended":"do"'
@@ -55,7 +55,7 @@ STUB
 
 test_deferred_due_surfaces_passed_date_and_closed_blocker() {
   make_stub_gh
-  local out
+  local out=
   out=$(PATH="$TEST_TMPDIR/bin:$PATH" ARTISAN_TODAY=2026-11-10 "$SCRIPTS/deferred-due.sh")
   assert_contains "$out" '#10 Old date: date 2026-10-01 has passed'
   assert_contains "$out" '#12 Event closed: blocking event closed (#20)'
@@ -65,7 +65,7 @@ test_deferred_due_surfaces_passed_date_and_closed_blocker() {
 
 test_deferred_due_does_not_list_a_date_that_has_not_come() {
   make_stub_gh
-  local out
+  local out=
   out=$(PATH="$TEST_TMPDIR/bin:$PATH" ARTISAN_TODAY=2026-09-01 "$SCRIPTS/deferred-due.sh")
   case "$out" in *'#10'*) fail "#10 not yet due on 2026-09-01" ;; esac
   assert_contains "$out" '#12'
@@ -76,7 +76,7 @@ test_record_miss_zero_padded_numbers_are_valid_json() {
   "$SCRIPTS/record-miss.sh" 02 7 Do Defer x
   "$SCRIPTS/record-miss.sh" '#02' 7 Do Defer x
   "$SCRIPTS/record-miss.sh" 000 new Do Defer x
-  local f="$TEST_TMPDIR/state/triage/misses.jsonl" line n=0
+  local f="$TEST_TMPDIR/state/triage/misses.jsonl" line= n=0
   while IFS= read -r line; do
     printf '%s' "$line" | python3 -I -m json.tool >/dev/null || fail "invalid JSON: $line"
     n=$((n+1))
@@ -88,9 +88,9 @@ test_record_miss_zero_padded_numbers_are_valid_json() {
 }
 
 test_backlog_review_prompt_resolves_plugin_without_plugin_root() {
-  local md="$PLUGIN_ROOT/skills/triage/backlog-review.md" line
+  local md="$PLUGIN_ROOT/skills/triage/backlog-review.md" line=
   # Inside the pasted prompt, plugin paths use $ROOT, never the unset variable.
-  local prompt; prompt=$(sed -n '/^````text/,/^````$/p' "$md")
+  local prompt=; prompt=$(sed -n '/^````text/,/^````$/p' "$md")
   assert_contains "$prompt" 'claude plugin list --json'
   if printf '%s\n' "$prompt" | grep -v 'ROOT=' | grep -q 'CLAUDE_PLUGIN_ROOT'; then fail "prompt uses \${CLAUDE_PLUGIN_ROOT} outside the resolver"; fi
   if printf '%s\n' "$prompt" | grep -q 'find /'; then fail "prompt mentions find /"; fi
@@ -107,7 +107,7 @@ cat <<JSON
 JSON
 STUB
   chmod +x "$TEST_TMPDIR/bin/claude"
-  local out; out=$(env -u CLAUDE_PLUGIN_ROOT PATH="$TEST_TMPDIR/bin:$PATH" bash -c "$line")
+  local out=; out=$(env -u CLAUDE_PLUGIN_ROOT PATH="$TEST_TMPDIR/bin:$PATH" bash -c "$line")
   assert_eq "$TEST_TMPDIR/installed" "$out" "resolved root"
   out=$(CLAUDE_PLUGIN_ROOT=/set PATH="$TEST_TMPDIR/bin:$PATH" bash -c "$line")
   assert_eq /set "$out" "variable wins when set"

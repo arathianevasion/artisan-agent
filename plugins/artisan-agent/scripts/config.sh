@@ -27,7 +27,7 @@ die() { printf 'config.sh: %s\n' "$*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
 project_path() {
-  local common
+  local common=
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || die "not inside a git repository; pass --file"
   printf '%s/.artisan-agent/config.yml\n' "$(dirname "$common")"
@@ -39,7 +39,7 @@ defaults_json() {
 
 # effective_json file
 effective_json() {
-  local file="$1" defaults project out
+  local file="$1" defaults= project= out=
   defaults=$(defaults_json)
   if [ -f "$file" ]; then
     project=$(config_yaml_json "$file") || exit 1

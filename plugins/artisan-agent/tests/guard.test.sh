@@ -14,7 +14,7 @@ test_committed_hooks_json_is_generated_from_the_list() {
 }
 
 test_every_replaced_name_is_in_matcher_deny_rules_and_flag_watch() {
-  local n
+  local n=
   for n in implement-spec implement to-spec retro triage grill-with-docs; do
     assert_contains "$("$GUARD" matcher)" "$n"
     assert_contains "$("$GUARD" deny-rules)" "Skill(mattpocock-skills:$n)"
@@ -43,7 +43,7 @@ test_comments_and_blank_lines_are_ignored() {
 }
 
 test_hook_blocks_with_replacement_and_suppresses_original_prompt() {
-  local out
+  local out=
   out=$(printf '{"command_name":"mattpocock-skills:implement","prompt":"/x"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
   assert_contains "$out" '"decision":"block"'
   assert_contains "$out" 'Blocked by the artisan-agent replaced-skill guard:'
@@ -52,20 +52,20 @@ test_hook_blocks_with_replacement_and_suppresses_original_prompt() {
 }
 
 test_hook_names_grill_for_grill_with_docs() {
-  local out
+  local out=
   out=$(printf '{"command_name":"mattpocock-skills:grill-with-docs"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
   assert_contains "$out" 'Use /artisan-agent:grill instead.'
 }
 
 test_no_skill_is_both_replaced_and_a_dependency() {
-  local n
+  local n=
   for n in $("$GUARD" flag-watch | sed 's/^[^:]*://'); do
     if grep -qx "$n" "$PLUGIN_ROOT/guard/dependencies.list"; then fail "$n is on both lists"; fi
   done
 }
 
 test_hook_blocks_every_replaced_name_with_its_own_replacement() {
-  local name repl out
+  local name= repl= out=
   while read -r name repl; do
     out=$(printf '{"command_name":"mattpocock-skills:%s"}' "$name" | "$PLUGIN_ROOT/guard/block-replaced.sh")
     assert_contains "$out" "/mattpocock-skills:$name is replaced"
@@ -76,14 +76,14 @@ EOT
 }
 
 test_settings_json_has_hook_and_deny_rules() {
-  local out
+  local out=
   out=$("$GUARD" settings-json --hook-command /abs/block-replaced.sh)
   assert_contains "$out" '"command":"/abs/block-replaced.sh"'
   assert_contains "$out" '"deny":["Skill(mattpocock-skills:implement-spec)"'
 }
 
 test_settings_json_escapes_the_hook_command() {
-  local cmd out got
+  local cmd= out= got=
   for cmd in '"$CLAUDE_PROJECT_DIR"/x/block-replaced.sh' 'C:\dir\my hook.sh "a b"'; do
     out=$("$GUARD" settings-json --hook-command "$cmd")
     got=$(printf '%s' "$out" | jq -r '.hooks.UserPromptExpansion[0].hooks[0].command')
@@ -105,14 +105,14 @@ test_missing_empty_or_incomplete_list_fails_loudly() {
 dep_names() { sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/dependencies.list"; }
 
 test_dependency_list_names_no_artisan_agent_skill() {
-  local n
+  local n=
   for n in $(dep_names); do
     if [ -d "$PLUGIN_ROOT/skills/$n" ]; then fail "$n is an artisan-agent skill, not an upstream one"; fi
   done
 }
 
 test_dependency_list_and_replaced_list_do_not_overlap() {
-  local n
+  local n=
   for n in $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/replaced-skills.list" | awk '{print $1}'); do
     if dep_names | grep -qx "$n"; then fail "$n is on both the dependency list and the replaced-skill list"; fi
   done
@@ -124,7 +124,7 @@ test_dependency_list_has_wayfinder_and_not_to_plan() {
 }
 
 test_every_dependency_exists_in_the_upstream_cache_when_present() {
-  local root newest n
+  local root= newest= n=
   root="${CLAUDE_CODE_PLUGIN_CACHE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins}/cache/claude-plugins-official/mattpocock-skills"
   newest=$(ls "$root" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)
   if [ -z "$newest" ] || [ ! -d "$root/$newest/skills" ]; then

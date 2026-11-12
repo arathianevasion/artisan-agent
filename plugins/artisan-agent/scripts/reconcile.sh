@@ -40,8 +40,8 @@ REPO_DIR=$(cd "$RUN_DIR/../../.." && pwd)
 # merge_commit_for integration branch: the first commit on the integration
 # branch's first-parent line that contains the ticket branch's tip.
 merge_commit_for() {
-  local integration="$1" tip="$2" c
-  local commits
+  local integration="$1" tip="$2" c=
+  local commits=
   commits=$(git -C "$REPO_DIR" rev-list --first-parent --reverse "$integration")
   for c in $commits; do
     if git -C "$REPO_DIR" merge-base --is-ancestor "$tip" "$c"; then
@@ -53,7 +53,7 @@ merge_commit_for() {
 }
 
 reconcile() {
-  local file tmp repo integration first_parent t branch tip sha issue blockers tracker
+  local file= tmp= repo= integration= first_parent= t= branch= tip= sha= issue= blockers= tracker=
   file=$(state_file "$RUN_DIR")
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"

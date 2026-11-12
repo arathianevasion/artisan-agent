@@ -39,7 +39,7 @@ test_the_three_bands_for_the_chat() {
 }
 
 test_never_a_hand_off_while_agents_are_outstanding() {
-  local tier p n out
+  local tier= p= n= out=
   for tier in chat orchestrator; do
     for p in 0 15 30 40 50 65 90; do
       for n in 1 2 5; do
@@ -135,7 +135,7 @@ setup_run() {
 
 test_check_reads_the_orchestrators_transcript_marker_and_workers() {
   setup_run
-  local t="$TEST_TMPDIR/orch.jsonl" w
+  local t="$TEST_TMPDIR/orch.jsonl" w=
   usage_line 80000 >"$t"
   echo "$t" >"$RUN_DIR/workers/orchestrator-w1.1/transcript.path"
   export ARTISAN_RESULT_FILE="$RUN_DIR/results/orchestrator-w1.1.result.json"
@@ -171,7 +171,7 @@ test_check_for_the_chat_counts_a_running_orchestrator() {
 
 test_chat_warns_above_30_and_asks_once_past_55() {
   setup_run
-  local t="$TEST_TMPDIR/chatctx.jsonl" pct
+  local t="$TEST_TMPDIR/chatctx.jsonl" pct=
   # The window is the config's 1,000,000: 1% is 10,000 tokens.
   for pct in 2 15 30; do
     usage_line $((pct * 10000)) >"$t"
@@ -230,7 +230,7 @@ test_a_risk_gate_holds_only_its_dependents() {
   assert_eq "risk-gate" "$(state_get '.decisions[-1].kind')"
   assert_eq "risk-gate" "$(state_get '.events[-1].event')"
   # Gating again changes nothing.
-  local before
+  local before=
   before=$(state_sum)
   "$DRAIN" gate "$RUN_DIR" 10 60
   assert_eq "$before" "$(state_sum)"
@@ -253,7 +253,7 @@ hook_input() { # event extra-json
 
 test_an_orchestrators_pre_compact_blocks_and_leaves_the_marker() {
   setup_run
-  local rc=0 err
+  local rc=0 err=
   err=$(hook_input PreCompact '{"trigger":"auto"}' | ARTISAN_ROLE=orchestrator ARTISAN_RUN_DIR="$RUN_DIR" \
     ARTISAN_RESULT_FILE="$RUN_DIR/results/orchestrator-w1.1.result.json" "$HOOK" pre-compact 2>&1 >/dev/null) || rc=$?
   assert_eq 2 "$rc" "a blocking exit"
@@ -264,7 +264,7 @@ test_an_orchestrators_pre_compact_blocks_and_leaves_the_marker() {
 
 test_an_orchestrators_session_start_records_its_transcript() {
   setup_run
-  local out
+  local out=
   out=$(hook_input SessionStart '{"source":"startup"}' | ARTISAN_ROLE=orchestrator ARTISAN_RUN_DIR="$RUN_DIR" \
     ARTISAN_RESULT_FILE="$RUN_DIR/results/orchestrator-w1.1.result.json" "$HOOK" session-start)
   assert_eq "" "$out"
@@ -273,7 +273,7 @@ test_an_orchestrators_session_start_records_its_transcript() {
 
 test_workers_and_verifiers_compact_as_usual() {
   setup_run
-  local role out
+  local role= out=
   for role in worker verifier; do
     out=$(hook_input PreCompact '{"trigger":"auto"}' | ARTISAN_ROLE=$role ARTISAN_RUN_DIR="$RUN_DIR" \
       ARTISAN_RESULT_FILE="$RUN_DIR/results/10.1.result.json" "$HOOK" pre-compact 2>&1)
@@ -284,7 +284,7 @@ test_workers_and_verifiers_compact_as_usual() {
 
 test_the_chats_pre_compact_steers_the_summary_while_a_run_is_open() {
   setup_run
-  local out
+  local out=
   out=$(cd "$PROJECT" && HOOK_CWD="$PROJECT" hook_input PreCompact '{"trigger":"auto"}' | "$HOOK" pre-compact)
   assert_contains "$out" "Engineering chat"
   assert_contains "$out" "run r1 is open"
@@ -297,7 +297,7 @@ test_the_chats_pre_compact_steers_the_summary_while_a_run_is_open() {
 
 test_the_digest_is_back_in_context_after_compaction_and_resume() {
   setup_run
-  local src out
+  local src= out=
   mkdir -p "$PROJECT/sub"
   for src in compact resume; do
     out=$(HOOK_CWD="$PROJECT/sub" hook_input SessionStart "{\"source\":\"$src\"}" | "$HOOK" session-start)
@@ -315,7 +315,7 @@ test_the_digest_is_back_in_context_after_compaction_and_resume() {
 test_session_start_is_silent_outside_a_set_up_repo() {
   mkdir -p "$TEST_TMPDIR/plain"
   git_quiet -C "$TEST_TMPDIR/plain" init
-  local out
+  local out=
   out=$(HOOK_CWD="$TEST_TMPDIR/plain" hook_input SessionStart '{"source":"compact"}' | "$HOOK" session-start)
   assert_eq "" "$out"
   out=$(HOOK_CWD="$TEST_TMPDIR/nowhere" hook_input SessionStart '{"source":"compact"}' | "$HOOK" session-start)
@@ -329,7 +329,7 @@ test_the_digest_says_where_the_run_is_whats_waiting_and_what_changed() {
   "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 abcdef1234
   jq -n '{kind: "exception", ticket: "11", question: "Bypass or defer?"}' >"$TEST_TMPDIR/d.json"
   "$SCRIPTS/state.sh" decision "$RUN_DIR" "$TEST_TMPDIR/d.json"
-  local out
+  local out=
   out=$(cd "$PROJECT" && "$DIGEST")
   assert_contains "$out" "Where it is: wave 1 running (orchestrator attempt 1); 1 of 3 merged"
   assert_contains "$out" "| #10 (untitled) | 1 | - | merged as abcdef1, not closed yet |"
@@ -478,7 +478,7 @@ test_a_compacted_orchestrator_hands_off_and_a_fresh_one_finishes_the_same_wave()
   # The guardrails were read once, for the wave, not again at the hand-off.
   assert_eq 1 "$(state_get '.waves | length')"
   # The chat: done, the lock back, both orchestrators' spend counted.
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "orchestrator: completed - (wave 1, attempt 2"
   assert_contains "$out" "next: done"
@@ -493,7 +493,7 @@ test_a_waiting_risk_gate_does_not_stop_the_chat_launching() {
   stub_blocked_by 11 "10:open"
   "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 deadbeef
   "$DRAIN" gate "$RUN_DIR" 10 52
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: launch"
   assert_contains "$out" "(risk-gate) | #10 |"

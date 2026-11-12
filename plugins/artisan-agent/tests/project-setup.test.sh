@@ -44,7 +44,7 @@ answers() { printf '%s\n' "$1" >"$TEST_TMPDIR/answers.json"; }
 
 # begin, apply, labels, finish: one whole setup run. Prints the scripts' output.
 run_setup() {
-  local wt
+  local wt=
   wt=$("$PS" begin "$P")
   "$PS" apply "$wt" "$TEST_TMPDIR/answers.json"
   "$PS" labels "$wt"
@@ -61,7 +61,7 @@ merge_setup_pr() { # what merging the PR does: main gains the branch; the main c
 
 test_fresh_repo_gets_one_pr_with_every_item_and_the_main_checkout_is_untouched() {
   seed
-  local before out
+  local before= out=
   before=$(cd "$P" && git status --porcelain && cat CLAUDE.md docs/agents/*.md | cksum)
   out=$(run_setup)
   assert_contains "$out" "pr: https://github.test/o/p/pull/1"
@@ -70,7 +70,7 @@ test_fresh_repo_gets_one_pr_with_every_item_and_the_main_checkout_is_untouched()
   # every item is on the PR branch
   branch_file .artisan-agent/config.yml | cmp -s - "$PLUGIN_ROOT/templates/config.yml" || fail "config is not the template"
   assert_contains "$(branch_file .gitignore)" ".artisan-agent/runs/"
-  local s; s=$(branch_file .claude/settings.json)
+  local s=; s=$(branch_file .claude/settings.json)
   assert_eq true "$(printf '%s' "$s" | jq '.enabledPlugins["artisan-agent@artisan-agent"] and .enabledPlugins["mattpocock-skills@claude-plugins-official"]')"
   assert_eq arathianevasion/artisan-agent "$(printf '%s' "$s" | jq -r '.extraKnownMarketplaces["artisan-agent"].source.repo')"
   assert_eq null "$(printf '%s' "$s" | jq '.hooks')" "no hook unless plugin hooks don't fire"
@@ -79,7 +79,7 @@ test_fresh_repo_gets_one_pr_with_every_item_and_the_main_checkout_is_untouched()
   assert_contains "$(branch_file CODING_STANDARDS.md)" "- New dependencies"
   assert_contains "$(branch_file CODING_STANDARDS.md)" '- `pr-boundaries`: one PR per slice'
   assert_contains "$(branch_file CLAUDE.md)" 'Start with `/artisan-agent:craft`.'
-  local t; t=$(branch_file docs/agents/issue-tracker.md)
+  local t=; t=$(branch_file docs/agents/issue-tracker.md)
   assert_contains "$t" '**Who the Artisan is** (triage compares ticket authors to this): `gh api user --jq .login`, which was `artisan` at setup.'
   assert_contains "$t" '**Tickets filed by agents** carry the `needs-triage` label'
   # GLOSSARY, ADRs and .out-of-scope only when needed: not by setup
@@ -102,7 +102,7 @@ test_a_project_value_for_the_override_is_kept() {
   mkdir -p "$P/.claude"
   printf '{"env":{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"55","OTHER":"1"}}\n' >"$P/.claude/settings.json"
   git -C "$P" add -A && git -C "$P" commit -q -m own && git -C "$P" push -q origin main
-  local out; out=$(run_setup)
+  local out=; out=$(run_setup)
   assert_contains "$out" "kept: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE is \"55\""
   assert_eq 55 "$(branch_file .claude/settings.json | jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')"
   assert_eq 1 "$(branch_file .claude/settings.json | jq -r '.env.OTHER')"
@@ -117,7 +117,7 @@ test_deny_rules_match_the_replaced_skill_list() {
 test_the_ten_labels_exist_on_the_tracker_and_in_the_doc() {
   seed
   run_setup >/dev/null
-  local l doc; doc=$(branch_file docs/agents/triage-labels.md)
+  local l= doc=; doc=$(branch_file docs/agents/triage-labels.md)
   for l in needs-triage needs-info ready-for-agent ready-for-human wontfix review-gate plan in-run urgent deferred; do
     grep -qx "$l" "$TEST_TMPDIR/labels" || fail "label $l not on the tracker"
     assert_contains "$doc" "\`$l\`"
@@ -129,7 +129,7 @@ test_rerun_after_merging_changes_nothing() {
   seed
   run_setup >/dev/null
   merge_setup_pr
-  local before out
+  local before= out=
   before=$(cd "$P" && git rev-parse HEAD && git status --porcelain)
   : >"$TEST_TMPDIR/gh-calls"
   out=$(run_setup)
@@ -144,7 +144,7 @@ test_rerun_with_the_pr_still_open_stops() {
   seed
   run_setup >/dev/null
   echo https://github.test/o/p/pull/1 >"$TEST_TMPDIR/open-pr"
-  local out rc=0
+  local out= rc=0
   out=$("$PS" begin "$P" 2>&1) || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "a setup PR is still open: https://github.test/o/p/pull/1"
@@ -159,7 +159,7 @@ test_existing_repo_keeps_its_own_files_and_only_gains_lines() {
   printf 'max_agents: 2\n' >"$P/.artisan-agent/config.yml"
   printf 'node_modules/\n' >"$P/.gitignore"
   git -C "$P" add -A && git -C "$P" commit -q -m own && git -C "$P" push -q origin main
-  local out f
+  local out= f=
   out=$(run_setup)
   assert_contains "$out" "kept: artisan-agent@artisan-agent is set to false"
   for f in PRODUCT_STANDARDS.md CODING_STANDARDS.md .gitignore .artisan-agent/config.yml CLAUDE.md docs/agents/issue-tracker.md docs/agents/triage-labels.md; do
@@ -167,19 +167,19 @@ test_existing_repo_keeps_its_own_files_and_only_gains_lines() {
     diff "$P/$f" <(branch_file "$f") | grep -q '^<' && fail "$f lost or changed a line"
   done
   assert_eq "max_agents: 2" "$(branch_file .artisan-agent/config.yml)"
-  local s; s=$(branch_file .claude/settings.json)
+  local s=; s=$(branch_file .claude/settings.json)
   assert_eq x "$(printf '%s' "$s" | jq -r .theme)"
   assert_eq false "$(printf '%s' "$s" | jq '.enabledPlugins["artisan-agent@artisan-agent"]')"
   assert_eq "Bash(rm:*)" "$(printf '%s' "$s" | jq -r '.permissions.deny[0]')"
   assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "## Always ask"
-  local c; c=$(branch_file CODING_STANDARDS.md)
+  local c=; c=$(branch_file CODING_STANDARDS.md)
   assert_contains "$c" "$(printf -- '- Schema changes\n- New dependencies\n\n## Style')"
 }
 
 test_setup_refuses_until_upstream_setup_has_run() {
   seed
   git -C "$P" rm -q docs/agents/issue-tracker.md && git -C "$P" commit -q -m drop
-  local out rc=0
+  local out= rc=0
   out=$("$PS" begin "$P" 2>&1) || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "/mattpocock-skills:setup-matt-pocock-skills first"
@@ -201,12 +201,12 @@ test_hook_fallback_writes_a_working_project_hook_only_when_asked() {
   seed
   answers '{"pr_boundary":"plan","pr_level":"product","hook_fallback":true}'
   run_setup >/dev/null
-  local s cmd; s=$(branch_file .claude/settings.json)
+  local s= cmd=; s=$(branch_file .claude/settings.json)
   cmd=$(printf '%s' "$s" | jq -r '.hooks.UserPromptExpansion[0].hooks[0].command')
   assert_eq '"$CLAUDE_PROJECT_DIR"/.claude/hooks/artisan-agent-block-replaced.sh' "$cmd"
   assert_eq "$("$PLUGIN_ROOT/guard/guard.sh" matcher)" "$(printf '%s' "$s" | jq -r '.hooks.UserPromptExpansion[0].matcher')"
   branch_file .claude/hooks/artisan-agent-block-replaced.sh >"$TEST_TMPDIR/hook.sh"
-  local out
+  local out=
   out=$(printf '{"command_name":"mattpocock-skills:triage"}' | bash "$TEST_TMPDIR/hook.sh")
   assert_eq block "$(printf '%s' "$out" | jq -r .decision)"
   assert_contains "$out" "Use /artisan-agent:triage instead."
@@ -227,7 +227,7 @@ test_motivation_goes_to_the_individual_home_never_the_pr_and_is_asked_once() {
   assert_contains "$("$PS" scan "$P")" "motivation	none"
   assert_status 1 "$PS" motivation get "$P"
   echo "My grandmother ran a bakery." | "$PS" motivation set "$P" >/dev/null
-  local f
+  local f=
   f=$(ls "$CLAUDE_CONFIG_DIR/artisan-agent/motivations/"*.md)
   assert_contains "$(cat "$f")" "My grandmother ran a bakery."
   assert_contains "$(cat "$f")" "Repo: $TEST_TMPDIR/origin"
@@ -250,7 +250,7 @@ test_skipping_the_motivation_does_not_block_setup() {
 test_motivation_set_needs_the_individual_home() {
   seed
   rm -rf "$CLAUDE_CONFIG_DIR/artisan-agent"
-  local out rc=0
+  local out= rc=0
   out=$(echo why | "$PS" motivation set "$P" 2>&1) || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "run machine-level setup first"
@@ -261,7 +261,7 @@ test_pr_boundary_at_individual_level_goes_to_the_individual_home() {
   answers '{"pr_boundary":"ticket","pr_level":"individual"}'
   run_setup >/dev/null
   branch_file CODING_STANDARDS.md | grep -q pr-boundaries && fail "individual guardrail in the PR"
-  local h="$CLAUDE_CONFIG_DIR/artisan-agent" n
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent" n=
   "$PS" individual Guardrails '- `pr-boundaries`: one PR per ticket (set at setup).' >/dev/null
   assert_contains "$(cat "$h/CODING_STANDARDS.md")" '## Guardrails'
   assert_eq "" "$(git -C "$h" status --porcelain)"
@@ -283,10 +283,10 @@ test_apply_records_only_checks_it_proves_itself_and_only_once() {
   seed_checks
   git -C "$P" push -q origin main
   answers '{"checks":[{"command":"./test.sh","break_cmd":"echo broken >value","break":"wrote a wrong value"},{"command":"true","break_cmd":"echo broken >value","break":"same"}]}'
-  local out; out=$(run_setup)
+  local out=; out=$(run_setup)
   assert_contains "$out" "proven	./test.sh"
   assert_contains "$out" "cannot-fail	true"
-  local c; c=$(branch_file CODING_STANDARDS.md)
+  local c=; c=$(branch_file CODING_STANDARDS.md)
   assert_contains "$c" '- `./test.sh`: proven to fail on'
   assert_contains "$c" 'breaking: wrote a wrong value'
   case "$c" in *'`true`'*) fail "an unproven check was recorded" ;; esac
@@ -297,7 +297,7 @@ test_apply_records_only_checks_it_proves_itself_and_only_once() {
 test_team_repo_must_be_owner_name() {
   seed
   answers '{"team_repo":"o/n|x"}'
-  local wt rc=0; wt=$("$PS" begin "$P")
+  local wt= rc=0; wt=$("$PS" begin "$P")
   "$PS" apply "$wt" "$TEST_TMPDIR/answers.json" >/dev/null 2>&1 || rc=$?
   assert_eq 1 "$rc"
   answers '{"team_repo":"acme/guardrails"}'
@@ -307,7 +307,7 @@ test_team_repo_must_be_owner_name() {
 
 test_prove_check_proves_a_real_check_in_a_throwaway_worktree() {
   seed_checks
-  local out
+  local out=
   out=$(cd "$P" && "$PS" prove-check --break 'echo broken >value' -- ./test.sh)
   assert_contains "$out" "proven	./test.sh"
   assert_eq ok "$(cat "$P/value")" "main checkout broken"
@@ -317,7 +317,7 @@ test_prove_check_proves_a_real_check_in_a_throwaway_worktree() {
 
 test_prove_check_reports_a_check_that_cannot_fail() {
   seed_checks
-  local out rc=0
+  local out= rc=0
   # like a typecheck over an empty program: passes whatever you break
   out=$(cd "$P" && "$PS" prove-check --break 'echo broken >value' -- true) || rc=$?
   assert_eq 1 "$rc"
@@ -340,8 +340,8 @@ test_pre_commit_installs_once_and_refuses_main_checkout_commits() {
   seed
   assert_contains "$("$PS" scan "$P")" "pre-commit	missing"
   "$PS" pre-commit "$P" >/dev/null
-  local hook; hook=$(git -C "$P" rev-parse --path-format=absolute --git-path hooks)/pre-commit
-  local sum; sum=$(cksum <"$hook")
+  local hook=; hook=$(git -C "$P" rev-parse --path-format=absolute --git-path hooks)/pre-commit
+  local sum=; sum=$(cksum <"$hook")
   "$PS" pre-commit "$P" >/dev/null
   assert_eq "$sum" "$(cksum <"$hook")"
   assert_contains "$("$PS" scan "$P")" "pre-commit	installed"
@@ -367,7 +367,7 @@ test_scan_finds_candidate_checks() {
   printf 'test:\n\tgo test\nrelease:\n\ttrue\n' >"$P/Makefile"
   mkdir -p "$P/.github/workflows"
   printf 'jobs:\n  t:\n    steps:\n      - run: ./ci.sh\n' >"$P/.github/workflows/ci.yml"
-  local out; out=$("$PS" scan "$P")
+  local out=; out=$("$PS" scan "$P")
   assert_contains "$out" "check	package.json	npm test"
   assert_contains "$out" "check	package.json	npm run lint"
   assert_contains "$out" "check	package.json	npm run typecheck"

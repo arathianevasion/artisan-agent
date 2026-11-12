@@ -5,7 +5,7 @@
 test_a_worker_past_its_deadline_is_stopped_and_counted_as_a_failed_attempt() {
   trap kill_workers EXIT
   init_run
-  local pid
+  local pid=
   pid=$(start_worker)
   ARTISAN_NOW=1000 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 1600
   # Before the deadline nothing happens.
@@ -22,7 +22,7 @@ test_a_worker_past_its_deadline_is_stopped_and_counted_as_a_failed_attempt() {
 
 test_the_last_allowed_attempt_failing_blocks_the_ticket_and_queues_a_decision() {
   init_run
-  local dead
+  local dead=
   sleep 0 &
   dead=$!
   wait "$dead"
@@ -40,7 +40,7 @@ test_the_last_allowed_attempt_failing_blocks_the_ticket_and_queues_a_decision() 
 test_a_result_file_records_the_result_and_cost() {
   trap kill_workers EXIT
   init_run
-  local pid
+  local pid=
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 11 "$pid"
@@ -57,7 +57,7 @@ test_a_result_file_records_the_result_and_cost() {
 test_an_exit_record_without_a_result_is_a_failed_attempt() {
   trap kill_workers EXIT
   init_run
-  local pid
+  local pid=
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
   printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.1.exit.json"
@@ -68,7 +68,7 @@ test_an_exit_record_without_a_result_is_a_failed_attempt() {
 
 test_a_crashed_worker_that_wrote_nothing_is_a_failed_attempt() {
   init_run
-  local dead
+  local dead=
   sleep 0 &
   dead=$!
   wait "$dead"
@@ -96,7 +96,7 @@ test_findings_are_logged_once_and_a_half_written_line_waits() {
 test_sweeping_twice_on_the_same_files_changes_nothing() {
   trap kill_workers EXIT
   init_run
-  local pid dead first
+  local pid= dead= first=
   pid=$(start_worker)
   sleep 0 &
   dead=$!
@@ -116,7 +116,7 @@ test_sweeping_twice_on_the_same_files_changes_nothing() {
 test_the_sweep_is_refused_while_another_writer_holds_the_lock() {
   trap kill_workers EXIT
   init_run
-  local holder
+  local holder=
   holder=$(start_worker)
   "$SCRIPTS/state.sh" lock "$RUN_DIR" "$holder"
   assert_status 3 "$SCRIPTS/sweep.sh" "$RUN_DIR"
@@ -125,7 +125,7 @@ test_the_sweep_is_refused_while_another_writer_holds_the_lock() {
 test_a_retry_is_not_failed_by_the_previous_attempts_files() {
   trap kill_workers EXIT
   init_run
-  local pid
+  local pid=
   pid=$(start_worker)
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid" 9999999999
   printf '{"ticket":"10","exit_status":1}' >"$RUN_DIR/results/10.1.exit.json"
@@ -141,7 +141,7 @@ test_a_retry_is_not_failed_by_the_previous_attempts_files() {
 test_stopping_a_worker_also_stops_its_descendants() {
   trap kill_workers EXIT
   init_run
-  local tree grandchild
+  local tree= grandchild=
   # A worker whose child starts a grandchild, like run-ticket.sh -> claude -> a tool.
   bash -c 'bash -c "sleep 347 & echo \$! >\"$1/grandchild\"; wait" _ "$1" & wait' _ "$TEST_TMPDIR" >/dev/null 2>&1 &
   tree=$!

@@ -84,7 +84,7 @@ test_killed_worker_leaves_an_exit_record_and_no_stray_processes() {
   setup_run
   launch sleep
   wait_for_file "$FAKE_CLAUDE_PID"
-  local worker
+  local worker=
   worker=$(cat "$FAKE_CLAUDE_PID")
   kill -KILL "$worker"
   wait_for_file "$EXIT_RECORD"
@@ -98,7 +98,7 @@ test_passes_the_caps_and_json_output_to_claude() {
   setup_run
   launch complete
   wait_for_file "$EXIT_RECORD"
-  local args
+  local args=
   args=$(cat "$FAKE_CLAUDE_ARGS")
   assert_contains "$args" "[-p]"
   assert_contains "$args" "[--output-format]
@@ -147,7 +147,7 @@ test_worker_is_told_its_files_and_not_to_leave_background_commands() {
   setup_run
   launch complete
   wait_for_file "$EXIT_RECORD"
-  local args env
+  local args= env=
   args=$(cat "$FAKE_CLAUDE_ARGS")
   env=$(cat "$FAKE_CLAUDE_ENV")
   assert_contains "$args" "Build ticket 46."
@@ -164,7 +164,7 @@ test_worker_past_its_deadline_is_stopped_and_recorded() {
   setup_run
   launch sleep --deadline-seconds 2
   wait_for_file "$FAKE_CLAUDE_PID"
-  local worker
+  local worker=
   worker=$(cat "$FAKE_CLAUDE_PID")
   wait_for_file "$EXIT_RECORD" 15
   assert_eq deadline "$(field "$EXIT_RECORD" reason)"
@@ -177,7 +177,7 @@ test_stopping_the_runner_stops_the_worker_and_records_it() {
   setup_run
   launch sleep
   wait_for_file "$FAKE_CLAUDE_PID"
-  local worker runner
+  local worker= runner=
   worker=$(cat "$FAKE_CLAUDE_PID")
   runner=$(cat "$TEST_TMPDIR/launch.out")
   kill -TERM "$runner"
@@ -189,7 +189,7 @@ test_stopping_the_runner_stops_the_worker_and_records_it() {
 
 test_launch_returns_at_once_with_the_detached_runner_pid() {
   setup_run
-  local start=$SECONDS runner
+  local start=$SECONDS runner=
   launch sleep
   [ $((SECONDS - start)) -lt 5 ] || fail "launch blocked on the worker"
   runner=$(cat "$TEST_TMPDIR/launch.out")
@@ -259,7 +259,7 @@ test_nothing_launches_into_a_run_folder_with_no_state_file() {
 test_an_orchestrator_launches_outside_the_ticket_scope_and_owns_the_writer_pid() {
   setup_run
   export FAKE_CLAUDE_MODE=complete
-  local runner
+  local runner=
   runner=$("$PLUGIN_ROOT/scripts/run-ticket.sh" --run-dir "$RUN" --ticket orchestrator-w1 --role orchestrator \
     --prompt-file "$TEST_TMPDIR/prompt.md" --workdir "$WORKTREE" \
     --estimate-usd 0.25 --expected-minutes 5)

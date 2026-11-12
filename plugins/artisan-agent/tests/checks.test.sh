@@ -30,7 +30,7 @@ test_c_reads_exactly_the_checks_setup_recorded() {
   setup_with_checks
   # setup's own scan finds more than it recorded: make test is a candidate.
   assert_contains "$("$PS" scan "$P")" "check	Makefile	make test"
-  local json
+  local json=
   json=$(cd "$P" && "$CHECKS" json)
   assert_eq true "$(printf '%s' "$json" | jq -r .recorded)"
   assert_eq "./test.sh ./lint.sh" "$(printf '%s' "$json" | jq -r '[.checks[].command] | join(" ")')"
@@ -42,7 +42,7 @@ test_c_reads_exactly_the_checks_setup_recorded() {
 
 test_c_the_suite_runs_every_recorded_check_and_fails_if_one_does() {
   setup_with_checks
-  local suite
+  local suite=
   suite=$(cd "$P" && "$CHECKS" suite)
   assert_eq "( ./test.sh ) && ( ./lint.sh )" "$suite"
   (cd "$P" && sh -c "$suite") >/dev/null || fail "the suite is red on a green project"
@@ -52,7 +52,7 @@ test_c_the_suite_runs_every_recorded_check_and_fails_if_one_does() {
 
 test_c_run_runs_only_the_recorded_checks_and_reports_each() {
   setup_with_checks
-  local out rc=0
+  local out= rc=0
   out=$(cd "$P" && "$CHECKS" run --out "$TEST_TMPDIR/checks.json" -- "make test") || rc=$?
   assert_eq 0 "$rc"
   assert_eq "./test.sh:true ./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
@@ -66,7 +66,7 @@ test_c_run_runs_only_the_recorded_checks_and_reports_each() {
 test_c_a_red_recorded_check_is_reported_red_and_the_rest_still_run() {
   setup_with_checks
   echo broken >"$P/value"
-  local out rc=0
+  local out= rc=0
   out=$(cd "$P" && "$CHECKS" run) || rc=$?
   assert_eq 7 "$rc"
   assert_eq "false false" "$(printf '%s' "$out" | jq -r '[.results[].passed] | join(" ")')"
@@ -75,7 +75,7 @@ test_c_a_red_recorded_check_is_reported_red_and_the_rest_still_run() {
 
 test_c_with_none_recorded_each_command_says_so_and_names_what_was_found() {
   seed_checks
-  local rc=0 out
+  local rc=0 out=
   (cd "$P" && "$CHECKS" list) 2>"$TEST_TMPDIR/err" || rc=$?
   assert_eq 16 "$rc"
   assert_contains "$(cat "$TEST_TMPDIR/err")" "no recorded checks (no CODING_STANDARDS.md)"
@@ -126,7 +126,7 @@ EOF
 
 test_c_an_out_path_with_quotes_still_writes_valid_json() {
   setup_with_checks
-  local out
+  local out=
   out=$(cd "$P" && "$CHECKS" run --out "$TEST_TMPDIR/a \"q\" \\b/checks.json")
   assert_contains "$(printf '%s' "$out" | jq -r '.results[0].log')" 'a "q" \b/checks.logs/1.log'
 }

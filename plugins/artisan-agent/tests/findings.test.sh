@@ -9,7 +9,7 @@ setup() {
   mkdir -p "$FAKE_GH_DIR"
   PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
   export PATH
-  local n
+  local n=
   for n in 10 11 12; do
     printf '{"number":%s,"title":"T%s","body":"","state":"open","labels":[]}\n' "$n" "$n" >"$FAKE_GH_DIR/issue-$n.json"
   done
@@ -27,7 +27,7 @@ finding() { # from json
 test_a_finding_about_an_in_flight_ticket_is_relayed_and_logged_on_both_tickets() {
   setup
   finding 10 '{"title":"parse() drops blanks","why":"Callers must trim first.","blocks":["11"]}'
-  local line
+  local line=
   line=$("$SCRIPTS/findings.sh" pending "$RUN_DIR")
   assert_eq 1 "$(printf '%s\n' "$line" | wc -l | tr -d ' ')"
   assert_eq relay "$(printf '%s' "$line" | jq -r .action)"
@@ -65,7 +65,7 @@ test_a_finding_about_a_finished_ticket_becomes_a_needs_triage_ticket() {
 test_a_finding_about_a_queued_ticket_is_a_comment_and_names_no_worker() {
   setup
   finding 10 '{"title":"Use the shared parser","why":"12 should too.","blocks":["12"]}'
-  local line
+  local line=
   line=$("$SCRIPTS/findings.sh" pending "$RUN_DIR")
   assert_eq comment "$(printf '%s' "$line" | jq -r .action)"
   assert_eq null "$(printf '%s' "$line" | jq -r .name)"
@@ -107,7 +107,7 @@ test_a_design_question_blocks_the_ticket_queues_it_and_notes_a_slicing_lesson() 
   assert_eq slicing "$(state_get '.lessons[0].kind')"
   assert_contains "$(state_get '.lessons[0].note')" "design"
   # Sweeping again changes nothing.
-  local before
+  local before=
   before=$(state_sum)
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq "$before" "$(state_sum)"

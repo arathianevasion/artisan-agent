@@ -87,7 +87,7 @@ need_repo() {
 
 # The repo's main checkout, where .artisan-agent/ lives.
 main_checkout() {
-  local common
+  local common=
   common=$(git -C "$PROJECT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || die "not inside a git repository: $PROJECT"
   dirname "$common"
@@ -115,7 +115,7 @@ is_in_run() { jq -e 'any((.labels // [])[]; .name == "in-run")' <<<"$1" >/dev/nu
 cmd_guard() {
   [ ${#ARGS[@]} -eq 1 ] || usage
   need_repo
-  local n=${ARGS[0]#\#} j run
+  local n=${ARGS[0]#\#} j= run=
   j=$(issue_json "$n") || die "could not read #$n"
   if is_in_run "$j"; then
     run=$(run_id_of "$j")
@@ -130,7 +130,7 @@ cmd_guard() {
 cmd_send() {
   [ ${#ARGS[@]} -ge 1 ] || usage
   need_repo
-  local n j state title list="" plan url num pid existing t id out
+  local n= j= state= title= list="" plan= url= num= pid= existing= t= id= out=
   local nums=()
   for n in "${ARGS[@]}"; do
     n=${n#\#}
@@ -170,7 +170,7 @@ $list
 cmd_label_run() {
   [ ${#ARGS[@]} -eq 1 ] || usage
   need_repo
-  local run_dir=${ARGS[0]} file run t j bad=0
+  local run_dir=${ARGS[0]} file= run= t= j= bad=0
   file=$(state_file "$run_dir")
   state_valid_file "$file" || die "unreadable or wrong schema version: $file"
   run=$(jq -r .run_id "$file")
@@ -190,7 +190,7 @@ cmd_label_run() {
 cmd_approve_envelope() {
   [ ${#ARGS[@]} -eq 1 ] || usage
   need_repo
-  local n=${ARGS[0]#\#} j
+  local n=${ARGS[0]#\#} j=
   j=$(issue_json "$n") || die "could not read #$n"
   if jq -e --arg m "$ENVELOPE_MARK" 'any((.comments // [])[]; (.body // "") | contains($m)) or ((.body // "") | contains($m))' <<<"$j" >/dev/null; then
     return 0
@@ -242,12 +242,12 @@ chat_dir() { printf '%s/.artisan-agent/runs/.chat\n' "$(main_checkout)"; }
 chat_file() { printf '%s/%s.json\n' "$(chat_dir)" "$CHAT"; }
 
 mem_get() { # jq filter [args]
-  local f
+  local f=
   f=$(chat_file)
   if [ -s "$f" ]; then jq -r "$@" "$f"; else echo ""; fi
 }
 mem_set() { # jq filter [args]: one-step rewrite
-  local f d
+  local f= d=
   f=$(chat_file)
   d=$(dirname "$f")
   mkdir -p "$d"
@@ -256,14 +256,14 @@ mem_set() { # jq filter [args]: one-step rewrite
 }
 
 sweep_minutes() {
-  local v
+  local v=
   v=$("$SCRIPT_DIR/config.sh" get sweep_minutes 2>/dev/null) || v=5
   case "$v" in ''|*[!0-9]*) v=5 ;; esac
   echo "$v"
 }
 
 cmd_due() {
-  local last now mins
+  local last= now= mins=
   last=$(mem_get '.last_sweep // ""')
   [ -n "$last" ] || exit 0
   now=$(state_now)
@@ -277,7 +277,7 @@ cmd_due() {
 # The highest plugin version installed beside the running one (the cache keeps
 # one folder per version), else the running one.
 plugin_versions() {
-  local own dir
+  local own= dir=
   own=$(jq -r '.version // "0"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo 0)
   dir=${ARTISAN_PLUGIN_VERSIONS_DIR:-$(dirname "$PLUGIN_DIR")}
   python3 -I - "$own" "$dir" <<'PY'
@@ -295,7 +295,7 @@ PY
 }
 
 sweep_gates() {
-  local g nums
+  local g= nums=
   g=$(gate_lines)
   echo "## Review gates"
   echo
@@ -310,7 +310,7 @@ sweep_gates() {
 # (gate.sh sync, which comments on the issue); both chats read the line from
 # the tracker.
 sweep_closed_gates() {
-  local main run_dir closed n j line carried seen out=""
+  local main= run_dir= closed= n= j= line= carried= seen= out=""
   main=$(main_checkout)
   if [ "$CHAT" = engineering ]; then
     for run_dir in "$main"/.artisan-agent/runs/*/; do
@@ -340,7 +340,7 @@ sweep_closed_gates() {
 }
 
 sweep_changes() {
-  local src old new k out="" own latest have
+  local src= old= new= k= out="" own= latest= have=
   src=$("$SCRIPT_DIR/guardrails.sh" sources $([ "$FETCH" = 1 ] || echo --no-fetch) 2>/dev/null \
         | jq -c '{team: (.team.commit // null), product: (.product.commit // null), individual: (.individual.commit // null)}') \
     || src='{"team":null,"product":null,"individual":null}'
@@ -378,7 +378,7 @@ plan_rows() {
 }
 
 sweep_plans() {
-  local rows p n t j total title blockers subs tickets open_tickets approved first="" locked held rows_out="" waiting=""
+  local rows= p= n= t= j= total= title= blockers= subs= tickets= open_tickets= approved= first="" locked= held= rows_out="" waiting=""
   rows=$(plan_rows)
   [ -n "$rows" ] || return 0
   locked=0
@@ -445,7 +445,7 @@ EOF
 }
 
 sweep_decisions() { # Engineering chat only: decisions waiting in a live run's state file
-  local main f run n
+  local main= f= run= n=
   main=$(main_checkout)
   for f in "$main"/.artisan-agent/runs/*/state.json; do
     [ -f "$f" ] || continue
@@ -463,7 +463,7 @@ cmd_sweep() {
   ACTIONS=$(mktemp "${TMPDIR:-/tmp}/chats-actions.XXXXXX")
   WAITING_KEYS="" WAITING_TEXT=""
   trap 'rm -f "$ACTIONS"' EXIT
-  local key fresh="" notified
+  local key= fresh="" notified=
   echo "# Sweep ($CHAT chat)"
   echo
   sweep_gates

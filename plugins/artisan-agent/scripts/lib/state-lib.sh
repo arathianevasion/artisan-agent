@@ -42,7 +42,7 @@ state_writer_pid() {
 # True when the pid names a live process. A zombie (exited, not yet reaped)
 # counts as dead.
 state_pid_alive() {
-  local pid="$1" stat
+  local pid="$1" stat=
   case "$pid" in '' | *[!0-9]*) return 1 ;; esac
   stat=$(ps -o stat= -p "$pid" 2>/dev/null) || return 1
   [ -n "$stat" ] || return 1
@@ -69,7 +69,7 @@ state_machine_id() {
 # the state: every writer takes state_lock, so none writes a run that is
 # somewhere else.
 state_location_guard() {
-  local run_dir="$1" file status machine
+  local run_dir="$1" file= status= machine=
   [ -z "${ARTISAN_MOVING:-}" ] || return 0
   file=$(state_file "$run_dir")
   [ -f "$file" ] || return 0
@@ -91,7 +91,7 @@ state_location_guard() {
 # 0: taken (or already held by pid). 3: held by another live process, or the
 # run is not live on this machine (state_location_guard).
 state_lock() {
-  local run_dir="$1" pid="$2" lock holder tries=0
+  local run_dir="$1" pid="$2" lock= holder= tries=0
   state_location_guard "$run_dir" || return 3
   lock=$(state_lock_path "$run_dir")
   while [ "$tries" -lt 3 ]; do
@@ -120,7 +120,7 @@ state_lock() {
 # state_unlock run_dir pid
 # Releases only a lock held by pid (or a stale one). 3 if another live pid holds it.
 state_unlock() {
-  local run_dir="$1" pid="$2" holder
+  local run_dir="$1" pid="$2" holder=
   holder=$(state_lock_holder "$run_dir")
   [ -n "$holder" ] || return 0
   if [ "$holder" != "$pid" ] && state_pid_alive "$holder"; then
@@ -136,7 +136,7 @@ state_unlock() {
 # bash would switch it off): a failure ends the script and the EXIT trap
 # releases the lock.
 state_with_lock() {
-  local run_dir="$1" pid
+  local run_dir="$1" pid=
   shift
   pid=$(state_writer_pid)
   if [ "$(state_lock_holder "$run_dir")" = "$pid" ]; then
@@ -156,7 +156,7 @@ state_with_lock() {
 # and the orchestrator's long-lived runner becomes the writer. 3 if "from"
 # does not hold it.
 state_hand_lock() {
-  local run_dir="$1" from="$2" to="$3" lock tmp
+  local run_dir="$1" from="$2" to="$3" lock= tmp=
   lock=$(state_lock_path "$run_dir")
   [ "$(state_lock_holder "$run_dir")" = "$from" ] || {
     printf 'cannot hand over the state lock: pid %s does not hold it\n' "$from" >&2
@@ -177,7 +177,7 @@ state_valid_file() { # path
 # the run there. Never a bare "wrong schema version" (references/state-file.md,
 # Schema version).
 state_version_message() {
-  local file="$1" found started
+  local file="$1" found= started=
   if ! found=$(jq -r 'if type == "object" then (.schema_version // "none" | tostring) else "not an object" end' "$file" 2>/dev/null); then
     printf 'unreadable state file (not JSON): %s\n' "$file"
     return 0
@@ -202,7 +202,7 @@ state_version_message() {
 # state file is either the old one or the new one, never a mix. Unchanged
 # content is not rewritten, so repeated reconciling leaves the file untouched.
 state_commit() {
-  local run_dir="$1" tmp="$2" file
+  local run_dir="$1" tmp="$2" file=
   file=$(state_file "$run_dir")
   if ! state_valid_file "$tmp"; then
     rm -f "$tmp"
@@ -223,7 +223,7 @@ state_tmp() { # run_dir
 # state_apply run_dir filter [jq args...]
 # Read, transform with jq, rewrite in one step. Caller holds the lock.
 state_apply() {
-  local run_dir="$1" filter="$2" tmp file
+  local run_dir="$1" filter="$2" tmp= file=
   shift 2
   file=$(state_file "$run_dir")
   [ -f "$file" ] || { printf 'no state file at %s\n' "$file" >&2; return 1; }

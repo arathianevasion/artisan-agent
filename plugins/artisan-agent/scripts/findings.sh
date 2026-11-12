@@ -62,7 +62,7 @@ cmd_pending() {
 
 cmd_mark() {
   [ $# -eq 4 ] || state_usage "$0"
-  local from=$1 seq=$2 target=$3 action=$4 repo title why body issue= line
+  local from=$1 seq=$2 target=$3 action=$4 repo= title= why= body= issue= line=
   case "$action" in relay | comment | triage) ;; *) state_usage "$0" ;; esac
   line=$(cmd_pending | jq -c --arg f "$from" --argjson s "$seq" --arg t "$target" \
     'select(.from == $f and .seq == $s and .target == $t)' | head -1)
@@ -99,7 +99,7 @@ Needs triage before it can join any run."
 
 cmd_add() {
   [ $# -ge 3 ] || state_usage "$0"
-  local from=$1 title=$2 why=$3 f
+  local from=$1 title=$2 why=$3 f=
   shift 3
   printf '%s' "$from" | grep -Eq '^[A-Za-z0-9_-]+$' || state_die 2 "bad ticket id: $from"
   f=$RUN_DIR/results/findings/$from.jsonl

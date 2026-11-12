@@ -43,7 +43,7 @@ test_every_reader_accepts_a_version_1_file_with_an_unknown_extra_field() {
 }
 
 test_readers_accept_a_file_missing_each_top_level_optional_field() {
-  local f
+  local f=
   for f in $OPTIONAL_TOP; do
     init_run
     drop_field ".$f"
@@ -53,7 +53,7 @@ test_readers_accept_a_file_missing_each_top_level_optional_field() {
 }
 
 test_readers_accept_a_file_missing_each_plan_optional_field() {
-  local f
+  local f=
   for f in $OPTIONAL_PLAN; do
     init_run
     drop_field ".plan.$f"
@@ -63,7 +63,7 @@ test_readers_accept_a_file_missing_each_plan_optional_field() {
 }
 
 test_readers_accept_a_file_missing_each_ticket_optional_field() {
-  local f
+  local f=
   for f in $OPTIONAL_TICKET; do
     init_run
     drop_field ".tickets[\"10\"].$f"
@@ -90,7 +90,7 @@ test_the_digest_reads_a_file_without_events_halted_or_orchestrators() {
   drop_field .events
   drop_field .halted
   drop_field .orchestrators
-  local out
+  local out=
   out=$("$PLUGIN_ROOT/scripts/run-digest.sh" --run-dir "$RUN_DIR" --peek)
   assert_contains "$out" "r1"
 }
@@ -101,7 +101,7 @@ test_a_different_version_is_refused_naming_the_runs_starting_plugin_version() {
   "$SCRIPTS/state.sh" wave-start "$RUN_DIR" 2 "0.8.0" - - - >/dev/null
   jq '.schema_version = 2' "$RUN_DIR/state.json" >"$TEST_TMPDIR/v2.json"
   mv "$TEST_TMPDIR/v2.json" "$RUN_DIR/state.json"
-  local cmd out
+  local cmd= out=
   for cmd in "sweep" "wave-width-pick" "event" "cost" "evidence"; do
     case "$cmd" in
       sweep) out=$("$SCRIPTS/sweep.sh" "$RUN_DIR" 2>&1 || true) ;;
@@ -119,13 +119,13 @@ test_the_refusal_without_a_recorded_wave_still_says_what_to_do() {
   init_run
   jq '.schema_version = 2' "$RUN_DIR/state.json" >"$TEST_TMPDIR/v2.json"
   mv "$TEST_TMPDIR/v2.json" "$RUN_DIR/state.json"
-  local out
+  local out=
   out=$("$SCRIPTS/sweep.sh" "$RUN_DIR" 2>&1 || true)
   assert_contains "$out" "finish it on the plugin version that created it"
 }
 
 test_the_reference_lists_every_optional_field_with_its_default() {
-  local ref="$PLUGIN_ROOT/references/state-file.md" f section
+  local ref="$PLUGIN_ROOT/references/state-file.md" f= section=
   section=$(sed -n '/^## Optional fields/,/^## Where a run lives/p' "$ref")
   assert_contains "$section" "Default when missing"
   for f in $OPTIONAL_TOP $OPTIONAL_PLAN $OPTIONAL_TICKET; do

@@ -33,7 +33,7 @@ test_h_an_off_critical_path_pick_names_its_focus_and_costs_nothing() {
   assert_eq 12 "$(jq -r .hands_on.ticket "$TEST_TMPDIR/plan.json")"
   assert_eq false "$(jq -r .hands_on.on_critical_path "$TEST_TMPDIR/plan.json")"
   assert_eq 0 "$(jq -r .hands_on.delay_minutes "$TEST_TMPDIR/plan.json")"
-  local out
+  local out=
   out=$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Hands-on ticket"
   assert_contains "$out" "| #12 (Docs) | finding the best solution | no (slack 6 min) | none |"
@@ -47,7 +47,7 @@ test_h_a_critical_path_pick_shows_the_delay_before_confirming() {
   # 20 hands-on minutes against 3 for a worker, no slack: 17 minutes later.
   assert_eq 17 "$(jq -r .hands_on.delay_minutes "$TEST_TMPDIR/plan.json")"
   assert_eq '["11"]' "$(jq -c .hands_on.dependents "$TEST_TMPDIR/plan.json")"
-  local out
+  local out=
   out=$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "| #10 (Schema) | understanding the problem | yes | about 17 min later |"
   assert_contains "$out" "about 17 minutes later, and #11 waits for it. Confirm the delay, or choose a ticket off the critical path."
@@ -68,7 +68,7 @@ test_h_at_most_one_hands_on_ticket_with_a_focus_in_scope() {
 
 test_h_suggest_lists_only_what_can_be_taken_without_delay() {
   write_hands_on_draft null
-  local out
+  local out=
   out=$("$SCRIPTS/human.sh" suggest --draft "$TEST_TMPDIR/draft.json")
   assert_contains "$out" "At most one hands-on ticket per plan"
   assert_contains "$out" "| #12 (Docs) | 6 | 2 | 6 | 0 |"
@@ -86,7 +86,7 @@ human_run() {
 }
 
 hands_on_commit() { # file
-  local wt
+  local wt=
   wt=$(state_get '.tickets["1"].human.worktree')
   echo hi >"$wt/${1:-hello.txt}"
   git_quiet -C "$wt" add -A
@@ -96,7 +96,7 @@ hands_on_commit() { # file
 test_h_a_ready_for_human_ticket_gets_a_worktree_and_is_not_dispatched() {
   human_run
   assert_eq "" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR")" "no frontier: ticket 1 is held, 2 is blocked"
-  local out wt
+  local out= wt=
   out=$("$SCRIPTS/human.sh" sync "$RUN_DIR")
   wt="$TEST_TMPDIR/project-wt/r1-1.human"
   assert_eq "#1 $wt" "$out"
@@ -117,7 +117,7 @@ test_h_a_ready_for_human_ticket_gets_a_worktree_and_is_not_dispatched() {
 test_h_the_run_parks_and_names_the_ticket_when_only_work_behind_it_remains() {
   human_run
   "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
   assert_contains "$out" "parked: waiting on the Artisan's hands-on ticket #1 (Add hello); 1 ticket(s) wait behind it: #2"
@@ -140,7 +140,7 @@ test_h_done_goes_through_the_verifier_the_suite_and_the_serial_merge() {
   human_run
   "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
   hands_on_commit
-  local out
+  local out=
   out=$("$SCRIPTS/human.sh" done "$RUN_DIR" 1)
   assert_contains "$out" "awaiting its verifier"
   assert_eq returned "$(state_get '.tickets["1"].status')"
@@ -152,7 +152,7 @@ test_h_done_goes_through_the_verifier_the_suite_and_the_serial_merge() {
   out=$("$SCRIPTS/human.sh" verdict "$RUN_DIR" 1)
   assert_contains "$out" "pass, 2/2 criteria met"
   assert_contains "$out" "| hello.txt exists | yes |"
-  local sha
+  local sha=
   sha=$("$SCRIPTS/wave.sh" merge "$RUN_DIR" 1)
   assert_eq "$sha" "$(state_get '.tickets["1"].merge_commit')"
   assert_eq true "$(state_get '.tickets["1"].suite.passed')"
@@ -172,7 +172,7 @@ test_h_a_failed_verdict_goes_back_to_the_artisan_not_to_a_worker() {
   "$SCRIPTS/human.sh" done "$RUN_DIR" 1 >/dev/null
   "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
   wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
-  local rc=0 out
+  local rc=0 out=
   out=$("$SCRIPTS/verify.sh" judge "$RUN_DIR" 1) || rc=$?
   assert_eq 6 "$rc"
   assert_contains "$out" "fail 1/2 human: It says hi"
@@ -200,7 +200,7 @@ test_h_done_while_a_wave_holds_the_lock_is_filed_and_taken_later() {
   human_run
   "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
   hands_on_commit
-  local other rc=0
+  local other= rc=0
   other=$(start_worker)
   "$SCRIPTS/state.sh" unlock "$RUN_DIR" "$CHAT" 2>/dev/null || true
   "$SCRIPTS/state.sh" lock "$RUN_DIR" "$other"
@@ -217,7 +217,7 @@ test_h_done_while_a_wave_holds_the_lock_is_filed_and_taken_later() {
 # fake tracker, and the draft copies each ticket's blocked_by from its output.
 scoped_plan() { # hands_on-json
   setup_wave '["1","2"]'
-  local scope
+  local scope=
   scope=$("$SCRIPTS/resolve-scope.sh" --repo local/sample 1 2)
   jq -n --argjson h "$1" --argjson s "$scope" '{
     run_id: "r1", repo: "local/sample", integration_branch: "run/r1", scope: ["1", "2"],
@@ -243,7 +243,7 @@ test_h_a_run_with_only_the_hands_on_ticket_and_its_dependents_parks_from_a_resol
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
   "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
   "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
   assert_contains "$out" "hands-on ticket #1"

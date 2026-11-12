@@ -84,7 +84,7 @@ cmd_file() {
     *) die "--criterion is 1-7 or always-ask" ;;
   esac
   ticket=${ticket#\#}
-  local opt body title url num i crit_text effect run_note=
+  local opt= body= title= url= num= i= crit_text= effect= run_note=
   if [ "$criterion" = always-ask ]; then crit_text="an \"Always ask\" item"; else crit_text="criterion $criterion"; fi
   if [ "$mode" = blocking ]; then
     effect="Blocked by this question until it is answered."
@@ -148,7 +148,7 @@ repo_of() { get .repo; }
 issue_id() { gh api "repos/$(repo_of)/issues/$1" | jq -r .id; }
 
 add_blocker() { # blocked blocker
-  local id err
+  local id= err=
   id=$(issue_id "$2") || die "could not read #$2 from the tracker"
   if ! err=$(gh api --method POST "repos/$(repo_of)/issues/$1/dependencies/blocked_by" -F "issue_id=$id" 2>&1 >/dev/null); then
     case "$err" in *already*|*422*) ;; *) die "could not mark #$1 blocked by #$2: $err" ;; esac
@@ -156,7 +156,7 @@ add_blocker() { # blocked blocker
 }
 
 remove_blocker() { # blocked blocker
-  local id
+  local id=
   id=$(issue_id "$2") || die "could not read #$2 from the tracker"
   gh api --method DELETE "repos/$(repo_of)/issues/$1/dependencies/blocked_by/$id" >/dev/null 2>&1 \
     || die "could not take #$2 off #$1's blockers"
@@ -169,7 +169,7 @@ cmd_block() {
   local t="${2:-}"
   [ -n "$t" ] || usage
   [ "$(get --arg t "$t" '.tickets[$t].status // "none"')" = blocked ] || die "#$t is not blocked"
-  local qs q
+  local qs= q=
   qs=$(get --arg t "$t" '
     [.findings[]? | select(.from == $t and .kind == "question" and .blocking == true) | .ticket] as $f
     | (.tickets[$t].questions // [] | map(.ticket)) as $have
@@ -199,7 +199,7 @@ answer_of() { # json array of comments
 
 cmd_sync() {
   open_run "${1:-}"
-  local pairs t q view state ans
+  local pairs= t= q= view= state= ans=
   pairs=$(get '.tickets | to_entries[] | .key as $t | (.value.questions // [])[] | select(.state == "open" or .state == "deferred") | "\($t) \(.ticket)"')
   [ -n "$pairs" ] || return 0
   while read -r t q; do
@@ -254,7 +254,7 @@ cmd_deferred() {
   open_run "${1:-}"
   local t="${2:-}" choice="${3:-}"
   [ -n "$t" ] && { [ "$choice" = pull ] || [ "$choice" = carry ]; } || usage
-  local qs q
+  local qs= q=
   qs=$(get --arg t "$t" '.tickets[$t].questions[]? | select(.state == "deferred") | .ticket')
   [ -n "$qs" ] || die "#$t has no deferred question; run sync first"
   for q in $qs; do
@@ -292,7 +292,7 @@ cmd_list() {
 
 cmd_provisional() {
   open_run "${1:-}"
-  local mark=0 rows
+  local mark=0 rows=
   [ "${2:-}" != --shown ] || mark=1
   rows=$(get '
     (.provisional_shown // []) as $seen
@@ -301,7 +301,7 @@ cmd_provisional() {
        | select(.confidence == "provisional" and ((.criterion // "" | tostring) as $c | ["4", "6", "7"] | index($c)))
        | {t: $t} + .]
     | .[] | "| #\(.t) | \(.question // "-" | gsub("\\|"; "/")) | \(.choice // "-" | gsub("\\|"; "/")) | \(.alternative // "-" | gsub("\\|"; "/")) | \(.criterion) | provisional |"')
-  local shown_tickets
+  local shown_tickets=
   shown_tickets=$(printf '%s\n' "$rows" | sed -n 's/^| #\([^ ]*\) |.*/\1/p' | jq -R . | jq -sc 'unique')
   echo "| Ticket | Question | Picked | Alternative | Criterion | Confidence |"
   echo "|---|---|---|---|---|---|"

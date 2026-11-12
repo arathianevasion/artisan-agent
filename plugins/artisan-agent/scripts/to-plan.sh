@@ -132,7 +132,7 @@ case "$cmd" in
     # The database id of issue $1. Runs in a command substitution, so callers
     # add `|| exit 1`: a failed lookup stops here, before any write is attempted.
     dbid() {
-      local out id
+      local out= id=
       out=$(gh api "repos/$REPO/issues/$1") || die "cannot look up the id of #$1 (gh api failed); nothing was written for it, run publish again"
       id=$(printf '%s' "$out" | jq -r '.id // empty') && [ -n "$id" ] || die "the tracker returned no id for #$1; run publish again"
       printf '%s' "$id"

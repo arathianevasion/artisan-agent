@@ -48,7 +48,7 @@ fi
 
 # adrs_json: [{number, file, title}]
 adrs_json() {
-  local f n t out=""
+  local f= n= t= out=""
   for f in "$adr_dir"/[0-9][0-9][0-9][0-9]-*.md; do
     [ -f "$f" ] || continue
     n=$(basename "$f" | cut -c1-4)
@@ -67,7 +67,7 @@ need_check() {
 
 # refuse any ADR number in the check file that has no file
 validate() {
-  local known bad
+  local known= bad=
   known=$(adrs_json)
   bad=$(jq -r --argjson known "$known" '
     [(.plan_adrs // [])[].adr, ((.tickets // [])[].adrs // [])[].adr] | unique

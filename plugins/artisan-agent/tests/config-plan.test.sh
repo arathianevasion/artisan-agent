@@ -44,7 +44,7 @@ config_sum() { cksum <"$PROJECT/.artisan-agent/config.yml"; }
 # ------------------------------------------------------------------ config
 
 test_defaults_hold_every_setting_from_the_ticket_table() {
-  local d
+  local d=
   d=$(config defaults)
   assert_eq 5 "$(jq .max_agents <<<"$d")" "Max Agents"
   assert_eq 5 "$(jq .sweep_minutes <<<"$d")" "sweep"
@@ -73,7 +73,7 @@ test_a_project_with_no_config_file_gets_every_default() {
 test_missing_and_empty_keys_fall_back_to_their_defaults() {
   make_project
   printf 'max_agents: 3\ncontext:\n  drain_percent: 40\nsweep_minutes:\n' >"$PROJECT/.artisan-agent/config.yml"
-  local c
+  local c=
   c=$(cd "$PROJECT" && config show)
   assert_eq 3 "$(jq .max_agents <<<"$c")"
   assert_eq 40 "$(jq .context.drain_percent <<<"$c")"
@@ -87,7 +87,7 @@ test_a_wrongly_typed_or_unsupported_config_is_refused() {
   make_project
   printf 'max_agents: lots\n' >"$PROJECT/.artisan-agent/config.yml"
   assert_status 1 config show --file "$PROJECT/.artisan-agent/config.yml"
-  local err
+  local err=
   err=$(config show --file "$PROJECT/.artisan-agent/config.yml" 2>&1 || true)
   assert_contains "$err" "max_agents must be number"
   printf 'areas:\n  - name: billing\n' >"$PROJECT/.artisan-agent/config.yml"
@@ -106,7 +106,7 @@ areas:
 estimate_multipliers: {all: 1.1, claude-opus-5-5: 1.3}
 team_guardrails_repo: owner/guardrails  # the team's repo
 EOF
-  local c
+  local c=
   c=$(cd "$PROJECT" && config show)
   assert_eq '["src/billing/","db/"]' "$(jq -c .areas.billing.paths <<<"$c")"
   assert_eq '["risk"]' "$(jq -c .areas.billing.gates <<<"$c")"
@@ -193,7 +193,7 @@ test_an_estimate_below_the_models_minimum_is_raised_to_it() {
   # Total and budget use the floored numbers: 0.5 + 5 = 5.5, + 25%.
   assert_eq 5.5 "$(jq .estimate_usd "$TEST_TMPDIR/plan.json")"
   assert_eq 6.88 "$(jq .budget_usd "$TEST_TMPDIR/plan.json")"
-  local out
+  local out=
   out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "| #10 (Typo) | claude-sonnet-5-5 | \$0.50 | minimum for claude-sonnet-5-5 (estimated \$0.25) |"
   assert_contains "$out" "| minimum_estimates.claude-sonnet-5-5 | 0.5 |"
@@ -221,7 +221,7 @@ test_a_minimum_can_be_overridden_for_one_run_and_every_priced_model_has_a_defaul
   assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "| minimum_estimates.claude-sonnet-5-5 | 0.2 (this run only; project: 0.5) |"
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "config.yml untouched"
   assert_status 1 sh -c "cd '$PROJECT' && '$SCRIPTS/plan.sh' build --draft '$TEST_TMPDIR/draft.json' --set minimum_estimates.claude-sonnet-5-5=-1"
-  local m
+  local m=
   for m in $(jq -r '.models | keys[]' "$PLUGIN_ROOT/references/model-prices.json"); do
     [ "$(config defaults | jq --arg m "$m" '.minimum_estimates[$m] > 0')" = true ] || fail "no default minimum for $m"
   done
@@ -231,7 +231,7 @@ test_a_model_with_no_price_and_no_history_is_refused() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
   jq '.tickets["10"].model = "claude-unknown-1"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
-  local err
+  local err=
   err=$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json" 2>&1 || true)
   assert_contains "$err" "no price for model claude-unknown-1"
 }
@@ -242,7 +242,7 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
-  local out key
+  local out= key=
   out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Wave 1"
   assert_contains "$out" "### Wave 2"
@@ -266,7 +266,7 @@ test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() 
   write_draft "$TEST_TMPDIR/draft.json"
   jq '.tickets["10"].expected_files = ["src/up/", "tests/up.sh"]' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
-  local out; out=$(plan render "$TEST_TMPDIR/plan.json")
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "| Expected files |"
   assert_contains "$out" '| `src/up/`, `tests/up.sh` |'
   assert_contains "$out" "| none declared |"
@@ -290,7 +290,7 @@ test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() 
 test_a_plan_step_override_changes_the_plan_but_not_the_committed_config() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
-  local before
+  local before=
   before=$(config_sum)
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" \
     --set max_agents=2 --set context.drain_percent=35) >"$TEST_TMPDIR/plan.json"
@@ -310,7 +310,7 @@ test_an_override_during_the_run_changes_the_state_file_but_not_the_config() {
   write_draft "$TEST_TMPDIR/draft.json"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
   "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
-  local before
+  local before=
   before=$(config_sum)
   "$SCRIPTS/state.sh" override "$RUN_DIR" attempts_per_ticket 3
   "$SCRIPTS/state.sh" override "$RUN_DIR" attempts_per_ticket 4
@@ -331,11 +331,11 @@ test_an_override_of_an_unknown_key_or_with_the_wrong_type_is_refused() {
   assert_status 1 sh -c "cd '$PROJECT' && '$SCRIPTS/plan.sh' build --draft '$TEST_TMPDIR/draft.json' --set max_agents=many"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
   "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
-  local before
+  local before=
   before=$(state_sum)
   assert_status 1 "$SCRIPTS/state.sh" override "$RUN_DIR" max_agents -1
   assert_status 1 "$SCRIPTS/state.sh" override "$RUN_DIR" nope 3
-  local err
+  local err=
   err=$("$SCRIPTS/state.sh" override "$RUN_DIR" max_agents.x 3 2>&1 || true)
   assert_contains "$err" "max_agents.x is not a setting"
   assert_eq "$before" "$(state_sum)" "state file untouched"
@@ -346,7 +346,7 @@ test_an_override_of_an_unknown_key_or_with_the_wrong_type_is_refused() {
 test_a_ticket_outside_the_approved_scope_is_refused_at_dispatch() {
   trap kill_workers EXIT
   init_run
-  local pid before
+  local pid= before=
   pid=$(start_worker)
   # Even with an entry slipped into tickets, scope is what was approved.
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["99"] = .tickets["10"]'
@@ -401,7 +401,7 @@ test_with_checks_recorded_the_suite_runs_them_and_the_approval_shows_it() {
   assert_eq "( sh test.sh ) && ( sh lint.sh )" "$(jq -r .suite_command "$TEST_TMPDIR/plan.json")"
   assert_eq recorded "$(jq -r .suite_source "$TEST_TMPDIR/plan.json")"
   assert_eq '["sh test.sh","sh lint.sh"]' "$(jq -c .recorded_checks.commands "$TEST_TMPDIR/plan.json")"
-  local view
+  local view=
   view=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$view" "### Suite command"
   assert_contains "$view" '`( sh test.sh ) && ( sh lint.sh )`: the recorded checks (`sh test.sh`, `sh lint.sh`'

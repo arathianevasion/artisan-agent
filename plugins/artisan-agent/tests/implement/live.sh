@@ -52,7 +52,7 @@ git_quiet() { git -c user.name=fixture -c user.email=fixture@example.invalid "$@
 # branch agent/<id> starts from main, plus the seeded first attempt for
 # review-seeds. Writes <workdir>/base (the commit the branch started from).
 setup() {
-  local scenario=$1 wd=$2 id fixture
+  local scenario=$1 wd=$2 id= fixture=
   id=$(ticket_id "$scenario")
   fixture="$FIXTURES/$scenario"
   [ ! -e "$wd/repo" ] || { echo "live.sh: $wd/repo already exists" >&2; exit 2; }
@@ -74,7 +74,7 @@ setup() {
 }
 
 run() {
-  local scenario=$1 wd=$2 id base
+  local scenario=$1 wd=$2 id= base=
   : "${UPSTREAM_PLUGIN_DIR:?set UPSTREAM_PLUGIN_DIR to the mattpocock-skills plugin directory}"
   setup "$scenario" "$wd"
   id=$(ticket_id "$scenario")
@@ -177,7 +177,7 @@ new_seam_names() {
 # True when a decision card with job 3 names one of those words, so the card
 # is about the seam the worker really added and not just any seam-like word.
 card_names_new_seam() {
-  local repo=$1 base=$2 record=$3 name
+  local repo=$1 base=$2 record=$3 name=
   for name in $(new_seam_names "$repo" "$base"); do
     if jq -e --arg n "$name" 'any(.decisions[]; .job == 3 and ((.question + " " + .choice) | test("(^|[^A-Za-z0-9_])" + $n + "([^A-Za-z0-9_]|$)")))' "$record" >/dev/null; then
       return 0
@@ -187,7 +187,7 @@ card_names_new_seam() {
 }
 
 verify() {
-  local scenario=$1 wd=$2 id repo record base attempt_commits=0
+  local scenario=$1 wd=$2 id= repo= record= base= attempt_commits=0
   id=$(ticket_id "$scenario")
   repo="$wd/repo"
   record="$wd/results/$id.json"

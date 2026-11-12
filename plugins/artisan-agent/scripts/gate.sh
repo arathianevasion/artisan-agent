@@ -118,7 +118,7 @@ cmd_holds() {
 # The gate's view for packet.py: the gate, its dependents, the state, and the
 # guardrails and other provisional cards as their scripts print them.
 build_view() { # id dependents-json
-  local def="$1" deps="$2" guard prov t
+  local def="$1" deps="$2" guard= prov= t=
   gates_dir >/dev/null
   guard=$("$SCRIPT_DIR/guardrails.sh" table --run-dir "$RUN_DIR" 2>"$RUN_DIR/gates/.guardrails.err") \
     || guard="Could not be read: $(tr '\n' ' ' <"$RUN_DIR/gates/.guardrails.err")"
@@ -135,7 +135,7 @@ build_view() { # id dependents-json
 
 # The in-run tickets still to merge that a ticket of the gate blocks natively.
 dependents() { # def
-  local def="$1" repo t blockers out='[]'
+  local def="$1" repo= t= blockers= out='[]'
   repo=$(get '.repo')
   for t in $(get '.plan.scope[]'); do
     jq -e --arg t "$t" '.tickets | index($t)' <<<"$def" >/dev/null && continue
@@ -150,11 +150,11 @@ dependents() { # def
   printf '%s\n' "$out"
 }
 
-issue_id() { local j; j=$(gh api "repos/$(get '.repo')/issues/$1") && jq -er .id <<<"$j"; }
+issue_id() { local j=; j=$(gh api "repos/$(get '.repo')/issues/$1") && jq -er .id <<<"$j"; }
 
 # blocker blocks ticket natively, once.
 add_blocker() { # ticket blocker-issue blocker-id
-  local repo
+  local repo=
   repo=$(get '.repo')
   gh api "repos/$repo/issues/$1/dependencies/blocked_by" \
     | jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' >/dev/null && return 0
@@ -165,7 +165,7 @@ add_blocker() { # ticket blocker-issue blocker-id
 cmd_open() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  local id="$2" def rec dir view body title repo num url d gid
+  local id="$2" def= rec= dir= view= body= title= repo= num= url= d= gid=
   rec=$(recorded "$id")
   if [ -n "$rec" ]; then jq -r .issue <<<"$rec"; return 0; fi
   def=$(gate_def "$id")
@@ -242,7 +242,7 @@ decided_cards() { # gate-id
 }
 
 card_json() { # card-number
-  local c
+  local c=
   c=$(jq -c --argjson n "$1" '.cards[] | select(.card == $n)' <<<"$GATE")
   [ -n "$c" ] || state_die 6 "gate.sh: gate #$(jq -r .issue <<<"$GATE") has no card $1"
   if decided_cards "$(jq -r .id <<<"$GATE")" | grep -qx "$1"; then
@@ -307,7 +307,7 @@ record() {
 }
 
 new_action() { # gate-id type by: a fresh action file's path
-  local dir f
+  local dir= f=
   dir=$(gates_dir)
   f="$dir/pending/$1.$(date +%s).$$.$RANDOM.json"
   printf '%s\n' "$f"
@@ -345,7 +345,7 @@ decision_from() { # card-json action choice
 cmd_change() {
   [ $# -ge 4 ] || usage
   open_run "$1"
-  local issue="$2" n="$3" choice="$4" card repo dec num url gid t f title
+  local issue="$2" n="$3" choice="$4" card= repo= dec= num= url= gid= t= f= title=
   shift 4
   parse_opts "$@"
   open_gate "$issue"
@@ -399,7 +399,7 @@ At the slice gate the Artisan changed a decision #\(.ticket) made alone.
 cmd_guardrail() {
   [ $# -ge 5 ] || usage
   open_run "$1"
-  local issue="$2" n="$3" level="$4" reach="$5" card dec f
+  local issue="$2" n="$3" level="$4" reach="$5" card= dec= f=
   shift 5
   case "$level" in team|product|individual) ;; *) usage ;; esac
   case "$reach" in ticket|area|everywhere) ;; *) usage ;; esac
@@ -439,7 +439,7 @@ decisions_comment() { # gate-id action-file
 cmd_approve() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local issue="$2" gid decided keeps f repo
+  local issue="$2" gid= decided= keeps= f= repo=
   shift 2
   parse_opts "$@"
   [ "$REACH" != area ] || [ -n "$AREA" ] || state_die 2 "gate.sh: a reach of area needs --area NAME"
@@ -474,7 +474,7 @@ cmd_approve() {
 cmd_sync() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local f st id issue repo state carried
+  local f= st= id= issue= repo= state= carried=
   # Actions the Artisan took while the lock was held.
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
@@ -503,7 +503,7 @@ cmd_sync() {
 <!-- artisan-agent:gate-closed-by-hand carried=$carried -->" >/dev/null 2>&1 || true
     fi
   done
-  local num
+  local num=
   for id in $(cmd_due "$RUN_DIR"); do
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
     echo "opened #$num $id"
@@ -524,7 +524,7 @@ cmd_list() {
 
 cmd_carried() {
   open_run "${1:-}"
-  local n
+  local n=
   n=$(get '[(.review_gates // [])[] | select(.closed_on_tracker == true) | .carried | length] | add // 0')
   if [ "$n" -eq 0 ]; then
     echo "No gate was closed by hand with cards left undecided."
@@ -538,7 +538,7 @@ cmd_carried() {
 }
 
 view_of() { # recorded-gate-json: its view, with the cards and dependents recorded
-  local g="$1" f
+  local g="$1" f=
   f="$RUN_DIR/gates/$(jq -r .id <<<"$g").view.json"
   if [ -f "$f" ]; then
     jq --slurpfile s "$FILE" --argjson g "$g" '.state = $s[0] | .gate.issue = $g.issue' "$f"
@@ -549,7 +549,7 @@ view_of() { # recorded-gate-json: its view, with the cards and dependents record
 
 cmd_chat() {
   open_run "${1:-}"
-  local g first=1
+  local g= first=1
   while IFS= read -r g; do
     [ -n "$g" ] || continue
     [ "$first" -eq 1 ] || echo
@@ -563,7 +563,7 @@ cmd_chat() {
 cmd_packet() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  local rec def
+  local rec= def=
   rec=$(recorded "$2")
   if [ -n "$rec" ] && [ -f "$RUN_DIR/gates/$(jq -r .id <<<"$rec").md" ]; then
     cat "$RUN_DIR/gates/$(jq -r .id <<<"$rec").md"

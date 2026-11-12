@@ -47,7 +47,7 @@ exit_record=$run_dir/results/$key.exit.json
 # Alive means a process that has not ended: a zombie is a finished runner.
 # (ps, not kill -0, so a test can stand in for the liveness check.)
 runner_alive() {
-  local stat
+  local stat=
   stat=$(ps -o stat= -p "$1" 2>/dev/null) || return 1
   [ -n "$stat" ] || return 1
   case "$stat" in Z*) return 1 ;; esac

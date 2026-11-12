@@ -103,7 +103,7 @@ R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
 # A fresh verifier per returned ticket; only its one-line verdict is read.
 verify() {
-  local rc
+  local rc=
   "\$S/verify.sh" start "\$R" "\$1" >/dev/null || return 1
   while :; do
     rc=0
@@ -150,7 +150,7 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   setup_wave
   start_and_launch
   wait_for "$ORCH_EXIT" 60
-  local wt ib tip
+  local wt= ib= tip=
   wt=$(cat "$TEST_TMPDIR/start.out")
   assert_eq "$TEST_TMPDIR/project-wt/run-r1" "$wt" "the run's own integration worktree"
   # The orchestrator completed and wrote its wave report.
@@ -207,10 +207,10 @@ test_the_chat_learns_of_completion_from_the_exit_record_and_sweep_alone() {
   export WORKER_SLEEP=3
   start_and_launch
   # While the wave runs, the orchestrator's runner holds the state lock.
-  local runner
+  local runner=
   runner=$(awk '{print $3}' "$TEST_TMPDIR/launch.out")
   assert_eq "$runner" "$(readlink "$RUN_DIR/state.lock")" "the orchestrator holds the lock"
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "orchestrator: running -"
   assert_contains "$out" "next: wait"
@@ -237,7 +237,7 @@ test_killing_the_launching_process_stops_neither_orchestrator_nor_worker() {
   kill -HUP "-$chat" 2>/dev/null || true
   kill -KILL "-$chat" 2>/dev/null || true
   wait "$chat" 2>/dev/null || true
-  local orch
+  local orch=
   orch=$(cat "$RUN_DIR/workers/orchestrator-w1.1/runner.pid")
   state_pid_alive "$orch" || fail "the orchestrator died with the chat"
   wait_for "$RUN_DIR/results/orchestrator-w1.1.exit.json" 60
@@ -290,7 +290,7 @@ test_a_red_suite_after_merging_blocks_the_ticket_and_undoes_the_merge() {
   assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "integration branch back where it was"
   assert_eq exception "$(state_get '.decisions[0].kind')"
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")" "never closed"
-  local out
+  local out=
   # The red check raises an exception gate, and the run parks on it (#70).
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
@@ -329,7 +329,7 @@ test_dispatch_never_exceeds_max_agents() {
 
 test_tick_criteria_ticks_only_met_criteria() {
   printf '{"acceptance":[{"criterion":"Adds  a thing","met":true},{"criterion":"Other","met":false}]}' >"$TEST_TMPDIR/r.json"
-  local out
+  local out=
   out=$(printf -- '- [ ] adds a thing\n- [ ] Other\n- [ ] Unrelated' | python3 -I "$PLUGIN_ROOT/scripts/lib/criteria.py" tick "$TEST_TMPDIR/r.json")
   assert_eq "- [x] adds a thing
 - [ ] Other

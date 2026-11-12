@@ -33,7 +33,7 @@ setup_run() { # [check.sh body]
   git_quiet -C "$PROJECT" commit -m "suite"
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
-  local n
+  local n=
   for n in 1 2 3 4; do
     jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "open",
       labels: [{name: "in-run"}, {name: "ready-for-agent"}],
@@ -101,7 +101,7 @@ test_decide_marks_a_waiting_decision_decided_as_a_decision_record() {
 
 test_approve_closes_a_slice_gate_with_the_optional_fields() {
   setup_run
-  local num
+  local num=
   num=$(open_slice_gate)
   "$A" approve "$RUN_DIR" "$num" --by Andrew --why "Reads well" --confidence firm \
     --level product --reach everywhere >/dev/null
@@ -114,7 +114,7 @@ test_approve_closes_a_slice_gate_with_the_optional_fields() {
 
 test_redirect_with_notes_reworks_in_the_same_run_counted_separately() {
   setup_run
-  local num rw
+  local num= rw=
   num=$(open_slice_gate)
   rw=$("$A" redirect "$RUN_DIR" "$num" --notes "Greet by name" --why "Too terse")
   # The gate closes as redirected; its decision is a decision record.
@@ -140,7 +140,7 @@ test_redirect_with_notes_reworks_in_the_same_run_counted_separately() {
 
 test_redirect_mine_puts_the_rework_ready_for_human() {
   setup_run
-  local num rw
+  local num= rw=
   num=$(open_slice_gate)
   rw=$("$A" redirect "$RUN_DIR" "$num" --mine --by Andrew)
   assert_eq "in-run,ready-for-human" "$(labels "$rw")"
@@ -151,7 +151,7 @@ test_redirect_mine_puts_the_rework_ready_for_human() {
 
 test_bypass_closes_the_gate_unreviewed_and_records_who() {
   setup_run
-  local num
+  local num=
   num=$(open_slice_gate)
   "$A" bypass "$RUN_DIR" "$num" --by Andrew --why "Trivial slice" >/dev/null
   assert_eq closed "$(issue_state "$num")"
@@ -164,7 +164,7 @@ test_bypass_closes_the_gate_unreviewed_and_records_who() {
 
 test_defer_releases_the_dependents_and_keeps_the_gate_for_the_end_gate() {
   setup_run
-  local num out rw
+  local num= out= rw=
   num=$(open_slice_gate)
   "$A" defer "$RUN_DIR" "$num" --by Andrew --why "Busy today" >/dev/null
   # The issue stays open but no longer blocks; the dependent runs.
@@ -190,7 +190,7 @@ test_defer_releases_the_dependents_and_keeps_the_gate_for_the_end_gate() {
 
 test_actions_wait_while_a_wave_holds_the_lock() {
   setup_run
-  local num other
+  local num= other=
   num=$(open_slice_gate)
   other=$(start_worker)
   "$SCRIPTS/state.sh" unlock "$RUN_DIR" "$CHAT" 2>/dev/null || true
@@ -214,7 +214,7 @@ test_a_ticket_failing_twice_raises_an_exception_gate_that_cannot_be_removed() {
   # No gates in the plan at all: exception gates are never the plan's to remove.
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []'
   gave_up_on_3
-  local out num body
+  local out= num= body=
   out=$("$A" sync "$RUN_DIR")
   num=$(state_get '.exception_gates[0].issue')
   assert_eq "opened #$num exception-1" "$out"
@@ -240,13 +240,13 @@ test_a_ticket_failing_twice_raises_an_exception_gate_that_cannot_be_removed() {
 }
 
 test_the_exception_choices_leave_the_ticket_and_dependents_as_stated() {
-  local choice
+  local choice=
   for choice in take reslice drop bypass defer; do
     rm -rf "$TEST_TMPDIR/project" "$TEST_TMPDIR/tracker"
     setup_run
     gave_up_on_3
     "$A" sync "$RUN_DIR" >/dev/null
-    local num
+    local num=
     num=$(state_get '.exception_gates[0].issue')
     "$A" "$choice" "$RUN_DIR" "$num" --by Andrew >/dev/null
     case "$choice" in
@@ -286,7 +286,7 @@ test_a_gate_closed_by_hand_on_the_tracker_is_a_bypass() {
   setup_run
   gave_up_on_3
   "$A" sync "$RUN_DIR" >/dev/null
-  local num
+  local num=
   num=$(state_get '.exception_gates[0].issue')
   gh issue close "$num" -R local/sample
   "$A" sync "$RUN_DIR" >/dev/null
@@ -329,7 +329,7 @@ S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
 verify() {
-  local rc
+  local rc=
   "\$S/verify.sh" start "\$R" "\$1" >/dev/null || return 1
   while :; do
     rc=0
@@ -362,7 +362,7 @@ test_a_run_gives_up_parks_behind_its_reviews_and_retries_with_notes() {
   setup_run
   write_role_scripts
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
-  local out ex slice prompt
+  local out= ex= slice= prompt=
   # Wave 1: 1 merges (its slice gate holds 2); 3 fails twice (its exception
   # gate holds 4). Everything left waits on the two reviews: the run parks.
   run_wave 1
@@ -400,7 +400,7 @@ test_a_seeded_check_that_wont_go_green_raises_an_exception_gate() {
   sed -i.bak 's/if \[ "$t" = 3 \].*fi$/:/' "$FAKE_CLAUDE_SCRIPT_WORKER"
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []'
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
-  local out num
+  local out= num=
   run_wave 1
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$(state_get '.tickets["3"].blocked_reason')" "the suite failed after merging"

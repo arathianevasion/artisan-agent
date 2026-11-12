@@ -82,7 +82,7 @@ stub_issue() {
 
 # stub_blocked_by n "blocker:state" ...
 stub_blocked_by() {
-  local n="$1" pair
+  local n="$1" pair=
   shift
   for pair in "$@"; do
     jq -n --argjson b "${pair%%:*}" --arg s "${pair#*:}" '{number: $b, state: $s}'
@@ -114,7 +114,7 @@ start_worker() {
 }
 
 kill_workers() {
-  local pid
+  local pid=
   [ -f "$TEST_TMPDIR/.workers" ] || return 0
   for pid in $(cat "$TEST_TMPDIR/.workers"); do kill -KILL "$pid" 2>/dev/null || true; done
 }

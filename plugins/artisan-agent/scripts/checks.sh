@@ -81,7 +81,7 @@ commands_or_16() { # json -> the commands, or 16 with the reason
 }
 
 cmd_suite() {
-  local json
+  local json=
   json=$(recorded_json)
   commands_or_16 "$json" >/dev/null
   # One check runs as it is; several each run in a subshell, so a check's own
@@ -91,7 +91,7 @@ cmd_suite() {
 }
 
 cmd_run() {
-  local json recorded logs= i=0 rc cmd last results='[]' out
+  local json= recorded= logs= i=0 rc= cmd= last= results='[]' out=
   json=$(recorded_json)
   recorded=$(printf '%s' "$json" | jq -r .recorded)
   local run=()
@@ -106,7 +106,7 @@ EOF
     logs="${OUT%.json}.logs"
     mkdir -p "$(dirname "$OUT")" "$logs"
   fi
-  local tmp
+  local tmp=
   tmp=$(mktemp "${TMPDIR:-/tmp}/checks.XXXXXX")
   for cmd in ${run[@]+"${run[@]}"}; do
     i=$((i + 1))

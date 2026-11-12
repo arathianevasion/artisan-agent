@@ -19,7 +19,7 @@ append() { printf '%s\n' "$2" >>"$1"; }
 
 test_times_out_with_status_124_when_nothing_changes() {
   setup_run
-  local out status=0 start=$SECONDS
+  local out= status=0 start=$SECONDS
   out=$(wait_any "$RUN" --timeout 2) || status=$?
   assert_eq 124 "$status" "exit status on timeout"
   assert_eq "" "$out" "nothing reported on timeout"
@@ -29,7 +29,7 @@ test_times_out_with_status_124_when_nothing_changes() {
 test_first_call_reports_files_already_present() {
   setup_run
   echo '{}' >"$RUN/results/46.1.exit.json"
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 5)
   assert_contains "$out" "new results/46.1.exit.json"
 }
@@ -38,7 +38,7 @@ test_returns_on_a_new_result_file() {
   setup_run
   wait_any "$RUN" --timeout 1 >/dev/null || true # take the baseline
   later 1 append "$RUN/results/46.1.result.json" '{"ok":true}'
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 10)
   assert_eq "new results/46.1.result.json" "$out"
 }
@@ -47,7 +47,7 @@ test_returns_on_a_new_exit_record() {
   setup_run
   wait_any "$RUN" --timeout 1 >/dev/null || true
   later 1 append "$RUN/results/46.1.exit.json" '{"exit_code":0}'
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 10)
   assert_eq "new results/46.1.exit.json" "$out"
 }
@@ -56,7 +56,7 @@ test_returns_when_a_findings_file_appears() {
   setup_run
   wait_any "$RUN" --timeout 1 >/dev/null || true
   later 1 append "$RUN/results/findings/46.jsonl" '{"finding":"one"}'
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 10)
   assert_eq "new results/findings/46.jsonl" "$out"
 }
@@ -66,7 +66,7 @@ test_returns_when_a_findings_file_grows() {
   append "$RUN/results/findings/46.jsonl" '{"finding":"one"}'
   wait_any "$RUN" --timeout 1 >/dev/null || true
   later 1 append "$RUN/results/findings/46.jsonl" '{"finding":"two"}'
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 10)
   assert_eq "grew results/findings/46.jsonl" "$out"
 }
@@ -94,7 +94,7 @@ test_waits_for_a_results_folder_that_does_not_exist_yet() {
   mkdir -p "$RUN"
   later 1 mkdir -p "$RUN/results"
   later 2 append "$RUN/results/46.1.exit.json" '{}'
-  local out
+  local out=
   out=$(wait_any "$RUN" --timeout 10)
   assert_eq "new results/46.1.exit.json" "$out"
 }
@@ -111,7 +111,7 @@ test_bad_options_are_usage_errors_not_changes() {
 }
 
 test_help_prints_the_whole_header() {
-  local out
+  local out=
   out=$(wait_any --help 2>&1) || true
   assert_contains "$out" "Exit status: 0 on a change, 124 on timeout, 2 on bad usage."
   assert_contains "$out" "Portable to bash 3.2"

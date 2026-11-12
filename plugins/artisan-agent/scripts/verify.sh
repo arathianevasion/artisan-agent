@@ -77,17 +77,17 @@ die() { state_die 1 "verify.sh: $*"; }
 # caller runs it again. Callers assign the result first (cls=$(classify ...)),
 # so the stop is not swallowed inside another command.
 classify() {
-  local out err
+  local out= err=
   err=$(mktemp) || die "no temp file to classify $1 attempt $2"
   out=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$1" "$2" 2>"$err") \
-    || { local msg; msg=$(cat "$err"); rm -f "$err"; die "could not classify $1 attempt $2 ($msg); nothing recorded, run it again"; }
+    || { local msg=; msg=$(cat "$err"); rm -f "$err"; die "could not classify $1 attempt $2 ($msg); nothing recorded, run it again"; }
   rm -f "$err"
   printf '%s\n' "$out"
 }
 
 # The ticket's acceptance criteria, verbatim, as a JSON array.
 read_criteria() { # ticket
-  local path body
+  local path= body=
   path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
   if [ -n "$path" ]; then
     case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
@@ -116,7 +116,7 @@ remove_worktree() { # path: a throwaway detached checkout of a committed sha
 # waits). 8 when it will not come up: its launch failed, or the start that
 # claimed it ended before recording it (its claim is then cleared). Call again.
 started_pid() { # ticket v
-  local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" claim="$RUN_DIR/verify/claims/$1.$2" i=0 rec owner
+  local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" claim="$RUN_DIR/verify/claims/$1.$2" i=0 rec= owner=
   while [ ! -s "$f" ]; do
     rec=$(get --arg t "$1" --argjson v "$2" '[(.tickets[$t].verifications // [])[] | select(.attempt == $v)] | last | if . == null then "none" else (.verdict // "-") end')
     [ "$rec" != error ] || state_die 8 "verify.sh: #$1's verifier $2 could not launch; start again"
@@ -139,14 +139,14 @@ cmd_start() {
   local t="${2:-}"
   [ -n "$t" ] || usage
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  local n tip
+  local n= tip=
   check_returned verify.sh "$t" "not verified"
   n=$ATTEMPT tip=$TIP
 
   # Idempotent per attempt: while this attempt has a verifier running, ended
   # but not judged, or judged pass, starting again launches nothing and
   # prints that verifier's runner pid. Only an error (14) starts the next.
-  local last v
+  local last= v=
   last=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty
     | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
   v=1
@@ -183,8 +183,8 @@ cmd_start() {
   echo $$ >"$claim/pid"
   trap 'rm -rf "'"$claim"'"' EXIT
 
-  local criteria base ib wt id prompt cfile repo title path expected result model estimate minutes ref suite
-  local std checks cout
+  local criteria= base= ib= wt= id= prompt= cfile= repo= title= path= expected= result= model= estimate= minutes= ref= suite=
+  local std= checks= cout=
   criteria=$(read_criteria "$t")
   [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
@@ -250,7 +250,7 @@ cmd_start() {
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
     --argjson ck "$checks" --arg co "verify/checks/$t.$v.json"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
-  local pid
+  local pid=
   read_extra_args
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \
@@ -298,7 +298,7 @@ CONTRACT_FILTER='
 
 # The line judge prints for a judged verifier, and its exit status.
 say_again() { # ticket
-  local t="$1" line
+  local t="$1" line=
   line=$(get --arg t "$t" '.tickets[$t] as $k | $k.verifications[-1] as $x
     | if $x.verdict == "error" then "error \($x.reason)"
       else $k.evidence as $e
@@ -319,7 +319,7 @@ cmd_judge() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local entry v n done_verdict
+  local entry= v= n= done_verdict=
   entry=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
   [ -n "$entry" ] || die "no verifier has been started for #$t; run verify.sh start"
   set -- $entry
@@ -328,13 +328,13 @@ cmd_judge() {
     say_again "$t"
     return 0
   fi
-  local id="verify-$t" cls verdict wt
+  local id="verify-$t" cls= verdict= wt=
   cls=$(classify "$id" "$v")
   case "$cls" in running*) state_die 8 "verify.sh: #$t's verifier is still running" ;; esac
   verdict="$RUN_DIR/results/$id.$v.result.json"
   wt=$(get --arg t "$t" '.tickets[$t].verifications[-1].worktree // ""')
 
-  local vcost wcost
+  local vcost= wcost=
   vcost=$(session_cost "$id" "$v")
   wcost=$(session_cost "$t" "$n")
   # Both sessions have ended: log what each cost, once.
@@ -354,7 +354,7 @@ cmd_judge() {
   esac
   # The checks the verifier ran, through checks.sh run. Recorded checks it
   # didn't run make the verdict an error; with none recorded, what it found.
-  local ck cres
+  local ck= cres=
   ck=$(get -c --arg t "$t" '.tickets[$t].verifications[-1].checks // {recorded: false, reason: "not read for this verifier"}')
   cres="$RUN_DIR/$(printf '%s' "$ck" | jq -r --arg d "verify/checks/$t.$v.json" '.results // $d')"
   if [ -z "$why" ] && [ "$(printf '%s' "$ck" | jq -r .recorded)" = true ] \
@@ -380,7 +380,7 @@ cmd_judge() {
     apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)
       | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: "error", reason: $r}; $now)' \
       --arg t "$t" --argjson n "$n" --argjson v "$v" --arg r "$why"
-    local errors
+    local errors=
     errors=$(get --arg t "$t" --argjson n "$n" '[.tickets[$t].verifications[] | select(.worker_attempt == $n and .verdict == "error")] | length')
     # The worker's work is not at fault: a verifier that keeps failing goes
     # to the Artisan, without using up an attempt.
@@ -388,7 +388,7 @@ cmd_judge() {
     say_again "$t"
   fi
 
-  local commit base record shortstat files contract acc
+  local commit= base= record= shortstat= files= contract= acc=
   commit=$(get --arg t "$t" '.tickets[$t].verifications[-1].commit')
   base=$(get --arg t "$t" '.tickets[$t].verifications[-1].base')
   record="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"

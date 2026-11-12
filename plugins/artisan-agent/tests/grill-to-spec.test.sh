@@ -7,7 +7,7 @@ TOSPEC="$PLUGIN_ROOT/skills/to-spec/SKILL.md"
 template_of() { sed -n '/<spec-template>/,/<\/spec-template>/p' "$1"; }
 
 test_skills_have_frontmatter_name_and_description() {
-  local f name
+  local f= name=
   for name in grill to-spec; do
     f="$PLUGIN_ROOT/skills/$name/SKILL.md"
     [ "$(sed -n '1p' "$f")" = "---" ] || fail "$name: no frontmatter"
@@ -53,7 +53,7 @@ test_to_spec_shows_draft_and_lists_additions_before_publishing() {
 }
 
 test_to_spec_keeps_upstream_template_and_seam_check() {
-  local up h
+  local up= h=
   up=$(ls "$HOME"/.claude/plugins/cache/claude-plugins-official/mattpocock-skills/*/skills/engineering/to-spec/SKILL.md 2>/dev/null | tail -n 1 || true)
   if [ -n "$up" ] && [ -f "$up" ]; then
     assert_eq "$(template_of "$up")" "$(template_of "$TOSPEC")" "spec template differs from upstream"
@@ -66,7 +66,7 @@ test_to_spec_keeps_upstream_template_and_seam_check() {
 }
 
 test_skills_cite_plugin_files_that_exist() {
-  local f ref rel
+  local f= ref= rel=
   for f in "$GRILL" "$TOSPEC"; do
     for ref in $(grep -o '\${CLAUDE_PLUGIN_ROOT}/[A-Za-z0-9_./-]*' "$f" | sort -u); do
       rel=${ref#\$\{CLAUDE_PLUGIN_ROOT\}/}

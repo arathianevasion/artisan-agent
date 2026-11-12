@@ -98,7 +98,7 @@ test_facts_show_focus_shares_rubber_stamps_throughput_and_cost_per_merged_ticket
   sample_run
   mkdir -p "$RUN_DIR/retro"
   printf '{"what":"retyped the ticket numbers","focus":"chore"}\n' >"$RUN_DIR/retro/actions.jsonl"
-  local f; f=$("$RETRO" facts "$RUN_DIR")
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
   assert_eq 2 "$(jq .merged <<<"$f")" merged
   assert_eq 2 "$(jq .hours <<<"$f")" hours
   assert_eq 1 "$(jq .throughput_per_hour <<<"$f")" throughput
@@ -114,7 +114,7 @@ test_facts_show_focus_shares_rubber_stamps_throughput_and_cost_per_merged_ticket
 
 test_each_lesson_gets_its_home_role_and_reach_and_only_judgement_calls_are_questions() {
   sample_run; seed_lessons
-  local out; out=$("$RETRO" check "$RUN_DIR")
+  local out=; out=$("$RETRO" check "$RUN_DIR")
   local c="$RUN_DIR/retro/checked.json"
   # The seeded machine-checkable taste lesson is proposed as a check.
   assert_eq mechanical "$(jq -r '.lessons[] | select(.id == "L1") | .kind' "$c")" "checkable becomes a check"
@@ -133,7 +133,7 @@ test_check_refuses_a_lesson_without_role_reach_or_change() {
   sample_run; mkdir -p "$RUN_DIR/retro"
   echo '{"lessons":[{"id":"X","kind":"engineering-taste","lesson":"a","why":"b"},{"id":"Y","kind":"nonsense","lesson":"c"}]}' \
     >"$RUN_DIR/retro/lessons.json"
-  local err; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
   assert_contains "$err" "lesson X: role"
   assert_contains "$err" "lesson X: scope"
   assert_contains "$err" "lesson X: needs change.path"
@@ -144,14 +144,14 @@ test_a_check_must_be_the_check_itself_not_a_line_in_a_standards_file() {
   sample_run; mkdir -p "$RUN_DIR/retro"
   echo '{"lessons":[{"id":"X","kind":"product-taste","checkable":true,"lesson":"Exports carry a header row","role":"product","scope":"this-project","why":"#12","change":{"path":"PRODUCT_STANDARDS.md","text":"- header rows"}}]}' \
     >"$RUN_DIR/retro/lessons.json"
-  local err; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
   assert_contains "$err" "lesson X: a check's change must be the check itself"
 }
 
 test_render_is_one_chat_round_with_batch_questions_signals_and_satisfaction() {
   sample_run; seed_lessons
   "$RETRO" check "$RUN_DIR" >/dev/null
-  local r; r=$("$RETRO" render "$RUN_DIR")
+  local r=; r=$("$RETRO" render "$RUN_DIR")
   assert_contains "$r" "The run shipped CSV export for finance staff"
   assert_contains "$r" 'one "yes" keeps them all'
   assert_contains "$r" "| # | Lesson | Home | Role | Reach | Why |"
@@ -173,7 +173,7 @@ test_a_smooth_run_ends_with_nothing_to_learn_plus_the_satisfaction_questions() {
   echo '{"lessons":[]}' >"$RUN_DIR/retro/lessons.json"
   "$RETRO" check "$RUN_DIR" >/dev/null
   assert_eq true "$(jq .smooth "$RUN_DIR/retro/checked.json")"
-  local r; r=$("$RETRO" render "$RUN_DIR")
+  local r=; r=$("$RETRO" render "$RUN_DIR")
   assert_contains "$r" "Nothing to learn from this run."
   assert_contains "$r" "3. Is the pipeline better at delivering after this run"
   case "$r" in *"Judgement calls"*|*"one \"yes\""*) fail "lessons shown on a smooth run" ;; esac
@@ -183,7 +183,7 @@ test_a_recorded_motivation_is_shown_above_the_satisfaction_questions_and_updated
   sample_run; seed_lessons
   echo "My grandmother ran a bakery." | ARTISAN_INDIVIDUAL_HOME=$ARTISAN_HOME bash "$PS" motivation set "$PROJECT" >/dev/null
   "$RETRO" check "$RUN_DIR" >/dev/null
-  local r m q head
+  local r= m= q= head=
   r=$("$RETRO" render "$RUN_DIR")
   assert_contains "$r" "> My grandmother ran a bakery."
   m=$(printf '%s\n' "$r" | grep -n 'bakery' | cut -d: -f1)
@@ -206,7 +206,7 @@ test_approved_lessons_land_as_one_pr_home_commits_with_origin_and_pipeline_ticke
   sample_run; seed_lessons
   "$RETRO" check "$RUN_DIR" >/dev/null
   echo '{"L1":"yes","L2":"yes","L3":"yes","L4":"no","L5":"yes","L6":"yes"}' >"$TEST_TMPDIR/decisions.json"
-  local out home0; home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local out= home0=; home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
   out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/decisions.json" --pr)
   # One project branch with one commit per project lesson, pushed, one PR.
   local wt="$TEST_TMPDIR/project-wt/retro-r1"
@@ -231,7 +231,7 @@ test_approved_lessons_land_as_one_pr_home_commits_with_origin_and_pipeline_ticke
   assert_contains "$out" "project	retro/r1"
   assert_contains "$out" "pr	https://github.com/owner/repo/pull/7"
   # Delivering again changes nothing.
-  local calls; calls=$(wc -l <"$FAKE_GH_DIR/calls")
+  local calls=; calls=$(wc -l <"$FAKE_GH_DIR/calls")
   "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/decisions.json" --pr >/dev/null
   assert_eq "$calls" "$(wc -l <"$FAKE_GH_DIR/calls")" "second delivery called the tracker"
   assert_eq $((home0 + 2)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
@@ -269,7 +269,7 @@ test_satisfaction_answers_are_recorded_privately_and_a_score_of_two_and_a_chore_
  "pipeline": {"score": "skip"},
  "chores": "retyping ticket numbers; confirming merges"}
 EOF
-  local out rec
+  local out= rec=
   out=$("$RETRO" satisfaction "$RUN_DIR" "$TEST_TMPDIR/answers.json")
   assert_contains "$out" "why	solution	scored 2"
   assert_contains "$out" "chore	retyping ticket numbers"
@@ -306,7 +306,7 @@ test_a_fall_of_one_over_three_runs_prompts_why() {
     >"$ARTISAN_HOME/satisfaction.jsonl"
   gq -C "$ARTISAN_HOME" commit -am history
   echo '{"problem":{"score":4},"solution":{"score":"skip"},"pipeline":{"score":4},"chores":"none"}' >"$TEST_TMPDIR/answers.json"
-  local out; out=$("$RETRO" satisfaction "$RUN_DIR" "$TEST_TMPDIR/answers.json")
+  local out=; out=$("$RETRO" satisfaction "$RUN_DIR" "$TEST_TMPDIR/answers.json")
   assert_eq "why	pipeline	fell from 5 to 4 over three runs" "$out"
 }
 
@@ -330,10 +330,10 @@ echo '{"type":"result","total_cost_usd":0.01}'
 STUB
   chmod +x "$TEST_TMPDIR/bin/claude"
   printf 'chat line\n' >"$TEST_TMPDIR/chat.jsonl"
-  local out
+  local out=
   out=$(ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/bin/claude" "$RETRO" prepare "$RUN_DIR" --chat-log "$TEST_TMPDIR/chat.jsonl" --max-budget-usd 0.50)
   assert_contains "$out" "L1	batch	pipeline"
-  local args; args=$(cat "$RUN_DIR/retro/args")
+  local args=; args=$(cat "$RUN_DIR/retro/args")
   assert_contains "$args" "[-p]"
   assert_contains "$args" "[--max-budget-usd]
 [0.50]"

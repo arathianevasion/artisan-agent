@@ -62,7 +62,7 @@ dependency_names() {
 replaced_names() { bash "$PLUGIN_ROOT/guard/guard.sh" flag-watch | sed "s/^$UPSTREAM://"; }
 
 skill_file() { # tree name -> path of its SKILL.md, or nothing
-  local f
+  local f=
   for f in "$1"/skills/*/"$2"/SKILL.md "$1/skills/$2/SKILL.md"; do
     [ -f "$f" ] && { printf '%s\n' "$f"; return 0; }
   done
@@ -83,7 +83,7 @@ docs_agents_names() { # tree -> file names under docs/agents the tree has or its
 }
 
 label_names() { # tree -> the canonical triage label names (first column of the label table)
-  local f
+  local f=
   for f in "$1"/docs/agents/triage-labels.md "$1"/skills/*/*/triage-labels.md; do
     [ -f "$f" ] || continue
     awk -F'|' '/^\|/ { c=$2; gsub(/[ `]/, "", c); if (c != "" && c !~ /^-+$/ && c !~ /^Labelin/) print c }' "$f"
@@ -105,7 +105,7 @@ cmd_refresh() {
 }
 
 cmd_status() {
-  local inst sha path ver new url
+  local inst= sha= path= ver= new= url=
   inst=$(user_install)
   [ -n "$inst" ] || die "no user-scope install of $UPSTREAM@$MARKET_NAME in $PLUGINS_JSON"
   sha=$(jq -r '.gitCommitSha // ""' <<<"$inst"); path=$(jq -r '.installPath // ""' <<<"$inst")
@@ -130,7 +130,7 @@ cmd_fetch() {
 }
 
 cmd_mechanical() {
-  local old= new= n f of nf fails=0 tmp
+  local old= new= n= f= of= nf= fails=0 tmp=
   while [ $# -gt 0 ]; do
     case "$1" in
       --old) old=$2; shift 2 ;;
@@ -175,7 +175,7 @@ moved_field() { cut -f"$2" "$1/moved.tsv"; } # work-dir field-number of moved.ts
 block_file() { printf '%s/upstream-block.json' "$HOME_DIR"; }
 
 cmd_run() {
-  local work=${1:-} line old new oldtree url blocked state judge_prompt
+  local work=${1:-} line= old= new= oldtree= url= blocked= state= judge_prompt=
   [ -n "$work" ] || usage
   mkdir -p "$work"
   rm -f "$work/mechanical.txt" "$work/judgement.json" "$work/report.md"
@@ -222,7 +222,7 @@ cmd_run() {
 }
 
 table() { # header1|header2|... then rows on stdin as tab-separated lines
-  local heads=$1 n i sep=""
+  local heads=$1 n= i= sep=""
   n=$(printf '%s' "$heads" | awk -F'|' '{print NF}')
   printf '| %s |\n' "$(printf '%s' "$heads" | sed 's/|/ | /g')"
   for i in $(seq 1 "$n"); do sep="$sep---|"; done
@@ -231,7 +231,7 @@ table() { # header1|header2|... then rows on stdin as tab-separated lines
 }
 
 cmd_report() {
-  local work=${1:-} mech j new old ticket body fails n
+  local work=${1:-} mech= j= new= old= ticket= body= fails= n=
   [ -d "$work" ] || usage
   mech="$work/mechanical.txt"; j="$work/judgement.json"
   [ -f "$mech" ] && [ -f "$j" ] || die "report needs $mech and $j"
@@ -286,7 +286,7 @@ cmd_report() {
 }
 
 others() { # other plugins installed from this marketplace whose pinned commit moved
-  local rows
+  local rows=
   [ -f "$PLUGINS_JSON" ] && [ -f "$MARKET_JSON" ] || return 0
   rows=$(jq -r --slurpfile m "$MARKET_JSON" --arg up "$UPSTREAM@$MARKET_NAME" --arg mk "@$MARKET_NAME" '
     .plugins | to_entries[] | select(.key | endswith($mk)) | select(.key != $up) |
@@ -305,7 +305,7 @@ file_ticket() { # label-for-output title body -> prints "<label> #<n>"
 }
 
 cmd_file_ports() {
-  local work=${1:-} j new i n skill title why rule done
+  local work=${1:-} j= new= i= n= skill= title= why= rule= done=
   [ -f "$work/judgement.json" ] || usage
   j="$work/judgement.json"; new=$(moved_field "$work" 3); done="$work/ports-filed"
   [ ! -e "$done" ] || { echo "already filed (see $done)"; return 0; }

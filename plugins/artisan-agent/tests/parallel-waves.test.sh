@@ -14,7 +14,7 @@
 # Each ticket expects the files in $EXPECT_<t> (JSON; default ["t<t>.txt"],
 # "none" to declare none). Per-ticket worker behaviour: $WAVES/ticket-<t>.
 setup_waves() {
-  local max="$1" t
+  local max="$1" t=
   shift
   make_project
   export WAVES="$TEST_TMPDIR/waves"
@@ -30,7 +30,7 @@ setup_waves() {
   for t in "$@"; do
     jq -n --argjson n "$t" '{number: $n, title: "Ticket \($n)", state: "open", labels: [],
       body: "## Acceptance criteria\n- [ ] it works"}' >"$FAKE_GH_DIR/issue-$t.json"
-    local var="EXPECT_$t" files
+    local var="EXPECT_$t" files=
     files=${!var:-"[\"t$t.txt\"]"}
     tickets=$(jq --arg t "$t" --arg f "$files" '.[$t] = ({title: "Ticket \($t)", model: "claude-sonnet-5-5",
       estimate_usd: 0.25, expected: {minutes: 5}, expected_output: "t\($t).txt",
@@ -108,7 +108,7 @@ EOF
 # verify_ticket ticket: what the orchestrator does before a merge, by hand.
 verify_ticket() {
   "$SCRIPTS/verify.sh" start "$RUN_DIR" "$1" >/dev/null
-  local v
+  local v=
   v=$(state_get ".tickets[\"$1\"].verifications | length")
   wait_for "$RUN_DIR/results/verify-$1.$v.exit.json"
   "$SCRIPTS/verify.sh" judge "$RUN_DIR" "$1" >/dev/null
@@ -127,7 +127,7 @@ set -uo pipefail
 S="$SCRIPTS" R="$ARTISAN_RUN_DIR"
 st() { jq -r "$@" "$R/state.json"; }
 verify() { # a fresh verifier; only its one-line verdict is read (6: failed attempt or blocked)
-  local rc
+  local rc=
   "$S/verify.sh" start "$R" "$1" >/dev/null || return $?
   while :; do
     rc=0
@@ -287,7 +287,7 @@ test_merges_are_serial_with_the_suite_after_each_and_a_red_suite_blocks_only_its
   assert_contains "$(state_get '.tickets["2"].blocked_reason')" "the suite failed after merging"
   # The suite ran once per merge, each on the integration branch as it stood
   # after that one merge: 1, then 2 (red, undone), then 3 on top of 1.
-  local runs m1 m3
+  local runs= m1= m3=
   runs=$(cat "$WAVES/suite-runs")
   assert_eq 3 "$(printf '%s\n' "$runs" | wc -l | tr -d ' ')" "suite runs"
   m1=$(state_get '.tickets["1"].merge_commit')
@@ -321,7 +321,7 @@ test_a_seeded_conflict_gets_one_resolve_conflicts_try_which_resolves_it() {
   assert_eq "greeting.txt" "$(state_get '.tickets["2"].resolve.paths | join(" ")')"
   assert_eq "conflict resolve" "$(state_get '[.events[] | select(.event == "conflict" or .event == "resolve") | .event] | join(" ")')"
   # Merged --no-ff with both sides kept, and the suite ran on the resolution.
-  local m2
+  local m2=
   m2=$(state_get '.tickets["2"].merge_commit')
   assert_eq "$(git -C "$PROJECT" rev-parse agent/2)" "$(git -C "$PROJECT" rev-parse "$m2^2")"
   assert_eq "hello howdy" "$(git -C "$PROJECT" show "$m2:greeting.txt" | tr '\n' ' ' | sed 's/ $//')"
@@ -415,7 +415,7 @@ test_a_resolution_that_never_came_back_is_abandoned_before_the_next_merge() {
   setup_waves 3 1 2 3
   seed_conflict
   # Workers only: build all three, then merge by hand as an orchestrator would.
-  local t
+  local t=
   for t in 1 2 3; do "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" "$t" >/dev/null; done
   for t in 1 2 3; do wait_for "$RUN_DIR/results/$t.1.exit.json"; done
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
@@ -441,7 +441,7 @@ test_a_failed_first_attempt_is_retried_by_a_fresh_worker_given_the_failure_evide
   # A fresh session: its own worker folder, runner and prompt.
   [ "$(cat "$RUN_DIR/workers/1.1/runner.pid")" != "$(cat "$RUN_DIR/workers/1.2/runner.pid")" ] \
     || fail "the retry reused the first runner"
-  local prompt
+  local prompt=
   prompt=$(cat "$RUN_DIR/workers/1.2/prompt.md")
   assert_contains "$prompt" "This is a retry, attempt 2 of 2. The last attempt failed: worker reported failed"
   assert_contains "$prompt" "## Failure evidence from attempt 1"
@@ -499,7 +499,7 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   run_wave 1
   assert_eq "blocked blocked queued" "$(status_of 1) $(status_of 2) $(status_of 3)"
   assert_eq 1 "$(jq -r '.halted.wave' "$RUN_DIR/results/orchestrator-w1.1.result.json")" "the wave report says so"
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: halted"
   assert_contains "$out" "halted: every ticket dispatched in wave 1 failed (#1, #2); nothing more launches until the Artisan decides"

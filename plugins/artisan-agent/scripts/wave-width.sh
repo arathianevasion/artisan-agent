@@ -59,7 +59,7 @@ WIDTH_JQ="$STATE_JQ_DEFS"'
 '
 
 cmd_check() {
-  local file="$1" t="$2" hit
+  local file="$1" t="$2" hit=
   hit=$(jq -r --arg t "$t" "$WIDTH_JQ"'
     in_the_way($t; peers($t)) | if . == null then "" else "overlaps #\(.ticket): \(.why)" end' "$file")
   [ -z "$hit" ] || state_die 10 "wave-width.sh: #$t can't join this wave: it $hit"

@@ -84,7 +84,7 @@ refuse() { state_die 6 "gate-action.sh: $*"; }
 # the tracker, so an action is never half recorded. Child scripts write
 # under the same pid.
 hold() {
-  local pid
+  local pid=
   pid=$(writer)
   export ARTISAN_WRITER_PID=$pid
   [ "$(state_lock_holder "$RUN_DIR")" != "$pid" ] || return 0
@@ -93,7 +93,7 @@ hold() {
   trap 'state_unlock "'"$RUN_DIR"'" "'"$pid"'" || true' EXIT
   # Another chat may have answered the gate before the lock was ours.
   if [ -n "$GATE" ]; then
-    local before
+    local before=
     before=$(g .status)
     find_gate "$(g .issue)"
     [ "$(g .status)" = "$before" ] || refuse "gate #$(g .issue) was answered meanwhile; it is now $(g .status)"
@@ -102,19 +102,19 @@ hold() {
 
 REPO=
 repo() { [ -n "$REPO" ] || REPO=$(get '.repo'); printf '%s\n' "$REPO"; }
-issue_id() { local j; j=$(gh api "repos/$(repo)/issues/$1") && jq -er .id <<<"$j"; }
+issue_id() { local j=; j=$(gh api "repos/$(repo)/issues/$1") && jq -er .id <<<"$j"; }
 blockers_of() { gh api "repos/$(repo)/issues/$1/dependencies/blocked_by"; }
 
 # blocks ticket blocker: 0 when the blocker natively blocks the ticket, 1 when
 # it doesn't. A tracker that can't be read ends the call: never act blind.
 blocks() {
-  local b
+  local b=
   b=$(blockers_of "$1") || die "could not read the blockers of #$1 from the tracker"
   jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' <<<"$b" >/dev/null
 }
 
 add_blocker() { # ticket blocker-issue
-  local id
+  local id=
   ! blocks "$1" "$2" || return 0
   id=$(issue_id "$2") || die "could not read #$2"
   gh api --method POST "repos/$(repo)/issues/$1/dependencies/blocked_by" -F "issue_id=$id" >/dev/null \
@@ -124,7 +124,7 @@ add_blocker() { # ticket blocker-issue
 # remove_blocker ticket blocker: the native edge goes. 0 when it removed one,
 # 1 when there was none.
 remove_blocker() {
-  local id
+  local id=
   blocks "$1" "$2" || return 1
   id=$(issue_id "$2") || die "could not read #$2"
   gh api --method DELETE "repos/$(repo)/issues/$1/dependencies/blocked_by/$id" >/dev/null \
@@ -200,7 +200,7 @@ REDIRECT=
 
 # The dependents a gate holds that are still to run, one per line.
 open_dependents() {
-  local d st
+  local d= st=
   for d in $(g '.dependents[]?.number'); do
     st=$(get --arg d "$d" '.tickets[$d].status // ""')
     case "$st" in merged | closed) continue ;; esac
@@ -223,7 +223,7 @@ cmd_approve() {
 cmd_redirect() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local issue="$2" label mode title num url r from d body
+  local issue="$2" label= mode= title= num= url= r= from= d= body=
   shift 2
   parse_opts "$@"
   find_gate "$issue"
@@ -287,7 +287,7 @@ Redirected at review gate #\($issue). In run \($run).
 # them; an exception gate's ticket and issue do. Prints the edges removed as
 # JSON, kept on the gate so the retro and the end gate can see them.
 release() {
-  local d b out='[]' blockers
+  local d= b= out='[]' blockers=
   blockers=$(g .issue)
   [ "$KIND" != exception ] || blockers="$blockers $(g .ticket)"
   for d in $(open_dependents); do
@@ -327,7 +327,7 @@ cmd_bypass() {
 cmd_defer() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local issue="$2" released extra='.'
+  local issue="$2" released= extra='.'
   shift 2
   parse_opts "$@"
   find_gate "$issue"
@@ -345,7 +345,7 @@ cmd_defer() {
 }
 
 dependents_line() {
-  local d
+  local d=
   d=$(g 'if (.dependents // []) == [] then "" else .dependents | map("#" + .number) | join(", ") end')
   printf '%s\n' "${d:-nothing}"
 }
@@ -366,7 +366,7 @@ close_exception() { # issue what
 cmd_retry() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local issue="$2" t
+  local issue="$2" t=
   shift 2
   parse_opts "$@"
   [ -n "$NOTES" ] || usage
@@ -387,7 +387,7 @@ cmd_retry() {
 cmd_take() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local issue="$2" t prev
+  local issue="$2" t= prev=
   shift 2
   parse_opts "$@"
   exception_only "$issue"
@@ -410,7 +410,7 @@ cmd_take() {
 }
 
 out_of_run() { # choice status label-to-add tracker-note
-  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t
+  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t=
   t=$(g .ticket)
   REDIRECT=
   hold
@@ -491,7 +491,7 @@ exception_body() { # gate-json
 }
 
 open_exception() { # decision-json
-  local dec="$1" did t reason title headline deps='[]' d st gate num url body attempts
+  local dec="$1" did= t= reason= title= headline= deps='[]' d= st= gate= num= url= body= attempts=
   did=$(jq -r .id <<<"$dec")
   t=$(jq -r .ticket <<<"$dec")
   [ "$(get --arg id "exception-$did" '[(.exception_gates // [])[] | select(.id == $id)] | length')" -eq 0 ] || return 0
@@ -541,7 +541,7 @@ open_exception() { # decision-json
 cmd_sync() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local issue state dec
+  local issue= state= dec=
   hold
   # An exception gate closed by hand on the tracker is bypassed by whoever closed it.
   for issue in $(get '(.exception_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue'); do
@@ -549,7 +549,7 @@ cmd_sync() {
     [ "$state" = closed ] || continue
     find_gate "$issue"
     BY="Artisan (closed on the tracker)" WHY= NOTES= REDIRECT=
-    local released
+    local released=
     released=$(release)
     gh issue edit "$(g .ticket)" -R "$(repo)" --remove-label in-run >/dev/null 2>&1 || true
     record_answer bypassed bypass bypass '.tickets[$t] |= (.status = "bypassed" | .pid = null)' \
@@ -567,7 +567,7 @@ cmd_sync() {
 
 cmd_parked() {
   open_run "${1:-}"
-  local record=0 t tracker='{}' line
+  local record=0 t= tracker='{}' line=
   [ "${2:-}" != --record ] || record=1
   # Quick refusals from the state file alone: work still moving, work ready,
   # a decision that isn't a gate, or no gate open.
@@ -621,7 +621,7 @@ cmd_parked() {
 
 cmd_chat() {
   open_run "${1:-}"
-  local any
+  local any=
   any=$(get '[(.exception_gates // [])[] | select(.status == "open" or .status == "deferred")] | length')
   if [ "$any" -eq 0 ]; then echo "No exception gate is open."; return 0; fi
   get '(.exception_gates // [])[] | select(.status == "open" or .status == "deferred")

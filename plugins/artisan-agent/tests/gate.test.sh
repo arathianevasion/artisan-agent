@@ -32,7 +32,7 @@ setup_gate() {
   git_quiet -C "$PROJECT" commit -m "suite"
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
-  local n
+  local n=
   for n in 1 2 3 4; do
     jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "open", labels: [{name: "in-run"}],
       body: "## Acceptance criteria\n\n- [ ] t\($n).txt exists"}' >"$FAKE_GH_DIR/issue-$n.json"
@@ -84,7 +84,7 @@ merged_with_evidence() { # ticket
 test_the_packet_follows_variant_b_top_to_bottom() {
   setup_gate
   merged_with_evidence 1
-  local num body last=0 line h
+  local num= body= last=0 line= h=
   num=$("$G" open "$RUN_DIR" slice-1)
   body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
   assert_eq "Slice gate: greeting (run r1)" "$(jq -r .title "$FAKE_GH_DIR/issue-$num.json")"
@@ -124,7 +124,7 @@ test_the_gate_blocks_only_the_slice_dependents_natively() {
   setup_gate
   merged_with_evidence 1
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["4"].status = "merged"'
-  local num
+  local num=
   num=$("$G" open "$RUN_DIR" slice-1)
   assert_eq "[1,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")"
   assert_eq "[4]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-3.json")"
@@ -161,7 +161,7 @@ test_a_gate_is_not_due_until_every_ticket_of_its_slice_has_merged() {
 test_the_chat_shows_the_compressed_packet() {
   setup_gate
   merged_with_evidence 1
-  local num out
+  local num= out=
   num=$("$G" open "$RUN_DIR" slice-1)
   out=$("$G" chat "$RUN_DIR")
   assert_contains "$out" "Slice gate: greeting (run r1) #$num: 2 decisions (1 low confidence), 2 uncertainties. Blocks #2 (Ticket 2)."
@@ -173,7 +173,7 @@ test_the_chat_shows_the_compressed_packet() {
 test_keep_all_approves_closes_and_records_each_decision_with_its_job_and_who() {
   setup_gate
   merged_with_evidence 1
-  local num out
+  local num= out=
   num=$("$G" open "$RUN_DIR" slice-1)
   out=$("$G" approve "$RUN_DIR" "$num" --by Andrew)
   assert_eq "approved #$num: #2 can dispatch in the next wave" "$out"
@@ -192,7 +192,7 @@ test_keep_all_approves_closes_and_records_each_decision_with_its_job_and_who() {
 test_change_on_a_card_creates_a_rework_ticket_in_the_run() {
   setup_gate
   merged_with_evidence 1
-  local num rw
+  local num= rw=
   num=$("$G" open "$RUN_DIR" slice-1)
   rw=$("$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --why "Matches the feature")
   assert_eq "Rework #1: Which file name?" "$(jq -r .title "$FAKE_GH_DIR/issue-$rw.json")"
@@ -220,7 +220,7 @@ test_change_on_a_card_creates_a_rework_ticket_in_the_run() {
 test_make_it_a_guardrail_keeps_the_card_and_notes_a_lesson() {
   setup_gate
   merged_with_evidence 1
-  local num
+  local num=
   num=$("$G" open "$RUN_DIR" slice-1)
   assert_status 2 "$G" guardrail "$RUN_DIR" "$num" 2 product area
   "$G" guardrail "$RUN_DIR" "$num" 2 product area --area docs >/dev/null
@@ -231,7 +231,7 @@ test_make_it_a_guardrail_keeps_the_card_and_notes_a_lesson() {
 test_an_answer_given_while_a_wave_holds_the_lock_is_folded_in_later() {
   setup_gate
   merged_with_evidence 1
-  local num other
+  local num= other=
   num=$("$G" open "$RUN_DIR" slice-1)
   other=$(start_worker)
   "$SCRIPTS/state.sh" lock "$RUN_DIR" "$other"
@@ -249,7 +249,7 @@ test_an_answer_given_while_a_wave_holds_the_lock_is_folded_in_later() {
 test_a_gate_closed_on_the_tracker_by_hand_is_approved_at_the_next_sync() {
   setup_gate
   merged_with_evidence 1
-  local num
+  local num=
   num=$("$G" open "$RUN_DIR" slice-1)
   gh issue close "$num" -R local/sample
   "$G" sync "$RUN_DIR" >/dev/null
@@ -260,7 +260,7 @@ test_a_gate_closed_on_the_tracker_by_hand_is_approved_at_the_next_sync() {
 test_a_gate_closed_by_hand_is_announced_in_one_line_and_its_cards_carry_to_the_end_gate() {
   setup_gate
   merged_with_evidence 1
-  local num cards out
+  local num= cards= out=
   num=$("$G" open "$RUN_DIR" slice-1)
   cards=$(state_get '.review_gates[0].cards | length')
   [ "$cards" -ge 1 ] || fail "the seeded gate has no decision cards"
@@ -281,7 +281,7 @@ test_a_gate_closed_by_hand_is_announced_in_one_line_and_its_cards_carry_to_the_e
 test_gate_list_reads_the_tracker_across_runs_not_the_state_file() {
   setup_gate
   merged_with_evidence 1
-  local num out
+  local num= out=
   num=$("$G" open "$RUN_DIR" slice-1)
   # A gate another run opened: in no state file here.
   jq -n '{number: 90, title: "Slice gate: other (run r9)", state: "open", labels: [{name: "review-gate"}],
@@ -323,7 +323,7 @@ S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
 verify() {
-  local rc
+  local rc=
   "\$S/verify.sh" start "\$R" "\$1" >/dev/null || return 1
   while :; do
     rc=0
@@ -354,7 +354,7 @@ test_a_run_holds_the_dependent_at_the_gate_and_releases_it_on_keep_all() {
   setup_gate
   write_role_scripts
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
-  local out num
+  local out= num=
   # Wave 1: 1 and 4 merge; closing 1 opens the gate, which holds only 2.
   run_wave 1
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")

@@ -73,10 +73,10 @@ test_two_machines_resuming_at_once_exactly_one_wins() {
   assert_status 5 bash -c "cd '$third' && ARTISAN_MACHINE=third '$SCRIPTS/move.sh' in r1"
   # a stale claim built before the host's lands is refused by the fast-forward rule:
   # push a competing commit on the old tip
-  local old
+  local old=
   old=$(git -C "$REMOTE" rev-parse refs/heads/runs/r1~1)
   git_quiet -C "$third" fetch origin
-  local c
+  local c=
   c=$(git -C "$third" -c user.name=T -c user.email=t@e commit-tree "$(git -C "$third" rev-parse "$old^{tree}")" -p "$old" -m rival)
   if git -C "$third" push -q origin "$c:refs/heads/runs/r1" >/dev/null 2>&1; then fail "a non-fast-forward claim was accepted"; fi
 }
@@ -205,7 +205,7 @@ test_out_killed_after_the_push_reads_as_moved_and_the_other_machine_resumes() {
 # fails) died at "rstatus: unbound variable". 3.2 cannot show that, so pin the cause:
 # the remote-state variables are set before the fetch that may skip them.
 test_the_remote_state_is_set_before_the_fetch_that_may_fail() {
-  local var assign fetch
+  local var= assign= fetch=
   fetch=$(grep -n 'fetch -q "\$remote" "+refs/heads/runs/\$id:\$rref"' "$SCRIPTS/move.sh" | head -1 | cut -d: -f1)
   [ -n "$fetch" ] || fail "cannot find the runs/<id> fetch in move.sh"
   for var in prev rstate rstatus rmach; do

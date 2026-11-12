@@ -13,7 +13,7 @@ open_run() { # run-dir
   FILE=$(state_file "$RUN_DIR")
   state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
   RUN_ID=$(basename "$RUN_DIR")
-  local common
+  local common=
   common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || die "run folder $RUN_DIR is not inside a git repository"
   MAIN=$(dirname "$common")
@@ -33,7 +33,7 @@ apply() {
 
 integration_branch() { get '.integration.branch'; }
 integration_worktree() {
-  local wt
+  local wt=
   wt=$(get '.integration.worktree // ""')
   [ -n "$wt" ] && [ -d "$wt" ] || die "no integration worktree for run $RUN_ID; run wave.sh start first"
   printf '%s\n' "$wt"
@@ -73,7 +73,7 @@ block() {
 # "what" ends the refusal: "not merged", "not verified".
 ATTEMPT= TIP=
 check_returned() {
-  local who="$1" t="$2" what="$3" status cls branch claimed
+  local who="$1" t="$2" what="$3" status= cls= branch= claimed=
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
   ATTEMPT=$(get --arg t "$t" '.tickets[$t].attempts')

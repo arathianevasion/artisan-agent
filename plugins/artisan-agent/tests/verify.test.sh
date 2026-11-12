@@ -30,7 +30,7 @@ test_v_the_verifier_is_a_fresh_session_in_its_own_checkout_of_the_commit() {
   export FAKE_CLAUDE_ENV="$TEST_TMPDIR/verifier.env"
   "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
   judge_verifier 1
-  local env wt commit
+  local env= wt= commit=
   env=$(cat "$FAKE_CLAUDE_ENV")
   wt="$TEST_TMPDIR/project-wt/r1-verify-1.1"
   commit=$(git -C "$PROJECT" rev-parse agent/1)
@@ -41,7 +41,7 @@ test_v_the_verifier_is_a_fresh_session_in_its_own_checkout_of_the_commit() {
   assert_eq "$commit" "$(state_get '.tickets["1"].verifications[0].commit')"
   [ ! -d "$wt" ] || fail "the verifier's worktree was left behind"
   # The prompt names the brief, the diff and the criteria verbatim, in order.
-  local prompt
+  local prompt=
   prompt=$(cat "$RUN_DIR/prompts/verify-1.1.md")
   assert_contains "$prompt" "skills/implement-plan/references/verifier.md"
   assert_contains "$prompt" "...$commit"
@@ -153,7 +153,7 @@ test_v_judging_twice_says_the_same_and_writes_nothing() {
   assert_eq "pass 2/2" "$JUDGE_OUT"
   cmp -s "$TEST_TMPDIR/before.json" "$RUN_DIR/state.json" || fail "a second judge rewrote the state file"
   # Verified work is not verified again: starting again is a no-op.
-  local pid
+  local pid=
   pid=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>/dev/null)
   assert_eq "$(cat "$RUN_DIR/workers/verify-1.1/runner.pid")" "$pid" "the first verifier's pid"
   cmp -s "$TEST_TMPDIR/before.json" "$RUN_DIR/state.json" || fail "a second start rewrote the state file"
@@ -163,7 +163,7 @@ test_v_starting_a_verifier_twice_for_one_attempt_launches_one() {
   setup_wave
   returned_ticket
   export VERIFIER_SLEEP=2   # still running for the second call
-  local first second third
+  local first= second= third=
   first=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1)
   second=$("$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>/dev/null)
   assert_eq "$first" "$second" "the running verifier's pid, not a new one"
@@ -178,7 +178,7 @@ test_v_starting_a_verifier_twice_for_one_attempt_launches_one() {
 test_v_two_starts_at_once_launch_one_verifier() {
   setup_wave
   returned_ticket
-  local i pids=
+  local i= pids=
   for i in 1 2 3 4; do
     "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >"$TEST_TMPDIR/start.$i" 2>/dev/null &
     pids="$pids $!"
@@ -208,7 +208,7 @@ test_v_a_claim_whose_start_was_killed_is_cleared() {
   setup_wave
   returned_ticket
   # A start killed (no trap ran) between claiming and recording.
-  local dead
+  local dead=
   sh -c 'exit 0' & dead=$!; wait "$dead"
   mkdir -p "$RUN_DIR/verify/claims/1.1"
   echo "$dead" >"$RUN_DIR/verify/claims/1.1/pid"
@@ -225,7 +225,7 @@ test_v_the_ticket_comment_is_the_contract_in_the_state_file() {
   start_and_launch
   wait_for "$ORCH_EXIT" 60
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-1.json")"
-  local comment
+  local comment=
   comment=$(cat "$FAKE_GH_DIR/comments-1.md")
   # Every criterion with its evidence, what the worker was unsure of, its
   # cost and the decisions it made alone.
@@ -254,7 +254,7 @@ test_v_the_digest_names_each_ticket_in_a_few_lines() {
   "$SCRIPTS/wave.sh" launch "$RUN_DIR" >/dev/null
   wait_for "$RUN_DIR/results/orchestrator-w2.1.exit.json" 60
   "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
-  local d1 d2 all
+  local d1= d2= all=
   d1=$("$SCRIPTS/evidence.sh" digest "$RUN_DIR" --wave 1)
   d2=$("$SCRIPTS/evidence.sh" digest "$RUN_DIR")
   all=$("$SCRIPTS/evidence.sh" digest "$RUN_DIR" --all)
@@ -275,7 +275,7 @@ test_v_the_digest_shows_a_blocked_ticket_and_why() {
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.attempts_per_ticket = 1'
   start_and_launch
   wait_for "$ORCH_EXIT" 60
-  local d
+  local d=
   d=$("$SCRIPTS/evidence.sh" digest "$RUN_DIR")
   assert_contains "$d" "| #1 (Add hello) | blocked: the verifier found 1 of 2 criteria unmet, first: It says hi | 1/2 verified |"
   assert_contains "$d" "Blocked: #1, each with a decision waiting"
@@ -326,7 +326,7 @@ test_v_a_ticket_the_verifier_fails_is_retried_by_a_fresh_worker_given_its_findin
   # The retry: a fresh worker told what the verifier found.
   unset VERIFIER_UNMET
   "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
-  local prompt
+  local prompt=
   prompt=$(cat "$RUN_DIR/prompts/1.2.md")
   assert_contains "$prompt" "The last attempt failed: the verifier found 1 of 2 criteria unmet, first: It says hi"
   assert_contains "$prompt" "- Unmet (verifier): It says hi (not in the diff)"
@@ -393,7 +393,7 @@ test_v_with_checks_recorded_the_verifier_runs_exactly_them_and_the_evidence_show
   "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
   judge_verifier 1
   assert_eq "pass 2/2" "$JUDGE_OUT"
-  local prompt
+  local prompt=
   prompt=$(cat "$RUN_DIR/prompts/verify-1.1.md")
   assert_contains "$prompt" "The recorded checks ("
   assert_contains "$prompt" '    - `sh check.sh`'

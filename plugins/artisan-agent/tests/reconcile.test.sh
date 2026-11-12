@@ -35,13 +35,13 @@ test_a_crashed_orchestrator_is_recovered_by_a_new_reconciler_run() {
   # The orchestrator dispatched 10, merged it, and died before writing the
   # merge to the state file: the file still says 10 is in flight, under a
   # worker pid that is gone, and the frontier it left is the plan's wave 1.
-  local dead
+  local dead=
   sleep 0 &
   dead=$!
   wait "$dead"
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$dead"
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.frontier = ["10","13"]'
-  local frontier
+  local frontier=
   frontier=$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ')
   assert_eq "11 14 " "$frontier" "frontier printed"
   assert_eq '["11","14"]' "$(jq -c .frontier "$RUN_DIR/state.json")" "frontier stored"
@@ -55,7 +55,7 @@ test_a_crashed_orchestrator_is_recovered_by_a_new_reconciler_run() {
 test_reconciling_twice_changes_nothing() {
   setup_run
   "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
-  local first
+  local first=
   first=$(cat "$RUN_DIR/state.json")
   "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
   assert_eq "$first" "$(cat "$RUN_DIR/state.json")" "state after a second reconcile"
@@ -77,7 +77,7 @@ test_a_reported_but_unmerged_blocker_does_not_unblock() {
   branch_with_commit 11
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["11"].status = "returned"'
   stub_blocked_by 12 11:closed
-  local frontier
+  local frontier=
   frontier=$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ')
   case " $frontier" in *" 12 "*) fail "12 dispatchable on a reported, unmerged blocker: [$frontier]" ;; esac
 }

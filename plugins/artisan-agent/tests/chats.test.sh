@@ -25,7 +25,7 @@ setup_chats() {
 }
 
 ticket() { # number [label...]
-  local n=$1 labels='[]' l
+  local n=$1 labels='[]' l=
   shift
   for l in "$@"; do labels=$(jq -c --arg l "$l" '. + [{name: $l}]' <<<"$labels"); done
   jq -n --argjson n "$n" --argjson l "$labels" '{number: $n, title: "Ticket \($n)", state: "open", labels: $l, body: "body"}' >"$FAKE_GH_DIR/issue-$n.json"
@@ -42,7 +42,7 @@ test_send_to_engineering_creates_a_plan_issue_with_those_sub_issues() {
   setup_chats
   ticket 345
   ticket 346
-  local plan
+  local plan=
   plan=$("$C" send 345 346)
   assert_eq 347 "$plan"
   assert_contains "$(jq -r '.labels[].name' "$FAKE_GH_DIR/issue-347.json")" plan
@@ -67,7 +67,7 @@ test_the_engineering_chat_picks_up_a_sent_plan_on_its_next_sweep() {
   setup_chats
   ticket 345
   "$C" send 345 >/dev/null
-  local out
+  local out=
   out=$(sweep)
   assert_contains "$out" "## Plans waiting for Engineering"
   assert_contains "$out" "#346 (Plan: send #345 to engineering)"
@@ -84,7 +84,7 @@ test_the_product_chat_refuses_to_triage_edit_or_relabel_an_in_run_ticket() {
   # The run id is in a comment, once, even if the label step is repeated.
   "$C" label-run "$RUN_DIR"
   assert_eq 1 "$(grep -c "artisan-agent:run r1" "$FAKE_GH_DIR/comments-1.md")"
-  local st=0 out
+  local st=0 out=
   out=$("$C" guard 1 2>&1) || st=$?
   assert_eq 6 "$st"
   assert_contains "$out" "#1 is in run r1"
@@ -94,7 +94,7 @@ test_the_product_chat_refuses_to_triage_edit_or_relabel_an_in_run_ticket() {
 test_a_plan_approved_before_it_was_queued_starts_without_asking_again() {
   setup_chats
   ticket 345
-  local plan out
+  local plan= out=
   plan=$("$C" send 345)
   "$C" approve-envelope "$plan"
   "$C" approve-envelope "$plan"
@@ -108,7 +108,7 @@ test_queued_plans_wait_for_the_lock_then_start_oldest_first() {
   setup_chats
   ticket 345
   ticket 346
-  local a b out holder
+  local a= b= out= holder=
   a=$("$C" send 345)
   b=$("$C" send 346)
   sleep 300 &
@@ -130,7 +130,7 @@ test_a_plan_blocked_by_an_open_plan_does_not_start() {
   setup_chats
   ticket 345
   ticket 346
-  local a b
+  local a= b=
   a=$("$C" send 345)
   b=$("$C" send 346)
   echo "[$a]" >"$FAKE_GH_DIR/blocked_by-$b.json"
@@ -143,7 +143,7 @@ test_a_sweep_lists_open_gates_batched_by_job_and_role() {
   gate_issue 20 "Slice gate: export (run r1)" "Engineering (QA)"
   gate_issue 21 "Slice gate: billing (run r2)" "Engineering (QA)"
   gate_issue 22 "Slice gate: design (run r2)" "Product"
-  local out
+  local out=
   out=$(sweep)
   assert_contains "$out" "| Role | Job | Gates | Waiting |"
   assert_contains "$out" "| Engineering (QA) | 13 Check a finished slice at a review gate | #20 (slice: export, run r1); #21 (slice: billing, run r2) | 2 |"
@@ -161,7 +161,7 @@ test_a_sweep_lists_open_gates_batched_by_job_and_role() {
 test_a_sweep_announces_a_guardrail_change_and_a_new_plugin_version_once() {
   setup_chats
   mkdir -p "$ARTISAN_PLUGIN_VERSIONS_DIR/$(jq -r .version "$PLUGIN_ROOT/.claude-plugin/plugin.json")"
-  local out
+  local out=
   out=$(sweep)
   case "$out" in *"## Changes"*) fail "announced a change on the first sweep" ;; esac
   printf '{"id":"ind-1"}\n' >"$ARTISAN_HOME/guardrails.jsonl"
@@ -180,7 +180,7 @@ test_a_gate_closed_on_github_is_announced_in_one_line_by_either_chat() {
   setup_chats
   jq -n '{number: 30, title: "Slice gate: export (run r1)", state: "closed", labels: [{name: "review-gate"}], body: "x"}' >"$FAKE_GH_DIR/issue-30.json"
   printf 'Gate #30 closed on GitHub: treated as approved; 3 undecided cards carried to the end gate\n\n<!-- artisan-agent:gate-closed-by-hand carried=3 -->' >"$FAKE_GH_DIR/comments-30.md"
-  local out
+  local out=
   out=$(sweep --chat product)
   assert_contains "$out" "Gate #30 closed on GitHub: treated as approved; 3 undecided cards carried to the end gate"
   out=$(sweep --chat product)

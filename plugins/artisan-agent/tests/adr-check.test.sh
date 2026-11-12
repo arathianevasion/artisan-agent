@@ -26,7 +26,7 @@ JSON
 
 test_approval_opens_with_plan_compliance_ticket_tension_and_gaps() {
   seed_adrs
-  local out; out=$("$AC" render "$CHECK" --adr-dir "$ADRS")
+  local out=; out=$("$AC" render "$CHECK" --adr-dir "$ADRS")
   assert_contains "$out" "### The plan against its ADRs"
   assert_contains "$out" "| 0001 | Layer on upstream skills | complies | adds skills beside upstream |"
   assert_contains "$out" "| #12 (Fork the grill skill) | 0001 | TENSION | copies upstream \\| not layering |"
@@ -34,7 +34,7 @@ test_approval_opens_with_plan_compliance_ticket_tension_and_gaps() {
   assert_contains "$out" "| #14 (Docs only) | none | none |"
   assert_contains "$out" "| Which queue library | #13, #14 | record an ADR |"
   # plan compliance comes first, then tickets, then gaps
-  local a b c
+  local a= b= c=
   a=$(printf '%s\n' "$out" | grep -n 'The plan against' | cut -d: -f1)
   b=$(printf '%s\n' "$out" | grep -n 'Each ticket against' | cut -d: -f1)
   c=$(printf '%s\n' "$out" | grep -n 'no ADR covers' | cut -d: -f1)
@@ -51,7 +51,7 @@ test_an_adr_with_no_file_is_refused() {
 test_no_gaps_and_no_adrs_say_so() {
   seed_adrs
   echo '{"plan_adrs": [], "tickets": [], "gaps": []}' >"$CHECK"
-  local out; out=$("$AC" render "$CHECK" --adr-dir "$ADRS")
+  local out=; out=$("$AC" render "$CHECK" --adr-dir "$ADRS")
   assert_contains "$out" "No ADR applies to this plan."
   assert_contains "$out" "No gaps found."
   assert_contains "$out" "Guardrails not checked."
@@ -59,7 +59,7 @@ test_no_gaps_and_no_adrs_say_so() {
 
 test_refs_finds_the_adrs_a_ticket_cites_and_ignores_unknown_ones() {
   seed_adrs
-  local out
+  local out=
   out=$(printf 'Must respect ADR 0001 and ADR-2; see docs/adr/0002-bash-three.md, not ADR 0077.\n' | "$AC" refs --adr-dir "$ADRS")
   assert_eq "0001
 0002" "$out"
@@ -90,7 +90,7 @@ test_a_seeded_conflict_between_levels_is_flagged_with_the_level_that_applies() {
   jq -nc '{id: "p1", key: "pr-boundary", value: "per-slice", strict: false, rule: "one PR per slice", origin: {date: "2026-01-01T00:00:00Z", reason: "seed"}, moves: []}' >"$PROJECT/.artisan-agent/guardrails.jsonl"
   git_quiet -C "$PROJECT" add -A; git_quiet -C "$PROJECT" commit -m prod
   (cd "$PROJECT" && "$PLUGIN_ROOT/scripts/guardrails.sh" resolve >"$TEST_TMPDIR/resolve.json")
-  local out; out=$("$AC" render "$CHECK" --adr-dir "$ADRS" --guardrails "$TEST_TMPDIR/resolve.json")
+  local out=; out=$("$AC" render "$CHECK" --adr-dir "$ADRS" --guardrails "$TEST_TMPDIR/resolve.json")
   assert_contains "$out" "| pr-boundary | product: per-slice | individual: per-ticket |"
 }
 
@@ -104,7 +104,7 @@ test_no_conflicts_is_said_plainly() {
 test_both_plan_approval_paths_and_the_reference_carry_the_check_and_the_loop() {
   assert_contains "$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")" 'references/adr-check.md'
   assert_contains "$(cat "$PLUGIN_ROOT/skills/to-plan/SKILL.md")" 'references/adr-check.md'
-  local r; r=$(cat "$REF")
+  local r=; r=$(cat "$REF")
   assert_contains "$r" "guardrails.sh resolve"
   assert_contains "$r" "adr-check.sh render"
   assert_contains "$r" "adr-check.sh affected"

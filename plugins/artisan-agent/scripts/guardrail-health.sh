@@ -69,7 +69,7 @@ parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, OPT_*, REST (array of un
 }
 
 state_files() { # prints each run's state.json; refuses none or a folder without one
-  local d
+  local d=
   [ ${#RUNS[@]} -gt 0 ] || usage
   for d in "${RUNS[@]}"; do
     [ -f "$d/state.json" ] || state_die 1 "guardrail-health.sh: no state.json in $d"
@@ -82,7 +82,7 @@ misses_json() { # the triage misses as a JSON array
 }
 
 states_json() { # every state as one array
-  local files
+  local files=
   state_files >/dev/null || exit $?
   files=()
   for d in "${RUNS[@]}"; do files+=("$d/state.json"); done
@@ -150,14 +150,14 @@ health_table() {
 cmd_health() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
-  local states misses resolved out
+  local states= misses= resolved= out=
   states=$(states_json)
   misses=$(misses_json)
   resolved=$("$SCRIPT_DIR/guardrails.sh" resolve)
   out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
     '{states: $states, misses: $misses, resolved: $resolved} | '"$HEALTH_JQ")
   if [ "$RECORD" = 1 ]; then
-    local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now
+    local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now=
     now=$(state_now)
     mkdir -p "$dir"
     jq -n --argjson now "$now" --argjson out "$out" \
@@ -223,7 +223,7 @@ def key: (.area // .reason // "unspecified");
 cmd_audit() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
-  local out
+  local out=
   out=$(jq -n --argjson states "$(states_json)" --argjson misses "$(misses_json)" --argjson th "$THRESHOLD" \
     '{states: $states, misses: $misses} | '"$AUDIT_JQ")
   if [ "$TABLE" = 1 ]; then
@@ -261,7 +261,7 @@ cmd_backstop() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
   local repo_dir=${OPT_repo_dir:-.} main=${OPT_main:-main} since=${OPT_since:-} prs=${OPT_prs:-} closed=${OPT_closed:-}
-  local states repo prs_json closed_json commits=""
+  local states= repo= prs_json= closed_json= commits=""
   states=$(states_json)
   repo=$(jq -r '.[0].repo // ""' <<<"$states")
   if [ -n "$prs" ]; then prs_json=$(cat "$prs")
@@ -273,7 +273,7 @@ cmd_backstop() {
   # first-parent commits on main: "<sha> <parent count>"
   commits=$(git -C "$repo_dir" log --first-parent ${since:+--since="$since"} --format='%H %P' "$main" \
     | jq -R -s -c 'split("\n") | map(select(length > 0) | split(" ") | {sha: .[0], parents: (length - 1)})')
-  local out
+  local out=
   out=$(jq -n --argjson states "$states" --argjson prs "$prs_json" --argjson closed "$closed_json" \
     --argjson commits "$commits" --arg since "$since" '
     ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits

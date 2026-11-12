@@ -131,7 +131,7 @@ cmd_annotate() {
     esac
   done
   [ -f "$draft" ] || die "no draft: ${draft:-<none>}"
-  local plan out
+  local plan= out=
   plan=$(cat)
   out=$(jq -n --argjson plan "$plan" --slurpfile d "$draft" --arg fac "$HUMAN_MINUTES_FACTOR" "$SCHEDULE_JQ"'
     $d[0] as $d | $plan as $plan
@@ -167,7 +167,7 @@ cmd_annotate() {
 # Blockers of the ticket from the tracker: every one in the run merged into
 # the integration branch, every one outside it closed. 5 when not.
 blockers_merged() { # ticket
-  local t="$1" repo ib tip blockers b state status sha
+  local t="$1" repo= ib= tip= blockers= b= state= status= sha=
   repo=$(get '.repo')
   ib=$(integration_branch)
   tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib") || die "no integration branch $ib"
@@ -188,7 +188,7 @@ blockers_merged() { # ticket
 }
 
 is_hands_on() { # ticket: labelled ready-for-human on the tracker, or the plan's pick
-  local t="$1" labels
+  local t="$1" labels=
   [ "$(get --arg t "$t" '(.plan.hands_on.ticket // "" | tostring) == $t')" != true ] || return 0
   labels=$(gh api "repos/$(get '.repo')/issues/$t" | jq -r '[.labels[]? | (.name? // .)] | join(" ")'; exit "${PIPESTATUS[0]}") \
     || die "could not read #$t from the tracker"
@@ -197,7 +197,7 @@ is_hands_on() { # ticket: labelled ready-for-human on the tracker, or the plan's
 }
 
 start_one() { # ticket: sets WORKTREE
-  local t="$1" status ib base branch wt focus
+  local t="$1" status= ib= base= branch= wt= focus=
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
@@ -234,7 +234,7 @@ cmd_start() {
 
 cmd_setup() {
   open_run "${1:-}"
-  local t rc
+  local t= rc=
   for t in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "queued" and .tickets[$t].human == null) | $t'); do
     rc=0
     (start_one "$t" >/dev/null 2>&1) || rc=$?
@@ -255,7 +255,7 @@ cmd_done() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  local wt base tip
+  local wt= base= tip=
   wt=$(get --arg t "$t" '.tickets[$t].human.worktree // ""')
   [ -n "$wt" ] && [ -d "$wt" ] || die "#$t has no hands-on worktree; run human.sh setup first"
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] || die "#$t is $(get --arg t "$t" '.tickets[$t].status'), not with the Artisan"
@@ -278,7 +278,7 @@ cmd_done() {
 
 # take_locked: every filed request becomes a returned ticket. Holds the lock.
 take_locked() {
-  local f t n tip base notes res
+  local f= t= n= tip= base= notes= res=
   for f in "$RUN_DIR"/human/*.done; do
     [ -e "$f" ] || continue
     t=$(basename "$f" .done)
@@ -359,7 +359,7 @@ cmd_parked() {
   open_run "${1:-}"
   local record=0
   [ "${2:-}" != --record ] || record=1
-  local line
+  local line=
   line=$(get '
     . as $s | ($s.plan.tickets // {}) as $pt
     | $s.plan.scope as $scope

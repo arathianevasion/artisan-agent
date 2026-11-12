@@ -88,7 +88,7 @@ test_a_crash_with_no_output_is_a_failed_attempt() {
 test_a_stopped_worker_is_a_failed_attempt() {
   setup_run
   export FAKE_CLAUDE_MODE=sleep
-  local runner
+  local runner=
   runner=$("$PLUGIN_ROOT/scripts/run-ticket.sh" --run-dir "$RUN" --ticket 46 \
     --prompt-file "$TEST_TMPDIR/prompt.md" --workdir "$WORKTREE" \
     --estimate-usd 1 --expected-minutes 10)
@@ -126,7 +126,7 @@ test_a_runner_pid_that_cannot_be_read_is_an_error_not_a_vanished_session() {
   setup_run
   mkdir -p "$RUN/workers/46.1"
   : >"$RUN/workers/46.1/runner.pid"
-  local out status=0
+  local out= status=0
   out=$(classify 2>/dev/null) || status=$?
   assert_eq 3 "$status"
   assert_eq "" "$out"
@@ -140,7 +140,7 @@ test_reads_the_attempt_it_is_given() {
 }
 
 test_usage_prints_the_whole_header() {
-  local out
+  local out=
   out=$("$PLUGIN_ROOT/scripts/classify-worker.sh" 2>&1) || true
   assert_contains "$out" "Needs jq."
 }

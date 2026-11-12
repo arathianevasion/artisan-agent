@@ -42,7 +42,7 @@ usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2; ex
 edit() { python3 -I "$HERE/project_edit.py" "$@"; }
 
 main_of() { # repo dir -> main checkout path
-  local common
+  local common=
   common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "not a git repository: $1"
   dirname "$common"
 }
@@ -56,13 +56,13 @@ ident_args() { # a fixed identity only when git has none (CI, fresh machines)
 
 git_commit() { # dir message [paths...]
   local dir=$1 msg=$2; shift 2
-  local args; args=$(ident_args "$dir")
+  local args=; args=$(ident_args "$dir")
   # shellcheck disable=SC2086
   git -C "$dir" $args commit -q -m "$msg" "$@"
 }
 
 base_ref() { # the default branch to start from: origin's HEAD, else the main checkout's HEAD
-  local m=$1 r
+  local m=$1 r=
   if r=$(git -C "$m" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); then printf '%s\n' "$r"; return; fi
   if git -C "$m" rev-parse -q --verify refs/remotes/origin/main >/dev/null; then echo origin/main; return; fi
   git -C "$m" rev-parse -q --verify HEAD >/dev/null || die "$m has no commits yet; commit something first so setup has a base for its PR"
@@ -70,7 +70,7 @@ base_ref() { # the default branch to start from: origin's HEAD, else the main ch
 }
 
 tracker_kind() { # from upstream's docs/agents/issue-tracker.md title
-  local f=$1/docs/agents/issue-tracker.md title
+  local f=$1/docs/agents/issue-tracker.md title=
   [ -f "$f" ] || { echo none; return; }
   title=$(head -n 1 "$f")
   case "$title" in
@@ -92,7 +92,7 @@ upstream_done() { # upstream's setup-matt-pocock-skills leaves an "## Agent skil
 }
 
 repo_id() { # how the individual home names a product: host/owner/name from origin, else the path
-  local m url
+  local m= url=
   m=$(main_of "$1")
   if url=$(git -C "$m" remote get-url origin 2>/dev/null) && [ -n "$url" ]; then
     url=${url%.git}; url=${url%/}
@@ -109,7 +109,7 @@ repo_id() { # how the individual home names a product: host/owner/name from orig
 motivation_file() { printf '%s/motivations/%s.md\n' "$HOME_DIR" "$(repo_id "$1" | sed 's/[^A-Za-z0-9._-]/__/g')"; }
 
 found_checks() { # candidate check commands, "check<TAB>source<TAB>command"
-  local d=$1 f t
+  local d=$1 f= t=
   if [ -f "$d/package.json" ] && command -v jq >/dev/null 2>&1; then
     for t in $(jq -r '.scripts // {} | keys[]' "$d/package.json" 2>/dev/null); do
       case "$t" in
@@ -143,7 +143,7 @@ found_checks() { # candidate check commands, "check<TAB>source<TAB>command"
 }
 
 cmd_scan() {
-  local d m p kind
+  local d= m= p= kind=
   d=$(cd "${1:-.}" && pwd); m=$(main_of "$d")
   if upstream_done "$m"; then echo "upstream	ok"; else echo "upstream	missing"; fi
   kind=$(tracker_kind "$m"); printf 'tracker\t%s\n' "$kind"
@@ -166,7 +166,7 @@ open_pr() { # url of an open setup PR, if any
 }
 
 cmd_begin() {
-  local m wt base url
+  local m= wt= base= url=
   m=$(main_of "${1:-.}")
   upstream_done "$m" || die "upstream's setup has not run here; type /mattpocock-skills:setup-matt-pocock-skills first"
   wt="$(dirname "$m")/$(basename "$m")-wt/artisan-agent-setup"
@@ -206,7 +206,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind f login line team boundary level item tmp check break_cmd break_desc prepare outcome proven who
+  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who=
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -337,7 +337,7 @@ EOT
 }
 
 cmd_labels() {
-  local wt=$1 have name color desc
+  local wt=$1 have= name= color= desc=
   [ "$(tracker_kind "$wt")" = github ] || { echo "skipped: the tracker is not GitHub; the labels are recorded in docs/agents/triage-labels.md only"; return 0; }
   have=$(cd "$wt" && "$GH" label list --limit 500 --json name --jq '.[].name') || die "gh label list failed"
   edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '1,/^labels:$/d' | while IFS=$'\t' read -r name desc; do
@@ -356,13 +356,13 @@ EOH
 }
 
 cmd_pre_commit() {
-  local m out
+  local m= out=
   m=$(main_of "${1:-.}")
   if out=$("$GUARD/install-pre-commit.sh" "$m" 2>&1); then echo "pre-commit: $out"; else echo "kept: $out"; return 1; fi
 }
 
 cmd_hook_probe() {
-  local m name out
+  local m= name= out=
   m=$(main_of "${1:-.}")
   # Capture first, then take line one: an early-closing reader would SIGPIPE guard.sh under pipefail.
   name=$("$GUARD/guard.sh" flag-watch)
@@ -372,7 +372,7 @@ cmd_hook_probe() {
 }
 
 cmd_prove_check() {
-  local ref=HEAD prepare="" brk="" check wt rc=0 out
+  local ref=HEAD prepare="" brk="" check= wt= rc=0 out=
   while [ $# -gt 0 ]; do
     case "$1" in
       --ref) ref=$2; shift 2 ;;
@@ -416,7 +416,7 @@ write_motivation() { # file id text: the motivation record, staged in the indivi
 }
 
 cmd_motivation() {
-  local sub=${1:-} f text id
+  local sub=${1:-} f= text= id=
   [ $# -gt 0 ] && shift
   f=$(motivation_file "${1:-.}"); id=$(repo_id "${1:-.}")
   case "$sub" in
@@ -453,7 +453,7 @@ cmd_individual() {
 }
 
 cmd_finish() {
-  local wt=$1 m base n url
+  local wt=$1 m= base= n= url=
   [ -d "$wt" ] || die "no worktree at $wt"
   wt=$(cd "$wt" && pwd); m=$(main_of "$wt")
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "uncommitted changes in $wt; run apply again"
