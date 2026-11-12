@@ -84,7 +84,7 @@ plugins/artisan-agent/tests/run.sh <dir>    # every test in another directory
 
 The scripts need `jq`, `python3`, `perl` (to detach workers on macOS, which has no `setsid`) and git 2.31 or later.
 
-It exits 0 when every test passes, 1 when any fails, and 2 when it finds no tests. Scripts must run on macOS's `/bin/bash` 3.2 as well as Linux, so avoid bash 4 features (`mapfile`, associative arrays, `${var,,}`) and GNU-only flags. The [Script tests workflow](.github/workflows/script-tests.yml) runs the suite on `ubuntu-latest` and `macos-latest`, and again under `/bin/bash` 3.2 on macOS.
+It exits 0 when every test passes, 1 when any fails, and 2 when it finds no tests. Scripts must run on macOS's `/bin/bash` 3.2 as well as Linux, so avoid bash 4 features (`mapfile`, associative arrays, `${var,,}`) and GNU-only flags. The [Script tests workflow](.github/workflows/script-tests.yml) runs the suite on Linux, in an Ubuntu container on a self-hosted runner. macOS and `/bin/bash` 3.2 are checked locally before each merge.
 
 ## Releasing
 

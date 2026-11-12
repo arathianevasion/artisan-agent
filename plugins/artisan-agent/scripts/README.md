@@ -9,7 +9,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
-| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
+| `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
 
 Each script's header has its full usage.
@@ -89,7 +89,7 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
-| `plan.sh render` | Prints the one approval: waves, model and estimate per ticket, total, Max Agents and every config number | Markdown |
+| `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents and every config number | Markdown |
 
 ## The project config
 
@@ -101,6 +101,9 @@ How the plan step reads the project config, estimates a run and records the numb
 | sweep | `sweep_minutes` | 5 |
 | context drain | `context.drain_percent` | 30 |
 | context review | `context.review_percent` | 50 |
+| chat warning | `chat_context.warn_percent` | 30 |
+| chat automatic compaction | `chat_context.compact_percent` | 40 |
+| chat expected window (tokens) | `chat_context.window_tokens` | 1000000 |
 | overrun allowance | `overrun_allowance_percent` | 25 |
 | usage reserve | `usage_reserve.five_hour_reserve_percent`, `usage_reserve.seven_day_ceiling_percent` | 20, 90 |
 | stale usage reading | `stale_usage_minutes` | 10 |
@@ -169,7 +172,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | :- | :- | :- | :- |
 | `wave.sh start <run-dir> [--base REF]` | Engineering chat | creates the integration branch and the run's integration worktree, `<repo>-wt/run-<run-id>` | 0, 1 |
 | `wave.sh launch <run-dir> [--resume] [--handoff]` | Engineering chat (`--handoff`: the orchestrator, through `drain.sh handoff`) | refuses while the run is halted (12) unless `--resume` records the Artisan's decision to carry on; launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs; 6 a `--handoff` from anyone but the running orchestrator that recorded it |
-| `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `blocked`, `done`), with a ticket table | 0 |
+| `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `parked`, `blocked`, `done`), with a ticket table | 0 |
 | `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9) and its expected files overlap nothing in flight or in this wave (10); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10 |
 | `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try, 13 not verified |
 | `wave.sh resolved <run-dir> <ticket> [--gave-up WHY]` | orchestrator | after `/artisan-agent:resolve-conflicts`: aborts and blocks if anything is still conflicted, marked or unstaged (or it gave up), else commits the merge and runs the suite as `merge` does | 0, 6, 7 |
@@ -177,6 +180,13 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `wave.sh block <run-dir> <ticket> <reason>` | orchestrator | blocks a returned ticket it won't merge (the diff misses its expected output): an exception decision for the Artisan and a `blocked` event | 0, 4 |
 | `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence contract (`evidence.sh comment`), ticks the criteria the verifier found met (`lib/criteria.py tick`), closes the ticket | 0, 1 |
 | `wave.sh report <run-dir>` | orchestrator | halts the run if every ticket dispatched in the wave ended blocked, then the wave report, JSON, for its result file | 0 |
+| `human.sh suggest --draft F` / `annotate --draft F` | Engineering chat (`annotate`: `plan.sh build`) | the one hands-on candidate table, off the critical path; the plan's `hands_on` with its focus and delay (1: more than one, outside the scope, no focus) | 0, 1 |
+| `human.sh sync\|setup\|start\|take <run-dir>` | orchestrator, chat | worktrees from the integration tip for `ready-for-human` tickets, which are never dispatched; takes the ones the Artisan finished as `returned` | 0, 1, 4, 5 |
+| `human.sh done <run-dir> <ticket>` | chat | the Artisan says it's done: refused (6) with uncommitted work or no commit; filed, and taken unless the lock is held (3) | 0, 3, 6 |
+| `human.sh verdict\|status <run-dir>` | chat | the verifier's feedback as a table; every hands-on ticket and where it stands | 0, 1 |
+| `human.sh parked <run-dir> [--record]` | `wave.sh status` | 0 and a line when only a hands-on ticket and its dependents are left (`next: parked`); 1 otherwise | 0, 1 |
+
+Hands-on tickets: `skills/implement-plan/references/hands-on.md`. Tested in `tests/human.test.sh`.
 
 Wave width, serial merges, the one conflict try, two attempts and the halt are described in `skills/implement-plan/references/parallel-waves.md` and tested end to end in `tests/parallel-waves.test.sh`, with a scripted orchestrator that follows that page and a stand-in for the resolve skill.
 
@@ -184,7 +194,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 **The lock passes with the work.** The chat holds the state lock between waves with its own session's pid. `wave.sh launch` records the orchestrator, then `run-ticket.sh --lock-from` makes the orchestrator's runner take the lock over before its session starts and export its pid to the session as `ARTISAN_WRITER_PID`. When the orchestrator exits, the lock is stale, and `wave.sh status` takes it back for the chat. A worker never gets a writer pid.
 
-**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir … --setting-sources project,local --no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`.
+**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir …`, the flags from `tests/helpers/live-hooks.sh` and `--no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`. `ARTISAN_HOOK_PROOF` (a file path) makes `compact-hook.sh` append one line per hook run, so a live harness can prove a plugin hook fired (#105).
 
 ## Exit status
 
@@ -270,13 +280,14 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 # Context drain and resume
 
-Neither tier ever stops to compact (#59). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
+Neither tier ever stops to compact (#59); the chat is compacted by Claude Code at 40% and never asks the Artisan to (#104). `drain.sh` reads a session's context and applies the drain bands, the orchestrator hands its wave to a fresh orchestrator, and `run-digest.sh` puts the run in front of a compacted, resumed or new chat. The rules for both tiers: `skills/implement-plan/references/context-drain.md`. Tested in `tests/drain.test.sh`, the hand-off end to end with the fake `claude` (an orchestrator compacted with its worker in flight; the next one finishes the wave).
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
 | `drain.sh percent --transcript F [--window N]` | either | the context used, from the transcript's last main-thread usage record against the model's window: `<percent> <used> <window>`, or `unknown` | 0, 2 |
 | `drain.sh decide --tier T --percent P --outstanding N [--marker] [--drain P] [--review P]` | either | the bands alone: `<band> <percent>% <dispatch\|process\|handoff>[ risk-gate]` | 0, 2 |
-| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat, a running orchestrator | 0, 1 |
+| `drain.sh check <run-dir> [--tier orchestrator\|chat] [--transcript F]` | either | `decide` from the run's files: the thresholds in `plan.config.context`, the orchestrator's transcript and marker in its `workers/` folder, its workers in flight and verifiers not yet judged; for the chat tier, a running orchestrator (the chat itself uses `drain.sh chat`) | 0, 1 |
+| `drain.sh chat <run-dir> --transcript F` | chat | the chat's context: `ok <percent>%` (30 or under), `warn <percent>%` (the chat ends its message with a one-line warning), `warn ask <percent>%` (past 55% with no compaction: also the one fallback `/compact` ask, printed once; the marker `chat-compact-asked` in the run folder is cleared by a reading back under the line), `unknown -`. Thresholds and window: `chat_context.*` in the plan config (defaults 30, 40, 1,000,000) | 0, 2 |
 | `drain.sh handoff <run-dir>` | orchestrator | records the hand-off, launches the next orchestrator for the same wave (`wave.sh launch --handoff`), writes the hand-off report as the result file: `handed-off <id> <attempt> <pid>`, or `none` when nothing is left | 0, 1, 6 not the running orchestrator |
 | `drain.sh gate <run-dir> <ticket> <percent>` | orchestrator | a risk gate on a merge processed at the review band: its dependents wait for it (`wave.sh dispatch` 5, off the frontier), nothing else does; a `risk-gate` decision | 0, 4, 6 not merged |
 | `drain.sh gate-cleared <run-dir> <ticket> [--by NAME]` | chat | the Artisan cleared it | 0, 6 no gate waiting |
