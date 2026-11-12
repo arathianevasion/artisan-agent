@@ -91,6 +91,13 @@ hold() {
   state_lock "$RUN_DIR" "$pid" 2>/dev/null \
     || state_die 3 "gate-action.sh: the run's state lock is held (a wave is running); nothing changed. Answer again once wave.sh status says the wave has ended"
   trap 'state_unlock "'"$RUN_DIR"'" "'"$pid"'" || true' EXIT
+  # Another chat may have answered the gate before the lock was ours.
+  if [ -n "$GATE" ]; then
+    local before
+    before=$(g .status)
+    find_gate "$(g .issue)"
+    [ "$(g .status)" = "$before" ] || refuse "gate #$(g .issue) was answered meanwhile; it is now $(g .status)"
+  fi
 }
 
 REPO=
@@ -590,9 +597,14 @@ cmd_parked() {
     | if $tr | any(.[]; . == null) then empty
       elif ($left | length) == 0 or any($left[]; . as $t | $held | index($t) | not) then empty
       else
-        (($open | length) + ($risk | length)) as $n
+        # Only the reviews that hold a ticket left count.
+        ([$left[] | $tr[.] // [] | .[]] | unique) as $bl
+        | [$open[] | select((.kind == "exception" and (.ticket as $t | $held0 | index($t)))
+                           or ((.issue | tostring) as $i | $bl | index($i)))] as $holding
+        | [$risk[] | select(. as $r | $bl | index($r))] as $riskh
+        | (($holding | length) + ($riskh | length)) as $n
         | "parked: waiting on \($n) review\(if $n == 1 then "" else "s" end): "
-          + ([$open[] | "\(.title) #\(.issue)"] + [$risk[] | "risk gate on #\(.)"] | join(", "))
+          + ([$holding[] | "\(.title) #\(.issue)"] + [$riskh[] | "risk gate on #\(.)"] | join(", "))
           + "; \($left | length) ticket\(if ($left | length) == 1 then " waits" else "s wait" end) behind \(if $n == 1 then "it" else "them" end): "
           + ($left | map("#" + .) | join(", "))
       end' --argjson tr "$tracker")
