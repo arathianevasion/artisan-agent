@@ -21,6 +21,18 @@ context:
   drain_percent: 30     # dispatch nothing new, hand off once idle
   review_percent: 50    # every merge from here gets a risk gate
 
+# The Engineering chat's context: it never asks the Artisan to compact.
+# Above warn_percent every message ends with a one-line warning; Claude Code
+# compacts the chat on its own at compact_percent (setup writes it to the
+# project settings as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE); if the chat passes
+# compact_percent + 15 without that having happened, it asks once for /compact.
+# window_tokens is the window the chat is expected to have (Opus, 1M); it is
+# recorded, not forced, because the settings env applies to every session.
+chat_context:
+  warn_percent: 30
+  compact_percent: 40
+  window_tokens: 1000000
+
 # Budget = approved estimate + this percentage.
 overrun_allowance_percent: 25
 
