@@ -56,7 +56,7 @@ for file in "$suite_dir"/*.test.sh; do
       "$2"
     ' _ "$file" "$name" 2>&1)
     status=$?
-    rm -rf "$tmp"
+    rm -rf "$tmp" "$tmp.usage.json"   # lib.sh's usage reading sits beside the test's folder
     if [ "$status" -eq 0 ]; then
       echo "ok   $label"
       passed=$((passed + 1))
