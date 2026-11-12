@@ -222,3 +222,35 @@ test_due_follows_the_sweep_interval() {
   assert_status 1 env ARTISAN_NOW=1200 "$C" due
   assert_status 0 env ARTISAN_NOW=1301 "$C" due
 }
+
+test_a_run_started_through_implement_plan_labels_every_ticket_once() {
+  setup_chats
+  ticket 2
+  "$C" label-run "$RUN_DIR"
+  for t in 1 2; do
+    assert_contains "$(jq -r '.labels[].name' "$FAKE_GH_DIR/issue-$t.json")" in-run
+    assert_eq 1 "$(grep -c "artisan-agent:run r1" "$FAKE_GH_DIR/comments-$t.md")"
+  done
+}
+
+test_a_plan_started_at_once_records_no_envelope_approval() {
+  setup_chats
+  ticket 345
+  local plan out
+  plan=$("$C" send 345)
+  [ ! -f "$FAKE_GH_DIR/comments-$plan.md" ] || ! grep -q "envelope-approved" "$FAKE_GH_DIR/comments-$plan.md" \
+    || fail "recorded an approval nobody gave"
+  out=$(sweep)
+  assert_contains "$out" "ACTION start-plan $plan approve-envelope"
+}
+
+test_the_two_skills_name_each_call_at_its_step() {
+  local ip tp
+  ip=$(cat "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
+  tp=$(cat "$PLUGIN_ROOT/skills/to-plan/SKILL.md")
+  assert_contains "$ip" "chats.sh label-run"
+  assert_contains "$ip" "chats.sh approve-envelope"
+  assert_contains "$ip" "envelope-approved"
+  assert_contains "$tp" "chats.sh approve-envelope"
+  [ -f "$PLUGIN_ROOT/skills/implement-plan/references/labels-and-envelope.md" ] || fail "reference missing"
+}
