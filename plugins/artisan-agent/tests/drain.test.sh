@@ -169,36 +169,6 @@ test_check_for_the_chat_counts_a_running_orchestrator() {
   assert_eq "review 60% handoff risk-gate" "$("$DRAIN" check "$RUN_DIR" --tier chat --transcript "$t")"
 }
 
-test_chat_warns_above_30_and_asks_once_past_55() {
-  setup_run
-  local t="$TEST_TMPDIR/chatctx.jsonl" pct
-  # The window is the config's 1,000,000: 1% is 10,000 tokens.
-  for pct in 2 15 30; do
-    usage_line $((pct * 10000)) >"$t"
-    assert_eq "ok $pct%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")" "no warning at $pct%"
-  done
-  for pct in 31 34 40 50 55; do
-    usage_line $((pct * 10000 + 500)) >"$t"
-    assert_eq "warn $pct%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")" "warning, no ask at $pct%"
-  done
-  # Past 55% with no compaction: ask once, then never again while it stays there.
-  usage_line 570000 >"$t"
-  assert_eq "warn ask 57%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
-  assert_eq "warn 57%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")" "asked twice"
-  usage_line 620000 >"$t"
-  assert_eq "warn 62%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")" "asked twice"
-  # A compaction drops it under the line; a later climb may ask again.
-  usage_line 90000 >"$t"
-  assert_eq "ok 9%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
-  usage_line 600000 >"$t"
-  assert_eq "warn ask 60%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
-  # No reading: say nothing. The thresholds are the run's config.
-  assert_eq "unknown -" "$("$DRAIN" chat "$RUN_DIR" --transcript "$TEST_TMPDIR/none.jsonl")"
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.chat_context = {warn_percent: 70}' >/dev/null
-  assert_eq "ok 60%" "$("$DRAIN" chat "$RUN_DIR" --transcript "$t")"
-  assert_status 2 "$DRAIN" chat "$RUN_DIR"
-}
-
 test_only_the_running_orchestrator_hands_off() {
   setup_run
   export ARTISAN_WRITER_PID=$$

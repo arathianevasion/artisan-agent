@@ -22,8 +22,8 @@
 #                               workers/<id>.<n>/transcript.path, where
 #                               drain.sh check reads its context percentage.
 #   session-start, chat         in a repo set up for the plugin: one line naming
-#                               this session's transcript (for drain.sh
-#                               chat). With a run open: after compaction
+#                               this session's transcript (for drain.sh check
+#                               --tier chat). With a run open: after compaction
 #                               or /resume (source compact or resume), the run
 #                               digest (run-digest.sh); at startup, one line
 #                               saying the run is open.
@@ -46,13 +46,6 @@ transcript=$(field transcript_path)
 cwd=$(field cwd)
 [ -n "$cwd" ] || cwd=$PWD
 role=${ARTISAN_ROLE:-}
-
-# Hook-fired proof for the live harnesses (#105): when ARTISAN_HOOK_PROOF names a
-# file, every run of this hook appends one line to it, so a harness can tell a
-# session that ran the plugin's hooks from one that silently skipped them.
-if [ -n "${ARTISAN_HOOK_PROOF:-}" ]; then
-  printf '%s %s role=%s session=%s\n' "$event" "$(date +%s)" "${role:--}" "$(field session_id)" >>"$ARTISAN_HOOK_PROOF" 2>/dev/null || true
-fi
 
 # This session's folder in its run, for a session run-ticket.sh launched.
 session_dir() {
@@ -95,7 +88,7 @@ EOF
     common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
     [ -d "$(dirname "$common")/.artisan-agent" ] || exit 0
     source=$(field source)
-    [ -z "$transcript" ] || echo "Artisan Agent: this chat's transcript is $transcript (drain.sh chat --transcript reads its context percentage from it)."
+    [ -z "$transcript" ] || echo "Artisan Agent: this chat's transcript is $transcript (drain.sh check --tier chat --transcript reads its context percentage from it)."
     case "$source" in
       compact | resume)
         "$SCRIPT_DIR/run-digest.sh" --repo "$cwd" 2>/dev/null || true

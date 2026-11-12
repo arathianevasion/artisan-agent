@@ -1,8 +1,7 @@
 """A ticket's acceptance criteria: read them, match them, tick them.
 
 The one place the matching rule lives: a criterion matches another when
-their text is the same once spaces and case are normalised; failing that,
-the entry in the same position when the counts agree (never fuzzier).
+their text is the same once spaces and case are normalised.
 
 Usage:
   python3 -I criteria.py extract < body.md
@@ -14,9 +13,8 @@ Usage:
       one entry per ticket criterion, in order, as JSON: {criterion, met,
       evidence, claimed}. Each takes the verdict entry with the same text,
       else the verdict entry in its position when the counts agree; with
-      none it is unmet. "claimed" is the worker record's "met" by the same
-      rule (the same text, else the entry in its position when the record's
-      count matches the ticket's), or null. A record or verdict that is missing or unreadable
+      none it is unmet. "claimed" is the worker record's "met" for the same
+      text, or null. A record or verdict that is missing or unreadable
       counts as empty.
   python3 -I criteria.py tick <evidence.json> < body.md > body.md
       the body with "- [ ] <criterion>" turned into "- [x] <criterion>" for
@@ -76,8 +74,6 @@ def align(criteria, verdict, record):
         if e is None and len(given) == len(criteria):
             e = given[i]
         w = find(claims, c)
-        if w is None and len(claims) == len(criteria):
-            w = claims[i]
         out.append({
             "criterion": c,
             "met": bool(e) and e.get("met") is True,

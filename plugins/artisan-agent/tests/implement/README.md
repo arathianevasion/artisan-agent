@@ -20,7 +20,7 @@ UPSTREAM_PLUGIN_DIR=/path/to/mattpocock-skills \
 plugins/artisan-agent/tests/implement/live.sh verify review-seeds "$SB/review-seeds"
 ```
 
-Each session is capped at `--max-budget-usd 0.50` on `claude-sonnet-5-5`, loads both plugins with `--plugin-dir`, reads no user settings and saves no session. The plugin's hooks run (`tests/helpers/live-hooks.sh`: Claude Code 2.1.322 skips a `--plugin-dir` plugin's hooks under a bare `--setting-sources project,local`, so the helper registers them through `--settings` and keeps user settings out), and `live.sh` fails unless a SessionStart hook left its line in `ARTISAN_HOOK_PROOF` (#105). It still authenticates through the normal login: an isolated `CLAUDE_CONFIG_DIR` or a fake `HOME` reports "Not logged in".
+Each session is capped at `--max-budget-usd 0.50` on `claude-sonnet-5-5`, loads both plugins with `--plugin-dir`, reads no user settings and saves no session. It still authenticates through the normal login: an isolated `CLAUDE_CONFIG_DIR` or a fake `HOME` reports "Not logged in".
 
 ## Runs on 2026-11-10
 

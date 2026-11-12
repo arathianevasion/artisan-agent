@@ -51,7 +51,7 @@ You are the worker for ticket <ticket>, attempt <n>, in run <run-id>.
 
 A ticket kept as a local file (`plan.tickets.<t>.ticket_path`) is named by its path instead of `#<ticket> on <repo>`.
 
-The worker session runs in its worktree with `--model` from the plan, `--max-budget-usd` (twice the estimate), `--max-turns`, its deadline, `--permission-mode acceptEdits`, the tools it needs, and `--add-dir` for the run's `results/`. `ARTISAN_CLAUDE_ARGS` adds arguments to every session (for a trial: `--plugin-dir`, the flags from `tests/helpers/live-hooks.sh` (a bare `--setting-sources project,local` stops the plugin's hooks running), `--no-session-persistence`), and `ARTISAN_MAX_BUDGET_USD` caps any one session's budget.
+The worker session runs in its worktree with `--model` from the plan, `--max-budget-usd` (twice the estimate), `--max-turns`, its deadline, `--permission-mode acceptEdits`, the tools it needs, and `--add-dir` for the run's `results/`. `ARTISAN_CLAUDE_ARGS` adds arguments to every session (for a trial: `--plugin-dir`, `--setting-sources project,local`, `--no-session-persistence`), and `ARTISAN_MAX_BUDGET_USD` caps any one session's budget.
 
 `/artisan-agent:implement` already tells the worker to commit early and often (a worker killed by a rate limit with ten uncommitted files cost a second full dispatch), to run `mattpocock-skills:code-review` over its own diff and record every remark, and to write its record even when it fails, since a missing file looks exactly like a crash.
 

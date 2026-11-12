@@ -29,11 +29,11 @@ test_the_chat_is_the_engineering_chat_and_not_the_orchestrator() {
 }
 
 test_tickets_shown_to_the_artisan_are_tables() {
-  # The plan, the wave digest and the run summary each show a table with the
+  # The plan, the wave report and the run summary each show a table with the
   # ticket (number and description), wave, model and output or status.
   local skill
   skill=$(cat "$SKILL_DIR/SKILL.md")
-  assert_contains "$skill" "**The wave digest** is the status table"
+  assert_contains "$skill" "**The wave report** is a table"
   assert_contains "$skill" "| Ticket | Wave | Model | Status |"
   assert_contains "$skill" "| Ticket | Wave | Model | Outcome |"
   assert_contains "$skill" "| #12 (retry failed uploads) | 1 |"

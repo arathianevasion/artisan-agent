@@ -77,12 +77,7 @@ check_returned() {
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
   ATTEMPT=$(get --arg t "$t" '.tickets[$t].attempts')
-  # A hands-on ticket the Artisan finished (human.sh) has no worker session.
-  if [ "$(get --arg t "$t" '.tickets[$t].human.done_at // null | . != null')" = true ]; then
-    cls="completed -"
-  else
-    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
-  fi
+  cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$ATTEMPT" 2>/dev/null || echo "failed vanished")
   case "$cls" in
     running*) state_die 8 "$who: #$t's worker is still running; wait for its exit record" ;;
     completed*) ;;

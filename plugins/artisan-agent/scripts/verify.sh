@@ -356,18 +356,8 @@ cmd_judge() {
     # verifier's findings (wave.sh dispatch), or, after the last attempt,
     # the Artisan gets the ticket.
     # The next step is kept with the verdict, so judging again says the same.
-    if [ "$(get --arg t "$t" '.tickets[$t].human != null')" = true ]; then
-      # A hands-on ticket is the Artisan's: no fresh worker, no attempt used.
-      # It goes back to them with what the verifier found (human.sh verdict).
-      apply '.tickets[$t] |= (.status = "queued" | .human.done_at = null
-          | .human.feedback += [{round: $n, unmet: [$e[0].acceptance[] | select(.met | not) | .criterion]}])
-        | .tickets[$t].verifications[-1].next = "human"
-        | event({event: "human-feedback", ticket: $t, attempt: $n}; $now)' \
-        --arg t "$t" --argjson n "$n" --slurpfile e "$contract"
-    else
     apply 'failed_attempt($t; $r; $now)
       | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select(.met | not) | .criterion] | first)"' "$contract")"
-    fi
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"
     if ! "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body" \

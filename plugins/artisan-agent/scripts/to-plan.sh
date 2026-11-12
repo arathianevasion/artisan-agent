@@ -129,14 +129,7 @@ case "$cmd" in
     deps=$(py deps "$file" "$GRAPH")
     count=$(jq '.plans | length' "$file")
     save() { jq "$@" "$file" >"$file.tmp" && mv "$file.tmp" "$file"; }
-    # The database id of issue $1. Runs in a command substitution, so callers
-    # add `|| exit 1`: a failed lookup stops here, before any write is attempted.
-    dbid() {
-      local out id
-      out=$(gh api "repos/$REPO/issues/$1") || die "cannot look up the id of #$1 (gh api failed); nothing was written for it, run publish again"
-      id=$(printf '%s' "$out" | jq -r '.id // empty') && [ -n "$id" ] || die "the tracker returned no id for #$1; run publish again"
-      printf '%s' "$id"
-    }
+    dbid() { gh api "repos/$REPO/issues/$1" | jq -r '.id'; }
 
     # 1. One issue per plan, earliest first, so a later plan can name them.
     i=0
@@ -164,8 +157,7 @@ case "$cmd" in
     while [ "$i" -lt "$count" ]; do
       plan_no=$(jq -r --argjson i "$i" '.plans[$i].issue' "$file")
       for t in $(jq -r --argjson i "$i" '.plans[$i].tickets[]' "$file"); do
-        tid=$(dbid "$t") || exit 1
-        args=(-F "sub_issue_id=$tid")
+        args=(-F "sub_issue_id=$(dbid "$t")")
         [ -z "$REPLACE_PARENT" ] || args+=(-F replace_parent=true)
         if ! err=$(gh api --method POST "repos/$REPO/issues/$plan_no/sub_issues" "${args[@]}" 2>&1 >/dev/null); then
           case "$err" in
@@ -184,8 +176,7 @@ case "$cmd" in
       plan_no=$(jq -r --argjson i "$i" '.plans[$i].issue' "$file")
       for d in $(printf '%s' "$deps" | jq -r --argjson i "$i" '.[$i][]'); do
         blocker=$(jq -r --argjson d "$d" '.plans[$d].issue' "$file")
-        bid=$(dbid "$blocker") || exit 1
-        if ! err=$(gh api --method POST "repos/$REPO/issues/$plan_no/dependencies/blocked_by" -F "issue_id=$bid" 2>&1 >/dev/null); then
+        if ! err=$(gh api --method POST "repos/$REPO/issues/$plan_no/dependencies/blocked_by" -F "issue_id=$(dbid "$blocker")" 2>&1 >/dev/null); then
           case "$err" in
             *[Aa]lready*) ;;
             *) die "could not block #$plan_no by #$blocker: $err (carry on by running publish again)" ;;

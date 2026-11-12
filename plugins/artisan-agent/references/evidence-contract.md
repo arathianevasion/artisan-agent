@@ -40,7 +40,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
 
-`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
+`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
 
 ## The evidence contract
 

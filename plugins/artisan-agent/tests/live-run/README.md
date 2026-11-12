@@ -1,6 +1,6 @@
 # Live proof: the two-tier run (#54)
 
-`live.sh` runs a whole one-ticket run for real: an Engineering chat, an orchestrator and a worker, each a headless `claude -p` on `claude-sonnet-5-5` capped at `--max-budget-usd 0.50`. Each loads this plugin and `mattpocock-skills` with `--plugin-dir` under the normal login, with the helper's flags (user settings out, the plugin's hooks on) and `--no-session-persistence`. The plugin's hooks run (`tests/helpers/live-hooks.sh`: Claude Code 2.1.322 skips a `--plugin-dir` plugin's hooks under a bare `--setting-sources project,local`, so the helper registers them through `--settings` and keeps user settings out), and `live.sh` fails unless a SessionStart hook left its line in `ARTISAN_HOOK_PROOF` (#105). It runs in a throwaway repo, and the fake tracker (`tests/fixtures/fake-gh`) stands in for GitHub, so nothing reaches a real tracker and no settings are touched. It is not part of `tests/run.sh` because it spends money.
+`live.sh` runs a whole one-ticket run for real: an Engineering chat, an orchestrator and a worker, each a headless `claude -p` on `claude-sonnet-5-5` capped at `--max-budget-usd 0.50`. Each loads this plugin and `mattpocock-skills` with `--plugin-dir` under the normal login, with `--setting-sources project,local` and `--no-session-persistence`. It runs in a throwaway repo, and the fake tracker (`tests/fixtures/fake-gh`) stands in for GitHub, so nothing reaches a real tracker and no settings are touched. It is not part of `tests/run.sh` because it spends money.
 
 ```bash
 SB=<a throwaway folder>
