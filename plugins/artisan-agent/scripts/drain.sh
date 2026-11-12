@@ -40,6 +40,20 @@
 #       $ARTISAN_RESULT_FILE. Prints "handed-off <id> <attempt> <pid>", or
 #       "none" when nothing in scope is queued, in flight or returned (write
 #       the wave report and exit as usual).
+#   drain.sh chat <run-dir> --transcript FILE
+#       the Engineering chat's context, which never asks the Artisan to compact
+#       (Claude Code compacts it at chat_context.compact_percent, default 40,
+#       through CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in the project settings).
+#       Prints "<state> <percent>%" with state
+#         ok            at or below chat_context.warn_percent (30): say nothing
+#         warn          above it: end the message with the one-line warning
+#         warn ask      past compact_percent + 15 (55) with no compaction:
+#                       also ask once for /compact. Printed once; the marker
+#                       <run-dir>/chat-compact-asked is cleared when the
+#                       reading falls back under the line (a compaction)
+#         unknown -     no reading: say nothing
+#       The window is ARTISAN_CONTEXT_WINDOW, else chat_context.window_tokens
+#       (1,000,000, the Opus chat's window; recorded, never forced).
 #   drain.sh gate <run-dir> <ticket> <percent>
 #       a merge processed at the review band: a risk gate on the merged
 #       ticket. Its dependents don't dispatch until it is cleared (wave.sh
@@ -286,6 +300,54 @@ cmd_handoff() {
   echo "handed-off $launched"
 }
 
+# -------------------------------------------------------------------- chat
+
+CHAT_ASK_MARGIN=15
+
+chat_setting() { # key: the run's plan config, else the default
+  local v
+  v=$(get --arg k "$1" '.plan.config.chat_context[$k] // empty')
+  [ -n "$v" ] || v=$("$SCRIPT_DIR/config.sh" defaults | jq -r --arg k "$1" '.chat_context[$k]')
+  printf '%s\n' "$v"
+}
+
+cmd_chat() {
+  open_run "${1:-}"
+  shift
+  local transcript= warn compact window reading pct marker state
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --transcript) [ $# -ge 2 ] || usage; transcript=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$transcript" ] || usage
+  warn=$(chat_setting warn_percent)
+  compact=$(chat_setting compact_percent)
+  window=${ARTISAN_CONTEXT_WINDOW:-$(chat_setting window_tokens)}
+  reading=$(percent_of "$transcript" "$window")
+  pct=${reading%% *}
+  marker="$RUN_DIR/chat-compact-asked"
+  if [ "$pct" = unknown ]; then
+    echo "unknown -"
+    return 0
+  fi
+  if [ "$pct" -le "$warn" ]; then
+    state=ok
+  else
+    state=warn
+  fi
+  if [ "$pct" -gt $((compact + CHAT_ASK_MARGIN)) ]; then
+    if [ ! -e "$marker" ]; then
+      printf '%s\n' "$pct" >"$marker"
+      state="warn ask"
+    fi
+  else
+    rm -f "$marker"
+  fi
+  echo "$state $pct%"
+}
+
 # -------------------------------------------------------------------- gate
 
 cmd_gate() {
@@ -334,6 +396,7 @@ shift
 case "$cmd" in
   percent) cmd_percent "$@" ;;
   decide) cmd_decide "$@" ;;
+  chat) cmd_chat "$@" ;;
   check) cmd_check "$@" ;;
   handoff) cmd_handoff "$@" ;;
   gate) cmd_gate "$@" ;;

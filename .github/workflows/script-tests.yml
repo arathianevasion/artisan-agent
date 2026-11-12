@@ -9,18 +9,21 @@ permissions:
 
 jobs:
   script-tests:
-    name: Script tests (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    name: Script tests (Linux)
+    # Self-hosted runner on the owner's Linux VM; the job runs in a throwaway container.
+    # macOS (and bash 3.2) is covered by the local suite gate before every merge.
+    runs-on: [self-hosted, linux, cmux-vm]
+    container: ubuntu:24.04
     steps:
+      - name: Install tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git jq python3 perl procps tmux coreutils ca-certificates sudo >/dev/null
+          useradd -m tester
       - uses: actions/checkout@v4
       - name: Show bash
         run: bash --version | head -n 1
-      - name: Run the script test harness
-        run: plugins/artisan-agent/tests/run.sh
-      - name: Run it again under macOS's bash 3.2
-        if: runner.os == 'macOS'
-        run: PATH=/bin:/usr/bin:/usr/sbin:/sbin /bin/bash plugins/artisan-agent/tests/run.sh
+      - name: Run the script test harness (as a non-root user)
+        run: |
+          chown -R tester "$GITHUB_WORKSPACE"
+          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh'

@@ -9,7 +9,7 @@ Run a defined set of work to done: a plan, several plans, individual tickets, a 
 
 `/artisan-agent:implement` builds one ticket and ends at the commit and its evidence record. It never closes the ticket or merges, and for a queue that is fatal on its own: the frontier is tickets whose blockers are all **merged**, so if nothing merges, nothing ever unblocks. This skill is the layer above it. It owns the dependency graph, the plan, the dispatch and the reconciliation. It never implements anything itself.
 
-Wherever this skill puts something in front of the Artisan (the plan, a wave report, a question, the run summary), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Wherever it lists tickets, use a markdown table, never a numbered list: one row per ticket, with its number and a short plain description together (such as "#12 (retry failed uploads)"), its wave or blockers, its model, and its expected output or status.
+Wherever this skill puts something in front of the Artisan (the plan, a wave digest, a question, the run summary), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Wherever it lists tickets, use a markdown table, never a numbered list: one row per ticket, with its number and a short plain description together (such as "#12 (retry failed uploads)"), its wave or blockers, its model, and its expected output or status.
 
 ## Two tiers
 
@@ -43,7 +43,7 @@ This skill is Claude-callable, so another pipeline step can hand it work. Dispat
 
 ## Process
 
-**An open run first.** Before step 1, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-digest.sh`. If it prints a digest, a run is open in this repo: open with the digest as printed and carry that run on from step 6; plan nothing new until the Artisan asks. Neither tier ever stops to compact: before each launch and whenever woken, check your context with `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh check <run folder> --tier chat --transcript <this chat's transcript, named by the plugin's start-up line>`, as `references/context-drain.md` says.
+**An open run first.** Before step 1, run `${CLAUDE_PLUGIN_ROOT}/scripts/run-digest.sh`. If it prints a digest, a run is open in this repo: open with the digest as printed and carry that run on from step 6; plan nothing new until the Artisan asks. Neither tier ever stops to compact: before each launch, whenever woken and before every message you send, check your context with `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh chat <run folder> --transcript <this chat's transcript, named by the plugin's start-up line>`, and add the one-line warning (or the one-time fallback ask) it calls for, as `references/context-drain.md` says.
 
 ### 1. Read the queue and build the graph
 
@@ -110,7 +110,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `next:` | Do |
 |---|---|
 | `wait` | The wave is still running. Say so in one line, with the table if asked, and end your turn. |
-| `launch` | Report the wave (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
+| `launch` | Show the wave digest (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
 | `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
 | `parked` | Only a hands-on ticket the Artisan is building, and work behind it, is left. Say which ticket, as `status` prints it, and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. |
@@ -119,7 +119,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 
 If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline), launch again: the next orchestrator reconciles from the state file and carries the same wave on.
 
-**The wave report** is a table, never a list:
+**The wave digest** is the status table below and the evidence table after it, never a list:
 
 | Ticket | Wave | Model | Status |
 |---|---|---|---|
@@ -130,7 +130,7 @@ Under it, one line each for: cost so far against the budget (`.costs`, `.plan.bu
 
 **Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
 
-Then the wave digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (a table naming each ticket with its verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`).
+Then the evidence table of the digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (a table naming each ticket with its verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`).
 
 ### 7. Findings filed for triage
 
@@ -148,6 +148,8 @@ When `status` says `done`, or the run halts, report:
 | #14 (export CSV) | 2 | claude-sonnet-5-5 | blocked: merge conflict in `export.py`; branch `agent/14` kept |
 
 Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
+
+Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/skills/retro/SKILL.md`).
 
 ## Failure handling
 
