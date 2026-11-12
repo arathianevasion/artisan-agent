@@ -101,3 +101,37 @@ test_missing_empty_or_incomplete_list_fails_loudly() {
   printf 'alpha\n' > "$TEST_TMPDIR/norepl.list"
   assert_status 2 "$GUARD" matcher --list "$TEST_TMPDIR/norepl.list"
 }
+
+dep_names() { sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/dependencies.list"; }
+
+test_dependency_list_names_no_artisan_agent_skill() {
+  local n
+  for n in $(dep_names); do
+    if [ -d "$PLUGIN_ROOT/skills/$n" ]; then fail "$n is an artisan-agent skill, not an upstream one"; fi
+  done
+}
+
+test_dependency_list_and_replaced_list_do_not_overlap() {
+  local n
+  for n in $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/replaced-skills.list" | awk '{print $1}'); do
+    if dep_names | grep -qx "$n"; then fail "$n is on both the dependency list and the replaced-skill list"; fi
+  done
+}
+
+test_dependency_list_has_wayfinder_and_not_to_plan() {
+  dep_names | grep -qx wayfinder || fail "wayfinder missing from the dependency list"
+  if dep_names | grep -qx to-plan; then fail "to-plan is ours and must not be on the dependency list"; fi
+}
+
+test_every_dependency_exists_in_the_upstream_cache_when_present() {
+  local root newest n
+  root="${CLAUDE_CODE_PLUGIN_CACHE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins}/cache/claude-plugins-official/mattpocock-skills"
+  newest=$(ls "$root" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)
+  if [ -z "$newest" ] || [ ! -d "$root/$newest/skills" ]; then
+    echo "skip: no mattpocock-skills cache at $root"
+    return 0
+  fi
+  for n in $(dep_names); do
+    [ -f "$(ls "$root/$newest"/skills/*/"$n"/SKILL.md 2>/dev/null | head -n 1)" ] || fail "$n is not in the upstream cache ($newest)"
+  done
+}

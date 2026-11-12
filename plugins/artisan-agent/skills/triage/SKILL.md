@@ -34,7 +34,7 @@ The Artisan's outcomes for a ticket:
 - **Discard**: reject it, see below.
 - **Take it myself**: `ready-for-human`, same brief structure, with a note why it can't be delegated.
 
-`needs-info` (post the triage notes template) and `needs-triage` (leave in the queue) are ways to move an item along, not outcomes. A ticket marked `in-run` is never re-triaged, edited or relabelled here.
+`needs-info` (post the triage notes template) and `needs-triage` (leave in the queue) are ways to move an item along, not outcomes. A ticket marked `in-run` is never re-triaged, edited or relabelled here: check with `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh guard <issue>` first, and send work on to the Engineering chat as `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md` says.
 
 ## What goes through triage
 

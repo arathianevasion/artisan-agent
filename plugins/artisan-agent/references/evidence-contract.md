@@ -40,7 +40,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
 
-`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
+`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
 
 ## The evidence contract
 
@@ -53,6 +53,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `criteria_met`, `criteria_total` | the counts |
 | `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
 | `tests` | the worker's full-suite run: `{suite_passed, command, summary}` |
+| `checks` | the checks the verifier ran through `checks.sh run`: the recorded checks with their results, or `{recorded: false, fallback: "no recorded checks (…): found …"}`. With checks recorded, `worker_matches` says whether the worker's evidence listed exactly them (`worker_listed`), and the comment flags it when not. A red recorded check makes each criterion that cites it unmet (all of them when none does); `references/checks.md` |
 | `diff` | `summary` (`git diff --shortstat`) and `files` (`<path> +<added> -<deleted>`, comma-separated), base to commit |
 | `unsure` | what the worker was unsure of |
 | `decisions` | the decisions the worker made alone: its decision cards, as in `evidence-record.md` |
