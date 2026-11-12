@@ -37,7 +37,9 @@ problems=$(jq -r '
       (select(has("evidence") and (.evidence | type) != "object") | "acceptance[\($i)]: evidence must be an object")
     end),
   (select(has("tests")) | .tests |
-    if (.suite_passed | type) != "boolean" then "tests: suite_passed must be true or false" else empty end),
+    (if (.suite_passed | type) != "boolean" then "tests: suite_passed must be true or false" else empty end),
+    (if (.files | type) != "array" or (.files | length) == 0 or ([.files[] | type != "string"] | any) then "tests: files must name the test files run" else empty end),
+    (if ((.full_suite // "") | type) != "string" or ((.full_suite // "") | test("merge gate") | not) then "tests: full_suite must say the full suite is left to the merge gate" else empty end)),
   (["unsure","findings","decisions"][] as $k | select(has($k) and (.[$k] | type) != "array") | "\($k): must be an array"),
   (select((.decisions | type) == "array") | .decisions | to_entries[] | .key as $i | .value |
     (need(.; ["job","choice","by","question","alternative","kind","criterion"]; "decisions[\($i)]")),

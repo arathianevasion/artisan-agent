@@ -131,6 +131,8 @@ Under it, one line each for: cost so far against the budget (`.costs`, `.plan.bu
 
 **Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
 
+**Gate actions, exception gates and parking.** Approve, redirect, bypass and defer at any gate, the exception gate for a ticket the run gave up on (show `gate-action.sh chat <run folder>`), and `next: parked` with "waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`.
+
 Then the evidence table of the digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (a table naming each ticket with its verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`).
 
 ### 7. Findings filed for triage

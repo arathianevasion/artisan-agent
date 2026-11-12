@@ -32,23 +32,33 @@
 #       with evidence, loosens. Refuses a --who that names an agent (2).
 #
 #   guardrails.sh loosen --level individual|product|team --who NAME --reason TEXT
-#       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID] [--pr]
+#       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID]
+#       [--override-reason TEXT [--run-dir D]] [--pr]
 #       the retro's loosening path: lower an existing guardrail's --strict, with
 #       the evidence and who, recorded as a `loosen` move. Needs --evidence and a
 #       --strict below the current one (5 otherwise); refuses the scope floor
 #       (key scope-floor) and a defer-only gate (defer_only: true) with 7. Only a
 #       person, from a retro that showed the evidence (guardrail-health.sh).
+#       It also needs the latest health report (`guardrail-health.sh health
+#       --record`) to propose loosening this guardrail, and records the report's
+#       id and date on the move; with none, or one that doesn't, it exits 8.
+#       --override-reason TEXT proceeds anyway: the reason and --who are recorded
+#       on the move as an override, and with --run-dir D a `guardrail-bypassed`
+#       event is logged in that run's state file.
 #
 # Environment:
 #   ARTISAN_HOME            the individual home (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent)
 #   ARTISAN_TEAM_CACHE      where the team guardrails repo is cloned (default
 #                           ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-team)
 #   ARTISAN_TEAM_URL_BASE   prefix for the team repo's clone URL (default https://github.com/)
+#   ARTISAN_HEALTH_DIR      where `guardrail-health.sh health --record` keeps the latest report
+#                           (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health)
 #   ARTISAN_MAIN_REF        the product's main branch (default origin/main, else main)
 #
 # Exit status: 0 ok, 1 error (a source could not be fetched), 2 usage,
 # 5 a loosening (tighten) or not a loosening (loosen), 6 merge conflict,
-# 7 loosen refused: the scope floor or a defer-only gate.
+# 7 loosen refused: the scope floor or a defer-only gate, 8 loosen refused:
+# the latest health report doesn't propose it (or there is none).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq.
 
@@ -275,8 +285,7 @@ cmd_table() {
     esac
   done
   json=$(resolve_json "$run" "$role")
-  jq -r '
-    def row: "| " + join(" | ") + " |";
+  jq -r "$(state_jq_row_def)"'
     "| Guardrail | Level | Version | Says |",
     "|---|---|---|---|",
     (.applied[] | [.id, .level, .version, "\(.key) = \(.value)"] | row),
@@ -293,6 +302,18 @@ cmd_table() {
 cmd_tighten() { move_guardrail tighten "$@"; }
 cmd_loosen() { move_guardrail loosen "$@"; }
 
+# health_report_for ID: prints {id, date} of the latest health report if it
+# proposes loosening ID; otherwise prints what is missing and fails.
+health_report_for() {
+  local f=${ARTISAN_HEALTH_DIR:-$CFG/artisan-agent-health}/latest.json
+  [ -f "$f" ] || { echo "no guardrail-health report has been recorded for $1"; return 1; }
+  if [ "$(jq -r --arg id "$1" '[.proposals[] | select(.id == $id and .move == "loosen")] | length' "$f")" = 0 ]; then
+    echo "the latest guardrail-health report ($(jq -r '.id' "$f")) does not propose loosening $1"
+    return 1
+  fi
+  jq -c '{id, date}' "$f"
+}
+
 # move_guardrail tighten|loosen ...: write a new guardrail or move one, with
 # its origin or its move. A loosening needs evidence and an existing, lower-
 # strictness target, and is never made for the scope floor or a defer-only gate.
@@ -300,7 +321,7 @@ move_guardrail() {
   local mode=$1 mode_tag=""
   shift
   [ "$mode" != loosen ] || mode_tag=" (loosen)"
-  local level="" who="" reason="" id="" key="" value="" rule="" strict="" evidence="" scope="" role="" run="" pr=0
+  local level="" who="" reason="" id="" key="" value="" rule="" strict="" evidence="" scope="" role="" run="" pr=0 override="" run_dir=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --level) level=${2:-}; shift 2 ;;   --who) who=${2:-}; shift 2 ;;
@@ -309,6 +330,7 @@ move_guardrail() {
       --rule) rule=${2:-}; shift 2 ;;     --strict) strict=${2:-}; shift 2 ;;
       --evidence) evidence=${2:-}; shift 2 ;; --scope) scope=${2:-}; shift 2 ;;
       --role) role=${2:-}; shift 2 ;;     --run) run=${2:-}; shift 2 ;;
+      --override-reason) override=${2:-}; shift 2 ;; --run-dir) run_dir=${2:-}; shift 2 ;;
       --pr) pr=1; shift ;;
       *) usage ;;
     esac
@@ -318,12 +340,13 @@ move_guardrail() {
   case "$(printf %s "$who" | tr 'A-Z' 'a-z')" in
     agent* | worker* | orchestrator* | verifier* | claude*) state_die 2 "guardrails.sh: only a person moves a guardrail; --who $who names an agent" ;;
   esac
-  case "$strict" in '' | *[!0-9]*) [ -z "$strict" ] || usage ;; esac
+  [ -z "$strict" ] || state_is_uint "$strict" || usage
   [ -n "$id" ] || id=$(printf %s "$key" | tr -c 'A-Za-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
   [ -n "$id" ] || usage
   if [ "$mode" = loosen ]; then
     [ -n "$evidence" ] || state_die 2 "guardrails.sh: a loosening records the evidence for it: pass --evidence"
     [ -n "$strict" ] || usage
+    [ -z "$run_dir" ] || [ -f "$run_dir/state.json" ] || die "no state.json in --run-dir $run_dir"
   fi
 
   local m dir branch="" file path now date current new
@@ -372,13 +395,19 @@ move_guardrail() {
       drop_worktree
       state_die 5 "guardrails.sh: $id is at strictness $cur_l; a loosening needs a lower --strict"
     fi
+    # a loosening follows the latest health report, or is a stated, recorded override
+    local report=null
+    if [ -z "$override" ]; then
+      report=$(health_report_for "$id") || { drop_worktree; state_die 8 "guardrails.sh: $report; a loosening follows a health report (guardrail-health.sh health --record), or pass --override-reason"; }
+    fi
     new=$(jq -c --arg value "$value" --arg rule "$rule" --argjson strict "$strict" --arg date "$date" \
-      --arg evidence "$evidence" --arg who "$who" --arg run "$run" '
+      --arg evidence "$evidence" --arg who "$who" --arg run "$run" --arg override "$override" --argjson report "$report" '
       . as $o | (if $value == "" then . else .value = $value end)
       | (if $rule == "" then . else .rule = $rule end) | .strict = $strict
       | .moves += [{date: $date, kind: "loosen", evidence: $evidence, who: $who,
                     from: {value: $o.value, strict: ($o.strict // 0)}, to: {value: .value, strict: $strict}}
-                   + (if $run == "" then {} else {run: $run} end)]' <<<"$current")
+                   + (if $run == "" then {} else {run: $run} end)
+                   + (if $override == "" then {report: $report} else {override: {reason: $override, by: $who}} end)]' <<<"$current")
   elif [ "$current" = null ]; then
     [ -n "$key" ] && [ -n "$value" ] && [ -n "$rule" ] || die "a new guardrail needs --key, --value and --rule"
     new=$(jq -nc --arg id "$id" --arg key "$key" --arg value "$value" --arg rule "$rule" --arg strict "${strict:-1}" \
@@ -412,6 +441,10 @@ move_guardrail() {
         --body "$reason" -R "$( [ "$level" = product ] && git -C "$m" remote get-url origin | sed -E 's#.*github.com[:/]##;s#\.git$##' || team_repo "$m")" >/dev/null \
         || die "could not push and open the PR; the branch is in $dir"
     fi
+  fi
+  if [ "$mode" = loosen ] && [ -n "$override" ] && [ -n "$run_dir" ]; then
+    "$SCRIPT_DIR/state.sh" event "$run_dir" "$(jq -nc --arg g "$id" --arg r "loosened without a health report: $override" --arg by "$who" \
+      '{event: "guardrail-bypassed", guardrail: $g, reason: $r, by: $by}')" >/dev/null
   fi
 }
 

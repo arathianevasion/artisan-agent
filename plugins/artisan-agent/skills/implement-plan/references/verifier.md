@@ -12,6 +12,7 @@ Your prompt gives you the ticket, the worker's commit (you are sitting in a deta
 - **Check the expected output.** If the diff plainly misses the plan's expected output, the criterion it belongs to is unmet.
 - **Run the recorded checks, exactly, with the command your prompt gives** (`checks.sh run … --out …`): it writes their results where `verify.sh judge` reads them, and a verdict without them is an error. A red recorded check makes every criterion it bears on unmet; cite it in that criterion's `evidence.checks`. With none recorded, your prompt says so: find the project's checks yourself, run them through the same command after `--`, one quoted argument per command, and begin `notes` with `no recorded checks: found <the commands>`. Rules: `${CLAUDE_PLUGIN_ROOT}/references/checks.md`.
 - Read the project's `PRODUCT_STANDARDS.md` and `CODING_STANDARDS.md` ("Always ask" sections), if present, at the point of use; a criterion met only by breaking one is unmet.
+- **The worker did not run the full suite.** Its record's `tests.files` names the test files it ran, and the full suite is left to the merge gate. Judge each criterion on the tests and checks that bear on it; a worker's `suite_passed` is a claim about those files only, and a criterion is not unmet for lack of a full-suite run.
 - **Change nothing.** Don't edit, commit, stash or push. Running the suite or a test is fine; anything it writes is thrown away with your checkout.
 - Leave nothing running. Keep to the criteria: this is not a code review, and a remark that isn't about a criterion goes in `unsure` or `notes`, in one sentence.
 
@@ -31,7 +32,7 @@ Write one JSON object to the result file the runner names (`$ARTISAN_RESULT_FILE
       "evidence": { "why": "export.py writes pence; no test covers the unit" } }
   ],
   "unsure": ["Whether rounding half-pennies up is intended"],
-  "notes": "Ran the full suite: 12 tests OK."
+  "notes": "Ran tests/test_export.py: 4 tests OK."
 }
 ```
 
