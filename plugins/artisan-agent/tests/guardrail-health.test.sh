@@ -65,15 +65,17 @@ test_three_loosen_events_propose_a_loosen_and_fewer_do_not() {
 
 test_a_guardrail_that_never_fires_over_three_runs_is_proposed_for_loosening() {
   setup "$(g quiet kq 1)"
-  run r1 '[]'; run r2 '[]'
+  other=$(fired other)   # a run only counts once it recorded guardrail events
+  run r1 "[$other]"; run r2 "[$other]"
   assert_eq none "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)")" quiet)"
-  run r3 '[]'
+  run r3 "[$other]"
   assert_eq loosen "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)" "$(R r3)")" quiet)"
 }
 
 test_the_scope_floor_and_a_defer_only_gate_are_never_proposed_for_loosening() {
   setup "$(g floor scope-floor 9)" "$(g defer kd 9 '{"defer_only":true}')"
-  run r1 '[]'; run r2 '[]'; run r3 '[]'; run r4 "[$(bypass floor a), $(bypass floor b), $(bypass floor c)]"
+  o=$(fired other)
+  run r1 "[$o]"; run r2 "[$o]"; run r3 "[$o]"; run r4 "[$o, $(bypass floor a), $(bypass floor b), $(bypass floor c)]"
   out=$("$H" health --runs "$(R r1)" "$(R r2)" "$(R r3)" "$(R r4)")
   assert_eq none "$(proposal "$out" floor)"
   assert_eq none "$(proposal "$out" defer)"
@@ -186,4 +188,18 @@ test_loosening_refuses_no_evidence_a_raise_an_agent_and_the_protected() {
   assert_status 7 "$G" loosen --level individual --who Andrew --reason x --id floor --strict 1 --evidence e
   assert_status 7 "$G" loosen --level individual --who Andrew --reason x --id defer --strict 1 --evidence e
   assert_eq "$before" "$(git -C "$ARTISAN_HOME" rev-parse HEAD)"
+}
+
+test_runs_with_no_guardrail_events_never_make_a_loosen_proposal() {
+  setup "$(g quiet kq 1)"
+  run r1 '[]'; run r2 '[]'; run r3 '[]'
+  assert_eq none "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)" "$(R r3)")" quiet)"
+}
+
+test_a_missing_run_folder_or_flag_value_is_an_error_not_a_partial_answer() {
+  setup
+  run r1 '[]'
+  assert_status 1 "$H" health --runs "$(R r1)" "$TEST_TMPDIR/nope"
+  assert_status 2 "$H" health
+  assert_status 2 "$H" backstop --runs "$(R r1)" --since
 }

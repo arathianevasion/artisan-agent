@@ -10,7 +10,7 @@ The retro prunes as well as adds (#74). `${CLAUDE_PLUGIN_ROOT}/scripts/guardrail
 |---|---|---|
 | A bypass with a reason | loosen | `guardrail-bypassed` (`guardrail`, `reason`) |
 | A gate in the guardrail's area approved unchanged | loosen | `gate-decision` with `outcome: keep` and no redirect |
-| A guardrail that never fired | loosen (one per run examined) | no `guardrail-fired` or `guardrail-bypassed` |
+| A guardrail that never fired | loosen (one per run that recorded guardrail events) | no `guardrail-fired` or `guardrail-bypassed` for it, in a run that recorded any |
 | A redirect at a gate in the area | tighten | `gate-decision` with `outcome: change` or a `redirect` |
 | A spot-check answered "I'd have decided differently" | tighten | `spot-check` with `answer: differently` |
 | A counted triage miss | tighten | a line of `retro/misses.jsonl` |

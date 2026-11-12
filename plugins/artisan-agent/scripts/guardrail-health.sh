@@ -13,7 +13,7 @@
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
 #   guardrail-health.sh spot-check --runs DIR... [--count N]
 #       about N (default 3) decisions a worker made alone that no gate showed
-#   guardrail-health.sh spot-check-record --run DIR --ticket T --card I --answer same|differently [--area A]
+#   guardrail-health.sh spot-check-record --run DIR --ticket T --card I --answer same|differently [--area A] [--guardrail ID]
 #       record the answer: "differently" is tighten evidence in the area
 #   guardrail-health.sh audit --runs DIR... [--misses FILE] [--threshold N] [--table]
 #       triage misses with the criterion that should have caught them, and
@@ -23,6 +23,7 @@
 #       decided that an agent would have needed) and whether to nudge (N runs, default 5, with none)
 #   guardrail-health.sh backstop --runs DIR... [--repo-dir D] [--main REF] [--since DATE]
 #       [--prs FILE] [--closed FILE] [--table]
+#       (pass --since: without it every ticket ever closed is checked)
 #       commits straight to main, PRs and merges with no run record, tickets
 #       closed outside a run. --prs and --closed are JSON files standing in for
 #       `gh pr list` and `gh issue list`.
@@ -58,23 +59,25 @@ parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, REST (array of unparsed 
   case "$THRESHOLD" in '' | *[!0-9]*) usage ;; esac
 }
 
-state_files() { # prints each run's state.json; refuses a folder without one
+state_files() { # prints each run's state.json; refuses none or a folder without one
   local d
   [ ${#RUNS[@]} -gt 0 ] || usage
   for d in "${RUNS[@]}"; do
     [ -f "$d/state.json" ] || state_die 1 "guardrail-health.sh: no state.json in $d"
-    printf '%s\n' "$d/state.json"
   done
+  for d in "${RUNS[@]}"; do printf '%s\n' "$d/state.json"; done
 }
 
 misses_json() { # the triage misses as a JSON array
   if [ -n "$MISSES" ] && [ -f "$MISSES" ]; then jq -sc 'map(select(type == "object"))' "$MISSES"; else echo '[]'; fi
 }
 
-states_json() { # every state as one array, each with its run folder name
-  local f out=()
-  while IFS= read -r f; do out+=("$f"); done < <(state_files)
-  jq -sc '.' "${out[@]}"
+states_json() { # every state as one array
+  local files
+  state_files >/dev/null || exit $?
+  files=()
+  for d in "${RUNS[@]}"; do files+=("$d/state.json"); done
+  jq -sc '.' "${files[@]}"
 }
 
 # ------------------------------------------------------------------ health
@@ -93,7 +96,7 @@ def row($g):
   | ([evs[] | select(.event == "spot-check" and .answer == "differently" and match($g))]) as $differently
   | ([.misses[] | select(match($g))]) as $misses
   | ([evs[] | select(.event == "shipped-bug" and match($g))]) as $bugs
-  | (if ($fired | length) == 0 and ($byp | length) == 0 then (.states | length) else 0 end) as $never
+  | (if ($fired | length) == 0 and ($byp | length) == 0 then ([.states[] | select([(.events // [])[] | select(.event == "guardrail-fired" or .event == "guardrail-bypassed")] | length > 0)] | length) else 0 end) as $never
   | ([ ($reasoned | map({kind: "bypass", reason: .reason, run: .run})[]),
        ($unchanged | map({kind: "gate approved unchanged", gate: .gate, run: .run})[]),
        (if $never > 0 then {kind: "never fired", runs: $never} else empty end) ]) as $loosen
@@ -151,7 +154,7 @@ cmd_health() {
 # -------------------------------------------------------------- spot-check
 
 cmd_spot_check() {
-  local count=3 words=()
+  local count=3
   parse_common "$@"
   set -- ${REST[@]+"${REST[@]}"}
   while [ $# -gt 0 ]; do
@@ -172,18 +175,19 @@ cmd_spot_check() {
 }
 
 cmd_spot_check_record() {
-  local run="" ticket="" card="" answer="" area=""
+  local run="" ticket="" card="" answer="" area="" guardrail=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run) run=${2:-}; shift 2 ;; --ticket) ticket=${2:-}; shift 2 ;; --card) card=${2:-}; shift 2 ;;
-      --answer) answer=${2:-}; shift 2 ;; --area) area=${2:-}; shift 2 ;;
+      --run | --ticket | --card | --answer | --area | --guardrail) [ $# -ge 2 ] || usage
+        case "$1" in --run) run=$2 ;; --ticket) ticket=$2 ;; --card) card=$2 ;; --answer) answer=$2 ;; --area) area=$2 ;; --guardrail) guardrail=$2 ;; esac
+        shift 2 ;;
       *) usage ;;
     esac
   done
   [ -n "$run" ] && [ -n "$ticket" ] && [ -n "$card" ] || usage
   case "$answer" in same | differently) ;; *) usage ;; esac
-  "$SCRIPT_DIR/state.sh" event "$run" "$(jq -nc --arg t "$ticket" --arg c "$card" --arg a "$answer" --arg area "$area" \
-    '{event: "spot-check", ticket: $t, card: ($c | tonumber), answer: $a} + (if $area == "" then {} else {area: $area} end)')" >/dev/null
+  "$SCRIPT_DIR/state.sh" event "$run" "$(jq -nc --arg t "$ticket" --arg c "$card" --arg a "$answer" --arg area "$area" --arg g "$guardrail" \
+    '{event: "spot-check", ticket: $t, card: ($c | tonumber), answer: $a} + (if $area == "" then {} else {area: $area} end) + (if $g == "" then {} else {guardrail: $g} end)')" >/dev/null
 }
 
 # ------------------------------------------------------------------- audit
@@ -247,8 +251,9 @@ cmd_backstop() {
   set -- ${REST[@]+"${REST[@]}"}
   while [ $# -gt 0 ]; do
     case "$1" in
-      --repo-dir) repo_dir=${2:-}; shift 2 ;; --main) main=${2:-}; shift 2 ;;
-      --since) since=${2:-}; shift 2 ;; --prs) prs=${2:-}; shift 2 ;; --closed) closed=${2:-}; shift 2 ;;
+      --repo-dir | --main | --since | --prs | --closed) [ $# -ge 2 ] || usage
+        case "$1" in --repo-dir) repo_dir=$2 ;; --main) main=$2 ;; --since) since=$2 ;; --prs) prs=$2 ;; --closed) closed=$2 ;; esac
+        shift 2 ;;
       *) usage ;;
     esac
   done
