@@ -26,7 +26,8 @@
 #       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
 #       ticket table. "parked" (with a line naming it) means only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
-#       (human.sh parked). A waiting risk gate (drain.sh gate) holds only its
+#       (human.sh parked), or dispatch is parked on plan usage (budget.sh
+#       guard: a "parked <window>" line). A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -34,7 +35,9 @@
 #       refuse unless the ticket is in scope (4), queued, every blocker is
 #       merged into the integration branch or closed (5), a slot is free
 #       under Max Agents (9) and its expected files overlap no ticket in
-#       flight or in this wave (10, wave-width.sh check); then branch a
+#       flight or in this wave (10, wave-width.sh check), and budget.sh
+#       guard passes (12 halted, 16 the overrun gate, 17 parked on plan
+#       usage); then branch a
 #       worktree from the integration tip and launch the worker with
 #       /artisan-agent:implement. A retry is a fresh worker on the same
 #       branch, given the failed attempt's evidence, and only once the
@@ -79,7 +82,8 @@
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
-# 12 the run is halted, 13 not verified, 15 the login would expire mid-run. One table of every code, with
+# 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
+# 16 the overrun gate holds dispatch, 17 parked on plan usage. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -325,7 +329,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o parked=
+  local last id attempt wave pid cls next reconciled=1 waiting o parked= usage_park=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -359,12 +363,17 @@ cmd_status() {
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
+      # A usage park or the overrun gate, noticed before a wave launches (budget.sh, #72).
+      usage_park=
+      [ "$(get '.halted != null')" = true ] \
+        || usage_park=$("$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" 2>/dev/null | grep '^parked ' || true)
       # A risk gate or a review gate holds only its tickets' dependents
       # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
       waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
+      elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
@@ -383,7 +392,7 @@ cmd_status() {
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo
   ticket_table
-  if [ "${next}" = decide ] || [ "${next}" = halted ] \
+  if [ "${next}" = decide ] || [ "${next}" = halted ] || [ -n "$usage_park" ] \
      || { [ "$next" = launch ] && [ "$(get '[.decisions[] | select(.status == "waiting")] | length')" -gt 0 ]; }; then
     echo
     echo "| Decision | Ticket | Question |"
@@ -442,6 +451,9 @@ cmd_dispatch() {
   in_flight=$(get '[.tickets[] | select(.status == "in_flight")] | length')
   max=$(get '.plan.max_agents // 5')
   [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
+  # The plan-window guard and the budget (budget.sh, #72): 17 parked, 16 the
+  # overrun gate, 12 halted. Work already in flight is never stopped.
+  "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
   check_blockers "$t"
   "$SCRIPT_DIR/wave-width.sh" check "$RUN_DIR" "$t" || exit $?
 

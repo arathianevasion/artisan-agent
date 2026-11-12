@@ -52,8 +52,10 @@
 #                       <run-dir>/chat-compact-asked is cleared when the
 #                       reading falls back under the line (a compaction)
 #         unknown -     no reading: say nothing
-#       The window is ARTISAN_CONTEXT_WINDOW, else chat_context.window_tokens
-#       (1,000,000, the Opus chat's window; recorded, never forced).
+#       The window is ARTISAN_CONTEXT_WINDOW, else the one the status-line
+#       capture recorded for this transcript's session (statusline.sh window),
+#       else chat_context.window_tokens (1,000,000, the Opus chat's window;
+#       recorded, never forced).
 #   drain.sh gate <run-dir> <ticket> <percent>
 #       a merge processed at the review band: a risk gate on the merged
 #       ticket. Its dependents don't dispatch until it is cleared (wave.sh
@@ -324,7 +326,10 @@ cmd_chat() {
   [ -n "$transcript" ] || usage
   warn=$(chat_setting warn_percent)
   compact=$(chat_setting compact_percent)
-  window=${ARTISAN_CONTEXT_WINDOW:-$(chat_setting window_tokens)}
+  # The window the status-line capture saw for this chat's own model (#72),
+  # else the expected one.
+  window=${ARTISAN_CONTEXT_WINDOW:-$("$SCRIPT_DIR/statusline.sh" window --transcript "$transcript" 2>/dev/null \
+    || chat_setting window_tokens)}
   reading=$(percent_of "$transcript" "$window")
   pct=${reading%% *}
   marker="$RUN_DIR/chat-compact-asked"

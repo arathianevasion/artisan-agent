@@ -389,11 +389,11 @@ cmd_overrun() {
       ;;
     *) usage ;;
   esac
-  local choice
+  local choice card
   case "$opt" in
-    raise) choice="raise the budget to \$${ARGS[0]}" ;;
-    cut) choice="cut $(printf '#%s ' "${ARGS[@]}" | sed 's/ $//')" ;;
-    stop) choice="stop the run" ;;
+    raise) choice="raise the budget to \$${ARGS[0]}" card=1 ;;
+    cut) choice="cut $(printf '#%s ' "${ARGS[@]}" | sed 's/ $//')" card=2 ;;
+    *) choice="stop the run" card=3 ;;
   esac
   apply '
     .overrun_gates |= map(if .id == $id then .status = "deferred" | .action = "defer"
@@ -403,7 +403,7 @@ cmd_overrun() {
         then .status = "decided" | .choice = $choice | .by = $by | .decided_at = $now else . end)
     | event({event: "overrun-decision", gate: $id, option: $opt, choice: $choice, by: $by, action: "defer"}; $now)' \
     --arg id "$id" --arg opt "$opt" --arg choice "$choice" --arg by "$BY" --arg why "$WHY" \
-    --argjson card "$(case "$opt" in raise) echo 1 ;; cut) echo 2 ;; *) echo 3 ;; esac)"
+    --argjson card "$card"
   if [ -n "$issue" ]; then
     gh issue comment "$issue" -R "$(get '.repo')" --body "$(printf '%s\n\n| Card | Choice | By | Why |\n|---|---|---|---|\n| %s | %s | %s | %s |\n\nGate action: **defer** (the only one this gate has). This issue stays open until the end gate.\n\n```json\n%s\n```' \
       "Overrun gate answered." "$opt" "$choice" "$BY" "${WHY:--}" \
