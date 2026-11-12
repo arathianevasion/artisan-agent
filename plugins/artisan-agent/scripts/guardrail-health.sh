@@ -101,7 +101,6 @@ def row($g):
        ($differently | map({kind: "spot-check: decided differently", ticket: .ticket, run: .run})[]),
        ($misses | map({kind: "triage miss", ticket: .ticket, criterion: (.criterion // null)})[]),
        ($bugs | map({kind: "shipped bug", ticket: .ticket, run: .run})[]) ]) as $tighten
-  | (if $never > 0 then $never else ($reasoned | length) + ($unchanged | length) end) as $lcount
   | { id: $g.id, level: $g.level, key: $g.key, value: $g.value, area: $g.area,
       origin: $g.origin, protected: $g.protected,
       status: (if ($byp | length) > 0 then "bypassed" elif ($fired | length) > 0 then "fired" else "never fired" end),
