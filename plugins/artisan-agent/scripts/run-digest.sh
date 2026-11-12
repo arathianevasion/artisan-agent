@@ -73,7 +73,7 @@ orch="no orchestrator yet"
 last=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt) \(.wave)"')
 if [ -n "$last" ]; then
   set -- $last
-  cls=$("$SCRIPT_DIR/classify-worker.sh" "$run_dir" "$1" "$2" 2>/dev/null || echo "failed vanished")
+  cls=$("$SCRIPT_DIR/classify-worker.sh" "$run_dir" "$1" "$2" 2>/dev/null || echo "unknown classifier-error")
   case "$cls" in
     running*) orch="wave $3 running (orchestrator attempt $2)" ;;
     completed*) orch="wave $3 finished" ;;

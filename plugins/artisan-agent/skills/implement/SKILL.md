@@ -34,7 +34,7 @@ Take these from the prompt that invoked you:
 - The ticket in full: its acceptance criteria, the seams it names, and anything it says to stop and ask about.
 - `GLOSSARY.md` and the ADRs in `docs/adr/` that touch the area. Name things in the glossary's words.
 - **The standards, at the point of use.** `CODING_STANDARDS.md` and `PRODUCT_STANDARDS.md` at the repo root, and the Artisan's individual standards in `~/.claude/artisan-agent/` where they exist, each including its **"Always ask"** section; and `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md`. Read them now, and read the relevant section again whenever you reach a choice they might cover. Don't rely on what you remember from the start of the session.
-- How the project runs its checks (test suite, typecheck, lint), from the ticket, README or build files.
+- **The project's checks: the recorded ones.** Run `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh list`. It prints the checks setup proved can fail, from `CODING_STANDARDS.md` `## Checks`; those, exactly, are your checks. Don't swap one for a command you found in the README or build files, and don't add one. Exit 16 means none are recorded: only then find them from the ticket, README or build files, and say so in the record (step 5). The rules: `${CLAUDE_PLUGIN_ROOT}/references/checks.md`.
 
 ## 2. Build test-first at the named seams
 
@@ -86,6 +86,6 @@ Run the full suite again after the fixes and commit. One review pass is enough. 
 
 ## 5. Finish
 
-1. Run the full suite and every check the project has. The working tree must be clean and every change committed.
+1. Run the full suite, then the checks: `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`. With checks recorded it runs exactly those and prints their results; with none recorded, pass the commands you found after `--` (`checks.sh run -- 'npm test' 'npm run lint'`: one quoted argument per command), and its output says `no recorded checks (…): found …`. Its JSON output goes into the record's `checks` as it is. The working tree must be clean and every change committed.
 2. Write the evidence record to the result path, in the shape in `${CLAUDE_PLUGIN_ROOT}/references/evidence-record.md`. **Write it even if you failed or are blocked.** A missing result file looks exactly like a crash.
 3. End with one line: status, commit and result path.

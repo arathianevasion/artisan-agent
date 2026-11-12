@@ -9,3 +9,7 @@
 
 - Before adding a third-party dependency.
 - Before changing the signature of a public function that already exists on `main`.
+
+## Checks
+
+- `python3 -m unittest -q`: proven to fail on 2026-11-11, breaking: flipped the expected value in one assertion

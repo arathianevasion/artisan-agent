@@ -9,9 +9,9 @@ The skill itself is proven by headless workers on the sample tickets in `../fixt
 | `named-seam` | 01: add `slugify`, seam named | the ticket's examples pass; tested at the named seam; no Write/Edit to the code before the test; a test run failed before the first commit |
 | `unnamed-seam` | 02: CSV export, no seam named | the CSV and `list` outputs; a job 3 decision card names the function or module the worker really added (not just a seam-like word) |
 | `public-interface` | 04: late fees, with a function later tickets must import | the CLI outputs and exit code; a public function added outside `cli.py`; status `complete`, not `blocked`; a job 3 decision card naming that function, with criterion 3 |
-| `review-seeds` | 03: a stopped first attempt with a boundary bug (`>` for "or more"), a `print()` that `CODING_STANDARDS.md` rule 1 forbids, and a Data Clump (`street, city, postcode`) | the bug and the violation are fixed; both signatures are unchanged; a finding is left as a `decision` and the clump is a decision card |
+| `review-seeds` | 03: a stopped first attempt with a boundary bug (`>` for "or more"), a `print()` that `CODING_STANDARDS.md` rule 1 forbids, and a Data Clump (`street, city, postcode`) | the bug and the violation are fixed; both signatures are unchanged; a finding is left as a `decision` and the clump is a decision card; with one check recorded in `## Checks` and an unrecorded `make lint`, the record lists exactly the recorded check and `make lint` never ran (#98) |
 
-The shared checks: a result file exists and is an evidence record, status `complete`, a commit on `agent/<id>` that the record names, a clean tree, no stash, a green suite, every criterion met, and `mattpocock-skills:tdd` and `mattpocock-skills:code-review` both loaded.
+The shared checks: a result file exists and is an evidence record, its `checks` are the recorded checks exactly (or a fallback saying so, where none are recorded), status `complete`, a commit on `agent/<id>` that the record names, a clean tree, no stash, a green suite, every criterion met, and `mattpocock-skills:tdd` and `mattpocock-skills:code-review` both loaded.
 
 ```bash
 SB=/some/scratch/dir
