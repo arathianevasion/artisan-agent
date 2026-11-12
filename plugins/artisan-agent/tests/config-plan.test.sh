@@ -164,6 +164,69 @@ test_the_all_multiplier_applies_to_models_without_their_own() {
   assert_eq 8 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")"
 }
 
+# tiny_draft path: one Sonnet ticket far under any minimum, one Opus ticket above it.
+tiny_draft() {
+  jq -n '{
+    run_id: "r1", repo: "owner/repo", integration_branch: "run/r1",
+    scope: ["10", "11"], waves: [["10", "11"]], gates: [],
+    tickets: {
+      "10": {title: "Typo", model: "claude-sonnet-5-5",
+             expected: {input_tokens: 100000, output_tokens: 5000, minutes: 10}},
+      "11": {title: "Billing tab", model: "claude-opus-5-5",
+             expected: {input_tokens: 1000000, output_tokens: 50000, minutes: 45}}
+    }}' >"$1"
+}
+
+test_an_estimate_below_the_models_minimum_is_raised_to_it() {
+  make_project
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  # Sonnet: 0.1M x $2 + 0.005M x $10 = $0.25, under the $0.50 minimum.
+  assert_eq 0.5 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq minimum "$(jq -r '.tickets["10"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  assert_eq 0.25 "$(jq '.tickets["10"].estimate_basis.estimated_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq 1 "$(jq '.tickets["10"].caps.max_budget_usd' "$TEST_TMPDIR/plan.json")" "twice the minimum"
+  assert_eq 20 "$(jq '.tickets["10"].caps.max_turns' "$TEST_TMPDIR/plan.json")"
+  # Opus: $5.00, above its $1.00 minimum: unchanged.
+  assert_eq 5 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq price "$(jq -r '.tickets["11"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  # Total and budget use the floored numbers: 0.5 + 5 = 5.5, + 25%.
+  assert_eq 5.5 "$(jq .estimate_usd "$TEST_TMPDIR/plan.json")"
+  assert_eq 6.88 "$(jq .budget_usd "$TEST_TMPDIR/plan.json")"
+  local out
+  out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "| #10 (Typo) | claude-sonnet-5-5 | \$0.50 | minimum for claude-sonnet-5-5 (estimated \$0.25) |"
+  assert_contains "$out" "| minimum_estimates.claude-sonnet-5-5 | 0.5 |"
+}
+
+test_the_floor_applies_to_history_estimates_and_falls_back_to_all() {
+  make_project
+  seed_history old1 20 claude-sonnet-5-5 0.1 merged
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["11"].model = "claude-other-1"' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  seed_history old2 21 claude-other-1 0.2 merged
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq 0.5 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")"
+  assert_eq history "$(jq -r '.tickets["10"].estimate_basis.was.mode' "$TEST_TMPDIR/plan.json")"
+  assert_eq 0.5 "$(jq '.tickets["11"].estimate_usd' "$TEST_TMPDIR/plan.json")" "the all minimum"
+}
+
+test_a_minimum_can_be_overridden_for_one_run_and_every_priced_model_has_a_default() {
+  make_project
+  tiny_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" \
+    --set minimum_estimates.claude-sonnet-5-5=0.2) >"$TEST_TMPDIR/plan.json"
+  assert_eq 0.25 "$(jq '.tickets["10"].estimate_usd' "$TEST_TMPDIR/plan.json")" "above the lowered minimum"
+  assert_eq price "$(jq -r '.tickets["10"].estimate_basis.mode' "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "| minimum_estimates.claude-sonnet-5-5 | 0.2 (this run only; project: 0.5) |"
+  assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "config.yml untouched"
+  assert_status 1 sh -c "cd '$PROJECT' && '$SCRIPTS/plan.sh' build --draft '$TEST_TMPDIR/draft.json' --set minimum_estimates.claude-sonnet-5-5=-1"
+  local m
+  for m in $(jq -r '.models | keys[]' "$PLUGIN_ROOT/references/model-prices.json"); do
+    [ "$(config defaults | jq --arg m "$m" '.minimum_estimates[$m] > 0')" = true ] || fail "no default minimum for $m"
+  done
+}
+
 test_a_model_with_no_price_and_no_history_is_refused() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
@@ -192,7 +255,8 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
     overrun_allowance_percent usage_reserve.five_hour_reserve_percent \
     usage_reserve.seven_day_ceiling_percent stale_usage_minutes attempts_per_ticket \
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \
-    team_guardrails_repo estimate_multipliers host_configured; do
+    team_guardrails_repo estimate_multipliers minimum_estimates.claude-sonnet-5-5 \
+    minimum_estimates.all host_configured; do
     assert_contains "$out" "| $key |" "setting $key in the approval"
   done
 }
