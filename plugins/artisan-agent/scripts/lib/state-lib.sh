@@ -13,6 +13,14 @@ state_die() { # status message...
   exit "$status"
 }
 
+state_is_uint() { # value: succeeds only for a non-empty run of digits
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+}
+
+state_jq_row_def() { # prints the jq def that renders an array as a markdown table row
+  printf '%s' 'def row: "| " + join(" | ") + " |";'
+}
+
 state_require_jq() {
   command -v jq >/dev/null 2>&1 || state_die 1 "jq is required but was not found on PATH"
 }

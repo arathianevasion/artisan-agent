@@ -495,3 +495,37 @@ SH
   assert_contains "$(cat "$TEST_TMPDIR/err")" "returned no id for #1"
   ! grep -q -- '--method POST' "$FAKE_GH_DIR/calls" || fail "a write was attempted after the empty lookup"
 }
+
+# ---- resolve-scope.sh: each ticket's blocked_by ---------------------------
+
+test_resolve_scope_returns_each_tickets_open_blockers_even_outside_the_scope() {
+  use_fake_gh
+  echo '[1,44]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
+  echo '[1,5]' >"$FAKE_GH_DIR/blocked_by-3.json"
+  local out; out=$("$RS" --repo local/sample 1 2 3)
+  assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
+  assert_eq "[1]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "closed blocker 44 left out"
+  assert_eq "[1,5]" "$(jq -c '.tickets[2].blocked_by' <<<"$out")" "open blocker 5 is outside the scope but listed"
+}
+
+test_resolve_scope_falls_back_to_the_body_line_where_there_are_no_native_dependencies() {
+  use_fake_gh
+  rm -f "$FAKE_GH_DIR"/blocked_by-*.json
+  jq '.body = "Blocked by: #1, #44\n\n## What\nx"' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-2.json"
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
+  fail_gh_on '*dependencies/blocked_by*' "gh: Not Found (HTTP 404)"
+  local out; out=$("$RS" --repo local/sample 1 2)
+  assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
+  assert_eq "[1]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "closed #44 left out"
+}
+
+test_resolve_scope_fails_naming_the_ticket_when_a_blocker_read_fails() {
+  use_fake_gh
+  fail_gh_on '*issues/2/dependencies/blocked_by*'
+  local rc=0
+  "$RS" --repo local/sample 1 2 >"$TEST_TMPDIR/out" 2>"$TEST_TMPDIR/err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "resolve-scope exited 0"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "cannot read the blockers of #2"
+  assert_eq "" "$(cat "$TEST_TMPDIR/out")" "a partial scope was printed"
+}

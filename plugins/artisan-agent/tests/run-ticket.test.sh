@@ -152,6 +152,8 @@ test_worker_is_told_its_files_and_not_to_leave_background_commands() {
   env=$(cat "$FAKE_CLAUDE_ENV")
   assert_contains "$args" "Build ticket 46."
   assert_contains "$args" "background"
+  assert_contains "$args" "Never end a turn"
+  assert_contains "$args" "ends the session"
   assert_contains "$args" "ARTISAN-WORKER: complete"
   assert_contains "$env" "PWD=$WORKTREE"
   assert_contains "$env" "ARTISAN_RESULT_FILE=$RUN/results/46.1.result.json"

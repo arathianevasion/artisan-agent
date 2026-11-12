@@ -95,6 +95,8 @@ How the plan step reads the project config, estimates a run and records the numb
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
 | `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
+**The draft's shape.** Per ticket in scope: `title`, `model`, `blocked_by`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). `blocked_by` is required: the ticket numbers of its open blockers, copied from `resolve-scope.sh`'s `tickets[].blocked_by` (native dependencies, or the body's "Blocked by" line where the tracker has none; a blocker outside the scope is kept). `[]` is valid; a ticket with no `blocked_by` field makes `plan.sh build` exit 1. The critical path, a hands-on pick's delay and parking all read it. `plan.sh` makes no tracker calls.
+
 ## The project config
 
 `.artisan-agent/config.yml` is committed. Every setting and its default is in `templates/config.yml`, the one place defaults are written; `/artisan-agent:setup` copies it into a project. A key left out or left empty falls back to its default; a value of the wrong type stops the read with the key named. The file is plain YAML: maps, scalars, `[flow, lists]` and `- item` lists of scalars (`scripts/lib/yaml-subset.py`, standard-library `python3`).
@@ -160,7 +162,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `to-plan.sh check <plans> --graph F` | every ticket in exactly one plan, no blocker in a later plan | 0, 1 |
 | `to-plan.sh render <plans> --graph F` | the approval view: a table of plans, then each plan's tickets with blockers, estimates and acceptance criteria, then warnings | 0, 1 |
 | `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent]` | creates the `plan` issues, sub-issues and blocking | 0, 1 |
-| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out | 0, 1, 2, 3 |
+| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out, each with its open `blocked_by` (a failed blocker read exits 1 naming the ticket) | 0, 1, 2, 3 |
 
 **The graph** is a JSON file the chat completes after `graph`: per ticket `slice` (what reviewable thing it helps make; none means its own slice) and an estimate, either `estimate_usd` or `model` with `expected.input_tokens` and `expected.output_tokens` priced from `references/model-prices.json` (the plan step's method). No estimate is refused; there are no defaults. The budget has no default either.
 
@@ -257,7 +259,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 ## Guardrails
 
-`guardrails.sh` reads the three guardrail levels at the point of use; the rules are `references/guardrails.md`. Tested in `tests/guardrails.test.sh` with a local team repo and a throwaway individual home (`ARTISAN_HOME`, `ARTISAN_TEAM_CACHE`, `ARTISAN_TEAM_URL_BASE`).
+`guardrails.sh` reads the three guardrail levels at the point of use; the rules are `references/guardrails.md`. Tested in `tests/guardrails.test.sh` with a local team repo and a throwaway individual home (`ARTISAN_HOME`, `ARTISAN_TEAM_CACHE`, `ARTISAN_TEAM_URL_BASE`; `ARTISAN_HEALTH_DIR` for the recorded health report).
 
 | Command | Does | Returns |
 |---|---|---|
@@ -265,8 +267,8 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `guardrails.sh resolve [--run-dir D] [--role R]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
 | `guardrails.sh table [--run-dir D]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
-| `guardrails.sh loosen --level L --who NAME --reason TEXT --id ID --strict N --evidence TEXT` | the retro's loosening path: lowers an existing guardrail's strictness and records a `loosen` move with its evidence, who and run | 2 with no evidence or an agent `--who`, 5 when `--strict` isn't lower, 7 for the scope floor (`key: scope-floor`) or a defer-only gate (`defer_only: true`) |
-| `guardrail-health.sh health\|spot-check\|spot-check-record\|audit\|hands-on\|backstop --runs DIR...` | the retro's guardrail health (fired, bypassed or never fired, with origin), loosen and tighten proposals at the threshold, the spot-check, miss and discard audits, the hands-on question and nudge, and the backstop scan. Reads run history, changes nothing but the `spot-check` event. Rules and event shapes: `references/guardrail-health.md`; tested in `tests/guardrail-health.test.sh` | JSON, or a markdown table with `--table` |
+| `guardrails.sh loosen --level L --who NAME --reason TEXT --id ID --strict N --evidence TEXT` | the retro's loosening path: lowers an existing guardrail's strictness and records a `loosen` move with its evidence, who and run | 2 with no evidence or an agent `--who`, 5 when `--strict` isn't lower, 7 for the scope floor (`key: scope-floor`) or a defer-only gate (`defer_only: true`), 8 when the latest `health --record` report doesn't propose it (or there is none); `--override-reason TEXT [--run-dir D]` proceeds and records the reason and who as a bypass |
+| `guardrail-health.sh health\|spot-check\|spot-check-record\|audit\|hands-on\|backstop --runs DIR...` | the retro's guardrail health (fired, bypassed or never fired, with origin), loosen and tighten proposals at the threshold, the spot-check, miss and discard audits, the hands-on question and nudge, and the backstop scan. Reads run history, changes nothing but the `spot-check` event and, with `health --record`, the latest report `loosen` follows (`ARTISAN_HEALTH_DIR`). Rules and event shapes: `references/guardrail-health.md`; tested in `tests/guardrail-health.test.sh` | JSON, or a markdown table with `--table` |
 | `guardrails.sh sources` | each source's current commit | JSON |
 
 ## Slice gates

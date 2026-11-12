@@ -23,6 +23,10 @@ An event belongs to a guardrail when its `guardrail` is the guardrail's `id`, or
 - **Guardrail conflicts** (`resolve`'s `conflicts` and `overridden`) are carried in the output for the retro to raise.
 - Fewer events than the threshold propose nothing.
 
+## Loosening follows a report
+
+`health --record` keeps the report (`id` `health-<epoch>`, `date`, `runs`, `threshold`, `proposals`) as the latest one, in `ARTISAN_HEALTH_DIR` (default `<config dir>/artisan-agent-health/latest.json`). `guardrails.sh loosen` reads it: it proceeds only if the report proposes loosening that guardrail, and records `report: {id, date}` on the `loosen` move; otherwise it exits 8 saying whether no report exists or the latest one doesn't propose it. `--override-reason` proceeds without one and records `override: {reason, by}` on the move; with `--run-dir` it also appends a `guardrail-bypassed` event (`guardrail`, `reason: "loosened without a health report: <reason>"`, `by`) to that run's state file, which the next health report counts as loosen evidence.
+
 ## Audits
 
 | Command | What it does |

@@ -232,6 +232,7 @@ test_v_the_ticket_comment_is_the_contract_in_the_state_file() {
   assert_contains "$comment" "the verifier says **pass**, 2 of 2 criteria met"
   assert_contains "$comment" "| hello.txt exists | yes | sh check.sh: suite ok |"
   assert_contains "$comment" "| It says hi | yes | sh check.sh: suite ok |"
+  assert_contains "$comment" "- **Tests the worker ran:** \`sh check.sh\` → suite ok (the full suite runs at the merge gate)"
   assert_contains "$comment" "- Whether hi needs a newline"
   assert_contains "$comment" "| Which file? | hello.txt | HELLO | engineering taste | provisional |"
   assert_contains "$comment" "- **Cost:** \$0.02 (worker \$0.01, verifier \$0.01) against an estimate of \$0.25"
