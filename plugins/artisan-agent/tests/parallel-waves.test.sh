@@ -299,7 +299,8 @@ test_merges_are_serial_with_the_suite_after_each_and_a_red_suite_blocks_only_its
   assert_eq "2" "$(state_get '[.decisions[] | select(.status == "waiting") | .ticket] | join(" ")')"
   (cd "$INTEGRATION" && [ ! -e BROKEN ]) || fail "the red merge was not undone"
   assert_eq "merge merge" "$(state_get '[.events[] | select(.event == "merge") | .event] | join(" ")')"
-  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
+  # #2's red check raised its exception gate; with nothing else left, the run parks on it (#70).
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: parked"
 }
 
 # A seeded conflict: tickets 1 and 2 both write greeting.txt, though each
