@@ -570,7 +570,7 @@ failure_evidence() {
   if [ -f "$res" ]; then
     jq -r '
       "- Its evidence record said: status \(.status // "-")"
-        + (if .tests then ", suite_passed \(.tests.suite_passed | tostring) (\(.tests.summary // "-"))" else "" end),
+        + (if .tests then ", covering tests \((.tests.files // []) | join(" ")) \(if .tests.suite_passed == true then "passed" else "failed" end) (\(.tests.summary // "-"))" else "" end),
       ((.acceptance // [])[] | select(.met != true) | "- Not met: \(.criterion) (\(.evidence.why // "no reason given"))"),
       ((.unsure // [])[] | "- Unsure: \(.)"),
       (if .notes then "- Notes: \(.notes)" else empty end)' "$res" 2>/dev/null || true
