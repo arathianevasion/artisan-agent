@@ -92,6 +92,8 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
+
+**The draft's shape.** Per ticket in scope: `title`, `model`, `blocked_by`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). `blocked_by` is required: the ticket numbers of its open blockers, copied from `resolve-scope.sh`'s `tickets[].blocked_by` (native dependencies, or the body's "Blocked by" line where the tracker has none; a blocker outside the scope is kept). `[]` is valid; a ticket with no `blocked_by` field makes `plan.sh build` exit 1. The critical path, a hands-on pick's delay and parking all read it. `plan.sh` makes no tracker calls.
 | `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
 ## The project config
@@ -159,7 +161,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `to-plan.sh check <plans> --graph F` | every ticket in exactly one plan, no blocker in a later plan | 0, 1 |
 | `to-plan.sh render <plans> --graph F` | the approval view: a table of plans, then each plan's tickets with blockers, estimates and acceptance criteria, then warnings | 0, 1 |
 | `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent]` | creates the `plan` issues, sub-issues and blocking | 0, 1 |
-| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out | 0, 1, 2, 3 |
+| `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out, each with its open `blocked_by` (a failed blocker read exits 1 naming the ticket) | 0, 1, 2, 3 |
 
 **The graph** is a JSON file the chat completes after `graph`: per ticket `slice` (what reviewable thing it helps make; none means its own slice) and an estimate, either `estimate_usd` or `model` with `expected.input_tokens` and `expected.output_tokens` priced from `references/model-prices.json` (the plan step's method). No estimate is refused; there are no defaults. The budget has no default either.
 
