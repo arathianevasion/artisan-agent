@@ -101,12 +101,13 @@ team_repo() {
 }
 
 guardrail_boundary() { # -> {value, level, source} or nothing
-  local v repo
+  local v repo tf
   v=$(git -C "$MAIN" show HEAD:CODING_STANDARDS.md 2>/dev/null | boundary_in)
   if [ -n "$v" ]; then jq -nc --arg v "$v" '{value: $v, level: "product", source: "guardrail"}'; return; fi
   repo=$(team_repo)
-  if [ -n "$repo" ] && [ -f "$TEAM_CACHE/$(printf %s "$repo" | tr / _)/CODING_STANDARDS.md" ]; then
-    v=$(boundary_in <"$TEAM_CACHE/$(printf %s "$repo" | tr / _)/CODING_STANDARDS.md")
+  tf="$TEAM_CACHE/$(printf %s "$repo" | tr / _)/CODING_STANDARDS.md"
+  if [ -n "$repo" ] && [ -f "$tf" ]; then
+    v=$(boundary_in <"$tf")
     if [ -n "$v" ]; then jq -nc --arg v "$v" '{value: $v, level: "team", source: "guardrail"}'; return; fi
   fi
   if [ -f "$HOME_DIR/CODING_STANDARDS.md" ]; then
@@ -235,7 +236,7 @@ cmd_cut() {
   branch=$(jq -r .branch <<<"$pr"); base=$(jq -r .base <<<"$pr"); repo=$(get -r .repo)
   build_branch "$pr"
   if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
-    git -C "$MAIN" push -q -f origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
+    git -C "$MAIN" push -q origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
   fi
   [ -n "$title" ] || title="Run $RUN_ID, PR $n of $(jq length <<<"$plan"): $(jq -r '.tickets | map("#" + .) | join(", ")' <<<"$pr")"
   url=$(gh pr create -R "$repo" --base "$base" --head "$branch" --title "$title" --body-file "$body") \
@@ -248,8 +249,6 @@ cmd_cut() {
 }
 
 # ------------------------------------------------------------------ packet
-
-tref() { get -r --arg t "$1" '"#\($t)" + ((.plan.tickets[$t].title // null) | if . then " (\(.))" else "" end)'; }
 
 packet() {
   local def b gview title

@@ -85,7 +85,7 @@ test_the_artisan_moves_a_slice_or_risk_gate() {
   assert_eq '{"kind":"risk","after":"2","tests":["new-seam"]}' "$(jq -c '.gates[2]' draft.json)"
   assert_eq '{"kind":"slice","slice":"billing","tickets":["2","3"]}' "$(jq -c '.gates[1]' draft.json)"
   assert_contains "$(cat out.md)" "| slice-2 | slice | #2 (CSV header), #3 (billing tab) merge |"
-  assert_status 6 "$GP" move draft.json slice-1 --after 99
+  assert_status 4 "$GP" move draft.json slice-1 --after 99
 }
 
 test_the_end_gate_has_one_place_and_is_moved_by_removing_it() {

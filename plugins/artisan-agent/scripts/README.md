@@ -360,7 +360,6 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 | `chats.sh due [--chat C]` | either | exit 0 when the last sweep was at least `sweep_minutes` ago | 0 due, 1 not yet |
 | `gate.sh carried <run-dir>` | Engineering | the cards left undecided on gates closed by hand, for the end gate | 0 |
 
-
 # Gate placement, risk gates and the end gate
 
 `gate-plan.sh` places the run's gates at the plan step; `gate.sh` opens risk gates as it opens slice gates; `end-gate.sh` runs the end gate, cuts the PRs to `main` and ends the run. The rules: `references/end-gate.md`. Tested in `tests/gate-plan.test.sh`, `tests/risk-gates.test.sh` and `tests/end-gate.test.sh`, with the fake `gh` (which also answers `pr create`).

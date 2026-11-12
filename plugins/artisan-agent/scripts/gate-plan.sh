@@ -26,8 +26,9 @@
 # tracer-bullet, vocabulary-adr, judgement-criteria). Every command except
 # render rewrites the draft in place and prints the table.
 #
-# Exit status: 0 ok, 1 error, 2 usage (or an unknown escalation test), 6
-# refused (an exception gate, an unknown gate or ticket, moving the end gate).
+# Exit status: 0 ok, 1 error, 2 usage (or an unknown escalation test), 4 a
+# ticket outside the plan's scope, 6 refused (an exception gate, an unknown
+# gate, moving the end gate).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs jq.
 
@@ -145,7 +146,7 @@ cmd_move() {
   [ "$kind" != risk ] || [ -z "$tickets" ] || die "a risk gate is on one ticket: use --after" 2
   for t in $after $(printf '%s' "$tickets" | tr , ' '); do
     jq -e --arg t "$t" '(.scope // []) | map(tostring) | index($t)' "$f" >/dev/null \
-      || die "#$t is not in the plan's scope" 6
+      || die "#$t is not in the plan's scope" 4
   done
   if [ -n "$after" ]; then
     write "$f" '.gates[$i] |= (del(.tickets) | .after = $t)' --argjson i "$i" --arg t "$after"
