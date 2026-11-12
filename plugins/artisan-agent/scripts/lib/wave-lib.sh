@@ -11,7 +11,7 @@ open_run() { # run-dir
   state_require_run_dir "$1"
   RUN_DIR=$(cd "$1" && pwd)
   FILE=$(state_file "$RUN_DIR")
-  state_valid_file "$FILE" || die "unreadable or wrong schema version: $FILE"
+  state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
   RUN_ID=$(basename "$RUN_DIR")
   local common
   common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \

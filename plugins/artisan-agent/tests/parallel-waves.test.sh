@@ -139,19 +139,20 @@ verify() { # a fresh verifier; only its one-line verdict is read (6: failed atte
     esac
   done
 }
+keep_both() { # every unmerged path, however it is spelled: both sides kept
+  while IFS= read -r -d '' f; do
+    grep -v -E '^(<<<<<<<|=======|>>>>>>>)' "$f" >"$f.tmp"; mv "$f.tmp" "$f"; git add -- "$f"
+  done < <(git diff -z --name-only --diff-filter=U)
+}
 resolve_conflicts() { # the stand-in for /artisan-agent:resolve-conflicts
   echo "$1" >>"$WAVES/skill-calls"
   case "${RESOLVE_MODE:-both}" in
     both)
-      for f in $(git diff --name-only --diff-filter=U); do
-        grep -v -E '^(<<<<<<<|=======|>>>>>>>)' "$f" >"$f.tmp"; mv "$f.tmp" "$f"; git add "$f"
-      done
+      keep_both
       "$S/wave.sh" resolved "$R" "$1" ;;
     markers) git add -A; "$S/wave.sh" resolved "$R" "$1" ;;
     litter)
-      for f in $(git diff --name-only --diff-filter=U); do
-        grep -v -E '^(<<<<<<<|=======|>>>>>>>)' "$f" >"$f.tmp"; mv "$f.tmp" "$f"; git add "$f"
-      done
+      keep_both
       mkdir -p __pycache__ && touch __pycache__/x.pyc
       "$S/wave.sh" resolved "$R" "$1" ;;
     giveup) "$S/wave.sh" resolved "$R" "$1" --gave-up "both tickets rewrite the greeting" ;;
@@ -327,6 +328,42 @@ test_a_seeded_conflict_gets_one_resolve_conflicts_try_which_resolves_it() {
   assert_contains "$(git -C "$PROJECT" log -1 --format=%B "$m2")" "resolved by /artisan-agent:resolve-conflicts"
   assert_eq "$m2" "$(tail -n 1 "$WAVES/suite-runs")"
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-2.json")"
+}
+
+# Conflicted paths stay a list end to end (#101).
+test_a_conflict_on_a_path_with_a_space_is_recorded_as_one_element() {
+  setup_waves 3 1 2
+  printf 'FILE="docs/my file.md"\nCONTENT=hello\n' >"$WAVES/ticket-1"
+  printf 'FILE="docs/my file.md"\nCONTENT=howdy\n' >"$WAVES/ticket-2"
+  run_wave 1
+  assert_eq '["docs/my file.md"]' "$(state_get '[.events[] | select(.event == "conflict")][0].paths | tojson')"
+  assert_eq '["docs/my file.md"]' "$(state_get '.tickets["2"].resolve.paths | tojson')"
+  assert_eq "merged merged" "$(status_of 1) $(status_of 2)"
+}
+
+test_a_conflict_on_a_glob_path_is_resolved_cleanly_and_passes() {
+  setup_waves 3 1 2
+  printf 'FILE="src/[id].ts"\nCONTENT=hello\n' >"$WAVES/ticket-1"
+  printf 'FILE="src/[id].ts"\nCONTENT=howdy\n' >"$WAVES/ticket-2"
+  run_wave 1
+  assert_eq '["src/[id].ts"]' "$(state_get '[.events[] | select(.event == "conflict")][0].paths | tojson')"
+  assert_eq "merged merged" "$(status_of 1) $(status_of 2)"
+  assert_eq resolved "$(state_get '.tickets["2"].resolve.outcome')"
+}
+
+test_leftover_markers_in_a_glob_path_block_the_ticket() {
+  setup_waves 3 1 2
+  printf 'FILE="src/[id].ts"\nCONTENT=hello\n' >"$WAVES/ticket-1"
+  printf 'FILE="src/[id].ts"\nCONTENT=howdy\n' >"$WAVES/ticket-2"
+  # A clean file the unquoted glob `src/[id].ts` would match (src/i.ts) instead
+  # of the real path, which would hide its markers.
+  mkdir -p "$PROJECT/src" && echo clean >"$PROJECT/src/i.ts"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "decoy"
+  export RESOLVE_MODE=markers
+  run_wave 1
+  assert_eq blocked "$(status_of 2)"
+  assert_contains "$(state_get '.tickets["2"].resolve.why')" "conflict markers left in src/[id].ts"
 }
 
 test_a_conflict_it_cannot_resolve_blocks_the_ticket_with_branch_and_worktree_kept() {
