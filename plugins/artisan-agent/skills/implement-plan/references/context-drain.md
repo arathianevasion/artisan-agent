@@ -1,10 +1,10 @@
 # Context drain, hand-offs and resume
 
-The Artisan experiences one continuous chat, and no session in a run ever stops to compact. Each tier watches its own context and hands off before it fills: an orchestrator to a fresh orchestrator for the same wave, the Engineering chat by compacting out of sight. Scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh`, `run-digest.sh` and `compact-hook.sh`; their usage is in `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Context drain and resume".
+The Artisan experiences one continuous chat, and no session in a run ever stops to compact. Each tier watches its own context and hands off before it fills: an orchestrator to a fresh orchestrator for the same wave, the Engineering chat by Claude Code compacting it out of sight at 40%. Scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh`, `run-digest.sh` and `compact-hook.sh`; their usage is in `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Context drain and resume".
 
 ## The bands
 
-The same table for both tiers. The chat's outstanding agent is an orchestrator; an orchestrator's are its workers and its verifiers not yet judged.
+The table is the orchestrator's (the Engineering chat has its own rule, below). An orchestrator's outstanding agents are its workers and its verifiers not yet judged.
 
 | Context | Band | Does |
 |---|---|---|
@@ -46,13 +46,22 @@ After every event (a dispatch, a sweep that recorded something, a verdict, a mer
 
 ## The Engineering chat
 
-The chat checks with `drain.sh check <run folder> --tier chat --transcript <its transcript>` before it launches a wave and whenever it is woken.
+The chat never asks the Artisan to compact, and it has no `handoff` of its own: Claude Code compacts it on its own, out of sight. It checks with `drain.sh chat <run folder> --transcript <its transcript>` before it launches a wave, whenever it is woken, and before it sends a message. The output is `<state> <percent>%`:
 
-- **`dispatch`:** as usual.
-- **`process`:** an orchestrator is running; report and end your turn as usual. Launch nothing new when it ends.
-- **`handoff`:** idle, so the chat's hand-off is compaction out of sight. Claude can't compact its own session, so say one line and end your turn: "My context is at <n>%. Type `/compact` and I'll carry on exactly where we are; nothing is lost." Launch the next wave after it.
+| State | The chat does |
+|---|---|
+| `ok` | at or below `chat_context.warn_percent` (30): says nothing about context |
+| `warn` | above it: ends the message with one line that needs no action, such as "Context at 34%. It will compact out of sight at 40%." (the numbers are the config's) |
+| `warn ask` | past `chat_context.compact_percent` + 15 (55) with no compaction having fired: the warning, and once, in one line, "Type `/compact` and I'll carry on exactly where we are; nothing is lost." Printed once per climb; a reading back under the line (a compaction) arms it again |
+| `unknown -` | no transcript or usage yet: says nothing |
 
-**Compaction out of sight.** The chat's `PreCompact` hook steers the summary: it keeps the run, what the Artisan said about it in this chat and the step in progress, and leaves out tables and script output. The `SessionStart` hook with source `compact` then puts the run digest back into context. The Artisan does nothing; whether they type `/compact` or autocompact fires, the chat carries on.
+It launches waves whatever the percentage: the chat's band never holds a wave back. (`drain.sh decide|check --tier chat` remain for the orchestrator's use of the shared table and are not the chat's rule.)
+
+**Automatic compaction at 40%.** Project setup writes `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (Claude Code 2.1.322) into the project settings `env`, from `chat_context.compact_percent` (default 40), never over a value the project already set. The `env` block applies to every session in the project, orchestrators and workers included. An orchestrator's rules are unchanged: its `PreCompact` hook still blocks the compaction and leaves the marker, now often earlier, and it hands off as above.
+
+**The window is not forced.** `CLAUDE_CODE_AUTO_COMPACT_WINDOW` would reach every session, including workers on smaller-window models, for which 40% of a forced 1M could pass their real window. The chat's expected window is the config's `chat_context.window_tokens` (1,000,000, Opus), which `drain.sh chat` reads its percentage against (`ARTISAN_CONTEXT_WINDOW` overrides). Force the window only if a live check shows Claude Code detecting the chat's wrongly, and then find a way to apply it to the chat alone.
+
+**Compaction out of sight.** The chat's `PreCompact` hook steers the summary: it keeps the run, what the Artisan said about it in this chat and the step in progress, and leaves out tables and script output. The `SessionStart` hook with source `compact` then puts the run digest back into context. The Artisan does nothing; whether Claude Code compacts at 40% or they typed the fallback `/compact`, the chat carries on.
 
 ## Opening a session with a run open
 

@@ -14,6 +14,7 @@
 #                                          prove CHECK fails on a deliberate break in a throwaway worktree
 #   project-setup.sh motivation get [REPO]          print the recorded motivation (exit 1: none)
 #   project-setup.sh motivation set [REPO] < TEXT   record it in the individual home and commit there
+#   project-setup.sh motivation update [REPO] < TEXT  replace it (the retro, on the Artisan's yes) and commit
 #   project-setup.sh individual HEADING LINE        add LINE under HEADING in the individual
 #                                          CODING_STANDARDS.md and commit there (individual guardrails)
 #   project-setup.sh finish WT             push the branch and open (or reuse) the PR; with no new
@@ -242,6 +243,8 @@ cmd_apply() {
   # Settings: plugins enabled (never installed here), our marketplace, the deny rules;
   # the hook only as the fallback for plugin hooks that don't fire.
   "$GUARD/guard.sh" deny-json >"$tmp/deny.json"
+  # The Engineering chat compacts at the config's chat_context.compact_percent (default 40).
+  compact=$("$ROOT/scripts/config.sh" get chat_context.compact_percent --file "$wt/.artisan-agent/config.yml") || die "cannot read chat_context.compact_percent"
   if [ "$(jq -r '.hook_fallback // false' "$answers")" = true ]; then
     mkdir -p "$wt/.claude/hooks"
     hook_script >"$tmp/hook.sh"
@@ -252,9 +255,9 @@ cmd_apply() {
       echo "changed: wrote $HOOK_FILE"
     fi
     "$GUARD/guard.sh" settings-json --hook-command '"$CLAUDE_PROJECT_DIR"/'"$HOOK_FILE" >"$tmp/hook.json"
-    edit settings "$wt/.claude/settings.json" "$tmp/deny.json" "$tmp/hook.json"
+    edit settings "$wt/.claude/settings.json" "$tmp/deny.json" "$tmp/hook.json" --compact-percent "$compact"
   else
-    edit settings "$wt/.claude/settings.json" "$tmp/deny.json"
+    edit settings "$wt/.claude/settings.json" "$tmp/deny.json" --compact-percent "$compact"
   fi
 
   # Standards, each with "Always ask"; seeded from question 2.
@@ -406,6 +409,12 @@ cmd_prove_check() {
 
 need_home() { [ -d "$HOME_DIR/.git" ] || die "no individual home at $HOME_DIR; run machine-level setup first (machine-setup.sh init)"; }
 
+write_motivation() { # file id text: the motivation record, staged in the individual home
+  mkdir -p "$(dirname "$1")"
+  printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$2" "$2" "$(date +%Y-%m-%d)" "$3" >"$1"
+  git -C "$HOME_DIR" add -- "$1"
+}
+
 cmd_motivation() {
   local sub=${1:-} f text id
   [ $# -gt 0 ] && shift
@@ -417,11 +426,18 @@ cmd_motivation() {
       [ ! -s "$f" ] || die "a motivation is already recorded for $id ($f); setup never overwrites it"
       text=$(cat)
       [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing recorded (skipping is fine)"
-      mkdir -p "$(dirname "$f")"
-      printf '# Motivation: %s\n\nRepo: %s\nRecorded: %s\nPrivate: yes\n\n%s\n' "$id" "$id" "$(date +%Y-%m-%d)" "$text" >"$f"
-      git -C "$HOME_DIR" add -- "$f"
+      write_motivation "$f" "$id" "$text"
       git_commit "$HOME_DIR" "Motivation for $id" -- "$f"
       echo "changed: motivation for $id recorded in the individual home"
+      ;;
+    update)
+      need_home
+      text=$(cat)
+      [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "empty motivation; nothing changed"
+      write_motivation "$f" "$id" "$text"
+      if git -C "$HOME_DIR" diff --cached --quiet -- "$f"; then echo "unchanged: motivation for $id"; exit 0; fi
+      git_commit "$HOME_DIR" "Motivation for $id updated${ARTISAN_RUN_ID:+ at the retro of run $ARTISAN_RUN_ID}" -- "$f"
+      echo "changed: motivation for $id updated in the individual home"
       ;;
     *) usage ;;
   esac

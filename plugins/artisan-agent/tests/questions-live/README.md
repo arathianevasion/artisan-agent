@@ -12,3 +12,7 @@ live.sh verify "$SB/live"
 `claude-sonnet-5-5`, $0.29, 12 turns, all ten checks passed: the worker built `todo.done` test-first, filed a `needs-triage` ticket (three options for the format, a recommendation, the "Always ask" item as criterion, split off), logged the finding, left the second criterion unmet and picked no format.
 
 Not covered here, because it needs a real run: a worker ending `blocked` with `--blocking`, which `tests/questions.test.sh` covers with scripted workers.
+
+## Hooks and user settings (#105)
+
+`live.sh` runs with the flags from `tests/helpers/live-hooks.sh`: the plugin's hooks are active and the Artisan's user settings stay out. It fails unless a SessionStart hook left its line in `ARTISAN_HOOK_PROOF`.

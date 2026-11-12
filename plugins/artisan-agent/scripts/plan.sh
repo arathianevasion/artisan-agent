@@ -16,6 +16,10 @@
 #   overrides      {key: {value, project}} for every --set; never written to config.yml
 #   max_agents, attempts_per_ticket   from the config
 #   tickets.<t>.estimate_usd, .estimate_basis, .caps
+#   hands_on       when the draft has a "hands_on" object {ticket, focus, minutes?}
+#                  (at most one per plan; blocked_by per ticket gives the critical
+#                  path): the ticket, its focus, whether it is on the critical path
+#                  and the delay it costs the run (human.sh annotate)
 #   estimate_usd   the total; budget_usd = total + overrun allowance
 #
 # Estimates, in estimated dollars:
@@ -153,6 +157,10 @@ cmd_build() {
   ' ${sets[@]+"${sets[@]}"} 2>&1); then
     die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
   fi
+  # The draft's one hands-on ticket, if it names one (human.sh annotate).
+  if [ "$(jq -r '.hands_on != null' "$draft")" = true ]; then
+    out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
+  fi
   printf '%s\n' "$out"
 }
 
@@ -175,15 +183,29 @@ cmd_render() {
       ( $waves | to_entries[]
         | (.key + 1) as $w
         | "### Wave \($w)",
-          "| Ticket | Wave | Model | Estimate | From | Expected output |",
+          "| Ticket | Model | Estimate | From | Expected output | Expected files |",
           "|---|---|---|---|---|---|",
           ( .value[] as $t | $p.tickets[$t] as $tk
-            | "| \(ticket($t)) (\($tk.title // "untitled")) | \($w) | \($tk.model) | \($tk.estimate_usd | money) | "
+            | "| \(ticket($t)) (\($tk.title // "untitled")) | \($tk.model) | \($tk.estimate_usd | money) | "
               + (if $tk.estimate_basis.mode == "history"
                  then "history: \($tk.estimate_basis.tickets) merged ticket(s), mean \($tk.estimate_basis.mean_usd | money) x \($tk.estimate_basis.multiplier)"
                  else "price: \($tk.estimate_basis.input_tokens) in / \($tk.estimate_basis.output_tokens) out tokens" end)
-              + " | \($tk.expected_output // "") |" ),
+              + " | \($tk.expected_output // "") | "
+              + (if ($tk.expected_files // []) == [] then "none declared"
+                 else ($tk.expected_files | map("`" + . + "`") | join(", ")) end) + " |" ),
+          ( [.value[] | select(($p.tickets[.].expected_files // []) == [])] as $bare
+            | if ($bare | length) > 0 then "" else empty end ),
+          ( .value[] as $t | select(($p.tickets[$t].expected_files // []) == [])
+            | "\(ticket($t)) runs alone: no expected files, so it'"'"'s treated as touching everything. Name its files to let it share a wave." ),
           "" ),
+      ( $p.hands_on // null | if . == null then empty else
+        "### Hands-on ticket",
+        "| Ticket | Focus | Critical path | Delay to the run |",
+        "|---|---|---|---|",
+        "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.focus) | \(if .on_critical_path then "yes" else "no (slack \(.slack_minutes) min)" end) | \(if .delay_minutes > 0 then "about \(.delay_minutes) min later" else "none" end) |",
+        "",
+        (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
+        "" end),
       "Total estimate: \($p.estimate_usd | money). Budget (estimate + \($p.config.overrun_allowance_percent)% overrun allowance): \($p.budget_usd | money).",
       "Max Agents: \($p.max_agents). Gates: \(if ($p.gates // []) == [] then "none" else ($p.gates | map(tojson) | join(", ")) end).",
       "",
