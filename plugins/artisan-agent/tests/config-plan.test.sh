@@ -195,7 +195,7 @@ test_an_estimate_below_the_models_minimum_is_raised_to_it() {
   assert_eq 6.88 "$(jq .budget_usd "$TEST_TMPDIR/plan.json")"
   local out
   out=$(plan render "$TEST_TMPDIR/plan.json")
-  assert_contains "$out" "| #10 (Typo) | 1 | claude-sonnet-5-5 | \$0.50 | minimum for claude-sonnet-5-5 (estimated \$0.25) |"
+  assert_contains "$out" "| #10 (Typo) | claude-sonnet-5-5 | \$0.50 | minimum for claude-sonnet-5-5 (estimated \$0.25) |"
   assert_contains "$out" "| minimum_estimates.claude-sonnet-5-5 | 0.5 |"
 }
 
