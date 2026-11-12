@@ -5,12 +5,15 @@
 # Rules and event shapes: ${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md.
 #
 # Usage (--runs takes run folders, oldest first; --table prints markdown):
-#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--table]
+#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--table] [--record]
 #       each guardrail in force (guardrails.sh resolve) as fired, bypassed (with
 #       reasons) or never fired, with its origin, and the moves its evidence
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
+#       --record keeps the report ({id, date, proposals}) as the latest one in
+#       ARTISAN_HEALTH_DIR (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health/latest.json):
+#       `guardrails.sh loosen` acts only on a guardrail that report proposes.
 #   guardrail-health.sh spot-check --runs DIR... [--count N]
 #       about N (default 3) decisions a worker made alone that no gate showed
 #   guardrail-health.sh spot-check-record --run DIR --ticket T --card I --answer same|differently [--area A] [--guardrail ID]
@@ -42,6 +45,7 @@ usage() { state_usage "$0"; }
 
 RUNS=()
 TABLE=0
+RECORD=0
 THRESHOLD=3
 MISSES=""
 VALUE_OPTS=""   # a command's own options that take a value; each lands in OPT_<name>, dashes as underscores
@@ -52,6 +56,7 @@ parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, OPT_*, REST (array of un
       --runs) shift
         while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do RUNS+=("$1"); shift; done ;;
       --table) TABLE=1; shift ;;
+      --record) RECORD=1; shift ;;
       --threshold) [ $# -ge 2 ] || usage; THRESHOLD=$2; shift 2 ;;
       --misses) [ $# -ge 2 ] || usage; MISSES=$2; shift 2 ;;
       *) if [[ " $VALUE_OPTS " == *" $1 "* ]]; then
@@ -151,6 +156,14 @@ cmd_health() {
   resolved=$("$SCRIPT_DIR/guardrails.sh" resolve)
   out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
     '{states: $states, misses: $misses, resolved: $resolved} | '"$HEALTH_JQ")
+  if [ "$RECORD" = 1 ]; then
+    local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now
+    now=$(state_now)
+    mkdir -p "$dir"
+    jq -n --argjson now "$now" --argjson out "$out" \
+      '{id: "health-\($now)", date: ($now | todate), runs: $out.runs, threshold: $out.threshold, proposals: $out.proposals}' >"$dir/latest.json.tmp.$$"
+    mv "$dir/latest.json.tmp.$$" "$dir/latest.json"
+  fi
   if [ "$TABLE" = 1 ]; then health_table "$out"; else printf '%s\n' "$out"; fi
 }
 

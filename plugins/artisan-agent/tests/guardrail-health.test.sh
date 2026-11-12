@@ -168,8 +168,15 @@ test_the_backstop_flags_a_direct_commit_a_pr_with_no_run_and_a_ticket_closed_out
   assert_contains "$("$H" backstop --runs "$(R r1)" --repo-dir "$PROJECT" --main main --prs "$TEST_TMPDIR/prs.json" --closed "$TEST_TMPDIR/closed.json" --table)" "| ticket closed outside a run | #77 |"
 }
 
+# health_report_proposing_loosen ID: three bypasses of ID in three runs, recorded as the latest health report
+health_report_proposing_loosen() {
+  run r1 "[$(bypass "$1" a)]"; run r2 "[$(bypass "$1" b)]"; run r3 "[$(bypass "$1" c)]"
+  "$H" health --runs "$(R r1)" "$(R r2)" "$(R r3)" --record >/dev/null
+}
+
 test_loosening_records_the_move_with_its_evidence_and_who() {
   setup "$(g gr kt 3)"
+  health_report_proposing_loosen gr
   "$G" loosen --level individual --who Andrew --reason "retro r1" --id gr --strict 2 --run r1 \
     --evidence "3 bypasses: hotfix, hotfix, spike" >/dev/null
   line=$(jq -c 'select(.id == "gr")' "$ARTISAN_HOME/guardrails.jsonl")
@@ -202,4 +209,42 @@ test_a_missing_run_folder_or_flag_value_is_an_error_not_a_partial_answer() {
   assert_status 1 "$H" health --runs "$(R r1)" "$TEST_TMPDIR/nope"
   assert_status 2 "$H" health
   assert_status 2 "$H" backstop --runs "$(R r1)" --since
+}
+
+test_loosening_with_no_health_report_refuses_naming_what_is_missing() {
+  setup "$(g gr kt 3)"
+  before=$(git -C "$ARTISAN_HOME" rev-parse HEAD)
+  assert_status 8 "$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e
+  assert_contains "$("$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e 2>&1 || true)" "no guardrail-health report"
+  assert_eq "$before" "$(git -C "$ARTISAN_HOME" rev-parse HEAD)"
+}
+
+test_loosening_a_guardrail_the_latest_report_does_not_propose_refuses() {
+  setup "$(g gr kt 3)" "$(g other ko 3)"
+  health_report_proposing_loosen other
+  run r1 "[$(bypass other a), $(fired gr)]"; run r2 "[$(bypass other b), $(fired gr)]"; run r3 "[$(bypass other c), $(fired gr)]"
+  "$H" health --runs "$(R r1)" "$(R r2)" "$(R r3)" --record >/dev/null
+  assert_status 8 "$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e
+  assert_contains "$("$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e 2>&1 || true)" "does not propose loosening gr"
+}
+
+test_loosening_after_a_report_proposing_it_records_the_report() {
+  setup "$(g gr kt 3)"
+  health_report_proposing_loosen gr
+  id=$(jq -r '.id' "$CLAUDE_CONFIG_DIR/artisan-agent-health/latest.json")
+  "$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e >/dev/null
+  line=$(jq -c 'select(.id == "gr")' "$ARTISAN_HOME/guardrails.jsonl")
+  assert_eq "$id" "$(jq -r '.moves[0].report.id' <<<"$line")"
+  assert_eq "null" "$(jq -r '.moves[0].override' <<<"$line")"
+}
+
+test_loosening_with_an_override_reason_records_reason_and_who_as_a_bypass() {
+  setup "$(g gr kt 3)"
+  run r1 '[]'
+  "$G" loosen --level individual --who Andrew --reason x --id gr --strict 2 --evidence e \
+    --override-reason "the audit is a week away" --run-dir "$(R r1)" >/dev/null
+  line=$(jq -c 'select(.id == "gr")' "$ARTISAN_HOME/guardrails.jsonl")
+  assert_eq "the audit is a week away|Andrew" "$(jq -r '.moves[0].override | [.reason, .by] | join("|")' <<<"$line")"
+  assert_eq "guardrail-bypassed gr Andrew" "$(jq -r '.events[-1] | [.event, .guardrail, .by] | join(" ")' "$(R r1)/state.json")"
+  assert_contains "$(jq -r '.events[-1].reason' "$(R r1)/state.json")" "the audit is a week away"
 }
