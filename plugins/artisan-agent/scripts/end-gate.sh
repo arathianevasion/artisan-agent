@@ -318,7 +318,7 @@ packet() {
   echo "## Overall action"
   echo
   echo "- **approve**: the PRs to \`$(main_branch)\` are cut, the \`in-run\` labels come off and the retro is offered."
-  echo "- **change**: name what to change first; a rework ticket joins the run and the end gate waits for it."
+  echo "- **not yet**: say what is wrong. The end gate stays open and nothing is cut; a fix joins the run through its own plan step."
 }
 
 cmd_packet() { [ $# -eq 1 ] || usage; open_run "$1"; packet; }
