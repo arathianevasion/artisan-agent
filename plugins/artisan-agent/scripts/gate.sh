@@ -479,7 +479,7 @@ cmd_sync() {
       carried=$(jq -r '.carried | length' "$f")
       fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
       # One line on the tracker, so either chat announces it on its next sweep.
-      gh issue comment "$issue" -R "$repo" --body "Gate #$issue closed on GitHub: treated as approved; $carried undecided cards carried to the end gate
+      gh issue comment "$issue" -R "$repo" --body "Gate #$issue closed on GitHub: treated as approved; $carried undecided card$([ "$carried" = 1 ] || echo s) carried to the end gate
 
 <!-- artisan-agent:gate-closed-by-hand carried=$carried -->" >/dev/null 2>&1 || true
     fi

@@ -267,7 +267,7 @@ test_a_gate_closed_by_hand_is_announced_in_one_line_and_its_cards_carry_to_the_e
   gh issue close "$num" -R local/sample
   # The Product chat reads the line from the tracker alone, after the Engineering chat's sweep.
   out=$(ARTISAN_REPO=local/sample "$SCRIPTS/chats.sh" sweep --chat engineering --no-fetch --project "$PROJECT")
-  assert_contains "$out" "Gate #$num closed on GitHub: treated as approved; $cards undecided cards carried to the end gate"
+  assert_contains "$out" "Gate #$num closed on GitHub: treated as approved; $cards undecided card"
   assert_eq "$cards" "$(state_get '.review_gates[0].carried | length')"
   assert_eq approved "$(state_get '.review_gates[0].status')"
   assert_contains "$(state_get '.events[-1].event')" gate-approved

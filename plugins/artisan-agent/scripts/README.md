@@ -323,7 +323,7 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 
 # Two chats
 
-`chats.sh` is how the Engineering chat and the Product chat work through the tracker alone; the rules and the ownership table are in `references/two-chats.md`. Tested in `tests/chats.test.sh` (and `tests/gate.test.sh` for closing a gate by hand), with the fake `gh`.
+`chats.sh` is how the Engineering chat and the Product chat work through the tracker alone; the rules and the ownership table are in `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`. Tested in `tests/chats.test.sh` (and `tests/gate.test.sh` for closing a gate by hand), with the fake `gh`.
 
 | Command | Chat | Does | Exit status |
 | :- | :- | :- | :- |

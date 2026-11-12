@@ -145,7 +145,7 @@ cmd_send() {
 "
   done
   title="Plan: send $(printf '#%s, ' "${nums[@]}" | sed 's/, $//') to engineering"
-  existing=$(gh issue list -R "$REPO" --state open --label plan --json number,title,labels \
+  existing=$(gh issue list -R "$REPO" --limit 500 --state open --label plan --json number,title,labels \
     | jq -r --arg t "$title" '[.[] | select(.title == $t and any((.labels // [])[]; .name == "plan"))] | first | .number // empty')
   if [ -n "$existing" ]; then
     echo "$existing"
@@ -204,7 +204,7 @@ cmd_approve_envelope() {
 
 # One JSON line per open review-gate issue: number, kind, role, job, run, title.
 gate_lines() {
-  gh issue list -R "$REPO" --state open --label review-gate --json number,title,body,labels \
+  gh issue list -R "$REPO" --limit 500 --state open --label review-gate --json number,title,body,labels \
     | jq -c '.[] | select(any((.labels // [])[]; .name == "review-gate"))
       | (.body // "" | split("\n")) as $l
       | ($l | index("| Gate | Role needed | Slice | Tickets blocked |")) as $i
@@ -319,7 +319,7 @@ sweep_closed_gates() {
       "$SCRIPT_DIR/gate.sh" sync "${run_dir%/}" >/dev/null 2>&1 || true
     done
   fi
-  closed=$(gh issue list -R "$REPO" --state closed --label review-gate --json number,labels \
+  closed=$(gh issue list -R "$REPO" --limit 500 --state closed --label review-gate --json number,labels \
     | jq -r '.[] | select(any((.labels // [])[]; .name == "review-gate")) | .number')
   for n in $closed; do
     seen=$(mem_get --arg n "$n" '(.closed_announced // []) | index($n | tonumber) // empty')
@@ -372,7 +372,7 @@ sweep_changes() {
 # Open plan issues, oldest first, that haven't started: not in-run, not
 # blocked by an open plan, with at least one ticket not yet in a run.
 plan_rows() {
-  gh issue list -R "$REPO" --state open --label plan --json number,title,body,labels \
+  gh issue list -R "$REPO" --limit 500 --state open --label plan --json number,title,body,labels \
     | jq -c '.[] | select(any((.labels // [])[]; .name == "plan")) | select(any((.labels // [])[]; .name == "in-run") | not) | {number, title, body}' \
     | jq -s 'sort_by(.number)[]' | jq -c .
 }
@@ -447,14 +447,12 @@ EOF
 sweep_decisions() { # Engineering chat only: decisions waiting in a live run's state file
   local main f run n
   main=$(main_checkout)
-  SAW_DECISIONS=0
   for f in "$main"/.artisan-agent/runs/*/state.json; do
     [ -f "$f" ] || continue
     run=$(jq -r '.run_id // empty' "$f" 2>/dev/null) || continue
     n=$(jq -r '[(.decisions // [])[] | select(.status == "waiting")] | length' "$f" 2>/dev/null) || continue
     [ "${n:-0}" -gt 0 ] || continue
     echo "- Run $run has $n decision(s) waiting for the Artisan (\`wave.sh status\`)."
-    SAW_DECISIONS=1
     WAITING_KEYS="$WAITING_KEYS""decisions-$run-$n "
     WAITING_TEXT="$WAITING_TEXT""$n decision(s) waiting in run $run; "
   done
@@ -465,7 +463,7 @@ cmd_sweep() {
   ACTIONS=$(mktemp "${TMPDIR:-/tmp}/chats-actions.XXXXXX")
   WAITING_KEYS="" WAITING_TEXT=""
   trap 'rm -f "$ACTIONS"' EXIT
-  local before key fresh="" notified
+  local key fresh="" notified
   echo "# Sweep ($CHAT chat)"
   echo
   sweep_gates
