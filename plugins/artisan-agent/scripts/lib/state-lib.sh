@@ -280,10 +280,16 @@ state_usage() {
 #   failed_attempt(t; reason; at): attempt .attempts of ticket t failed; back to
 #     queued for a fresh worker, or blocked with an exception decision once it
 #     has used the run's attempts per ticket
+#   ticket_areas(ts): the areas of tickets ts (plan.tickets.<t>.areas), one list
+#   bug_found(t; gate; by; why; at): log a bug the Artisan found in ticket t at
+#     a review gate (#122): event bug-found, with t's areas and where "gate"
+#   guardrails_fired(gate; at): one guardrail-fired event per guardrail that
+#     opened the gate (its `guardrails`, [{guardrail, area?}])
 #   slice_gates: the review gates placed on tickets: the plan's slice and
 #     risk gates, and a risk gate per ticket whose evidence holds a new-seam
 #     card (criterion 3) no planned risk gate covers; each {id, kind, why,
-#     slice, role, problem, solution, tickets} (references/review-gates.md,
+#     slice, role, problem, solution, guardrails, tickets}; guardrails is
+#     [{guardrail: "area:<name>", area}] for an area's risk gate, else null (references/review-gates.md,
 #     references/end-gate.md)
 #   gate_due(g): every ticket of gate g merged (or closed) and the gate not
 #     yet answered (approved, bypassed, deferred or redirected: gate-action.sh)
@@ -302,6 +308,14 @@ STATE_JQ_DEFS='
       | .tickets[$t].cost_usd = ([.tickets[$t].attempt_costs[]] | add) end;
   def event($e; $at):
     .events = ((.events // []) as $log | $log + [{seq: (($log | length) + 1), at: $at} + $e]);
+  def ticket_areas($ts): [$ts[] as $t | (.plan.tickets[$t | tostring].areas // [])[]] | unique;
+  def bug_found($t; $gate; $by; $why; $at):
+    event({event: "bug-found", ticket: ($t | tostring), areas: ticket_areas([$t]), where: "gate", gate: $gate, by: $by}
+          + (if ($why // "") == "" then {} else {why: $why} end); $at);
+  def guardrails_fired($gate; $at):
+    reduce ($gate.guardrails // [])[] as $g (.;
+      event({event: "guardrail-fired", guardrail: $g.guardrail} + (if $g.area then {area: $g.area} else {} end)
+            + {gate: $gate.id, tickets: ($gate.tickets // [])}; $at));
   def new_ticket($t): {
     status: "queued", attempts: 0, pid: null,
     branch: (.plan.tickets[$t].branch // ("agent/" + $t)),
@@ -343,6 +357,8 @@ STATE_JQ_DEFS='
           slice: ($g.slice // (if $g.kind == "risk" and $g.after != null then "#\($g.after)" else "slice \($k + 1)" end)),
           role: ($g.role // "Engineering (QA)"),
           problem: ($g.problem // null), solution: ($g.solution // null),
+          guardrails: ([($g.tests // [])[] | select(startswith("area:")) | {guardrail: ., area: .[5:]}]
+                       | if . == [] then null else . end),
           tickets: ([($g.tickets // (if $g.after != null then [$g.after] else null end)
                       // [$s.plan.tickets | to_entries[] | select($g.slice != null and .value.slice? == $g.slice) | .key])
                      | .. | scalars | tostring] | unique_by(tonumber? // .))}

@@ -37,10 +37,16 @@
 #       one to change."
 #   gate.sh packet <run-dir> <gate-id | issue>
 #       the full packet (the issue body), as opened or as it would be now.
-#   gate.sh change <run-dir> <issue> <card> <choice> [--why W] [--by NAME]
+#   gate.sh change <run-dir> <issue> <card> <choice> [--why W] [--by NAME] [--bug]
 #       "change" on one card: a rework ticket in this run (in scope, queued,
 #       a native blocker of the slice's dependents), the decision recorded.
+#       --bug: the Artisan found a bug in the card's ticket; a bug-found
+#       event (tighten evidence in its areas) is logged in the same write.
 #       Prints the rework ticket's number.
+#   gate.sh bug <run-dir> <ticket> --gate <gate-id> [--why W] [--by NAME]
+#       a bug the Artisan found in a ticket at a gate with no card to change
+#       for it (the end gate "end", an urgent one "urgent-<t>"): logs
+#       bug-found. 4 when the ticket is not in the run.
 #   gate.sh guardrail <run-dir> <issue> <card> <team|product|individual>
 #                     <ticket|area|everywhere> [--area A] [--why W] [--by NAME]
 #       "make it a guardrail" on one card: kept, with a guardrail lesson
@@ -64,6 +70,12 @@
 # change on it opens a rework ticket without blocking the dependents, which
 # already ran. Redirect, bypass, defer, exception gates and parking:
 # gate-action.sh (references/gate-actions.md).
+#
+# Every gate-decision event carries outcome (keep or change), redirect
+# (false here; gate-action.sh logs a redirect's) and areas (the card's
+# ticket's), for guardrail health (references/guardrail-health.md). A gate a
+# guardrail opened (an area's risk gate) records it under `guardrails` and
+# logs guardrail-fired when it opens.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held (sync and
 # open only; the Artisan's actions are kept and folded in later), 6 refused
@@ -212,7 +224,8 @@ cmd_open() {
           id: $v.gate.id, kind: $v.gate.kind, slice: $v.gate.slice, title: $v.gate.title,
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
-          status: "open", opened_at: $now, decisions: [], reworks: []}])
+          status: "open", opened_at: $now, decisions: [], reworks: []}
+          + (if $v.gate.guardrails then {guardrails: $v.gate.guardrails} else {} end)])
       | .provisional_shown = (((.provisional_shown // []) + $v.gate.tickets + $other) | unique)
       | .decisions += [{id: ((.decisions | length) + 1), kind: "review-gate", gate: $v.gate.id, issue: $num,
           question: "\($v.gate.title) is #\($num): \($n) decision(s), \($u) uncertaint\(if $u == 1 then "y" else "ies" end); it holds \(if $v.gate.dependents == [] then "nothing" else ($v.gate.dependents | map("#" + .number) | join(", ")) end). Keep all, or name one to change (gate.sh chat).",
@@ -220,6 +233,7 @@ cmd_open() {
       | event({event: "gate-opened", gate: $v.gate.id, issue: $num, tickets: $v.gate.tickets,
                dependents: ($v.gate.dependents | map(.number))}; $now)
       | event({event: "provisional-shown"}; $now)
+      | guardrails_fired($v.gate; $now)
     end' --argjson num "$num" --argjson v "$(cat "$view")"
   echo "$num"
 }
@@ -259,6 +273,14 @@ card_json() { # card-number
 # The one filter that writes an action into the state file. Applying the same
 # action twice changes nothing (its key is recorded on its decisions).
 ACTION_FILTER='
+  # The gate-decision event health reads (#122): the outcome, never a
+  # redirect here (gate-action.sh logs those), and every area of the card'"'"'s
+  # ticket; a card flagged as a bug also logs bug-found.
+  def decision_events($a):
+    $a.decisions[0] as $d
+    | event({event: "gate-decision", gate: $a.gate, card: $d.card, by: $a.by,
+             outcome: $d.outcome, redirect: false, areas: ticket_areas([$d.ticket])}; $now)
+    | if $d.bug == true then bug_found($d.ticket; $a.gate; $a.by; ($d.why // ""); $now) else . end;
   . as $s0
   | ((.review_gates // []) | map(.id) | index($a.gate)) as $i
   | if $i == null or any(.review_gates[$i].decisions[]; .action == $a.key) then .
@@ -274,6 +296,7 @@ ACTION_FILTER='
               + {title: $a.rework.title, rework_of: $f, gate: $a.gate})
           | (if .tickets[$r] == null then .tickets[$r] = new_ticket($r) else . end)
           | .review_gates[$i].reworks += [{card: $a.decisions[0].card, ticket: $r}]
+          | decision_events($a)
           | event({event: "rework", ticket: $r, from: $f, gate: $a.gate, card: $a.decisions[0].card}; $now)
         elif $a.type == "approve" then
           .review_gates[$i].status = "approved" | .review_gates[$i].approved_at = $now
@@ -286,8 +309,7 @@ ACTION_FILTER='
              else . end)
           | event({event: "gate-approved", gate: $a.gate, issue: .review_gates[$i].issue, by: $a.by}
                   + (if $a.closed_on_tracker then {closed_on_tracker: true, carried: $a.carried} else {} end); $now)
-        else
-          event({event: "gate-decision", gate: $a.gate, card: $a.decisions[0].card, by: $a.by}; $now)
+        else decision_events($a)
         end
     end'
 
@@ -320,10 +342,11 @@ new_action() { # gate-id type by: a fresh action file's path
   printf '%s\n' "$f"
 }
 
-parse_opts() { # sets BY WHY CONF AREA LEVEL REACH
-  BY=Artisan WHY= CONF= AREA= LEVEL= REACH=
+parse_opts() { # sets BY WHY CONF AREA LEVEL REACH BUG (--bug only where BUG_OK=1)
+  BY=Artisan WHY= CONF= AREA= LEVEL= REACH= BUG=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      --bug) [ "${BUG_OK:-0}" = 1 ] || usage; BUG=1; shift ;;
       --by) [ $# -ge 2 ] || usage; BY=$2; shift 2 ;;
       --why) [ $# -ge 2 ] || usage; WHY=$2; shift 2 ;;
       --confidence) [ $# -ge 2 ] || usage; CONF=$2; shift 2 ;;
@@ -354,7 +377,7 @@ cmd_change() {
   open_run "$1"
   local issue="$2" n="$3" choice="$4" card= repo= dec= num= url= gid= t= f= title=
   shift 4
-  parse_opts "$@"
+  BUG_OK=1 parse_opts "$@"
   open_gate "$issue"
   card=$(card_json "$n")
   repo=$(get '.repo')
@@ -392,7 +415,8 @@ At the slice gate the Artisan changed a decision #\(.ticket) made alone.
   if [ "$(jq -r .status <<<"$GATE")" = open ]; then
     for d in $(jq -r '.dependents[].number' <<<"$GATE"); do add_blocker "$d" "$num" "$gid"; done
   fi
-  dec=$(decision_from "$card" change "$choice" | jq -c --argjson r "$num" '. + {rework: ($r | tostring)}')
+  dec=$(decision_from "$card" change "$choice" | jq -c --argjson r "$num" --argjson bug "$BUG" \
+    '. + {rework: ($r | tostring)} + (if $bug == 1 then {bug: true} else {} end)')
   gh issue comment "$issue" -R "$repo" --body "Card $n changed by $BY: \"$choice\". Rework ticket #$num, in this run; the slice's dependents wait for it too." >/dev/null \
     || echo "gate.sh: could not comment on #$issue" >&2
   f=$(new_action "$(jq -r .id <<<"$GATE")")
@@ -474,6 +498,27 @@ cmd_approve() {
   rm -f "$f.comment.md"
   record "$f"
   echo "approved #$issue: $(jq -r 'if .dependents == [] then "nothing in the run waited on it" else (.dependents | map("#" + .number) | join(", ")) + " can dispatch in the next wave" end' <<<"$GATE")"
+}
+
+# A bug the Artisan found in a ticket at a review gate that has no card to
+# change for it: the end gate, an urgent end gate, or any gate by name.
+cmd_bug() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local t="$2" gate=""
+  shift 2
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --gate) [ $# -ge 2 ] && [ -n "$2" ] || usage; gate=$2; shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  [ -n "$gate" ] || usage
+  parse_opts ${rest[@]+"${rest[@]}"}
+  [ "$(get --arg t "$t" '.plan.tickets[$t] != null')" = true ] || state_die 4 "gate.sh: #$t is not a ticket of this run"
+  apply 'bug_found($t; $g; $by; $why; $now)' --arg t "$t" --arg g "$gate" --arg by "$BY" --arg why "$WHY"
+  echo "bug in #$t recorded at $gate"
 }
 
 # --------------------------------------------------------------------- sync
@@ -596,5 +641,6 @@ case "$cmd" in
   change) cmd_change "$@" ;;
   guardrail) cmd_guardrail "$@" ;;
   approve) cmd_approve "$@" ;;
+  bug) cmd_bug "$@" ;;
   *) usage ;;
 esac

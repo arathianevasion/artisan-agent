@@ -188,3 +188,42 @@ test_a_legacy_risk_gate_flag_still_holds_its_dependents() {
   "$PLUGIN_ROOT/scripts/reconcile.sh" "$RUN_DIR" >/dev/null 2>&1 || true
   assert_eq "3" "$(state_get '.frontier | join(",")')"
 }
+
+# ------------------------------------------- guardrail events (#122)
+
+test_an_area_risk_gate_opening_logs_guardrail_fired_for_its_area_and_records_it_on_the_gate() {
+  setup_risk '[{"kind": "risk", "after": "1", "tests": ["new-seam", "area:billing"]}]'
+  merged_with_cards 1 none
+  "$G" open "$RUN_DIR" risk-1 >/dev/null
+  assert_eq '[{"guardrail":"area:billing","area":"billing"}]' "$(state_get '.review_gates[0].guardrails' | jq -c .)"
+  assert_eq '[{"guardrail":"area:billing","area":"billing","gate":"risk-1","tickets":["1"]}]' \
+    "$(state_get '[.events[] | select(.event == "guardrail-fired") | {guardrail, area, gate, tickets}]' | jq -c .)"
+  # Opening again logs nothing more.
+  "$G" open "$RUN_DIR" risk-1 >/dev/null
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "guardrail-fired")] | length')"
+}
+
+test_a_risk_gate_no_guardrail_opened_logs_no_guardrail_event() {
+  setup_risk '[{"kind": "risk", "after": "1", "tests": ["new-seam"]}]'
+  merged_with_cards 1 none
+  "$G" open "$RUN_DIR" risk-1 >/dev/null
+  assert_eq "null 0" "$(state_get '"\(.review_gates[0].guardrails) \([.events[] | select(.event | startswith("guardrail"))] | length)"')"
+}
+
+test_bypassing_a_gate_a_guardrail_opened_logs_guardrail_bypassed_with_reason_and_who() {
+  setup_risk '[{"kind": "risk", "after": "1", "tests": ["area:billing"]}]'
+  merged_with_cards 1 none
+  local num=
+  num=$("$G" open "$RUN_DIR" risk-1)
+  "$PLUGIN_ROOT/scripts/gate-action.sh" bypass "$RUN_DIR" "$num" --by Andrew --why "billing is frozen this week" >/dev/null
+  assert_eq '{"event":"guardrail-bypassed","guardrail":"area:billing","area":"billing","gate":"risk-1","reason":"billing is frozen this week","by":"Andrew"}' \
+    "$(state_get '.events[-1] | {event, guardrail, area, gate, reason, by}' | jq -c .)"
+}
+
+test_bypassing_a_gate_no_guardrail_opened_logs_no_guardrail_bypassed() {
+  setup_risk '[]'
+  merged_with_cards 1 none
+  "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 53
+  "$PLUGIN_ROOT/scripts/gate-action.sh" bypass "$RUN_DIR" "$(state_get '.review_gates[0].issue')" --why x >/dev/null
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "guardrail-bypassed")] | length')"
+}

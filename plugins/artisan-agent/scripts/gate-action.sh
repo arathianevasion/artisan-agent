@@ -15,22 +15,27 @@
 #       a review gate: keep all and close it (gate.sh approve). Refused (6)
 #       on an exception gate, which is bypassed or deferred, never approved.
 #   gate-action.sh redirect <run-dir> <issue> (--notes TEXT | --mine [--notes TEXT])
-#                  [--by NAME] [--why W]
+#                  [--by NAME] [--why W] [--bug]
 #       a review gate: send it back. --notes opens a rework ticket in this
 #       run for an agent; --mine opens it ready-for-human, for the Artisan.
 #       Either way it is a ticket of its own (its attempts are its own), it
 #       natively blocks the gate's dependents, and the gate closes as
-#       redirected. Prints the rework ticket's number.
+#       redirected. Prints the rework ticket's number. --bug: the Artisan
+#       found a bug in the gate's tickets (bug-found, tighten evidence in
+#       their areas, in the same write).
 #   gate-action.sh bypass <run-dir> <issue> [--by NAME] [--why W]
 #       either kind: the gate closes unreviewed and its dependents go ahead;
 #       recorded with who bypassed it, for the retro. On an exception gate the
-#       ticket leaves the run and no longer blocks its dependents.
+#       ticket leaves the run and no longer blocks its dependents. A gate a
+#       guardrail opened (its `guardrails`) also logs guardrail-bypassed,
+#       with the --why as its reason.
 #   gate-action.sh defer <run-dir> <issue> [--by NAME] [--why W]
 #       either kind: the dependents go ahead now; the gate stays open until
 #       the end gate (gate-action.sh deferred lists it there), where its cards
 #       can still be changed into rework tickets (gate.sh change).
-#   gate-action.sh retry <run-dir> <issue> --notes TEXT [--by NAME] [--why W]
-#   gate-action.sh reslice|take|drop <run-dir> <issue> [--by NAME] [--why W]
+#   gate-action.sh retry <run-dir> <issue> --notes TEXT [--by NAME] [--why W] [--bug]
+#   gate-action.sh take <run-dir> <issue> [--by NAME] [--why W] [--bug]
+#   gate-action.sh reslice|drop <run-dir> <issue> [--by NAME] [--why W]
 #       an exception gate: the Artisan's call on the ticket. retry: queued
 #       for a fresh worker given the notes, with one more attempt. reslice:
 #       out of the run, labelled needs-triage, to be sliced again. take:
@@ -167,11 +172,12 @@ find_gate() { # issue
 
 g() { jq -r "$@" <<<"$GATE"; }
 
-BY=Artisan WHY= NOTES= MINE=0
-parse_opts() {
-  BY=Artisan WHY= NOTES= MINE=0
+BY=Artisan WHY= NOTES= MINE=0 BUG=0
+parse_opts() { # --bug only where BUG_OK=1 (redirect, retry, take)
+  BY=Artisan WHY= NOTES= MINE=0 BUG=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      --bug) [ "${BUG_OK:-0}" = 1 ] || usage; BUG=1; shift ;;
       --by) [ $# -ge 2 ] && [ -n "$2" ] || usage; BY=$2; shift 2 ;;
       --why) [ $# -ge 2 ] || usage; WHY=$2; shift 2 ;;
       --notes) [ $# -ge 2 ] && [ -n "$2" ] || usage; NOTES=$2; shift 2 ;;
@@ -185,6 +191,10 @@ parse_opts() {
 # one-step write of the gate's answer: its status, the record kept for the
 # retro under "field", the gate's waiting decision decided as a decision
 # record, and the event. extra-filter runs first, for the ticket changes.
+# The events guardrail health reads go in the same write (#122): a bypass
+# of a gate a guardrail opened logs guardrail-bypassed per guardrail; a
+# redirect logs gate-decision (outcome change, redirect true, the tickets'
+# areas); --bug logs bug-found for each of the gate's tickets.
 record_answer() {
   local status="$1" choice="$2" field="$3" extra="$4" job=13
   shift 4
@@ -203,10 +213,21 @@ record_answer() {
     | ([.decisions[] | select(.status == "waiting" and (.issue | tostring) == $issue) | .id]) as $ids
     | reduce $ids[] as $id (.; decide($id; $d; $now))
     | event({event: "gate-\($status)", gate: .[$list][$x].id, issue: ($issue | tonumber),
-             kind: .[$list][$x].kind, choice: $choice, by: $by}; $now)' \
+             kind: .[$list][$x].kind, choice: $choice, by: $by}; $now)
+    | .[$list][$x] as $gt
+    | (if $status == "bypassed" then
+         reduce ($gt.guardrails // [])[] as $gr (.;
+           event({event: "guardrail-bypassed", guardrail: $gr.guardrail} + (if $gr.area then {area: $gr.area} else {} end)
+                 + {gate: $gt.id, reason: (if $why == "" then null else $why end), by: $by}; $now))
+       else . end)
+    | (if $choice == "redirect" then
+         event({event: "gate-decision", gate: $gt.id, card: null, by: $by, outcome: "change", redirect: true,
+                areas: ticket_areas($gt.tickets // [])}; $now)
+       else . end)
+    | (if $bug == 1 then reduce ($gt.tickets // [])[] as $bt (.; bug_found($bt; $gt.id; $by; $why; $now)) else . end)' \
     --arg list "$LIST" --arg issue "$(g .issue)" --arg status "$status" --arg choice "$choice" \
     --arg field "$field" --argjson job "$job" --arg by "$BY" --arg why "$WHY" --arg notes "$NOTES" \
-    --arg redirect "$REDIRECT" "$@"
+    --arg redirect "$REDIRECT" --argjson bug "$BUG" "$@"
 }
 REDIRECT=
 
@@ -310,7 +331,7 @@ cmd_redirect() {
   open_run "$1"
   local issue="$2" label= mode= title= num= url= r= from= d= body=
   shift 2
-  parse_opts "$@"
+  BUG_OK=1 parse_opts "$@"
   find_gate "$issue"
   [ "$KIND" != exception ] \
     || refuse "#$issue is an exception gate: send it back with gate-action.sh retry --notes, or take it yourself with gate-action.sh take"
@@ -468,7 +489,7 @@ cmd_retry() {
   open_run "$1"
   local issue="$2" t=
   shift 2
-  parse_opts "$@"
+  BUG_OK=1 parse_opts "$@"
   [ -n "$NOTES" ] || usage
   exception_only "$issue"
   t=$(g .ticket)
@@ -489,7 +510,7 @@ cmd_take() {
   open_run "$1"
   local issue="$2" t= prev=
   shift 2
-  parse_opts "$@"
+  BUG_OK=1 parse_opts "$@"
   exception_only "$issue"
   t=$(g .ticket)
   REDIRECT=self

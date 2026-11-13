@@ -538,3 +538,17 @@ test_bypass_still_lets_dependents_go_ahead() {
   assert_eq "[]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")"
   assert_eq "1 4" "$(frontier)"
 }
+
+# ------------------------------------------- guardrail health events (#122)
+
+test_a_redirect_logs_a_gate_decision_to_change_with_the_tickets_areas_and_a_flagged_bug() {
+  setup_run
+  local num=
+  num=$(open_slice_gate)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["uploads"]'
+  "$A" redirect "$RUN_DIR" "$num" --notes "Greet by name" --bug --by Andrew >/dev/null
+  assert_eq '{"card":null,"outcome":"change","redirect":true,"areas":["uploads"],"by":"Andrew"}' \
+    "$(state_get '.events[] | select(.event == "gate-decision") | {card, outcome, redirect, areas, by}' | jq -c .)"
+  assert_eq '{"ticket":"1","areas":["uploads"],"where":"gate","gate":"slice-1"}' \
+    "$(state_get '.events[] | select(.event == "bug-found") | {ticket, areas, where, gate}' | jq -c .)"
+}

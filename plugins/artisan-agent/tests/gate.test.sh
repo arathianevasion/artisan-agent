@@ -401,3 +401,41 @@ test_a_run_holds_the_dependent_at_the_gate_and_releases_it_on_keep_all() {
   assert_eq merged "$(state_get '.tickets["2"].status')"
   assert_eq "gate-opened gate-approved" "$(state_get '[.events[].event | select(startswith("gate-"))] | join(" ")')"
 }
+
+# ------------------------------------------- guardrail health events (#122)
+
+test_a_gate_decision_carries_its_outcome_redirect_and_the_tickets_areas() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing", "docs"]'
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  "$G" guardrail "$RUN_DIR" "$num" 2 product everywhere >/dev/null
+  "$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --by Andrew >/dev/null
+  assert_eq '[{"card":2,"outcome":"keep","redirect":false,"areas":["billing","docs"]},{"card":1,"outcome":"change","redirect":false,"areas":["billing","docs"]}]' \
+    "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, redirect, areas}]' | jq -c .)"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "bug-found")] | length')"
+}
+
+test_flagging_a_change_as_a_bug_logs_bug_found_at_the_gate_in_the_same_write() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"]'
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  "$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --bug --by Andrew >/dev/null
+  assert_eq '{"event":"bug-found","ticket":"1","areas":["billing"],"where":"gate","gate":"slice-1","by":"Andrew"}' \
+    "$(state_get '.events[] | select(.event == "bug-found") | {event, ticket, areas, where, gate, by}' | jq -c .)"
+  assert_eq true "$(state_get '.review_gates[0].decisions[0].bug')"
+}
+
+test_a_bug_found_at_the_end_gate_is_flagged_by_ticket() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"]'
+  "$G" bug "$RUN_DIR" 1 --gate end --by Andrew --why "totals off by a penny" >/dev/null
+  assert_eq '{"ticket":"1","areas":["billing"],"where":"gate","gate":"end","by":"Andrew","why":"totals off by a penny"}' \
+    "$(state_get '.events[-1] | {ticket, areas, where, gate, by, why}' | jq -c .)"
+  assert_status 4 "$G" bug "$RUN_DIR" 99 --gate end
+  assert_status 2 "$G" bug "$RUN_DIR" 1
+}
