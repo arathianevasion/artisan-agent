@@ -41,7 +41,7 @@
 #       ticket's dependents: next is still launch while the frontier has work.
 #       Status never writes the usage guard's state and never touches the
 #       tracker for it: the guard runs in the orchestrator's sweep and in
-#       launch, and a "usage guard: last verdict ..., taken <time>" line says
+#       launch, and a "usage guard: <verdict>, since <time>" line says
 #       what it last found.
 #
 # Usage, from the orchestrator:

@@ -416,10 +416,37 @@ test_the_sweep_runs_the_guard_and_parks_and_status_then_shows_its_last_verdict()
   assert_contains "$out" "next: parked"
   assert_contains "$out" "parked five-hour: the five-hour window is within the 20% reserve"
   when=$(state_get '.usage_verdict.at | strflocaltime("%a %d %b %H:%M %Z")')
-  assert_contains "$out" "usage guard: last verdict \"park five-hour 85%"
-  assert_contains "$out" "taken $when"
+  assert_contains "$out" "usage guard: park five-hour 85%"
+  assert_contains "$out" "since $when"
   # Status itself neither unparks nor re-parks: one park, one event.
   assert_eq 1 "$(state_get '[.events[] | select(.event == "parked")] | length')"
+}
+
+test_a_repeat_guard_reading_writes_nothing_and_a_changed_one_does() {
+  setup_budget
+  usage_reading 30 20
+  local before= first_at=
+  export ARTISAN_NOW=5000
+  "$B" guard "$RUN_DIR" >/dev/null
+  first_at=$(state_get .usage_verdict.at)
+  assert_eq 5000 "$first_at" "the first guard call records the verdict"
+  before=$(cat "$RUN_DIR/state.json")
+  export ARTISAN_NOW=5001
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq "$before" "$(cat "$RUN_DIR/state.json")" "the same reading a second later left state.json byte-identical"
+  # A second sweep and a second launch-style guard call hold to the same rule.
+  export ARTISAN_NOW=5002
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1 || true
+  export ARTISAN_NOW=5003
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq 5000 "$(state_get .usage_verdict.at)" "the verdict still says since when it was first seen"
+  # A changed reading is a changed verdict: it writes.
+  usage_reading 50 20
+  export ARTISAN_NOW=5004
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq 5004 "$(state_get .usage_verdict.at)" "a changed reading writes"
+  assert_contains "$(state_get .usage_verdict.line)" "5h 50%"
+  unset ARTISAN_NOW
 }
 
 test_the_sweep_opens_the_overrun_gate_as_before() {

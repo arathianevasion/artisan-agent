@@ -16,12 +16,15 @@
 #       crossing it opens the overrun gate (a review-gate issue holding the
 #       packet), queues an "overrun" decision and logs "overrun-gate". Work in
 #       flight is never stopped. Refuses with 12 while the run is halted.
-#       Every call also records its verdict and the time (usage_verdict).
+#       Every call records its verdict and the time it was first seen
+#       (usage_verdict), but writes only when the verdict (ok and line)
+#       changes: a repeat reading leaves the state file untouched.
 #   budget.sh parked <run-dir>
 #       read-only: the "parked <window> ..." line and exit 0 while the run is
 #       parked on plan usage (as the guard last left it), otherwise exit 1.
 #   budget.sh last <run-dir>
-#       read-only: the guard's last verdict and when it was taken.
+#       read-only: the guard's current verdict and since when it has held
+#       ("usage guard: <line>, since <time>").
 #   budget.sh usage <run-dir>
 #       the plan-window verdict alone, read-only: "ok 5h <p>% 7d <p>%",
 #       "park five-hour|seven-day <p>% ...resets <time>" or "park unknown <why>"
@@ -250,11 +253,17 @@ parked_line() {
     + (if .usage_park.resume then "; the Artisan said resume: waiting for a fresh reading under the limits" else "; waiting for the Artisan (budget.sh park)" end)'
 }
 
-# note_verdict verdict-json: the guard's last verdict and when it was taken,
-# for the status to show (it only reads).
+# note_verdict verdict-json: the guard's current verdict and when it was first
+# seen, for the status to show (it only reads). A call whose verdict (ok and
+# line) is the one on record writes nothing, so a repeat leaves the state
+# byte-identical; "at" is when this verdict began, not when it was last read.
 note_verdict() {
+  local line= same=
+  line=$(verdict_line "$1")
+  same=$(get --argjson v "$1" --arg line "$line" '.usage_verdict != null and .usage_verdict.ok == $v.ok and .usage_verdict.line == $line')
+  [ "$same" = true ] && return 0
   apply "$WHEN_JQ"'.usage_verdict = {ok: $v.ok, line: $line, at: $now}' \
-    --argjson v "$1" --arg line "$(verdict_line "$1")"
+    --argjson v "$1" --arg line "$line"
 }
 
 # usage_guard: 0 to carry on; otherwise prints the park and exits 18.
@@ -287,7 +296,7 @@ cmd_parked() {
 cmd_last() {
   open_run "${1:-}"
   get "$WHEN_JQ"'if .usage_verdict == null then "usage guard: not run yet (the sweep or wave.sh launch runs it)"
-    else "usage guard: last verdict \"\(.usage_verdict.line)\", taken \(.usage_verdict.at | when)" end'
+    else "usage guard: \(.usage_verdict.line), since \(.usage_verdict.at | when)" end'
 }
 
 # ------------------------------------------------------- the overrun gate
