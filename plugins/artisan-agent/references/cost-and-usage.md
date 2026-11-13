@@ -77,12 +77,14 @@ Claude Code shows plan usage and the context window only to the interactive stat
 | a window absent, or past its own `resets_at` | that window counts as empty |
 | otherwise | ok |
 
-Unknown stops dispatch exactly like a window near its limit. The first time the guard parks, it records `usage_park` (`window`, `used`, `limit`, `resets_at`, `why`, `resume`), queues a `usage` decision with its options and logs `parked` (`reason: "usage"`). `wave.sh status` then says `next: parked` with the `parked …` line. Offer the Artisan the options, with the reset time as printed:
+Unknown stops dispatch exactly like a window near its limit. The first time the guard parks, it records `usage_park` (`window`, `used`, `limit`, `resets_at`, `why`, `resume`), queues a `usage` decision with its options and logs `parked` (`reason: "usage"`). `wave.sh status` then says `next: parked` with the `parked …` line.
+
+**Who runs the guard.** `wave.sh status` only reads: it never writes the guard's state or opens a gate issue. It shows the park as the guard last left it (`budget.sh parked`) and, on a line of its own, the guard's last verdict with the time it was taken (`budget.sh last`, from `usage_verdict`). The guard itself runs from the orchestrator's sweep (`sweep.sh` runs `budget.sh guard` after its own pass, on the schedule the sweep already keeps), from `wave.sh dispatch`, and, between waves when no orchestrator is running, from the Engineering chat's `wave.sh launch`, before anything starts (a park or the overrun gate refuses the launch with 18 or 17). When a usage park and a wait behind open reviews hold together, `status` names both reasons; each logs one `parked` event, and clearing one leaves the run parked on the other. Offer the Artisan the options, with the reset time as printed:
 
 | The Artisan says | Call | Effect |
 |---|---|---|
 | resume after the reset | `budget.sh park <run-dir> resume` | at once if a fresh reading is already under the limits; otherwise dispatch carries on once one is (the next guard after the reset) |
-| raise the ceiling to P% | `budget.sh park <run-dir> raise <percent>` | a run override (`state.sh override`): seven-day ceiling P, or five-hour reserve 100 − P; refused (6) for an unknown reading or a lower ceiling |
+| raise the ceiling to P% | `budget.sh park <run-dir> raise <percent>` | a run override: seven-day ceiling P, or five-hour reserve 100 − P; refused (6) for an unknown reading or a lower ceiling. The override and the answer (and the end of the park, when the reading already clears the new limit) are one state write: a failure leaves the state as it was |
 | stop | `budget.sh park <run-dir> stop` | the run halts; work in flight finishes |
 
 Ending a park decides the `usage` decision and logs `unparked` (`how`, `by`); a raise logs `ceiling-raised`.

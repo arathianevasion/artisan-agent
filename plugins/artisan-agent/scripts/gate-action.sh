@@ -716,7 +716,7 @@ cmd_parked() {
   [ "$(get '
     ([.tickets[] | select(.status == "in_flight" or .status == "returned")] | length) == 0
     and ((.frontier // []) | length) == 0
-    and ([.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+    and ([.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate" and .kind != "usage"
           and (.kind != "exception" or .issue == null))] | length) == 0
     and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
          + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0')" = true ] || return 1
@@ -753,7 +753,10 @@ cmd_parked() {
   [ -n "$line" ] || return 1
   echo "$line"
   if [ "$record" -eq 1 ]; then
-    apply '(.events | last) as $last
+    # The last event that is not the usage park's own (#72 shares the "parked"
+    # event, with a reason): a usage park logged in between must not make the
+    # same review park log again.
+    apply '([.events[] | select(.reason != "usage" and .event != "resume-asked" and .event != "ceiling-raised")] | last) as $last
       | if $last.event == "parked" and $last.detail == $line then .
         else event({event: "parked", reason: "reviews", detail: $line}; $now) end' --arg line "$line"
   fi

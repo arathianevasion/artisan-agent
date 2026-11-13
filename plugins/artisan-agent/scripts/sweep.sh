@@ -2,7 +2,7 @@
 # The sweep: check every in-flight ticket and log new findings.
 # Field meanings: ${CLAUDE_PLUGIN_ROOT}/references/state-file.md
 #
-# Usage: sweep.sh <run-dir>
+# Usage: sweep.sh <run-dir> [--no-guard]
 #
 # For each ticket whose status is in_flight, in this order:
 #   1. a result file results/<ticket>.<attempt>.result.json -> the result is recorded
@@ -14,6 +14,10 @@
 # run's attempts per ticket, to blocked with an exception decision queued for
 # the Artisan. New lines in results/findings/<ticket>.jsonl join the findings
 # log. Running it again on the same files changes nothing.
+# Then it runs the plan-window and budget guard (budget.sh guard, #120): the
+# orchestrator's sweep is where a usage park or the overrun gate is noticed.
+# The reconciler and findings.sh pass --no-guard: wave.sh status reads only.
+# The guard's refusal (12, 17, 18) is not the sweep's: it prints it and goes on.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the lock is held by another live process.
 
@@ -24,6 +28,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 state_require_jq
 
+GUARD=1 guard_rc=0 guard_out=
+if [ "${2:-}" = --no-guard ]; then GUARD=0; set -- "$1"; fi
 [ $# -eq 1 ] || state_usage "$0"
 RUN_DIR=$1
 state_require_run_dir "$RUN_DIR"
@@ -151,3 +157,12 @@ sweep() {
 }
 
 state_with_lock "$RUN_DIR" sweep
+if [ "$GUARD" -eq 1 ]; then
+  guard_rc=0
+  guard_out=$("$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" 2>&1) || guard_rc=$?
+  case "$guard_rc" in
+    0) ;;
+    12 | 17 | 18) printf '%s\n' "$guard_out" >&2 ;;
+    *) printf '%s\n' "$guard_out" >&2; exit "$guard_rc" ;;
+  esac
+fi

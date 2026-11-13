@@ -107,10 +107,12 @@ test_sweeping_twice_on_the_same_files_changes_nothing() {
   "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 12 "$pid" 9999
   printf '{"text":"a"}\n' >"$RUN_DIR/results/findings/12.jsonl"
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
-  first=$(cat "$RUN_DIR/state.json")
+  # The guard's verdict carries the time it was taken (#120); nothing else moves.
+  first=$(jq 'del(.usage_verdict.at)' "$RUN_DIR/state.json")
   export ARTISAN_NOW=3000
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
-  assert_eq "$first" "$(cat "$RUN_DIR/state.json")" "state after a second sweep"
+  assert_eq "$first" "$(jq 'del(.usage_verdict.at)' "$RUN_DIR/state.json")" "state after a second sweep"
+  assert_eq 3000 "$(state_get .usage_verdict.at)" "the guard's last verdict is stamped afresh"
 }
 
 test_the_sweep_is_refused_while_another_writer_holds_the_lock() {

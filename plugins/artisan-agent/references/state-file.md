@@ -89,6 +89,7 @@ Top level:
 | `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, launched_at}`, plus `cost_usd` once `wave.sh status` has seen it end, and `handoff` (`{reason, percent, at}`) when it handed its wave to the next one (`drain.sh handoff`; `skills/implement-plan/references/context-drain.md`). Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `overrun_gates` | top-level | every overrun gate opened (`budget.sh`, `references/cost-and-usage.md`): `{id: "overrun-<n>", kind: "exception", title, issue, status: open\|deferred, gate_actions: ["defer"], opened_at, budget_usd, spent_usd, projected_usd, tickets_over: [{ticket, estimate, spent, over_by}], action?, decision?: {card, option, choice, why, by, job, at}, deferred_at?}`. An open one holds every new dispatch (17) |
 | `usage_park` | top-level | `null`, or while the plan-window guard has parked dispatch (18): `{window: five-hour\|seven-day\|unknown, used, limit, resets_at, why, at, resume: null\|{by, at, after, raised?}}` |
+| `usage_verdict` | top-level | the plan-window guard's last verdict, written by every `budget.sh guard` call: `{ok, line, at}`. `wave.sh status` only reads it (#120) |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
 `plan`, copied from the approved plan by `state.sh init <run-dir> <plan.json>`. The plan file needs `run_id`, `repo`, `integration_branch` and `scope`; the rest default. `state.sh` never reads `config.yml` itself: the plan step (`plan.sh build`) reads it and puts its numbers into the plan.
@@ -154,6 +155,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `end_gate` | absent: the end gate is not open |
 | `overrun_gates` | `[]`: no overrun gate opened |
 | `usage_park` | `null`: dispatch is not parked on plan usage |
+| `usage_verdict` | absent until the guard first runs |
 | `halted` | `null`: the run is not halted |
 | `waves` | `[]`: no wave started, so no starting plugin version to name |
 | `location` | absent: the run is live on this machine (`Where a run lives`) |

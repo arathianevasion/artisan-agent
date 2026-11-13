@@ -18,7 +18,10 @@
 #       carry on, and clears the halt. --handoff is for drain.sh handoff
 #       only: the running orchestrator, having recorded its hand-off, launches
 #       the next attempt of the same wave and hands it the lock (6 from anyone
-#       else); the wave's guardrails are not read again.
+#       else); the wave's guardrails are not read again. Launch runs the usage
+#       guard first (budget.sh guard), the guard's step between waves, when no
+#       orchestrator's sweep is running: 18 parked on plan usage, 17 the
+#       overrun gate; nothing launches. Not on --handoff (the sweep covers it).
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
@@ -28,7 +31,7 @@
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
 #       ("waiting on N reviews", gate-action.sh parked), or dispatch is
-#       parked on plan usage (budget.sh guard: a "parked <window>" line,
+#       parked on plan usage (budget.sh parked, the guard's last word: a "parked <window>" line,
 #       printed with the reviews line when both hold; each logs one "parked"
 #       event whose reason says which). "stranded" means only tickets that
 #       wait for good behind a dropped or resliced one are left: one line per
@@ -36,6 +39,10 @@
 #       sends them back to triage (gate-action.sh send-back); "blocked" is
 #       any other cause. A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
+#       Status never writes the usage guard's state and never touches the
+#       tracker for it: the guard runs in the orchestrator's sweep and in
+#       launch, and a "usage guard: last verdict ..., taken <time>" line says
+#       what it last found.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -253,6 +260,12 @@ cmd_launch() {
       | .halted = null'
   fi
 
+  # The usage guard between waves (#120): no sweep runs now, and launch is the
+  # chat's step that already writes state. A park or the overrun gate refuses.
+  if [ "$handoff" -eq 0 ]; then
+    "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
+  fi
+
   [ -n "$model" ] || model=$(get --arg d "$DEFAULT_ORCHESTRATOR_MODEL" '.plan.orchestrator.model // $d')
   [ -n "$estimate" ] || estimate=$(get --arg d "$DEFAULT_ORCHESTRATOR_ESTIMATE_USD" '.plan.orchestrator.estimate_usd // $d')
   estimate=$(clamp_estimate "$estimate")
@@ -372,13 +385,15 @@ cmd_status() {
         || echo "gate.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.gate.err")" >&2
       "$SCRIPT_DIR/reconcile.sh" "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.status.err" || {
         reconciled=0
-        "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" >/dev/null
+        "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
-      # A usage park or the overrun gate, noticed before a wave launches (budget.sh, #72).
+      # A usage park, as the guard last left it (budget.sh parked reads only).
+      # The guard itself runs from the orchestrator's sweep and from launch,
+      # never from here: status writes no guard state and opens no gate (#120).
       usage_park=
       [ "$(get '.halted != null')" = true ] \
-        || usage_park=$("$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" 2>/dev/null | grep '^parked ' || true)
+        || usage_park=$("$SCRIPT_DIR/budget.sh" parked "$RUN_DIR" 2>/dev/null || true)
       # A risk gate or a review gate holds only its tickets' dependents
       # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
       # An exception gate (an exception decision with its issue) holds only
@@ -418,6 +433,7 @@ $reviews"
   [ "$next" != stranded ] || echo "$stranded"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
+  "$SCRIPT_DIR/budget.sh" last "$RUN_DIR" 2>/dev/null || true
   echo
   ticket_table
   if [ "${next}" = decide ] || [ "${next}" = halted ] || [ "${next}" = parked ] \
