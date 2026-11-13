@@ -208,5 +208,10 @@ test_no_fake_claude_stray_outlives_a_test_that_leaves_one() {
   folder=$(cat "$STRAY_RECORD")
   rm -f "$STRAY_RECORD"
   [ -n "$folder" ] || fail "the inner test never recorded its folder"
-  ! pgrep -f "fake-claude-stray:$folder" >/dev/null || fail "a fake-claude-stray outlived its test"
+  local i=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do   # a killed process may take a moment to go
+    pgrep -f "fake-claude-stray:$folder" >/dev/null || return 0
+    sleep 0.3
+  done
+  fail "a fake-claude-stray outlived its test"
 }
