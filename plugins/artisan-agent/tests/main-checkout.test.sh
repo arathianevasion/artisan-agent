@@ -107,6 +107,29 @@ test_second_run_while_lock_held_is_refused_and_left_as_plan_issue() {
   assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: build the retry plan"
 }
 
+run_start_args() { # args [tool]: implement-plan with these arguments
+  if [ "${2:-}" = tool ]; then
+    jq -cn --arg c "$REPO" --arg a "$1" '{hook_event_name:"PreToolUse",tool_name:"Skill",cwd:$c,tool_input:{skill:"artisan-agent:implement-plan",args:$a}}'
+  else
+    jq -cn --arg c "$REPO" --arg a "$1" '{hook_event_name:"UserPromptExpansion",command_name:"artisan-agent:implement-plan",command_args:$a,cwd:$c}'
+  fi
+}
+
+test_adding_tickets_or_an_urgent_ticket_to_the_running_run_is_let_through_not_refused_or_queued() {
+  make_repo; stub_gh; hold_lock
+  local a=
+  for a in "add #45 #46" "Add 45" "urgent #47" "URGENT 47" "add-work #45" "--urgent #47" "add #45, #46"; do
+    assert_eq "" "$(run_start_args "$a" | "$PROTECT" run-start)" "UserPromptExpansion: $a"
+    assert_eq "" "$(run_start_args "$a" tool | "$PROTECT" run-start)" "Skill tool: $a"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a separate plan"
+  # A different request is still refused and queued.
+  assert_contains "$(run_start_args "build the urgent report" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "add login page" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "urgent" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "address #45" | "$PROTECT" run-start)" '"decision":"block"'
+}
+
 test_a_retried_request_does_not_file_a_second_plan_issue() {
   make_repo; stub_gh; hold_lock
   run_start_event implement-plan | "$PROTECT" run-start >/dev/null

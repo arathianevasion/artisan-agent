@@ -138,6 +138,9 @@ Top level:
 | `context_risk` | `{percent, at}` when it merged while the orchestrator was at the review band (`drain.sh gate`): the fact that raises the risk gate `risk-context-<t>`, which holds its dependents like any review gate |
 | `risk_gate` | legacy, from before that gate was an issue: `{status, percent, at, cleared_at?}`; `waiting` still holds its dependents off the frontier and out of `wave.sh dispatch` until `cleared` (`drain.sh gate-cleared`). Nothing writes it now |
 | `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
+| `steering` | `[{attempt, note, at}]`, each time the Artisan stopped the worker and gave notes (`lever.sh steer`, `references/run-levers.md`). Not a failure: it is not in `failures` and uses none of the ticket's attempts; the notes go into the next worker's prompt |
+| `urgent` | `true` for an urgent ticket (`lever.sh urgent`): dispatched on the one extra slot above Max Agents, from `main`, never on the frontier or merged into the integration branch; it ships through its own end gate (`urgent_gates`) |
+| `shipped` | an urgent ticket once `end-gate.sh urgent-finish` has run: `{pr, main_merged_into, sync_commit, at}` |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
 ## Optional fields
@@ -157,6 +160,9 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `usage_park` | `null`: dispatch is not parked on plan usage |
 | `usage_verdict` | `null`: the guard has not run yet (absent in older files reads the same) |
 | `halted` | `null`: the run is not halted |
+| `urgent_gates` | `{}`: no urgent ticket's end gate opened. Per urgent ticket: `{status: open\|approved\|ended, issue, title, opened_at, approved_at?, by?, pr?: {url, branch, base, at}, ended_at?, sync_commit?}` (`end-gate.sh urgent-*`) |
+| `plan.additions` | `[]`: nothing added mid-run. Per ticket added (`lever.sh add`, `urgent`): `{ticket, urgent, estimate_usd, budget_before, budget_after, by, at}`; the estimate and its overrun allowance are already in `plan.estimate_usd` and `plan.budget_usd` |
+| `plan.tickets.<t>.priority` | `0`: a planned ticket. A ticket added mid-run has 1 (urgent 2); the frontier is ordered by priority, then number |
 | `waves` | `[]`: no wave started, so no starting plugin version to name |
 | `location` | absent: the run is live on this machine (`Where a run lives`) |
 | `provisional_shown` | `[]` |

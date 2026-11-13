@@ -72,7 +72,7 @@ cmd_pick() {
   jq -r "$WIDTH_JQ"'
     . as $s
     | ($s.plan.max_agents // 5) as $max
-    | ([$s.tickets[] | select(.status == "in_flight")] | length) as $busy
+    | ([$s.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length) as $busy
     | reduce ($s.frontier // [])[] as $t ({picked: [], held: []};
         if ($s.tickets[$t].status // "") != "queued" then .
         elif ((.picked | length) + $busy) >= $max then

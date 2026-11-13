@@ -140,6 +140,14 @@ Under it, one line each for: cost so far against the budget (`.costs`, `.plan.bu
 
 Then the evidence table of the digest, as printed: `${CLAUDE_PLUGIN_ROOT}/scripts/evidence.sh digest <run folder>` (a table naming each ticket with its verdict, unsure and decision counts, and cost against its estimate; the contract behind it is in `${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`).
 
+### Adding to a running run, steering and urgent tickets
+
+While a run holds the lock, `/implement-plan add <tickets>` and `/implement-plan urgent <ticket>` are let through by the run-start hook to this flow; they are not refused or queued as a separate plan. The rules and calls are in `${CLAUDE_PLUGIN_ROOT}/references/run-levers.md`:
+
+- **Add:** one plan step per added ticket (model, estimate, as in step 2), shown as `lever.sh add`'s one-line approval (model, estimate, new run budget). On the Artisan's yes, `lever.sh add … --approve`: it joins the next wave ahead of lower-priority tickets.
+- **Urgent:** marking a ticket `urgent` is its approval: `lever.sh urgent`. It dispatches at once on the one extra slot, from `main`; ship it through `end-gate.sh urgent-open`, `urgent-approve`, `urgent-cut` and, after the Artisan merges the PR, `urgent-finish`.
+- **Steer:** when the Artisan wants to change what a worker is doing, `lever.sh steer <run> <ticket> --note "…"`, then dispatch it again. It is steering, not a failed attempt.
+
 ### 7. Findings filed for triage
 
 A finding is a fact a worker turned up that may matter to other work (its evidence record's `findings`, logged by the sweep). Between waves, file each finding that names missing work as a new ticket on the tracker, citing the ticket that found it, **off the frontier**: no blocking edges, no wave. Then run `/artisan-agent:triage` on it before it can join any run. A ticket a worker invented mid-run hasn't been grilled, sized or checked, and an untriaged finding entering the dispatch queue is how one worker's guess becomes three more workers' work. Only once triage admits it does it get edges, and it joins a run only through its own plan step and approval. If that changes the waves, show what moved before continuing.
