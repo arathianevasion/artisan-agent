@@ -8,7 +8,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
-| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
+| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`; `--worker` skips the check that is the suite, left to the merge gate). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 | `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `upstream-check.sh` | The retro's upstream-updates check: refresh, compare, mechanical check, judgement agent, report, port tickets (`skills/retro/SKILL.md`, "Upstream check"; `tests/upstream-check.test.sh`) | lines and tables; 10 moved |
@@ -28,7 +28,9 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `results/<t>.<n>.result.json` | the worker (path in `$ARTISAN_RESULT_FILE`) | the worker's result file; its shape belongs to the worker skill |
 | `results/findings/<t>.jsonl` | the worker (path in `$ARTISAN_FINDINGS_FILE`) | one finding per line, appended across attempts |
 | `workers/<t>.<n>/runner.pid` | runner | the runner's PID, for the sweep |
-| `workers/<t>.<n>/output.json` | `claude --output-format json` | the session's JSON output, including its result text |
+| `workers/<t>.<n>/output.json` | the runner | the stream's final `result` event (what `--output-format json` printed), including its result text |
+| `workers/<t>.<n>/stream.jsonl` | `claude --output-format stream-json --verbose` | the session's whole event stream |
+| `workers/<t>.<n>/usage.json` | the runner | the latest `rate_limit_event`, per window, with the time the runner received it (the usage guard reads it) |
 | `workers/<t>.<n>/prompt.md`, `stderr.log`, `runner.log` | runner | the full prompt as sent, and logs |
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
@@ -383,3 +385,18 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 | `chats.sh due [--chat C]` | either | exit 0 when the last sweep was at least `sweep_minutes` ago | 0 due, 1 not yet |
 | `gate.sh carried <run-dir>` | Engineering | the cards left undecided on gates closed by hand, for the end gate | 0 |
 
+# Gate placement, risk gates and the end gate
+
+`gate-plan.sh` places the run's gates at the plan step; `gate.sh` opens risk gates as it opens slice gates; `end-gate.sh` runs the end gate, cuts the PRs to `main` and ends the run. The rules: `references/end-gate.md`. Tested in `tests/gate-plan.test.sh`, `tests/risk-gates.test.sh` and `tests/end-gate.test.sh`, with the fake `gh` (which also answers `pr create`).
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate-plan.sh propose <draft>` | Engineering chat | writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
+| `gate-plan.sh render\|remove\|move <draft> ...` | Engineering chat | the table; remove a slice, risk or end gate; move a slice or risk gate (`--after T`, `--tickets T,T`). An exception gate, or moving the end gate, is refused | 0, 1, 2, 6 |
+| `gate.sh sync\|due\|open` | both | as for slice gates; also opens a risk gate (`risk-<n>` from the plan, `risk-seam-<t>` from a new-seam card) once its ticket merges | as above |
+| `end-gate.sh status <run-dir>` | Engineering chat | `not-due`, `due`, `open`, `removed`, `approved` or `ended` | 0 |
+| `end-gate.sh packet\|open <run-dir>` | Engineering chat | the packet (failing test first for a bug, deferred gates, carried cards, PR boundary); the `review-gate` issue and an `end-gate` decision | 0, 1, 6 |
+| `end-gate.sh boundary <run-dir>` | Engineering chat | the PR boundary as JSON: from the `pr-boundaries` guardrail (product, team, individual), approved, or proposed | 0 |
+| `end-gate.sh approve <run-dir> [--boundary B]` | Engineering chat | refused while a gate is deferred, or with no boundary recorded and none given; decides the end gate (job 13) and the boundary (job 17) | 0, 1, 2, 3, 6 |
+| `end-gate.sh prs <run-dir> [--json]` / `cut <run-dir> <n> --body-file F` | Engineering chat | the stacked PRs; builds `pr/<run-id>/<n>`, pushes it when there is an `origin`, opens the PR with the body upstream `pr` wrote | 0, 1, 6 |
+| `end-gate.sh finish <run-dir>` | Engineering chat | every PR cut: `in-run` off every ticket in scope, `run-ended`, the retro offer | 0, 1, 6 |
