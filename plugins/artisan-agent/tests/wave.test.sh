@@ -199,7 +199,7 @@ test_the_state_file_logs_each_event_in_order() {
   wait_for "$ORCH_EXIT" 60
   assert_eq "integration orchestrator dispatch result verify verified merge-gate merge closed" \
     "$(state_get '[.events[].event] | join(" ")')"
-  assert_eq "1 2 3 4 5 6 7 8" "$(state_get '[.events[].seq | tostring] | join(" ")')"
+  assert_eq "1 2 3 4 5 6 7 8 9" "$(state_get '[.events[].seq | tostring] | join(" ")')"
 }
 
 test_the_chat_learns_of_completion_from_the_exit_record_and_sweep_alone() {
