@@ -476,7 +476,7 @@ test_a_compacted_orchestrator_hands_off_and_a_fresh_one_finishes_the_same_wave()
   assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" orchestrator-w1 2)"
   assert_eq merged "$(state_get '.tickets["1"].status')"
   assert_eq 1 "$(state_get '.tickets["1"].attempts')" "the worker in flight was never dispatched again"
-  assert_eq "integration orchestrator dispatch handoff orchestrator result verify verified merge closed" \
+  assert_eq "integration orchestrator dispatch handoff orchestrator result verify verified merge-gate merge closed" \
     "$(state_get '[.events[].event] | join(" ")')"
   # The guardrails were read once, for the wave, not again at the hand-off.
   assert_eq 1 "$(state_get '.waves | length')"

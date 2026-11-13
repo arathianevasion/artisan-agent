@@ -260,6 +260,117 @@ test_mg_the_verifier_on_a_local_machine_runs_every_recorded_check() {
   wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
 }
 
+# ---- the gate runs detached (#142): no merge call waits on it for long
+
+# A local gate whose suite counts its runs and sleeps for as many seconds as
+# the file "slow" says, when there is one.
+setup_slow_local() {
+  setup_ci
+  export ARTISAN_MERGE_GATE=local
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = ("echo run >>" + $d + "/suite-runs && sh check.sh && { [ ! -e " + $d + "/slow ] || sleep $(cat " + $d + "/slow); }")' \
+    --arg d "$TEST_TMPDIR"
+}
+
+suite_runs() { wc -l <"$TEST_TMPDIR/suite-runs" 2>/dev/null | tr -d ' ' || echo 0; }
+gate_pid() { cat "$RUN_DIR/$(state_get '.merge_gate.pid_file')"; }
+gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(state_get '.merge_gate.result')"; }
+
+merge_1_wait() { # seconds
+  MERGE_STATUS=0
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 --wait "$1" >"$TEST_TMPDIR/merge.out" 2>"$TEST_TMPDIR/merge.err" || MERGE_STATUS=$?
+}
+
+test_mg_a_suite_slower_than_the_callers_limit_still_merges_and_runs_once() {
+  setup_slow_local
+  echo 4 >"$TEST_TMPDIR/slow"
+  verified_ticket
+  local t0=$SECONDS result=
+  merge_1_wait 1
+  assert_eq 20 "$MERGE_STATUS" "gate running: $(cat "$TEST_TMPDIR/merge.err")"
+  [ $((SECONDS - t0)) -lt 4 ] || fail "merge waited on the whole suite ($((SECONDS - t0))s)"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "merge gate is running"
+  assert_eq "local 1 1" "$(state_get '.merge_gate | "\(.mode) \(.ticket) \(.attempt)"')"
+  result=$(gate_result)
+  case "$result" in "$RUN_DIR"/results/merge-1.1.g1.json) ;; *) fail "the outcome goes under results/: $result" ;; esac
+  # Called again while it runs: still running, nothing started twice.
+  merge_1_wait 0
+  assert_eq 20 "$MERGE_STATUS"
+  assert_eq returned "$(state_get '.tickets["1"].status')"
+  wait_for "$result" 30
+  merge_1_wait 0
+  assert_eq 0 "$MERGE_STATUS" "finish: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(cat "$TEST_TMPDIR/merge.out")"
+  assert_eq 1 "$(suite_runs)" "the suite ran once"
+  assert_eq "local true" "$(state_get '.tickets["1"].suite | "\(.mode) \(.passed)"')"
+  assert_eq null "$(state_get '.merge_gate')"
+  assert_eq "" "$(pgrep -f "$RUN_DIR/results/merge-" || true)" "no gate process outlives the gate"
+}
+
+test_mg_killing_the_caller_mid_gate_then_calling_again_records_the_merge_once() {
+  setup_slow_local
+  echo 3 >"$TEST_TMPDIR/slow"
+  verified_ticket
+  local caller= i=0
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null 2>&1 &
+  caller=$!
+  until [ "$(state_get '.merge_gate != null')" = true ] && [ -s "$RUN_DIR/$(state_get '.merge_gate.pid_file')" ]; do
+    i=$((i + 1)); [ "$i" -le 100 ] || fail "the gate never started"; sleep 0.1
+  done
+  kill -KILL "$caller"
+  wait "$caller" 2>/dev/null || true
+  wait_for "$(gate_result)" 30
+  merge_1_wait 0
+  assert_eq 0 "$MERGE_STATUS" "finish: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq 1 "$(suite_runs)" "the finished suite is not run again"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "merge")] | length')" "recorded once"
+}
+
+test_mg_a_local_gate_that_died_without_an_outcome_is_undone_and_retried() {
+  setup_slow_local
+  echo 60 >"$TEST_TMPDIR/slow"
+  verified_ticket
+  merge_1_wait 0
+  assert_eq 20 "$MERGE_STATUS"
+  local sha=
+  sha=$(state_get '.merge_gate.sha')
+  kill -KILL "-$(gate_pid)"
+  mv "$TEST_TMPDIR/slow" "$TEST_TMPDIR/slow.gone"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "retry: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "$sha" "$(state_get '.tickets["1"].merge_commit')" "the same merge commit, gated again"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "merge-gate-abandoned")] | length')"
+  assert_eq 2 "$(suite_runs)"
+}
+
+test_mg_cutting_off_a_ci_gate_waits_on_the_same_run_with_no_new_dispatch() {
+  setup_ci
+  verified_ticket
+  echo never >"$FAKE_GH_DIR/ci-outcome"
+  merge_1_wait 1
+  assert_eq 20 "$MERGE_STATUS" "gate running: $(cat "$TEST_TMPDIR/merge.err")"
+  local branch=
+  branch=$(state_get '.merge_gate.branch')
+  # The caller cut off: calling again finds the gate still going.
+  merge_1_wait 0
+  assert_eq 20 "$MERGE_STATUS"
+  # The gate's own process dies too, while its CI run carries on.
+  kill -KILL "-$(gate_pid)"
+  sleep 0.2
+  jq '.status = "completed" | .conclusion = "success" | .jobs |= map(.status = "completed" | .conclusion = "success")' \
+    "$FAKE_GH_DIR/run-9001.json" >"$FAKE_GH_DIR/run.tmp" && mv "$FAKE_GH_DIR/run.tmp" "$FAKE_GH_DIR/run-9001.json"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "resume: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "9001 $branch" "$(state_get '.tickets["1"].suite | "\(.run_id) \(.branch)"')" "the same run on the same branch"
+  assert_eq 1 "$(grep -c 'workflow run' "$FAKE_GH_DIR/calls")" "no new dispatch"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "ci-gate-abandoned")] | length')"
+  assert_eq "9001" "$(state_get '[.events[] | select(.event == "merge-gate-resumed")] | last | .run_id')"
+  assert_eq "" "$(ci_branches)"
+}
+
 # ---- merge-gate.sh on its own
 
 test_mg_the_machine_chooses_the_mode_auto_by_os_and_host_json_overrides() {
