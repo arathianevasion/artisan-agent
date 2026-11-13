@@ -116,6 +116,7 @@ init_write() {
         review_gates: [],
         overrun_gates: [],
         usage_park: null,
+        usage_verdict: null,
         exception_gates: [],
         halted: null,
         events: []
