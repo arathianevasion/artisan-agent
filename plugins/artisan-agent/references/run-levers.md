@@ -49,7 +49,7 @@ lever.sh urgent <run> <ticket> --model M --estimate-usd N [--title T] [--escalat
   | cut the PR to `main` (body written with upstream `pr`) | `end-gate.sh urgent-cut <run> <t> --body-file F` |
   | the Artisan merges the PR; then | `end-gate.sh urgent-finish <run> <t>` |
 
-  `urgent-finish` merges `main` into the integration branch, runs the plan's **full suite** there (red undoes the merge, queues a decision, exit 7), marks the ticket merged and removes `in-run`. Then `wave.sh close <run> <t>` closes it on the tracker. A merge conflict with `main` leaves nothing changed (exit 1, naming the paths): resolve it by hand in the integration worktree and run `urgent-finish` again.
+  `urgent-finish` merges `main` into the integration branch, runs the plan's **full suite** there (red undoes the merge, queues a decision, exit 7), marks the ticket merged and removes `in-run`. Then `wave.sh close <run> <t>` closes it on the tracker. A merge conflict with `main` gets the one `/artisan-agent:resolve-conflicts` try every merge gets: `urgent-finish` leaves the merge in progress, records it (`tickets.<t>.resolve`, with a `sync` block) and exits 11 naming the paths; then `wave.sh resolved <run> <t>` (adding `--gave-up` after UNRESOLVED) commits it and runs the full suite through the detached merge gate (exit 20 while it runs; `wave.sh merge <run> <t>` finishes it). Green marks the ticket shipped as above. A failed or already-used try, or a red suite, aborts or undoes the merge and queues an `exception` decision naming the ticket and paths (`wave.sh status` lists it); the urgent ticket is not blocked, its PR being merged.
 
 ## Starting `/implement-plan` while a run holds the lock
 

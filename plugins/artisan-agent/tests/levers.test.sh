@@ -400,6 +400,109 @@ test_a_red_suite_after_main_joins_undoes_the_merge_and_queues_a_decision() {
   assert_eq approved "$(state_get '.urgent_gates["3"].status')" "not shipped until the suite is green"
 }
 
+# An urgent ticket whose PR merged into main, with main and the integration
+# branch each having changed fix.txt: main's join conflicts.
+setup_urgent_conflict() {
+  setup_urgent_returned
+  "$E" urgent-open "$RUN_DIR" 3 >/dev/null
+  "$E" urgent-approve "$RUN_DIR" 3 >/dev/null
+  printf 'b\n' >"$TEST_TMPDIR/body.md"
+  "$E" urgent-cut "$RUN_DIR" 3 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge PR 1" agent/3
+  jq '.state = "MERGED"' "$FAKE_GH_DIR/pr-1.json" >"$TEST_TMPDIR/pr" && mv "$TEST_TMPDIR/pr" "$FAKE_GH_DIR/pr-1.json"
+  UWT=$TEST_TMPDIR/project-wt/run-r1
+  echo "integration's own fix" >"$UWT/fix.txt"
+  git_quiet -C "$UWT" add -A
+  git_quiet -C "$UWT" commit -m "integration also touches fix.txt"
+  UPRE=$(git -C "$UWT" rev-parse HEAD)
+}
+
+resolve_by_hand() { # the stand-in for /artisan-agent:resolve-conflicts
+  echo "both fixes" >"$UWT/fix.txt"
+  git -C "$UWT" add fix.txt
+}
+
+test_a_conflicting_main_in_urgent_finish_exits_11_and_leaves_the_merge_for_one_resolve_try() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  git -C "$UWT" rev-parse -q --verify MERGE_HEAD >/dev/null || fail "the merge is not left in progress"
+  assert_eq pending "$(state_get '.tickets["3"].resolve.outcome')"
+  assert_eq '["fix.txt"]' "$(jq -c '.tickets["3"].resolve.paths' "$RUN_DIR/state.json")"
+  assert_eq approved "$(state_get '.urgent_gates["3"].status')" "not shipped yet"
+}
+
+test_the_stderr_of_a_conflicting_urgent_finish_names_the_paths_and_the_resolve_steps() {
+  setup_urgent_conflict
+  local err=
+  err=$("$E" urgent-finish "$RUN_DIR" 3 2>&1 >/dev/null) || true
+  assert_contains "$err" "fix.txt"
+  assert_contains "$err" "/artisan-agent:resolve-conflicts"
+  assert_contains "$err" "wave.sh resolved"
+}
+
+test_a_resolved_main_merge_commits_runs_the_full_suite_and_records_main_merged() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  resolve_by_hand
+  "$W" resolved "$RUN_DIR" 3 >"$TEST_TMPDIR/out" 2>&1 || fail "resolved failed: $(cat "$TEST_TMPDIR/out")"
+  git -C "$PROJECT" merge-base --is-ancestor main run/r1 || fail "main is not in the integration branch"
+  assert_eq "both fixes" "$(cat "$UWT/fix.txt")"
+  assert_eq merged "$(state_get '.tickets["3"].status')"
+  assert_eq ended "$(state_get '.urgent_gates["3"].status')"
+  assert_eq run/r1 "$(state_get '.tickets["3"].shipped.main_merged_into')"
+  assert_eq true "$(state_get '.tickets["3"].suite.passed')"
+  assert_eq null "$(jq -c '.merge_gate' "$RUN_DIR/state.json")" "the gate is cleared"
+  assert_eq 0 "$(state_get '[.integration.merges[] | select(.ticket == "3")] | length')"
+  assert_contains "$("$E" urgent-finish "$RUN_DIR" 3)" "already shipped"
+}
+
+test_a_red_suite_after_a_resolved_main_merge_undoes_it_and_queues_a_decision() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  resolve_by_hand
+  : >"$UWT/BROKEN"
+  git -C "$UWT" add -f BROKEN
+  assert_status 7 "$W" resolved "$RUN_DIR" 3
+  assert_eq "$UPRE" "$(git -C "$UWT" rev-parse HEAD)" "the merge was undone"
+  assert_eq "exception waiting" "$(state_get '.decisions[-1] | "\(.kind) \(.status)"')"
+  assert_eq approved "$(state_get '.urgent_gates["3"].status')"
+}
+
+test_a_failed_resolve_try_aborts_and_queues_a_decision_naming_the_ticket_and_paths() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  assert_status 6 "$W" resolved "$RUN_DIR" 3 --gave-up "too tangled"
+  assert_eq "$UPRE" "$(git -C "$UWT" rev-parse HEAD)"
+  git -C "$UWT" rev-parse -q --verify MERGE_HEAD >/dev/null && fail "the merge is still in progress"
+  assert_eq approved "$(state_get '.urgent_gates["3"].status')"
+  assert_eq returned "$(state_get '.tickets["3"].status')" "the urgent ticket is not blocked"
+  local q=
+  q=$(state_get '.decisions[-1].question')
+  assert_contains "$q" "#3"
+  assert_contains "$q" "fix.txt"
+  assert_eq waiting "$(state_get '.decisions[-1].status')"
+  assert_contains "$("$W" status "$RUN_DIR" 2>&1)" "fix.txt"
+}
+
+test_a_resolution_that_leaves_conflict_markers_counts_as_a_failed_try() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  git -C "$UWT" add fix.txt
+  assert_status 6 "$W" resolved "$RUN_DIR" 3
+  assert_eq "$UPRE" "$(git -C "$UWT" rev-parse HEAD)"
+}
+
+test_a_second_conflict_after_the_try_is_used_aborts_and_queues_a_decision() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  assert_status 6 "$W" resolved "$RUN_DIR" 3 --gave-up "no"
+  local before=
+  before=$(state_get '.decisions | length')
+  assert_status 6 "$E" urgent-finish "$RUN_DIR" 3
+  git -C "$UWT" rev-parse -q --verify MERGE_HEAD >/dev/null && fail "the merge is still in progress"
+  assert_eq "$((before + 1))" "$(state_get '.decisions | length')"
+}
+
 test_the_runs_own_prs_leave_out_the_urgent_ticket() {
   setup_urgent_returned
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["3"].merge_commit = "abc" | .tickets["3"].status = "merged"

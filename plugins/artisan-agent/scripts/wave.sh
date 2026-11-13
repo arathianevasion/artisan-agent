@@ -726,6 +726,35 @@ join_paths() { # JSON array -> "a b c" for messages
   jq -r 'join(" ")' <<<"$1"
 }
 
+# An urgent ticket reaching a merge gate is main joining the integration
+# branch after its PR merged (end-gate.sh urgent-finish), never the ticket's
+# own branch (#143). Its failures queue a decision instead of blocking it.
+is_urgent_sync() { [ "$(get --arg t "$1" '.tickets[$t].urgent // false')" = true ]; }
+
+# gate_failed ticket reason: the merge was undone. A ticket is blocked; an
+# urgent ticket's main sync queues a decision (its PR is merged already).
+gate_failed() {
+  if is_urgent_sync "$1"; then queue_sync_decision "$1" "$2"; else block "$1" "$2"; fi
+}
+
+# ship_urgent ticket sha: the full suite is green with main in the
+# integration branch; record the urgent ticket shipped (as urgent-finish does).
+ship_urgent() {
+  local t="$1" sha="$2" url= oid= ib= repo=
+  url=$(get -r --arg t "$t" '.urgent_gates[$t].pr.url // ""')
+  oid=$(get -r --arg t "$t" '.tickets[$t].resolve.sync.oid // ""')
+  ib=$(integration_branch)
+  repo=$(get -r .repo)
+  apply '
+    .tickets[$t] |= (.status = "merged" | .pid = null | .merge_commit = (if $oid == "" then $sha else $oid end)
+      | .suite = $r
+      | .shipped = {pr: $url, main_merged_into: $ib, sync_commit: $sha, at: $now})
+    | .urgent_gates[$t] += {status: "ended", ended_at: $now, sync_commit: $sha}
+    | event({event: "urgent-shipped", ticket: $t, pr: $url, sync_commit: $sha}; $now)' \
+    --arg t "$t" --arg oid "$oid" --arg sha "$sha" --arg url "$url" --arg ib "$ib" --argjson r "$3"
+  gh issue edit "$t" -R "$repo" --remove-label in-run >/dev/null 2>&1 || echo "wave.sh: could not remove in-run from #$t" >&2
+}
+
 # Seconds wave.sh merge (and resolved) waits on a running merge gate before
 # returning 20, so no call comes near the orchestrator's 2-minute Bash
 # timeout (#142). --wait overrides it; 0 returns at once.
@@ -944,7 +973,7 @@ finish_gate() {
   n=$(get '.merge_gate.attempt') pre=$(get '.merge_gate.pre') sha=$(get '.merge_gate.sha') mode=$(get '.merge_gate.mode')
   suite=$(get '.plan.suite_command')
   # Finished before (a crash after recording it): only the record is left.
-  if [ "$(get --arg t "$t" --arg s "$sha" '.tickets[$t] | .status == "merged" and .merge_commit == $s')" = true ]; then
+  if [ "$(get --arg t "$t" --arg s "$sha" '.tickets[$t] | .status == "merged" and (.merge_commit == $s or .shipped.sync_commit? == $s)')" = true ]; then
     apply '.merge_gate = null'
     printf '%s\n' "$sha"
     return 0
@@ -960,7 +989,7 @@ finish_gate() {
       git -C "$wt" reset -q --hard "$pre"
       apply '.tickets[$t].suite = {command: $c, passed: false, log: $l, mode: "local"} | .merge_gate = null' \
         --arg t "$t" --arg c "$suite" --arg l "$log"
-      block "$t" "the suite failed after merging ($log); the merge was undone"
+      gate_failed "$t" "the suite failed after merging ($log); the merge was undone"
       state_die 7 "wave.sh: #$t not merged: the suite failed after the merge; see $RUN_DIR/$log"
     fi
     record=$(jq -nc --arg c "$suite" --arg l "$log" '{command: $c, passed: true, log: $l, mode: "local"}')
@@ -976,7 +1005,7 @@ finish_gate() {
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
-        block "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
+        gate_failed "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
         state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
       fi
       why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
@@ -993,6 +1022,12 @@ finish_gate() {
     fi
     record=$(jq -c --arg c "$suite" '{command: $c, passed: true}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}' <<<"$GATE_JSON")
+  fi
+  if is_urgent_sync "$t"; then
+    apply '.merge_gate = null'
+    ship_urgent "$t" "$sha" "$record"
+    printf '%s\n' "$sha"
+    return 0
   fi
   "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$sha"
   record_session_cost "$t" "$n"
@@ -1045,6 +1080,10 @@ abandon_pending_resolution() { # integration worktree
   [ -n "$t" ] || return 0
   git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$(get --arg t "$t" '.tickets[$t].resolve.pre')"
   apply '.tickets[$t].resolve.outcome = "abandoned"' --arg t "$t"
+  if is_urgent_sync "$t"; then
+    queue_sync_decision "$t" "main's conflict with the integration branch was never resolved (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"
+    return 0
+  fi
   block "$t" "its conflict resolution never finished (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"
 }
 
@@ -1070,13 +1109,18 @@ cmd_resolved() {
   n=$(get --arg t "$t" '.tickets[$t].resolve.attempt')
   pre=$(get --arg t "$t" '.tickets[$t].resolve.pre')
   branch=$(get --arg t "$t" '.tickets[$t].branch')
+  local sync= expect=
+  sync=$(get -r --arg t "$t" '.tickets[$t].resolve.sync.ref // ""')
+  expect=$(get -r --arg t "$t" '.tickets[$t].resolve.sync.head // ""')
   pjson=$(get --arg t "$t" '.tickets[$t].resolve.paths')
   paths=$(join_paths "$pjson")
   why=$gave_up
   if [ -z "$why" ]; then
     if ! git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null; then
       why="the merge is no longer in progress"
-    elif [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$(git -C "$MAIN" rev-parse "refs/heads/$branch")" ]; then
+    elif [ -n "$sync" ] && [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$expect" ]; then
+      why="the merge in progress is not $sync"
+    elif [ -z "$sync" ] && [ "$(git -C "$wt" rev-parse MERGE_HEAD)" != "$(git -C "$MAIN" rev-parse "refs/heads/$branch")" ]; then
       why="the merge in progress is not $branch"
     else
       left=$(join_paths "$(unmerged_json "$wt")")
@@ -1099,11 +1143,17 @@ cmd_resolved() {
     git -C "$wt" clean -q -fd >/dev/null 2>&1 || true
     apply '.tickets[$t].resolve |= (.outcome = "unresolved" | .why = $w)
       | event({event: "resolve", ticket: $t, outcome: "unresolved", why: $w}; $now)' --arg t "$t" --arg w "$why"
+    if [ -n "$sync" ]; then
+      queue_sync_decision "$t" "main's conflict in $paths that /artisan-agent:resolve-conflicts could not resolve: $why"
+      state_die 6 "wave.sh: main not merged into $ib after urgent #$t: $why; merge aborted, a decision is queued"
+    fi
     block "$t" "merge conflict in $paths that /artisan-agent:resolve-conflicts could not resolve: $why"
     state_die 6 "wave.sh: #$t not merged: $why; blocked, with $branch and its worktree kept"
   fi
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
-  git -C "$wt" commit -q --no-verify -m "Merge #$t ($title) into $ib" \
+  local msg="Merge #$t ($title) into $ib"
+  [ -z "$sync" ] || msg="Merge $(main_branch) into $ib (urgent #$t shipped)"
+  git -C "$wt" commit -q --no-verify -m "$msg" \
     -m "Conflicts in $paths resolved by /artisan-agent:resolve-conflicts." >/dev/null \
     || die "could not commit the resolved merge of #$t"
   apply '.tickets[$t].resolve.outcome = "resolved"

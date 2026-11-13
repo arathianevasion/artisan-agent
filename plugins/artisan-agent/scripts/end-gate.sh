@@ -619,9 +619,21 @@ cmd_urgent_finish() {
   pre=$(git -C "$wt" rev-parse HEAD)
   if ! git -C "$wt" -c user.name="${GIT_AUTHOR_NAME:-Artisan-Agent}" -c user.email="${GIT_AUTHOR_EMAIL:-artisan-agent@localhost}" \
        merge --no-edit -m "Merge $base into $ib (urgent #$U shipped)" "$ref" >/dev/null 2>&1; then
-    paths=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
-    git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
-    die "merging $ref into $ib conflicts in ${paths:-unknown paths}; nothing changed. Resolve it by hand in $wt (git merge $ref), then run this again"
+    local pjson= head=
+    pjson=$(git -C "$wt" diff -z --name-only --diff-filter=U | jq -Rs 'split("\u0000")[:-1]')
+    paths=$(jq -r 'join(" ")' <<<"$pjson")
+    if [ "$(get --arg t "$U" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
+      git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
+      queue_sync_decision "$U" "merging $ref into $ib conflicts in ${paths:-unknown paths}; its one /artisan-agent:resolve-conflicts try is used"
+      refuse "merging $ref into $ib conflicts in ${paths:-unknown paths}; the one resolve try is used, so nothing changed and a decision is queued"
+    fi
+    # Left in progress for the one try at resolving it (as wave.sh merge does).
+    head=$(git -C "$wt" rev-parse "$ref")
+    apply '.tickets[$t].resolve = {attempt: (.tickets[$t].attempts // 1), paths: $p, pre: $pre, outcome: "pending",
+          sync: {ref: $ref, head: $head, url: $url, oid: $oid}, at: $now}
+      | event({event: "conflict", ticket: $t, paths: $p, next: "resolve-conflicts", sync: true}; $now)' \
+      --arg t "$U" --argjson p "$pjson" --arg pre "$pre" --arg ref "$ref" --arg head "$head" --arg url "$url" --arg oid "$oid"
+    state_die 11 "end-gate.sh: merging $ref into $ib conflicts in $paths; run /artisan-agent:resolve-conflicts once in $wt, then wave.sh resolved $RUN_DIR $U"
   fi
   mkdir -p "$RUN_DIR/merges"
   log="$RUN_DIR/merges/urgent-$U.suite.log"

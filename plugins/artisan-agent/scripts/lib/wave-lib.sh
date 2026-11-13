@@ -74,6 +74,17 @@ block() {
     | event({event: "blocked", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
 }
 
+# queue_sync_decision urgent-ticket reason: main could not join the
+# integration branch after the urgent ticket shipped (a conflict whose one
+# resolve try failed or was already used, or a suite gone red). The urgent
+# ticket is not blocked (its PR is merged); the Artisan gets a decision.
+queue_sync_decision() {
+  apply '.decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
+      question: "Merging main into the integration branch after urgent #\($t) shipped did not land: \($r). Nothing changed; the integration branch is behind main. Resolve it by hand in the integration worktree (git merge main) and run end-gate.sh urgent-finish again, or take it yourself?",
+      status: "waiting", at: $now}]
+    | event({event: "main-sync-failed", ticket: $t, reason: $r}; $now)' --arg t "$1" --arg r "$2"
+}
+
 # check_returned script ticket what: a returned ticket whose attempt completed
 # and whose result file describes its branch tip. Sets ATTEMPT and TIP.
 # Otherwise exits: 8 the worker is still running; 6 the attempt did not

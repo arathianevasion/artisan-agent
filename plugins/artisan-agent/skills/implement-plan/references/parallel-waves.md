@@ -46,6 +46,8 @@ On exit 11 the merge is stopped halfway in the integration worktree, conflicts i
 
 **Once per ticket.** The try is recorded (`tickets.<t>.resolve`) the moment the conflict is left in progress. Any later conflict for that ticket blocks it at once, and a try that never came back (the orchestrator ended mid-try) is aborted and blocked by the next `wave.sh merge`. Never run the skill twice on one ticket, and never resolve a conflict by hand.
 
+**`end-gate.sh urgent-finish`** (main joining the integration branch after an urgent ticket's PR merged) takes the same one try on exit 11, and `wave.sh resolved <run> <urgent ticket>` finishes it. The difference: the urgent ticket is not blocked when the try fails (its PR is merged); the merge is aborted and an exception decision naming the ticket and paths is queued.
+
 ## Two attempts
 
 Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fails when the worker reports `failed`, exits without a result, passes its deadline, vanishes, ends without completing (no completion line, a cap hit), or its verifier finds a criterion unmet; the sweep, `verify.sh` or `wave.sh merge` counts it. A verifier that itself fails (crashes, writes no verdict) uses up no attempt: it is started once more, then the ticket is blocked.
