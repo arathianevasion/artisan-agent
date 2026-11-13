@@ -46,7 +46,7 @@ test_a_process_a_test_leaves_behind_is_ended_when_the_test_ends() {
   mkdir -p "$suite"
   cat >"$suite/leaky.test.sh" <<EOT
 test_starts_a_detached_worker_and_walks_away() {
-  ( cd "\$TEST_TMPDIR" && exec setsid sh -c 'sleep 300' "\$TEST_TMPDIR" ) >/dev/null 2>&1 </dev/null &
+  ( cd "\$TEST_TMPDIR" && exec sh -c 'sleep 300' "\$TEST_TMPDIR" ) >/dev/null 2>&1 </dev/null &
   echo \$! >"$TEST_TMPDIR/leaked.pid"
   sleep 0.5
 }
