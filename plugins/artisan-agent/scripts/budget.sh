@@ -14,7 +14,8 @@
 #       "overrun #<issue> ..." (17). On the first park it records the park,
 #       queues a "usage" decision and logs "parked"; on the first projected
 #       crossing it opens the overrun gate (a review-gate issue holding the
-#       packet), queues an "overrun" decision and logs "overrun-gate". Work in
+#       packet), queues an "overrun" decision and logs "overrun-gate" and
+#       guardrail-fired (guardrail "defer-only": the gate is defer-only). Work in
 #       flight is never stopped. Refuses with 12 while the run is halted.
 #       Every call records its verdict and the time it was first seen
 #       (usage_verdict), but writes only when the verdict (ok and line)
@@ -348,7 +349,7 @@ open_overrun() {
   [ "$n" -eq 1 ] || title="Exception gate: overrun $n (run $RUN_ID)"
   apply '
     .overrun_gates = ((.overrun_gates // []) + [{id: $id, kind: "exception", title: $title, issue: null,
-        status: "open", gate_actions: ["defer"], opened_at: $now,
+        status: "open", gate_actions: ["defer"], opened_at: $now, guardrails: [{guardrail: "defer-only"}],
         budget_usd: $p.budget, spent_usd: $p.spent, projected_usd: $p.projected,
         tickets_over: [$p.tickets[] | select(.over_by > 0) | {ticket, estimate, spent, over_by}]}])
     | .decisions += [{id: ((.decisions | length) + 1), kind: "overrun", gate: $id, gate_actions: ["defer"],
@@ -356,7 +357,8 @@ open_overrun() {
         question: "\($title): the projected total $\(($p.projected * 100 | round) / 100) crosses the budget $\($p.budget). New dispatch has stopped; work in flight finishes. Raise the budget, cut scope, or stop? (budget.sh packet)",
         status: "waiting", at: $now}]
     | event({event: "overrun-gate", gate: $id, budget: $p.budget, spent: $p.spent, projected: $p.projected,
-             tickets_over: [$p.tickets[] | select(.over_by > 0) | .ticket]}; $now)' \
+             tickets_over: [$p.tickets[] | select(.over_by > 0) | .ticket]}; $now)
+    | event({event: "guardrail-fired", guardrail: "defer-only", gate: $id}; $now)' \
     --arg id "$id" --arg title "$title" --argjson p "$p"
   ensure_issue
 }

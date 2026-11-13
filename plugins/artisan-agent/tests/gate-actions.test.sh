@@ -552,3 +552,32 @@ test_a_redirect_logs_a_gate_decision_to_change_with_the_tickets_areas_and_a_flag
   assert_eq '{"ticket":"1","areas":["uploads"],"where":"gate","gate":"slice-1"}' \
     "$(state_get '.events[] | select(.event == "bug-found") | {ticket, areas, where, gate}' | jq -c .)"
 }
+
+test_an_exception_gate_the_scope_floor_opened_logs_guardrail_fired_and_its_bypass_guardrail_bypassed() {
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []'
+  gave_up_on_3
+  # The exception was raised because the ticket would add scope.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.decisions[0].guardrail = "scope-floor"'
+  "$A" sync "$RUN_DIR" >/dev/null
+  num=$(state_get '.exception_gates[0].issue')
+  assert_eq '[{"guardrail":"scope-floor"}]' "$(state_get '.exception_gates[0].guardrails' | jq -c .)"
+  assert_eq '{"guardrail":"scope-floor","gate":"exception-1","tickets":["3"]}' \
+    "$(state_get '.events[] | select(.event == "guardrail-fired") | {guardrail, gate, tickets}' | jq -c .)"
+  "$A" bypass "$RUN_DIR" "$num" --by Andrew --why "the extra field is tiny" >/dev/null
+  assert_eq "guardrail-bypassed scope-floor the extra field is tiny Andrew" \
+    "$(state_get '.events[-1] | "\(.event) \(.guardrail) \(.reason) \(.by)"')"
+}
+
+test_an_exception_gate_no_guardrail_opened_logs_no_guardrail_event_and_retry_can_flag_a_bug() {
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [] | .plan.tickets["3"].areas = ["auth"]'
+  gave_up_on_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  num=$(state_get '.exception_gates[0].issue')
+  "$A" retry "$RUN_DIR" "$num" --notes "check the token expiry" --bug >/dev/null
+  assert_eq 0 "$(state_get '[.events[] | select(.event | startswith("guardrail"))] | length')"
+  assert_eq '{"ticket":"3","areas":["auth"],"where":"gate","gate":"exception-1"}' \
+    "$(state_get '.events[] | select(.event == "bug-found") | {ticket, areas, where, gate}' | jq -c .)"
+  assert_status 2 "$A" defer "$RUN_DIR" "$num" --bug
+}

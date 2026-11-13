@@ -61,7 +61,9 @@
 # Usage, from wave.sh status:
 #   gate-action.sh sync <run-dir>
 #       opens an exception gate for every exception decision waiting without
-#       one (a ticket the run gave up on, a red check, a blocked merge), and
+#       one (a ticket the run gave up on, a red check, a blocked merge); a
+#       decision carrying `guardrail` (and `area`), such as the scope floor's
+#       "scope-floor", records it on the gate and logs guardrail-fired; and
 #       bypasses one closed by hand on the tracker. Prints "opened #<issue>
 #       <gate-id>" per gate. Exception gates are never in the plan's gates,
 #       so nothing removes them.
@@ -690,10 +692,14 @@ open_exception() { # decision-json
         '. + [{number: $d, title: (if $title == "" then null else $title end)}]' <<<"$deps")
     fi
   done
+  # A guardrail that raised the exception (the decision's `guardrail`, and
+  # `area`: the scope floor's is "scope-floor") is the one that opened it.
   gate=$(jq -nc --arg id "exception-$did" --arg t "$t" --arg title "$title" --arg headline "$headline" \
-    --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" --argjson dn "$downstream_t" \
+    --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" --argjson dn "$downstream_t" --argjson dec "$dec" \
     '{id: $id, kind: "exception", reason: $reason, title: $title, headline: $headline, ticket: $t,
-      tickets: [$t], decision: $did, dependents: $deps, downstream: $dn, cards: []}')
+      tickets: [$t], decision: $did, dependents: $deps, downstream: $dn, cards: []}
+     + (if ($dec.guardrail // "") == "" then {}
+        else {guardrails: [{guardrail: $dec.guardrail} + (if ($dec.area // "") == "" then {} else {area: $dec.area} end)]} end)')
   num=$(gh issue list -R "$(repo)" --state open --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
@@ -709,6 +715,7 @@ open_exception() { # decision-json
       | .decisions |= map(if .id == $g.decision then . + {issue: $num, gate: $g.id} else . end)
       | event({event: "gate-opened", gate: $g.id, kind: "exception", issue: $num, tickets: [$g.ticket],
                dependents: ($g.dependents | map(.number))}; $now)
+      | guardrails_fired($g; $now)
     end' --argjson g "$gate" --argjson num "$num"
   echo "opened #$num exception-$did"
 }

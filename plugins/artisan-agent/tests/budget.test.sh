@@ -591,3 +591,12 @@ test_a_run_parked_on_usage_and_on_reviews_names_both_logs_each_once_and_clears_o
   assert_contains "$out" "parked five-hour"
   assert_not_contains "$out" "waiting on 1 review"
 }
+
+test_the_defer_only_overrun_gate_opening_logs_guardrail_fired() {
+  setup_budget
+  seed_overrun
+  assert_status 17 "$B" guard "$RUN_DIR"
+  assert_eq '[{"guardrail":"defer-only"}]' "$(state_get '.overrun_gates[0].guardrails' | jq -c .)"
+  assert_eq '[{"guardrail":"defer-only","gate":"overrun-1"}]' \
+    "$(state_get '[.events[] | select(.event == "guardrail-fired") | {guardrail, gate}]' | jq -c .)"
+}
