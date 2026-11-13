@@ -319,3 +319,14 @@ test_a_slice_whose_merges_interleave_is_cherry_picked_onto_the_previous_pr() {
   assert_eq "t1.txt t3.txt" "$(git -C "$PROJECT" diff --name-only pr/r1/1 pr/r1/2 | tr '\n' ' ' | sed 's/ $//')"
   assert_eq "" "$(git -C "$PROJECT" diff "$M3" pr/r1/2)" "the stack ends where the integration branch does"
 }
+
+test_opening_the_end_gate_deletes_the_runs_leftover_ci_branches() {
+  setup_end
+  local origin="$TEST_TMPDIR/origin.git"
+  git_quiet clone --bare "$PROJECT" "$origin"
+  git_quiet -C "$PROJECT" remote add origin "$origin"
+  # A merge gate on CI that crashed left its branch; another run's is not ours.
+  git_quiet -C "$PROJECT" push origin "main:refs/heads/ci/r1-2-1-100" "main:refs/heads/ci/r10-1-1-100"
+  "$E" open "$RUN_DIR" >/dev/null
+  assert_eq "ci/r10-1-1-100" "$(git -C "$origin" for-each-ref --format='%(refname:short)' 'refs/heads/ci/')"
+}

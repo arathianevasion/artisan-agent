@@ -265,3 +265,39 @@ test_mg_minutes_per_merge_come_from_the_workflows_recent_runs() {
   assert_eq '{"runs":2,"minutes":12.4}' "$("$MG" minutes --repo local/sample --workflow ci.yml)"
   assert_eq '{"runs":0,"minutes":null}' "$("$MG" minutes --repo local/sample --workflow none.yml)"
 }
+
+# ---- the plan step on a CI machine
+
+ci_draft() {
+  jq -n '{run_id: "r1", repo: "local/sample", integration_branch: "run/r1",
+    scope: ["10", "11"], waves: [["10", "11"]], gates: [{kind: "end"}],
+    tickets: {
+      "10": {title: "A", model: "claude-sonnet-5-5", blocked_by: [], expected: {input_tokens: 1000, output_tokens: 100, minutes: 10}},
+      "11": {title: "B", model: "claude-sonnet-5-5", blocked_by: [], expected: {input_tokens: 1000, output_tokens: 100, minutes: 10}}}}' >"$1"
+}
+
+test_mg_on_a_ci_machine_the_plan_step_shows_expected_ci_minutes_per_merge() {
+  make_project
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker" ARTISAN_MERGE_GATE=ci
+  mkdir -p "$FAKE_GH_DIR"
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
+  jq -n '{databaseId: 1, workflowName: "ci.yml", status: "completed", conclusion: "success",
+          createdAt: "2026-11-13T10:00:00Z", updatedAt: "2026-11-13T10:09:12Z"}' >"$FAKE_GH_DIR/run-1.json"
+  printf 'ci_gate:\n  workflow: ci.yml\n' >>"$PROJECT/.artisan-agent/config.yml"
+  ci_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '{"mode":"ci","workflow":"ci.yml","timeout_minutes":30,"minutes_per_merge":9.2,"from_runs":1}' \
+    "$(jq -c .merge_gate "$TEST_TMPDIR/plan.json")"
+  local out=
+  out=$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Merge gate: on CI"
+  assert_contains "$out" "about 9.2 minutes per merge (mean of its last 1 completed runs), about 19 minutes for this run's 2 merges"
+  # No gate workflow recorded: the approval says nothing can merge.
+  printf 'max_agents: 5\n' >"$PROJECT/.artisan-agent/config.yml"
+  (cd "$PROJECT" && "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan2.json"
+  assert_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan2.json")" "**No gate workflow recorded.**"
+  # On a local machine the plan carries no merge gate and the approval no section.
+  (cd "$PROJECT" && ARTISAN_MERGE_GATE=local "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan3.json"
+  assert_eq null "$(jq -c .merge_gate "$TEST_TMPDIR/plan3.json")"
+  assert_not_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan3.json")" "Merge gate"
+}

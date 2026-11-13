@@ -33,6 +33,11 @@
 #                  the draft's command (and its optional suite_found, where it
 #                  was found) is "discovered", shown as a fallback; no command
 #                  at all is "none".
+#   merge_gate     only on a machine whose merge gate runs on CI (merge-gate.sh
+#                  mode): {mode: "ci", workflow, timeout_minutes,
+#                  minutes_per_merge, from_runs, note?}, the expected CI
+#                  minutes per merge from the gate workflow's recent runs
+#                  (merge-gate.sh minutes). Absent on a local machine.
 #
 # Estimates, in estimated dollars:
 #   history   when past merged tickets on the same model have logged costs
@@ -195,6 +200,20 @@ cmd_build() {
   ' ${sets[@]+"${sets[@]}"} 2>&1); then
     die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
   fi
+  # On a CI machine, what each merge's gate costs in CI time (#139).
+  local gate= wf= mins=
+  gate=$("$SCRIPT_DIR/merge-gate.sh" mode) || exit 1
+  if [ "$gate" = ci ]; then
+    wf=$(printf '%s' "$out" | jq -r '.config.ci_gate.workflow // empty')
+    mins='{"runs": 0, "minutes": null}'
+    if [ -n "$wf" ]; then
+      mins=$("$SCRIPT_DIR/merge-gate.sh" minutes --repo "$(jq -r '.repo' "$draft")" --workflow "$wf" 2>/dev/null) \
+        || mins='{"runs": 0, "minutes": null, "note": "the gate workflow'"'"'s runs could not be read"}'
+    fi
+    out=$(printf '%s' "$out" | jq --argjson m "$mins" --arg wf "$wf" '.merge_gate = ({mode: "ci",
+      workflow: (if $wf == "" then null else $wf end), timeout_minutes: .config.ci_gate.timeout_minutes,
+      minutes_per_merge: $m.minutes, from_runs: $m.runs} + (if $m.note then {note: $m.note} else {} end))')
+  fi
   # The draft's one hands-on ticket, if it names one (human.sh annotate).
   if [ "$(jq -r '.hands_on != null' "$draft")" = true ]; then
     out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
@@ -261,6 +280,17 @@ cmd_render() {
            "**None.** No recorded checks (\($p.recorded_checks.reason)) and the draft names no suite; every merge needs one, so name it before approving."
          else "`\($p.suite_command // "none")`" end ),
       "",
+      ( $p.merge_gate // null | if . == null or .mode != "ci" then empty else
+        "### Merge gate: on CI",
+        (if .workflow == null then
+           "**No gate workflow recorded.** This machine runs no suite after a merge, so with no gate workflow (`ci_gate.workflow` in `.artisan-agent/config.yml`) nothing can merge. Record one through project setup, or set this machine'"'"'s `merge_gate` to `local`."
+         else
+           "Each merge runs no suite here: it waits for `\(.workflow)` on a throwaway `ci/*` branch, and parks the run after \(.timeout_minutes) minutes without a conclusion. "
+           + (if .minutes_per_merge == null
+              then "Expected CI time per merge: unknown (\(.note // "no completed runs of `\(.workflow)` to measure"))."
+              else "Expected CI time: about \(.minutes_per_merge) minutes per merge (mean of its last \(.from_runs) completed runs), about \(.minutes_per_merge * ($p.scope | length) | ceil) minutes for this run'"'"'s \($p.scope | length) merges." end)
+         end),
+        "" end ),
       "### Every number this run uses",
       "| Setting | Value |",
       "|---|---|",

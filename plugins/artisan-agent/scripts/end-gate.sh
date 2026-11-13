@@ -17,7 +17,8 @@
 #   end-gate.sh open <run-dir>
 #       opens the review-gate issue "End gate: run <id>" (or finds the one a
 #       crashed call opened) and queues an "end-gate" decision. Prints the
-#       issue. Refused (6) when not due or removed.
+#       issue. Refused (6) when not due or removed. First deletes any
+#       ci/<run-id>-* branch a merge gate on CI left on origin (merge-gate.sh sweep).
 #   end-gate.sh boundary <run-dir>
 #       the PR boundary as JSON: {value, level, source: "guardrail"} from the
 #       pr-boundaries guardrail (product, then team, then individual), the
@@ -366,6 +367,8 @@ cmd_open() {
     removed) refuse "the Artisan removed the end gate at the plan step: approve the PR boundary with end-gate.sh approve" ;;
     *) refuse "the end gate is not due: tickets in scope are still to merge" ;;
   esac
+  # Any ci/<run-id>-* branch a merge gate on CI left behind (a crash mid-gate).
+  "$SCRIPT_DIR/merge-gate.sh" sweep --prefix "ci/$RUN_ID-" --dir "$MAIN" >/dev/null 2>&1 || true
   repo=$(get -r .repo); title="End gate: run $RUN_ID"
   dir="$RUN_DIR/gates"; mkdir -p "$dir"
   packet >"$dir/end.md"
