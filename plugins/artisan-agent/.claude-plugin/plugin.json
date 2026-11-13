@@ -6,5 +6,6 @@
     "name": "arathianevasion"
   },
   "repository": "https://github.com/arathianevasion/artisan-agent",
+  "license": "MIT",
   "dependencies": ["mattpocock-skills@claude-plugins-official"]
 }
