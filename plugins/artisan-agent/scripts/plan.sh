@@ -10,7 +10,8 @@
 #                                 Max Agents and every config number
 #
 # The draft is the orchestrator's proposal: run_id, repo, integration_branch,
-# scope, waves, gates, and per ticket a title, model, expected_output and
+# scope, waves, gates, and per ticket a title, model, expected_output,
+# blocked_by (required: the ticket numbers of its open blockers, [] for none) and
 # expected size {input_tokens, output_tokens, minutes}. build adds:
 #   config         the project config (config.sh) with this run's overrides
 #   overrides      {key: {value, project}} for every --set; never written to config.yml
@@ -146,6 +147,8 @@ cmd_build() {
     | reduce .scope[] as $t (.;
         (.tickets[$t] // error("ticket \($t) is in scope but has no entry in tickets")) as $tk
         | ($tk.model // error("ticket \($t) has no model")) as $m
+        | need(($tk.blocked_by | type) == "array";
+               "ticket \($t) has no blocked_by (the open blockers resolve-scope.sh returned; [] for none)")
         | ($tk.expected // {}) as $x
         | need(($x.minutes | type) == "number" and $x.minutes > 0;
                "ticket \($t) needs expected.minutes")

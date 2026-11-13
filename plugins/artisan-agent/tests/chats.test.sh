@@ -22,8 +22,6 @@ setup_chats() {
   git_quiet -C "$ARTISAN_HOME" commit -m "home init"
   cd "$PROJECT"
   export ARTISAN_REPO=local/sample
-  # The fake gh fails on a tracker with no issue at all.
-  ticket 1
 }
 
 ticket() { # number [label...]

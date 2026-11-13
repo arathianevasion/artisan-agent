@@ -80,7 +80,7 @@ Open with the ADR and guardrail check, as `${CLAUDE_PLUGIN_ROOT}/references/adr-
 
 The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11); the rest is the Artisan's to approve or change.
 
-1. **Write the draft** as JSON in the run folder (`$(${CLAUDE_PLUGIN_ROOT}/scripts/state.sh run-dir <run-id>)/draft.json`): `run_id`, `repo` (`owner/name` on the tracker, as `docs/agents/issue-tracker.md` names it), `integration_branch` (`run/<run-id>`), `scope` (exactly the defined set of work), `waves`, `gates`, `suite_command` (leave it out to run the project's recorded checks; with none recorded, name the suite you found and add `suite_found`, where you found it; `${CLAUDE_PLUGIN_ROOT}/references/checks.md`), and per ticket `title`, `model`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
+1. **Write the draft** as JSON in the run folder (`$(${CLAUDE_PLUGIN_ROOT}/scripts/state.sh run-dir <run-id>)/draft.json`): `run_id`, `repo` (`owner/name` on the tracker, as `docs/agents/issue-tracker.md` names it), `integration_branch` (`run/<run-id>`), `scope` (exactly the defined set of work), `waves`, `gates`, `suite_command` (leave it out to run the project's recorded checks; with none recorded, name the suite you found and add `suite_found`, where you found it; `${CLAUDE_PLUGIN_ROOT}/references/checks.md`), and per ticket `title`, `model`, `blocked_by` (copied from that ticket's `blocked_by` in `resolve-scope.sh`'s output, `[]` for none; `plan.sh build` refuses a ticket without it), `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
 2. **Hands-on ticket.** Suggest at most one, off the critical path, with its focus; a critical-path pick shows its delay before the Artisan confirms: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`.
 3. **Build the plan:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh build --draft <draft.json> > <run folder>/plan.json`. It reads the project config (`.artisan-agent/config.yml`), estimates each ticket in estimated dollars and sets each ticket's caps, the total and the budget.
 4. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed: a table per wave with each ticket's number and description, wave, model, estimate and expected output, then every number the run uses. Underneath, add your tier mapping, the suite command, and what each check actually covers (from the preconditions).
@@ -117,7 +117,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `launch` | Show the wave digest (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
 | `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
-| `parked` | Only a hands-on ticket the Artisan is building, and work behind it, is left. Say which ticket, as `status` prints it, and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. |
+| `parked` | Say why, as `status` prints it (one line per reason). A hands-on ticket the Artisan is building, and work behind it, is all that is left: say which ticket and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. "Waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`. "parked <window>" on plan usage: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
 
@@ -131,6 +131,8 @@ If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline),
 | #13 (billing tab) | 1 | claude-opus-5-5 | blocked: the suite failed after merging |
 
 Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
+
+**Budget and plan usage.** An `overrun` decision (the overrun gate, defer only) or a `parked …` line on plan usage: follow `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md` (`scripts/budget.sh`).
 
 **Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
 

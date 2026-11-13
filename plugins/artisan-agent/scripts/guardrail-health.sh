@@ -5,12 +5,15 @@
 # Rules and event shapes: ${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md.
 #
 # Usage (--runs takes run folders, oldest first; --table prints markdown):
-#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--table]
+#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--table] [--record]
 #       each guardrail in force (guardrails.sh resolve) as fired, bypassed (with
 #       reasons) or never fired, with its origin, and the moves its evidence
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
+#       --record keeps the report ({id, date, proposals}) as the latest one in
+#       ARTISAN_HEALTH_DIR (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health/latest.json):
+#       `guardrails.sh loosen` acts only on a guardrail that report proposes.
 #   guardrail-health.sh spot-check --runs DIR... [--count N]
 #       about N (default 3) decisions a worker made alone that no gate showed
 #   guardrail-health.sh spot-check-record --run DIR --ticket T --card I --answer same|differently [--area A] [--guardrail ID]
@@ -42,21 +45,27 @@ usage() { state_usage "$0"; }
 
 RUNS=()
 TABLE=0
+RECORD=0
 THRESHOLD=3
 MISSES=""
-parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, REST (array of unparsed words)
+VALUE_OPTS=""   # a command's own options that take a value; each lands in OPT_<name>, dashes as underscores
+parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, OPT_*, REST (array of unparsed words)
   REST=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --runs) shift
         while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do RUNS+=("$1"); shift; done ;;
       --table) TABLE=1; shift ;;
+      --record) RECORD=1; shift ;;
       --threshold) [ $# -ge 2 ] || usage; THRESHOLD=$2; shift 2 ;;
       --misses) [ $# -ge 2 ] || usage; MISSES=$2; shift 2 ;;
-      *) REST+=("$1"); shift ;;
+      *) if [[ " $VALUE_OPTS " == *" $1 "* ]]; then
+           [ $# -ge 2 ] || usage
+           printf -v "OPT_$(printf %s "${1#--}" | tr - _)" %s "$2"; shift 2
+         else REST+=("$1"); shift; fi ;;
     esac
   done
-  case "$THRESHOLD" in '' | *[!0-9]*) usage ;; esac
+  state_is_uint "$THRESHOLD" || usage
 }
 
 state_files() { # prints each run's state.json; refuses none or a folder without one
@@ -126,8 +135,7 @@ def row($g):
     conflicts: .resolved.conflicts, overridden: .resolved.overridden }'
 
 health_table() {
-  jq -r '
-    def row: "| " + join(" | ") + " |";
+  jq -r "$(state_jq_row_def)"'
     def origin: if .origin then "\(.origin.date // "?") \(.origin.who // "?"): \(.origin.reason // "")" else "no origin recorded" end;
     def st: if .status == "bypassed" then "bypassed (" + ([.bypassed[] | .reason // "no reason"] | join("; ")) + ")" else .status end;
     "Guardrail health over \(.runs) run(s); a move is proposed at \(.threshold) events.", "",
@@ -148,19 +156,25 @@ cmd_health() {
   resolved=$("$SCRIPT_DIR/guardrails.sh" resolve)
   out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
     '{states: $states, misses: $misses, resolved: $resolved} | '"$HEALTH_JQ")
+  if [ "$RECORD" = 1 ]; then
+    local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now
+    now=$(state_now)
+    mkdir -p "$dir"
+    jq -n --argjson now "$now" --argjson out "$out" \
+      '{id: "health-\($now)", date: ($now | todate), runs: $out.runs, threshold: $out.threshold, proposals: $out.proposals}' >"$dir/latest.json.tmp.$$"
+    mv "$dir/latest.json.tmp.$$" "$dir/latest.json"
+  fi
   if [ "$TABLE" = 1 ]; then health_table "$out"; else printf '%s\n' "$out"; fi
 }
 
 # -------------------------------------------------------------- spot-check
 
 cmd_spot_check() {
-  local count=3
+  VALUE_OPTS="--count"
   parse_common "$@"
-  set -- ${REST[@]+"${REST[@]}"}
-  while [ $# -gt 0 ]; do
-    case "$1" in --count) [ $# -ge 2 ] || usage; count=$2; shift 2 ;; *) usage ;; esac
-  done
-  case "$count" in '' | *[!0-9]*) usage ;; esac
+  [ ${#REST[@]} -eq 0 ] || usage
+  local count=${OPT_count:-3}
+  state_is_uint "$count" || usage
   states_json | jq -c --argjson n "$count" '
     [.[] | . as $s
       | ([($s.review_gates // [])[] | (.tickets // [])[] | tostring] + [($s.provisional_shown // [])[] | tostring]) as $shown
@@ -213,8 +227,7 @@ cmd_audit() {
   out=$(jq -n --argjson states "$(states_json)" --argjson misses "$(misses_json)" --argjson th "$THRESHOLD" \
     '{states: $states, misses: $misses} | '"$AUDIT_JQ")
   if [ "$TABLE" = 1 ]; then
-    jq -r '
-      def row: "| " + join(" | ") + " |";
+    jq -r "$(state_jq_row_def)"'
       "| Triage miss | Criterion | Suggestion |", "|---|---|---|",
       (.misses[] | ["#\(.ticket)", (.criterion // "none" | tostring), .suggestion] | row),
       "", "| Discards and deferrals | Count | Suggestion |", "|---|---|---|",
@@ -225,13 +238,11 @@ cmd_audit() {
 # ----------------------------------------------------------------- hands-on
 
 cmd_hands_on() {
-  local after=5
+  VALUE_OPTS="--nudge-after"
   parse_common "$@"
-  set -- ${REST[@]+"${REST[@]}"}
-  while [ $# -gt 0 ]; do
-    case "$1" in --nudge-after) [ $# -ge 2 ] || usage; after=$2; shift 2 ;; *) usage ;; esac
-  done
-  case "$after" in '' | *[!0-9]*) usage ;; esac
+  [ ${#REST[@]} -eq 0 ] || usage
+  local after=${OPT_nudge_after:-5}
+  state_is_uint "$after" || usage
   states_json | jq -c --argjson after "$after" '
     map([(.events // [])[] | select(.event == "human-done")] | length > 0) as $flags
     | ($flags | length) as $n
@@ -246,17 +257,10 @@ cmd_hands_on() {
 # ----------------------------------------------------------------- backstop
 
 cmd_backstop() {
-  local repo_dir=. main=main since="" prs="" closed=""
+  VALUE_OPTS="--repo-dir --main --since --prs --closed"
   parse_common "$@"
-  set -- ${REST[@]+"${REST[@]}"}
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --repo-dir | --main | --since | --prs | --closed) [ $# -ge 2 ] || usage
-        case "$1" in --repo-dir) repo_dir=$2 ;; --main) main=$2 ;; --since) since=$2 ;; --prs) prs=$2 ;; --closed) closed=$2 ;; esac
-        shift 2 ;;
-      *) usage ;;
-    esac
-  done
+  [ ${#REST[@]} -eq 0 ] || usage
+  local repo_dir=${OPT_repo_dir:-.} main=${OPT_main:-main} since=${OPT_since:-} prs=${OPT_prs:-} closed=${OPT_closed:-}
   local states repo prs_json closed_json commits=""
   states=$(states_json)
   repo=$(jq -r '.[0].repo // ""' <<<"$states")
@@ -282,8 +286,7 @@ cmd_backstop() {
         prs_without_run: [$prs[] | select((.headRefName | IN($branches[])) | not) | {number, headRefName}],
         tickets_closed_outside_run: [$closed[] | select(($since == "" or (.closedAt // "") >= $since) and ((.number | tostring) | IN($inrun[]) | not)) | .number] }')
   if [ "$TABLE" = 1 ]; then
-    jq -r '
-      def row: "| " + join(" | ") + " |";
+    jq -r "$(state_jq_row_def)"'
       "| Backstop | What | Flagged |", "|---|---|---|",
       (.direct_commits[] | ["direct commit to main", .[0:10], "no PR, no run record"] | row),
       (.unrecorded_merges[] | ["merge to main", .[0:10], "no PR, no run record"] | row),
