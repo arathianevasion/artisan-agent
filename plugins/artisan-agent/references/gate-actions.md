@@ -85,6 +85,8 @@ Everything in scope still to run (`queued` or `blocked`) that depends on the tic
 
 Every answer stays on its gate in the state file: `review_gates[]` and `exception_gates[]` carry `status`, the record under `bypass`, `deferral`, `redirect` or `outcome` (`{by, at, why?, notes?, released?, mode?, ticket?}`), and `answered`, every action in order. The gate's decision is decided as a decision record, and the event log has `gate-bypassed`, `gate-deferred`, `gate-redirected` or `gate-decided` (`gate`, `issue`, `kind`, `choice`, `by`), plus `decided` for any `state.sh decide`. The retro reads bypasses and deferrals, with their reasons, from these (`skills/retro/PREPARE.md`).
 
+**For guardrail health** (`references/guardrail-health.md`), in the same write: bypassing a gate a guardrail opened (its `guardrails`: an area's risk gate, or an exception gate whose exception decision named a guardrail, such as the scope floor's `scope-floor`) logs `guardrail-bypassed` per guardrail (`guardrail`, `area?`, `gate`, `reason`: the `--why`, `by`); a gate no guardrail opened logs nothing extra. A redirect logs `gate-decision` (`card: null`, `outcome: "change"`, `redirect: true`, `areas`: every area of the gate's tickets). `redirect`, `retry` and `take` take `--bug` when the Artisan found a bug in the gate's tickets: `bug-found` (`ticket`, `areas`, `where: "gate"`, `gate`, `by`), one per ticket.
+
 ## `state.sh decide`
 
 The general way any waiting decision is answered:

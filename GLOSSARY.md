@@ -202,7 +202,7 @@ A gate the Artisan can defer but never approve away or bypass, such as the overr
 _Avoid_: hard gate
 
 **Guardrail health**:
-The retro's view of every guardrail in force: whether it fired, was bypassed (and why) or never fired, and the loosen and tighten evidence that adds up to a proposed move.
+The retro's view of every guardrail in force: whether it fired, was bypassed (and why) or never fired, and the loosen and tighten evidence that adds up to a proposed move. A guardrail fires when it makes something happen: a gate opens because of it, or a verifier fails a criterion because of it. A bug traced to a guardrail's area is tighten evidence wherever the Artisan found it: caught at any review gate, though it never shipped, or confirmed at the retro after shipping.
 _Avoid_: guardrail metrics, guardrail report
 
 **Spot-check**:
