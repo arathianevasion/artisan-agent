@@ -469,3 +469,20 @@ test_a_tickets_areas_in_the_draft_reach_the_plan() {
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
   assert_eq '["billing"]' "$(jq -c '[.tickets[].areas] | unique | .[0]' "$TEST_TMPDIR/plan.json")"
 }
+
+# Areas through the real plan path (#77): the plan step's draft records
+# expected_files; gate-plan.sh propose turns them into areas and gate
+# settings; plan.sh build carries both into the plan.
+test_a_draft_with_expected_files_lands_its_area_and_gate_setting_in_the_plan() {
+  make_project
+  printf 'areas:\n  billing:\n    paths: [src/billing/]\n    gates: [risk]\n' >"$PROJECT/.artisan-agent/config.yml"
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["10"].expected_files = ["src/uploads/"] | .tickets["11"].expected_files = ["src/billing/tab.sh", "tests/billing.sh"] | del(.gates)' \
+    "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && "$SCRIPTS/gate-plan.sh" propose "$TEST_TMPDIR/d2.json") >/dev/null
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '["billing"]' "$(jq -c '.tickets["11"].areas' "$TEST_TMPDIR/plan.json")"
+  assert_eq 'false' "$(jq '.tickets["10"] | has("areas")' "$TEST_TMPDIR/plan.json")"
+  assert_eq '[{"kind":"risk","after":"11","tests":["area:billing"]}]' \
+    "$(jq -c '[.gates[] | select(.kind == "risk")]' "$TEST_TMPDIR/plan.json")"
+}

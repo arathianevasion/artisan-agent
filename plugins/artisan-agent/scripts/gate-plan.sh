@@ -11,8 +11,9 @@
 #       "bug" there is no slice gate: the end gate doubles as one (and, for a
 #       bug, leads with the failing test). Prints the table, as render does.
 #       Areas (#77): a ticket belongs to every area in the config (`areas.<name>`:
-#       `paths`, `gates`) that a path in its draft `paths` falls under (a path
-#       equal to, or inside, an area path). The ticket's `areas` is written to
+#       `paths`, `gates`) that an entry of its draft `expected_files` overlaps (read
+#       as wave-width.sh reads them: lib/paths-lib.sh). A ticket with no
+#       `expected_files` may touch anything, so it is in every area. The ticket's `areas` is written to
 #       the draft and named under the table. An area's `gates` list says what
 #       its tickets get: `slice` (a slice gate of the ticket alone) and/or
 #       `risk` (a risk gate, test `area:<name>`). A ticket in several areas gets
@@ -30,7 +31,7 @@
 #       refused (6); remove it instead.
 #
 # Draft fields read: scope, route (feature, small-change or bug; default
-# feature), tickets.<t>.title, .slice, .paths (the files it touches, for areas),
+# feature), tickets.<t>.title, .slice, .expected_files (the files it touches: waves and areas),
 # .escalation (any of new-seam, tracer-bullet, vocabulary-adr,
 # judgement-criteria). Every command except
 # render rewrites the draft in place and prints the table.
@@ -45,6 +46,8 @@ set -euo pipefail
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/paths-lib.sh
+. "$SCRIPT_DIR/lib/paths-lib.sh"
 die() { echo "gate-plan.sh: $*" >&2; exit "${2:-1}"; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
@@ -117,13 +120,19 @@ cmd_propose() {
   bad=$(jq -r --argjson ok "$TESTS" '[.tickets // {} | to_entries[] | .value.escalation // [] | .[] | select(. as $e | $ok | index($e) | not)] | unique | join(", ")' "$1")
   [ -z "$bad" ] || die "unknown escalation test: $bad (one of new-seam, tracer-bullet, vocabulary-adr, judgement-criteria)" 2
   case "$(jq -r '.route // "feature"' "$1")" in feature|small-change|bug) ;; *) die "route must be feature, small-change or bug" 2 ;; esac
-  write "$1" '
-    def under($p; $f): ($p | tostring | sub("/+$"; "")) as $b | ($f == $b or ($f | startswith($b + "/")));
-    def areas_of($paths): [$areas | to_entries[] | select(.value.paths // [] | any(. as $p | $paths | any(. as $f | under($p; $f)))) | .key];
+  write "$1" "$PATHS_JQ"'
+    # An area path matches an expected_files entry when they overlap, as
+    # wave-width.sh reads overlap; an area path without a trailing "/" is
+    # also taken as a directory. A ticket with no expected_files may touch
+    # anything: it is in every area. An empty list touches nothing.
+    def in_area($e; $p): ($p | tostring | sub("/+$"; "")) as $b
+      | path_under($e; $b) or path_under($b; $e) or path_under($e; $b + "/") or path_under($b + "/"; $e);
+    def areas_of($files): if $files == null then [$areas | keys[]]
+      else [$areas | to_entries[] | select(.value.paths // [] | any(. as $p | $files | any(. as $e | in_area($e; $p)))) | .key] end;
     def has_gate($names; $g): [$names[] | $areas[.].gates // [] | .[]] | index($g) != null;
     . as $orig | (.route // "feature") as $route
     | [(.scope // [])[] | tostring] as $scope
-    | (reduce $scope[] as $t (.; areas_of(($orig.tickets[$t].paths // []) | map(tostring)) as $a
+    | (reduce $scope[] as $t (.; areas_of(($orig.tickets[$t].expected_files // null) | if . == null then null else map(tostring) end) as $a
                               | if $a == [] then del(.tickets[$t].areas) else .tickets[$t].areas = $a end)) as $d
     | (if $route == "feature" then
          [$scope[] as $t | ($d.tickets[$t].slice // null) as $s

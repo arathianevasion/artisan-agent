@@ -39,7 +39,7 @@ Standards files are prose and checks are code; the machine-readable guardrails (
 2. **Individual fills gaps.** An individual guardrail applies where no shared level has the key.
 3. **A stricter individual guardrail about one's own reviews** (`scope: own-reviews`, `strict` above the shared one's) applies to the gates that Artisan holds. It is listed as `own_reviews`; for everyone else the shared guardrail stands.
 4. **In a pair,** an individual guardrail with a `role` applies only to that role's jobs (`resolve --role`).
-5. **An area-scoped guardrail** (an `area` field, #77) applies only to tickets touching that area. `resolve` and `table` take `--ticket T[,T...]` (with `--run-dir`: the tickets' `plan.tickets.<t>.areas`) or `--areas A,B` and drop a guardrail whose area is not among them; workers, verifiers and slice packets are given `--ticket`. Without either flag every guardrail is listed.
+5. **An area-scoped guardrail** (an `area` field, #77) applies only to tickets touching that area: those whose `expected_files` overlap an area path, or that declare none (`gate-plan.sh propose` writes `areas`). `resolve` and `table` take `--ticket T[,T...]` (with `--run-dir`: the tickets' `plan.tickets.<t>.areas`) or `--areas A,B` and drop a guardrail whose area is not among them; workers, verifiers and slice packets are given `--ticket`. Without either flag every guardrail is listed.
 
 Every conflict is in `conflicts` and `overridden`; the plan step surfaces them for approval and the retro raises them.
 

@@ -391,7 +391,7 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
-| `gate-plan.sh propose <draft> [--config FILE]` | Engineering chat | applies per-area gate settings (the strictest wins) and names each ticket's `areas`; writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
+| `gate-plan.sh propose <draft> [--config FILE]` | Engineering chat | applies per-area gate settings (the strictest wins) and names each ticket's `areas`, from its `expected_files` (none declared: every area); writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
 | `gate-plan.sh render\|remove\|move <draft> ...` | Engineering chat | the table; remove a slice, risk or end gate; move a slice or risk gate (`--after T`, `--tickets T,T`). An exception gate, or moving the end gate, is refused | 0, 1, 2, 6 |
 | `gate.sh sync\|due\|open` | both | as for slice gates; also opens a risk gate (`risk-<n>` from the plan, `risk-seam-<t>` from a new-seam card) once its ticket merges | as above |
 | `end-gate.sh status <run-dir>` | Engineering chat | `not-due`, `due`, `open`, `removed`, `approved` or `ended` | 0 |

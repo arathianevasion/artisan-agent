@@ -29,15 +29,17 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/state-lib.sh
 . "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/paths-lib.sh
+. "$SCRIPT_DIR/lib/paths-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
 
 # jq: the current wave (the last orchestrator's, 0 before any) and, for a
 # candidate ticket, the first ticket in the way: {ticket, why} or null.
-WIDTH_JQ="$STATE_JQ_DEFS"'
+WIDTH_JQ="$STATE_JQ_DEFS$PATHS_JQ"'
   def files($t): .plan.tickets[$t].expected_files // null;
-  def under($a; $b): $a == $b or ($b | endswith("/")) and ($a | startswith($b));
+  def under($a; $b): path_under($a; $b);
   def overlap($x; $y):
     if $x == null or $y == null then "unknown"
     else first($x[] as $a | $y[] as $b | select(under($a; $b) or under($b; $a))
