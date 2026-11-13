@@ -256,3 +256,45 @@ test_an_override_with_a_bad_run_dir_is_refused_before_anything_is_committed() {
     --override-reason why --run-dir "$TEST_TMPDIR/nope"
   assert_eq "$before" "$(git -C "$ARTISAN_HOME" rev-parse HEAD)"
 }
+
+# ------------------------------------------------- the events the run emits (#122)
+
+test_a_bug_found_at_a_gate_counts_as_tighten_evidence_for_each_of_its_ticket_areas() {
+  setup "$(g bill kt 1 '{"area":"billing"}')" "$(g up ku 1 '{"area":"uploads"}')" "$(g auth ka 1 '{"area":"auth"}')"
+  bug='{"event":"bug-found","ticket":"7","areas":["billing","uploads"],"where":"gate","gate":"slice-1","by":"Andrew"}'
+  run r1 "[$bug, $bug, $bug]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq tighten "$(proposal "$out" bill)"
+  assert_eq tighten "$(proposal "$out" up)"
+  assert_eq none "$(proposal "$out" auth)"
+  assert_eq "bug found at a gate" "$(jq -r '.guardrails[] | select(.id == "bill") | .tighten.evidence[0].kind' <<<"$out")"
+}
+
+test_an_old_shipped_bug_event_and_a_confirmed_retro_bug_still_count() {
+  setup "$(g bill kt 1 '{"area":"billing"}')"
+  run r1 '[{"event":"shipped-bug","area":"billing","ticket":"7"}]'
+  printf '%s\n' '{"issue":90,"ticket":"8","areas":["billing"],"where":"shipped","by":"Andrew"}' \
+    '{"issue":91,"ticket":"9","areas":["billing"],"where":"shipped","by":"Andrew"}' >"$TEST_TMPDIR/bugs.jsonl"
+  out=$("$H" health --runs "$(R r1)" --bugs "$TEST_TMPDIR/bugs.jsonl")
+  assert_eq tighten "$(proposal "$out" bill)"
+  assert_eq "shipped bug,shipped bug,shipped bug" "$(jq -r '[.guardrails[0].tighten.evidence[].kind] | join(",")' <<<"$out")"
+}
+
+test_a_gate_decision_reads_its_areas_as_a_list_and_a_change_is_not_approved_unchanged() {
+  setup "$(g up ku 1 '{"area":"uploads"}')"
+  keep='{"event":"gate-decision","gate":"slice-1","card":1,"by":"Andrew","outcome":"keep","redirect":false,"areas":["auth","uploads"]}'
+  change='{"event":"gate-decision","gate":"slice-1","card":2,"by":"Andrew","outcome":"change","redirect":false,"areas":["uploads"]}'
+  redirect='{"event":"gate-decision","gate":"slice-1","card":null,"by":"Andrew","outcome":"change","redirect":true,"areas":["uploads"]}'
+  run r1 "[$keep, $change, $redirect]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq 1 "$(jq '.guardrails[0].loosen.count' <<<"$out")"
+  assert_eq 2 "$(jq '.guardrails[0].tighten.count' <<<"$out")"
+}
+
+test_the_scope_floor_and_defer_only_events_belong_to_their_ledger_guardrails_whatever_their_ids() {
+  setup "$(g floor-1 scope-floor 9)" "$(g overrun-1 budget 9 '{"defer_only":true}')" "$(g quiet kq 1)"
+  run r1 '[{"event":"guardrail-fired","guardrail":"scope-floor","gate":"exception-3"},
+           {"event":"guardrail-fired","guardrail":"defer-only","gate":"overrun-1"}]'
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "floor-1 fired, overrun-1 fired, quiet never fired" "$(jq -r '[.guardrails | sort_by(.id)[] | "\(.id) \(.status)"] | join(", ")' <<<"$out")"
+}

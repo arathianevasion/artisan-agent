@@ -48,8 +48,9 @@ TABLE=0
 RECORD=0
 THRESHOLD=3
 MISSES=""
+BUGS=""
 VALUE_OPTS=""   # a command's own options that take a value; each lands in OPT_<name>, dashes as underscores
-parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, OPT_*, REST (array of unparsed words)
+parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, BUGS, OPT_*, REST (array of unparsed words)
   REST=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -59,6 +60,7 @@ parse_common() { # sets RUNS, TABLE, THRESHOLD, MISSES, OPT_*, REST (array of un
       --record) RECORD=1; shift ;;
       --threshold) [ $# -ge 2 ] || usage; THRESHOLD=$2; shift 2 ;;
       --misses) [ $# -ge 2 ] || usage; MISSES=$2; shift 2 ;;
+      --bugs) [ $# -ge 2 ] || usage; BUGS=$2; shift 2 ;;
       *) if [[ " $VALUE_OPTS " == *" $1 "* ]]; then
            [ $# -ge 2 ] || usage
            printf -v "OPT_$(printf %s "${1#--}" | tr - _)" %s "$2"; shift 2
@@ -77,9 +79,11 @@ state_files() { # prints each run's state.json; refuses none or a folder without
   for d in "${RUNS[@]}"; do printf '%s\n' "$d/state.json"; done
 }
 
-misses_json() { # the triage misses as a JSON array
-  if [ -n "$MISSES" ] && [ -f "$MISSES" ]; then jq -sc 'map(select(type == "object"))' "$MISSES"; else echo '[]'; fi
+lines_json() { # file: its JSON lines (objects only) as an array; none for no file
+  if [ -n "$1" ] && [ -f "$1" ]; then jq -sc 'map(select(type == "object"))' "$1"; else echo '[]'; fi
 }
+misses_json() { lines_json "$MISSES"; } # the triage misses
+bugs_json() { lines_json "$BUGS"; }     # the retro's confirmed bugs (retro/bugs.jsonl)
 
 states_json() { # every state as one array
   local files=
@@ -93,7 +97,13 @@ states_json() { # every state as one array
 
 HEALTH_JQ='
 def evs: [.states[] | . as $s | (.events // [])[] | . + {run: $s.run_id}];
-def match($g): (.guardrail == $g.id) or ((.area // null) != null and $g.area != null and .area == $g.area);
+# An event belongs to a guardrail by id, by area (one `area`, or any of an
+# `areas` list), or by a built-in id: "scope-floor" is the guardrail keyed
+# scope-floor, "defer-only" the one marked defer_only.
+def match($g): (.guardrail == $g.id)
+  or (.guardrail == "scope-floor" and $g.key == "scope-floor")
+  or (.guardrail == "defer-only" and ($g.defer_only // false))
+  or ($g.area != null and (((.area // null) == $g.area) or ((.areas // []) | index($g.area) != null)));
 def hits($name; $g): [evs[] | select(.event == $name and match($g))];
 def decided($g): [evs[] | select(.event == "gate-decision" and match($g))];
 def row($g):
@@ -104,7 +114,8 @@ def row($g):
   | (decided($g) | map(select(.outcome == "change" or (.redirect // false)))) as $redirects
   | ([evs[] | select(.event == "spot-check" and .answer == "differently" and match($g))]) as $differently
   | ([.misses[] | select(match($g))]) as $misses
-  | ([evs[] | select(.event == "shipped-bug" and match($g))]) as $bugs
+  | ([(evs[] | select((.event == "bug-found" or .event == "shipped-bug") and match($g))),
+      (.bugs[] | select(match($g)))]) as $bugs
   | (if ($fired | length) == 0 and ($byp | length) == 0 then ([.states[] | select([(.events // [])[] | select(.event == "guardrail-fired" or .event == "guardrail-bypassed")] | length > 0)] | length) else 0 end) as $never
   | ([ ($reasoned | map({kind: "bypass", reason: .reason, run: .run})[]),
        ($unchanged | map({kind: "gate approved unchanged", gate: .gate, run: .run})[]),
@@ -112,7 +123,8 @@ def row($g):
   | ([ ($redirects | map({kind: "redirect at gate", gate: .gate, run: .run})[]),
        ($differently | map({kind: "spot-check: decided differently", ticket: .ticket, run: .run})[]),
        ($misses | map({kind: "triage miss", ticket: .ticket, criterion: (.criterion // null)})[]),
-       ($bugs | map({kind: "shipped bug", ticket: .ticket, run: .run})[]) ]) as $tighten
+       ($bugs | map({kind: (if .where == "gate" then "bug found at a gate" else "shipped bug" end),
+                     ticket: .ticket, gate: (.gate // null), issue: (.issue // null), run: (.run // null)})[]) ]) as $tighten
   | { id: $g.id, level: $g.level, key: $g.key, value: $g.value, area: $g.area,
       origin: $g.origin, protected: $g.protected,
       status: (if ($byp | length) > 0 then "bypassed" elif ($fired | length) > 0 then "fired" else "never fired" end),
@@ -150,12 +162,13 @@ health_table() {
 cmd_health() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
-  local states= misses= resolved= out=
+  local states= misses= bugs= resolved= out=
   states=$(states_json)
   misses=$(misses_json)
+  bugs=$(bugs_json)
   resolved=$("$SCRIPT_DIR/guardrails.sh" resolve)
-  out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
-    '{states: $states, misses: $misses, resolved: $resolved} | '"$HEALTH_JQ")
+  out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson bugs "$bugs" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
+    '{states: $states, misses: $misses, bugs: $bugs, resolved: $resolved} | '"$HEALTH_JQ")
   if [ "$RECORD" = 1 ]; then
     local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now=
     now=$(state_now)

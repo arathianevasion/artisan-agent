@@ -257,7 +257,7 @@ resolve_json() {
   jq -n --argjson src "$src" --arg role "$role" --argjson scoped "$scoped" --argjson recs "$(printf '%s\n' "$recs" | jq -sc '.')" '
     def rank: {product: 3, team: 2, individual: 1}[.level];
     def strict: (.strict // 0);
-    def slim: {key, level, id, value, strict: strict, version, rule: (.rule // null), scope: (.scope // null), role: (.role // null), area: (.area // null), origin: (.origin // null), moves: (.moves // []), protected: ((.key == "scope-floor") or (.defer_only == true))};
+    def slim: {key, level, id, value, strict: strict, version, rule: (.rule // null), scope: (.scope // null), role: (.role // null), area: (.area // null), origin: (.origin // null), moves: (.moves // []), defer_only: (.defer_only == true), protected: ((.key == "scope-floor") or (.defer_only == true))};
     def classify:
       . as $g
       | ($g | map(select(.level != "individual")) | sort_by([(-(rank)), (-(strict))])) as $shared
