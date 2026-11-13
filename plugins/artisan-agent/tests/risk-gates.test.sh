@@ -144,6 +144,17 @@ test_a_context_gate_can_be_deferred_like_any_risk_gate() {
   assert_contains "$("$PLUGIN_ROOT/scripts/gate-action.sh" deferred "$RUN_DIR" 2>&1)" "merged at 52% context"
 }
 
+test_a_context_gate_can_be_bypassed_and_frees_its_dependents() {
+  setup_risk '[]'
+  merged_with_cards 1 none
+  "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 53
+  local num
+  num=$(state_get '.review_gates[0].issue')
+  "$PLUGIN_ROOT/scripts/gate-action.sh" bypass "$RUN_DIR" "$num" --why "reviewed by hand" >/dev/null
+  assert_eq bypassed "$(state_get '.review_gates[0].status')"
+  assert_eq free "$("$G" holds "$RUN_DIR" 1)"
+}
+
 test_a_merge_at_the_band_whose_tracker_failed_is_opened_by_sync() {
   setup_risk '[]'
   merged_with_cards 1 none

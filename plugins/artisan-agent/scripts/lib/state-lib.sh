@@ -350,7 +350,7 @@ STATE_JQ_DEFS='
         | {id: "risk-context-\($t)", kind: "risk", context_percent: $pct,
            why: "merged at \($pct)% context, the review band", slice: "#\($t)",
            role: "Engineering (QA)", tickets: [$t],
-           problem: "#\($t) merged while the orchestrator was at \($pct)% context (50% or more), where its own checking of the merge is least reliable.",
+           problem: "#\($t) merged while the orchestrator was at \($pct)% context, the review band.",
            solution: "Look over what merged before its dependents start on it: the cards, the uncertainties and the diff below. Only its dependents wait; nothing else does."}];
   def gate_due($g):
     . as $s
