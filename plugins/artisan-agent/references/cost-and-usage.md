@@ -69,8 +69,9 @@ Claude Code shows plan usage and the context window only to the interactive stat
 
 | Reading | Verdict |
 |---|---|
-| no file, or no rate limits in it | unknown |
-| `rate_limits.at` older than 10 minutes (real clock) | unknown |
+| the freshest reading of a window, from the status line or any worker | the one used (each window takes its own freshest reading) |
+| no reading newer than 10 minutes (real clock), a worker running | unknown |
+| no reading newer than 10 minutes, no worker running | ok, no park: nothing is spending |
 | five-hour window at or over 100 − reserve (80%) | park, five-hour, resets at its `resets_at` |
 | seven-day window over the ceiling (90%) | park, seven-day |
 | a window absent, or past its own `resets_at` | that window counts as empty |
@@ -86,4 +87,4 @@ Unknown stops dispatch exactly like a window near its limit. The first time the 
 
 Ending a park decides the `usage` decision and logs `unparked` (`how`, `by`); a raise logs `ceiling-raised`.
 
-**Known limit.** The status line refreshes every minute, but its plan usage is what the chat's own last API response carried: an idle chat keeps rewriting the same numbers while headless workers spend. `claude -p --output-format stream-json` does carry a `rate_limit_event` (`unifiedWindows.five_hour.utilization`, `resetsAt`), and `--output-format json`, which workers use, does not; reading it is follow-up work. Until then a run that should keep going overnight needs a chat open, or it parks within 10 minutes as unknown.
+**Workers report usage too.** The ticket runner starts each session with `--output-format stream-json --verbose`, which emits `rate_limit_event`s (plain `--output-format json` does not). Seen live, one per window, e.g. `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794610800,"rateLimitType":"seven_day","unifiedWindows":{"seven_day":{"utilization":0.29,"resetsAt":1794610800,"status":"allowed"}}}}`. The runner keeps the stream (`workers/<t>.<n>/stream.jsonl`), turns the latest event into `workers/<t>.<n>/usage.json` (`source: "worker"`, `received_at`, and per window `used_percentage` (utilisation × 100), `resets_at` and `at`, when the runner saw it) and, when the session ends, writes `output.json` as the stream's final `result` event, so everything that reads `output.json` is unchanged. The guard takes each window's freshest reading across the status line and every worker. The time is the runner's own, so a limit Claude Code resends cannot pass as fresh later. A "worker running" is an in-flight ticket whose runner is alive.

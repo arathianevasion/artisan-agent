@@ -16,6 +16,11 @@
 #               $ARTISAN_ROLE) in its working
 #               directory; completes if the file exits 0, else ends without
 #               the completion line
+#   stream      like complete, but as `--output-format stream-json --verbose`
+#               prints: a system event, a rate_limit_event (the shape seen live:
+#               one window, utilization a fraction, resetsAt), then FAKE_CLAUDE_SLEEP
+#               seconds later (default 2) a second one for the other window, then
+#               the result event
 #   sleep       leaves a stray background `sleep` in its process group, sleeps
 #               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
 #
@@ -91,6 +96,16 @@ ARTISAN-WORKER: complete"
     else
       result success false 6 "The script failed."
     fi
+    ;;
+  stream)
+    echo '{"type":"system","subtype":"init","session_id":"s1"}'
+    echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794610800,"rateLimitType":"seven_day","unifiedWindows":{"seven_day":{"utilization":0.29,"resetsAt":1794610800,"status":"allowed"}}},"session_id":"s1"}'
+    sleep "${FAKE_CLAUDE_SLEEP:-2}"
+    echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794610000,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1794610000,"status":"allowed"}}},"session_id":"s1"}'
+    write_result_file
+    result success false 4 "Built the ticket.
+
+ARTISAN-WORKER: complete"
     ;;
   sleep)
     sleep 300 &

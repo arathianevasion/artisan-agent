@@ -72,7 +72,7 @@ test_the_checker_rejects_a_malformed_record_and_names_each_problem() {
 test_the_record_names_the_test_files_run_and_leaves_the_full_suite_to_the_merge_gate() {
   local out status=0
   example_record | jq -e '.tests.files | type == "array" and length > 0' >/dev/null || fail "the example names no test files"
-  example_record | jq -r '.tests.full_suite' | grep -q "merge gate" || fail "the example does not leave the full suite to the merge gate"
+  example_record | jq -r '.tests.full_suite' | grep "merge gate" >/dev/null || fail "the example does not leave the full suite to the merge gate"
   example_record | jq 'del(.tests.files)' > nofiles.json
   out=$("$CHECK" nofiles.json) || status=$?
   assert_eq 1 "$status" "checker exit status"

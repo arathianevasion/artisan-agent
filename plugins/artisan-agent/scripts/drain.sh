@@ -57,12 +57,16 @@
 #       else chat_context.window_tokens (1,000,000, the Opus chat's window;
 #       recorded, never forced).
 #   drain.sh gate <run-dir> <ticket> <percent>
-#       a merge processed at the review band: a risk gate on the merged
-#       ticket. Its dependents don't dispatch until it is cleared (wave.sh
-#       dispatch exit 5, and the reconciler leaves them off the frontier);
-#       nothing else waits. A decision for the Artisan, event "risk-gate".
+#       a merge processed at the review band: records tickets.<t>.context_risk
+#       (event "risk-gate") and opens a risk gate on the merged ticket through
+#       `gate.sh open` (id risk-context-<t>): a review-gate issue that natively
+#       blocks only its in-run dependents, with a packet saying the merge
+#       happened at <percent>% context. Approve, redirect, bypass and defer
+#       are the gate actions (gate-action.sh). Gating again opens nothing new.
 #   drain.sh gate-cleared <run-dir> <ticket> [--by NAME]
-#       the Artisan reviewed it: its dependents may dispatch.
+#       only for a state file from before the gate was an issue, which holds
+#       tickets.<t>.risk_gate = waiting: clears that flag. Newer runs answer
+#       the review-gate issue instead (gate-action.sh).
 #
 # Environment: ARTISAN_CONTEXT_WINDOW overrides the window (tokens). Without
 # it the window is 1,000,000 for a model id ending "[1m]" or once the context
@@ -362,14 +366,16 @@ cmd_gate() {
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$2" || exit $?
   [ "$(get --arg t "$2" '.tickets[$t].status')" = merged ] \
     || state_die 6 "drain.sh: #$2 is not merged; a risk gate is for a merge processed at the review band"
+  # The merge at this context percentage is the fact; the gate is the hold.
+  # Gating again keeps the first percentage and opens nothing new.
   apply '
-    if .tickets[$t].risk_gate.status? == "waiting" then .
-    else .tickets[$t].risk_gate = {status: "waiting", percent: $pct, at: $now}
-      | .decisions += [{id: ((.decisions | length) + 1), kind: "risk-gate", ticket: $t,
-          question: "#\($t) merged while the orchestrator was at \($pct)% context. Recommended: look over its merge before its dependents start; they wait for it, nothing else does. Clear it, or block its dependents?",
-          status: "waiting", at: $now}]
+    if .tickets[$t].context_risk? != null then .
+    else .tickets[$t].context_risk = {percent: $pct, at: $now}
       | event({event: "risk-gate", ticket: $t, percent: $pct}; $now) end' \
-    --arg t "$2" --argjson pct "$3"
+    --arg t "$2" --argjson pct "$3" || exit $?
+  # Opened like any risk gate. If this fails (the tracker is down), the fact
+  # is recorded and `gate.sh sync` (wave.sh close and status call it) opens it.
+  "$SCRIPT_DIR/gate.sh" open "$RUN_DIR" "risk-context-$2" >/dev/null || exit $?
 }
 
 cmd_gate_cleared() {
