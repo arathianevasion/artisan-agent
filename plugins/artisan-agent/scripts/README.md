@@ -383,3 +383,18 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 | `chats.sh due [--chat C]` | either | exit 0 when the last sweep was at least `sweep_minutes` ago | 0 due, 1 not yet |
 | `gate.sh carried <run-dir>` | Engineering | the cards left undecided on gates closed by hand, for the end gate | 0 |
 
+# Gate placement, risk gates and the end gate
+
+`gate-plan.sh` places the run's gates at the plan step; `gate.sh` opens risk gates as it opens slice gates; `end-gate.sh` runs the end gate, cuts the PRs to `main` and ends the run. The rules: `references/end-gate.md`. Tested in `tests/gate-plan.test.sh`, `tests/risk-gates.test.sh` and `tests/end-gate.test.sh`, with the fake `gh` (which also answers `pr create`).
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `gate-plan.sh propose <draft>` | Engineering chat | writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
+| `gate-plan.sh render\|remove\|move <draft> ...` | Engineering chat | the table; remove a slice, risk or end gate; move a slice or risk gate (`--after T`, `--tickets T,T`). An exception gate, or moving the end gate, is refused | 0, 1, 2, 6 |
+| `gate.sh sync\|due\|open` | both | as for slice gates; also opens a risk gate (`risk-<n>` from the plan, `risk-seam-<t>` from a new-seam card) once its ticket merges | as above |
+| `end-gate.sh status <run-dir>` | Engineering chat | `not-due`, `due`, `open`, `removed`, `approved` or `ended` | 0 |
+| `end-gate.sh packet\|open <run-dir>` | Engineering chat | the packet (failing test first for a bug, deferred gates, carried cards, PR boundary); the `review-gate` issue and an `end-gate` decision | 0, 1, 6 |
+| `end-gate.sh boundary <run-dir>` | Engineering chat | the PR boundary as JSON: from the `pr-boundaries` guardrail (product, team, individual), approved, or proposed | 0 |
+| `end-gate.sh approve <run-dir> [--boundary B]` | Engineering chat | refused while a gate is deferred, or with no boundary recorded and none given; decides the end gate (job 13) and the boundary (job 17) | 0, 1, 2, 3, 6 |
+| `end-gate.sh prs <run-dir> [--json]` / `cut <run-dir> <n> --body-file F` | Engineering chat | the stacked PRs; builds `pr/<run-id>/<n>`, pushes it when there is an `origin`, opens the PR with the body upstream `pr` wrote | 0, 1, 6 |
+| `end-gate.sh finish <run-dir>` | Engineering chat | every PR cut: `in-run` off every ticket in scope, `run-ended`, the retro offer | 0, 1, 6 |

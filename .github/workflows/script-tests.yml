@@ -2,7 +2,16 @@ name: Script tests
 
 on:
   push:
+    # Documentation outside the plugin isn't read by any test.
+    paths-ignore: ['*.md', 'docs/**']
   pull_request:
+    paths-ignore: ['*.md', 'docs/**']
+
+# A newer push to the same branch or PR cancels its older run. Every push to main
+# gets its own group, so no main run is cancelled or dropped while queued.
+concurrency:
+  group: script-tests-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,9 +19,11 @@ permissions:
 jobs:
   script-tests:
     name: Script tests (Linux)
-    # Self-hosted runner on the owner's Linux VM; the job runs in a throwaway container.
-    # macOS (and bash 3.2) is covered by the local suite gate before every merge.
-    runs-on: [self-hosted, linux, cmux-vm]
+    # GitHub-hosted (free for this public repo: 4 vCPU, 16 GB). The job runs in a
+    # throwaway container. Never point a public repo's jobs at a self-hosted runner:
+    # a pull request from a fork could run code on that machine.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     container:
       image: ubuntu:24.04
       # An init process reaps killed children, so the process-stop tests see them gone.
@@ -29,4 +40,22 @@ jobs:
       - name: Run the script test harness (as a non-root user)
         run: |
           chown -R tester "$GITHUB_WORKSPACE"
-          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(nproc)"'
+          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"'
+
+  script-tests-macos:
+    name: Script tests (macOS, Apple bash 3.2)
+    # Apple's own /bin/bash 3.2: the only build that reproduces the EXIT-trap masking
+    # #126 guards against (a bash 3.2 built from source on Linux doesn't).
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show bash
+        run: /bin/bash --version | head -n 1
+      - name: Run the script test harness under /bin/bash
+        run: |
+          command -v jq >/dev/null || brew install jq
+          git config --global user.name CI
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"
