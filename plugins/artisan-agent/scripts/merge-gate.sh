@@ -15,8 +15,26 @@
 #       local or ci: the mode this machine's merge gate runs in.
 #   merge-gate.sh show
 #       how it was chosen, as JSON: {mode, setting, source, os}.
+#   merge-gate.sh start --result FILE --pid-file FILE --log FILE -- local|ci ARGS...
+#       run the gate (merge-gate.sh local or ci with ARGS) detached, the way
+#       run-ticket.sh starts a worker (lib/detach-lib.sh), so it outlives its
+#       caller and no caller's time cap stops it (#142). Prints the gate
+#       runner's pid and returns at once. The runner writes its pid to the pid
+#       file and, when the gate ends, its outcome to the result file, which
+#       wait-any.sh sees under results/: {exit_code, record, finished_at},
+#       exit_code and record (its JSON output, or null) as the gate gave them.
+#       A runner that is stopped or dies writes no result, so a missing result
+#       with no live runner is a gate that never finished. The gate runs in the
+#       runner's session: stopping that session's group stops the suite too.
+#   merge-gate.sh local --dir D --command CMD --log FILE
+#       the gate on this machine: CMD (the plan's suite) in D, its output to
+#       FILE. Prints {mode: "local", command, passed}. Exit 0 green, 7 red.
+#   merge-gate.sh find --repo O/N --workflow FILE --branch B --sha SHA
+#       the gate workflow's dispatched run on B for SHA, as JSON (any status);
+#       exit 1 when there is none, so a gate cut off before its dispatch has
+#       no CI run to wait on.
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
-#                    [--timeout-minutes M] [--remote R]
+#                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -29,7 +47,9 @@
 #       (default 30), or the run concluded anything else (cancelled, skipped,
 #       stale, startup_failure, action_required or a conclusion not known
 #       here), so CI never judged the commit. A run for any other SHA never
-#       counts.
+#       counts. --deadline stops waiting at that epoch second instead of M
+#       minutes from now. --resume waits on a run already dispatched on B
+#       (a gate whose runner died): no push and no new dispatch.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -54,6 +74,9 @@
 # minutes, gh.
 
 set -euo pipefail
+
+# shellcheck source=lib/detach-lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/detach-lib.sh"
 
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOST_FILE=${ARTISAN_HOME:-$CFG/artisan-agent}/host.json
@@ -115,7 +138,7 @@ find_run() {
 }
 
 cmd_ci() {
-  local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion=""
+  local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo) [ $# -ge 2 ] || usage; CI_REPO=$2; shift 2 ;;
@@ -125,30 +148,36 @@ cmd_ci() {
       --dir) [ $# -ge 2 ] || usage; CI_DIR=$2; shift 2 ;;
       --remote) [ $# -ge 2 ] || usage; CI_REMOTE=$2; shift 2 ;;
       --timeout-minutes) [ $# -ge 2 ] || usage; timeout=$2; shift 2 ;;
+      --deadline) [ $# -ge 2 ] || usage; deadline=$2; shift 2 ;;
+      --resume) resume=1; shift ;;
       *) usage ;;
     esac
   done
   [ -n "$CI_REPO" ] && [ -n "$CI_WF" ] && [ -n "$CI_BRANCH" ] && [ -n "$CI_SHA" ] && [ -n "$CI_DIR" ] || usage
   case "$CI_BRANCH" in ci/*) ;; *) die "the gate branch must be under ci/, not $CI_BRANCH" ;; esac
   case "$timeout" in '' | *[!0-9]*) die "--timeout-minutes must be a whole number" ;; esac
+  case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
 
-  if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
-    record '{}' "could not push $CI_BRANCH to $CI_REMOTE"
-    return 19
+  if [ "$resume" -eq 0 ]; then
+    if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
+      record '{}' "could not push $CI_BRANCH to $CI_REMOTE"
+      return 19
+    fi
+    if ! gh workflow run "$CI_WF" -R "$CI_REPO" --ref "$CI_BRANCH" >/dev/null 2>&1; then
+      delete_branch
+      record '{}' "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
+      return 19
+    fi
   fi
-  if ! gh workflow run "$CI_WF" -R "$CI_REPO" --ref "$CI_BRANCH" >/dev/null 2>&1; then
-    delete_branch
-    record '{}' "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
-    return 19
-  fi
-  deadline=$(($(date +%s) + timeout * 60))
+  allowed="$timeout minutes"
+  if [ "$deadline" -gt 0 ]; then allowed="the gate's deadline"; else deadline=$(($(date +%s) + timeout * 60)); fi
   while :; do
     run=$(find_run)
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       delete_branch
       [ -n "$run" ] || run='{}'
-      record "$run" "no conclusion from $CI_WF for $CI_SHA within $timeout minutes"
+      record "$run" "no conclusion from $CI_WF for $CI_SHA within $allowed"
       return 19
     fi
     sleep "$poll"
@@ -168,6 +197,87 @@ cmd_ci() {
       record "$view" "$CI_WF concluded ${conclusion:-nothing} for $CI_SHA, so CI did not judge it"
       return 19 ;;
   esac
+}
+
+cmd_find() {
+  local run=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || usage; CI_REPO=$2; shift 2 ;;
+      --workflow) [ $# -ge 2 ] || usage; CI_WF=$2; shift 2 ;;
+      --branch) [ $# -ge 2 ] || usage; CI_BRANCH=$2; shift 2 ;;
+      --sha) [ $# -ge 2 ] || usage; CI_SHA=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$CI_REPO" ] && [ -n "$CI_WF" ] && [ -n "$CI_BRANCH" ] && [ -n "$CI_SHA" ] || usage
+  run=$(find_run)
+  [ -n "$run" ] || return 1
+  printf '%s\n' "$run"
+}
+
+# -------------------------------------------------------------------- local
+
+cmd_local() {
+  local dir="" command="" log="" passed=true rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) [ $# -ge 2 ] || usage; dir=$2; shift 2 ;;
+      --command) [ $# -ge 2 ] || usage; command=$2; shift 2 ;;
+      --log) [ $# -ge 2 ] || usage; log=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$command" ] && [ -n "$log" ] || usage
+  (cd "$dir" && sh -c "$command") >"$log" 2>&1 || { passed=false rc=7; }
+  jq -nc --arg c "$command" --argjson p "$passed" '{mode: "local", command: $c, passed: $p}'
+  return "$rc"
+}
+
+# -------------------------------------------------------- start (detached)
+
+START_RESULT="" START_PID_FILE="" START_LOG=""
+start_args() { # parses --result --pid-file --log up to --; sets START_SHIFT
+  START_SHIFT=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --result) [ $# -ge 2 ] || usage; START_RESULT=$2; shift 2; START_SHIFT=$((START_SHIFT + 2)) ;;
+      --pid-file) [ $# -ge 2 ] || usage; START_PID_FILE=$2; shift 2; START_SHIFT=$((START_SHIFT + 2)) ;;
+      --log) [ $# -ge 2 ] || usage; START_LOG=$2; shift 2; START_SHIFT=$((START_SHIFT + 2)) ;;
+      --) START_SHIFT=$((START_SHIFT + 1)); break ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$START_RESULT" ] && [ -n "$START_PID_FILE" ] && [ -n "$START_LOG" ] || usage
+}
+
+cmd_start() {
+  start_args "$@"
+  shift "$START_SHIFT"
+  case "${1:-}" in local | ci) ;; *) usage ;; esac
+  [ ! -e "$START_RESULT" ] || die "$START_RESULT already holds a gate's outcome"
+  rm -f "$START_PID_FILE"
+  mkdir -p "$(dirname "$START_RESULT")" "$(dirname "$START_PID_FILE")" "$(dirname "$START_LOG")"
+  detach_start "$START_PID_FILE" "$START_LOG" "$0" run --result "$START_RESULT" \
+    --pid-file "$START_PID_FILE" --log "$START_LOG" -- "$@" \
+    || die "the gate runner did not start; see $START_LOG"
+}
+
+# The detached runner: the gate in the foreground, then its outcome, written
+# atomically (a dotfile first, which wait-any.sh skips). Stopped by a signal,
+# it writes nothing: the gate did not finish.
+cmd_run() {
+  local out="" rc=0 tmp=""
+  start_args "$@"
+  shift "$START_SHIFT"
+  detach_write_pid "$START_PID_FILE"
+  trap 'exit 143' TERM INT HUP
+  out=$("$0" "$@") || rc=$?
+  jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1 || out=null
+  tmp="$(dirname "$START_RESULT")/.$(basename "$START_RESULT").tmp"
+  jq -nc --argjson c "$rc" --argjson r "$out" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{exit_code: $c, record: $r, finished_at: $at}' >"$tmp"
+  mv "$tmp" "$START_RESULT"
 }
 
 # -------------------------------------------------------------------- sweep
@@ -233,6 +343,10 @@ case "$cmd" in
   mode) [ $# -eq 0 ] || usage; cmd_mode ;;
   show) [ $# -eq 0 ] || usage; cmd_show ;;
   ci) cmd_ci "$@" ;;
+  find) cmd_find "$@" ;;
+  local) cmd_local "$@" ;;
+  start) cmd_start "$@" ;;
+  run) cmd_run "$@" ;;
   sweep) cmd_sweep "$@" ;;
   minutes) cmd_minutes "$@" ;;
   workflow-check) [ $# -eq 1 ] || usage; cmd_workflow_check "$1" ;;

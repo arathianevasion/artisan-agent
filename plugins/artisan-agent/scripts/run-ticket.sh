@@ -156,32 +156,19 @@ findings_file=$run_dir/results/findings/$ticket.jsonl
 
 # ---------------------------------------------------------------- launcher
 
-detach() { # command... — run in a new session, never returning its status
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$@"
-  else
-    perl -MPOSIX -e 'POSIX::setsid() != -1 or die "setsid: $!\n"; exec @ARGV or die "exec $ARGV[0]: $!\n"' -- "$@"
-  fi
-}
+# shellcheck source=lib/detach-lib.sh
+. "$(dirname "$0")/lib/detach-lib.sh"
 
 if [ -z "$foreground" ]; then
   if [ -e "$worker_dir" ] || [ -e "$exit_record" ]; then
     die_usage "attempt $attempt of ticket $ticket already exists ($worker_dir); pass --attempt"
   fi
   mkdir -p "$worker_dir" "$run_dir/results/findings"
-  detach nohup "$0" --foreground "${orig_args[@]}" \
-    </dev/null >>"$worker_dir/runner.log" 2>&1 &
-  # The runner writes its own PID once it is up; wait for it (up to 10s).
-  i=0
-  while [ ! -s "$worker_dir/runner.pid" ]; do
-    i=$((i + 1))
-    if [ "$i" -gt 100 ]; then
-      echo "run-ticket.sh: runner did not start; see $worker_dir/runner.log" >&2
-      exit 1
-    fi
-    sleep 0.1
-  done
-  cat "$worker_dir/runner.pid"
+  # The runner writes its own PID once it is up (detach_start waits up to 10s).
+  detach_start "$worker_dir/runner.pid" "$worker_dir/runner.log" "$0" --foreground "${orig_args[@]}" || {
+    echo "run-ticket.sh: runner did not start; see $worker_dir/runner.log" >&2
+    exit 1
+  }
   exit 0
 fi
 
@@ -237,7 +224,7 @@ if [ -n "$lock_from" ]; then
     exit 1
   fi
 fi
-echo $$ >"$worker_dir/runner.pid.tmp" && mv "$worker_dir/runner.pid.tmp" "$worker_dir/runner.pid"
+detach_write_pid "$worker_dir/runner.pid"
 
 if [ "$role" = orchestrator ]; then
   done_what="the wave is done and your result file (the wave report) is written"

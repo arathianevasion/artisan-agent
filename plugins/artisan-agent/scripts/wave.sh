@@ -542,7 +542,7 @@ cmd_dispatch() {
 
   local ib= base= branch= n= wt= prev= repo= title= path= expected= estimate= minutes= model= turns= deadline= prompt= pid= ref=
   ib=$(integration_branch)
-  base=$(git -C "$MAIN" rev-parse "refs/heads/$ib")
+  base=$(integration_tip)
   # An urgent ticket branches from main, not from the integration branch.
   [ "$urgent" != true ] || base=$(git -C "$MAIN" rev-parse "refs/heads/$(main_branch)") || die "no main branch to branch #$t from"
   branch=$(get --arg t "$t" '.tickets[$t].branch')
@@ -719,10 +719,27 @@ join_paths() { # JSON array -> "a b c" for messages
   jq -r 'join(" ")' <<<"$1"
 }
 
+# Seconds wave.sh merge (and resolved) waits on a running merge gate before
+# returning 20, so no call comes near the orchestrator's 2-minute Bash
+# timeout (#142). --wait overrides it; 0 returns at once.
+DEFAULT_GATE_WAIT_SECONDS=60
+
+gate_wait_arg() { # value -> validated seconds
+  printf '%s' "$1" | grep -Eq '^[0-9]+$' || usage
+  printf '%s\n' "$1"
+}
+
 cmd_merge() {
   open_run "${1:-}"
-  local t="${2:-}"
+  local t="${2:-}" wait=$DEFAULT_GATE_WAIT_SECONDS
   [ -n "$t" ] || usage
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --wait) [ $# -ge 2 ] || usage; wait=$(gate_wait_arg "$2"); shift 2 ;;
+      *) usage ;;
+    esac
+  done
   local n= branch= wt= ib= suite= pre= title=
   [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] \
     || state_die 6 "wave.sh: #$t is urgent: it ships through its own end gate and PR to main (end-gate.sh urgent-open), never into the integration branch"
@@ -740,18 +757,20 @@ cmd_merge() {
   ib=$(integration_branch)
   [ "$(get '.ci_park != null')" = false ] \
     || state_die 19 "wave.sh: #$t not merged: the run is parked on CI ($(get -r '.ci_park.why')); nothing merges until the park is cleared (wave.sh unpark-ci)"
+  # A gate already started: finish it, wait on it, resume it, or (dead, with
+  # nothing to wait on) undo it for a retry below.
+  settle_gate "$t" "$wait" "$wt"
   abandon_pending_resolution "$wt"
-  abandon_pending_ci_gate "$wt"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   pre=$(git -C "$wt" rev-parse HEAD)
-  # A gate to retry (a cleared CI park, or a gate a crash cut short): the same
-  # merge commit, if nothing has merged since; otherwise merged afresh.
+  # A gate to retry (a cleared CI park, or a gate that died with no outcome):
+  # the same merge commit, if nothing has merged since; otherwise merged afresh.
   if [ "$(get --arg t "$t" '.tickets[$t].ci_retry != null')" = true ]; then
     local rpre= rsha=
     rpre=$(get -r --arg t "$t" '.tickets[$t].ci_retry.pre') rsha=$(get -r --arg t "$t" '.tickets[$t].ci_retry.sha')
     apply '.tickets[$t].ci_retry = null' --arg t "$t"
     if [ "$rpre" = "$pre" ] && git -C "$wt" reset -q --hard "$rsha" 2>/dev/null; then
-      finish_merge "$t" "$n" "$wt" "$pre"
+      finish_merge "$t" "$n" "$wt" "$pre" "$wait"
       return 0
     fi
   fi
@@ -771,40 +790,202 @@ cmd_merge() {
       --arg t "$t" --argjson n "$n" --argjson p "$pjson" --arg pre "$pre"
     state_die 11 "wave.sh: #$t conflicts in $paths; run /artisan-agent:resolve-conflicts once in $wt, then wave.sh resolved $RUN_DIR $t"
   fi
-  finish_merge "$t" "$n" "$wt" "$pre"
+  finish_merge "$t" "$n" "$wt" "$pre" "$wait"
 }
 
-# The suite after a merge commit is made: green records the merge, red undoes
-# it and blocks the ticket (7). Where it runs is the machine's merge gate
-# mode (merge-gate.sh): local runs it here; ci gates on the project's gate
-# workflow for this exact commit (ci_gate), and a CI that gives no conclusion
-# parks the run (19).
-finish_merge() { # ticket attempt worktree pre-merge-commit
-  local t="$1" n="$2" wt="$3" pre="$4" suite= log= sha= worker_wt= mode= record=
-  suite=$(get '.plan.suite_command')
+# finish_merge ticket attempt worktree pre wait: the merge gate for the merge
+# commit at the worktree's HEAD. Where it runs is the machine's merge gate
+# mode (merge-gate.sh): local runs the plan's suite in the worktree; ci gates
+# on the project's gate workflow for this exact commit, on a unique
+# ci/<run>-<ticket>-<attempt>-<ts> branch. Either way the gate runs detached
+# (merge-gate.sh start), recorded first as merge_gate, and writes its outcome
+# to results/merge-<ticket>.<attempt>.g<k>.json; this call waits up to `wait`
+# seconds for it (await_gate), then 20 if it is still running. Green records
+# the merge; red undoes it and blocks the ticket (7); a CI that gives no
+# verdict undoes it and parks the run (19) (finish_gate).
+finish_merge() {
+  local t="$1" n="$2" wt="$3" pre="$4" wait="$5" mode= sha= k= key= ci='{}' wf= minutes= branch= deadline=
   mode=$("$SCRIPT_DIR/merge-gate.sh" mode) || {
     git -C "$wt" reset -q --hard "$pre"
     die "could not tell this machine's merge gate mode (merge-gate.sh show); #$t not merged"
   }
-  mkdir -p "$RUN_DIR/merges"
-  log="$RUN_DIR/merges/$t.$n.suite.log"
+  sha=$(git -C "$wt" rev-parse HEAD)
   if [ "$mode" = ci ]; then
-    ci_gate "$t" "$n" "$wt" "$pre"
+    wf=$(ci_setting workflow)
+    if [ -z "$wf" ]; then
+      git -C "$wt" reset -q --hard "$pre"
+      die "#$t not merged: this machine gates merges on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set this machine's merge_gate to local (machine-setup.sh merge-gate local)"
+    fi
+    minutes=$(ci_setting timeout_minutes)
+    [ -n "$minutes" ] || minutes=30
+    branch="ci/$RUN_ID-$t-$n-$(state_now)"
+    deadline=$(( $(date +%s) + minutes * 60 ))
+    # Leftovers of a gate that died (its record is cleared at the next merge).
+    "$SCRIPT_DIR/merge-gate.sh" sweep --prefix "ci/$RUN_ID-" --dir "$wt" >/dev/null 2>&1 || true
+    ci=$(jq -nc --arg wf "$wf" --arg b "$branch" --argjson m "$minutes" --argjson d "$deadline" \
+      '{workflow: $wf, branch: $b, minutes: $m, deadline: $d}')
+  fi
+  k=$(( $(get --arg t "$t" '[.events[] | select(.event == "merge-gate" and .ticket == $t)] | length') + 1 ))
+  key="$t.$n.g$k"
+  mkdir -p "$RUN_DIR/merges" "$RUN_DIR/results"
+  apply '.merge_gate = ({ticket: $t, attempt: $n, gate: $k, mode: $mode, pre: $pre, sha: $sha,
+        result: "results/merge-\($key).json", pid_file: "merges/\($key).gate.pid",
+        log: "merges/\($key).gate.log", at: $now} + $ci)
+    | event({event: "merge-gate", ticket: $t, attempt: $n, gate: $k, mode: $mode, sha: $sha}; $now)' \
+    --arg t "$t" --argjson n "$n" --argjson k "$k" --arg key "$key" --arg mode "$mode" \
+    --arg pre "$pre" --arg sha "$sha" --argjson ci "$ci"
+  if ! launch_gate; then
+    git -C "$wt" reset -q --hard "$pre"
+    apply '.merge_gate = null'
+    die "#$t not merged: its merge gate did not start; see $RUN_DIR/merges/$key.gate.log"
+  fi
+  await_gate "$t" "$wait" "$wt"
+}
+
+# launch_gate [--resume]: start the recorded gate's detached runner
+# (merge-gate.sh start). Its command line names the run folder, so a test's
+# cleanup finds it.
+launch_gate() {
+  local g= mode= args=()
+  g=$(get -c '.merge_gate')
+  mode=$(jq -r .mode <<<"$g")
+  if [ "$mode" = ci ]; then
+    args=(ci --repo "$(get '.repo')" --workflow "$(jq -r .workflow <<<"$g")" --branch "$(jq -r .branch <<<"$g")"
+          --sha "$(jq -r .sha <<<"$g")" --dir "$(integration_worktree)" --deadline "$(jq -r .deadline <<<"$g")")
+    [ "${1:-}" != --resume ] || args+=(--resume)
+  else
+    args=(local --dir "$(integration_worktree)" --command "$(get '.plan.suite_command')"
+          --log "$RUN_DIR/merges/$(jq -r '"\(.ticket).\(.attempt)"' <<<"$g").suite.log")
+  fi
+  "$SCRIPT_DIR/merge-gate.sh" start --result "$RUN_DIR/$(jq -r .result <<<"$g")" \
+    --pid-file "$RUN_DIR/$(jq -r .pid_file <<<"$g")" --log "$RUN_DIR/$(jq -r .log <<<"$g")" \
+    -- "${args[@]}" >/dev/null
+}
+
+gate_pid() { cat "$RUN_DIR/$(get '.merge_gate.pid_file')" 2>/dev/null || true; }
+
+# The recorded gate's runner is alive: its pid is live and still the runner,
+# never a recycled pid.
+gate_alive() {
+  local pid=
+  pid=$(gate_pid)
+  state_pid_alive "$pid" || return 1
+  ps -o args= -p "$pid" 2>/dev/null | grep -q 'merge-gate.sh run'
+}
+
+gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(get '.merge_gate.result')"; }
+
+# settle_gate ticket wait worktree: what to do with a gate recorded in
+# progress. None: return. One with an outcome or a live runner: this ticket's
+# is awaited and finished (await_gate exits); another ticket's is named (20).
+# One whose runner died with no outcome: on CI, if its run was dispatched, a
+# fresh runner waits on that same run (same branch, same run id, no new
+# dispatch); otherwise the gate is undone for a retry (abandon_gate). A
+# ci_gate record from before #142 has no runner, so it is a dead gate.
+settle_gate() {
+  local t="$1" wait="$2" wt="$3" gt= run=
+  if [ "$(get '.ci_gate != null')" = true ]; then
+    apply '.merge_gate = (.merge_gate // (.ci_gate + {mode: "ci", deadline: (now | floor)})) | .ci_gate = null'
+  fi
+  [ "$(get '.merge_gate != null')" = true ] || return 0
+  gt=$(get '.merge_gate.ticket')
+  if [ ! -f "$(gate_result)" ] && ! gate_alive && [ ! -f "$(gate_result)" ]; then
+    if [ "$(get '.merge_gate.mode')" = ci ] && [ "$(git -C "$wt" rev-parse HEAD)" = "$(get '.merge_gate.sha')" ] \
+       && run=$("$SCRIPT_DIR/merge-gate.sh" find --repo "$(get '.repo')" --workflow "$(get '.merge_gate.workflow')" \
+                  --branch "$(get '.merge_gate.branch')" --sha "$(get '.merge_gate.sha')" 2>/dev/null) \
+       && launch_gate --resume; then
+      apply 'event({event: "merge-gate-resumed", ticket: .merge_gate.ticket, branch: .merge_gate.branch, run_id: $id}; $now)' \
+        --argjson id "$(jq '.databaseId // null' <<<"$run")"
+    else
+      abandon_gate "$wt"
+      return 0
+    fi
+  fi
+  [ "$gt" = "$t" ] \
+    || state_die 20 "wave.sh: #$t not merged yet: #$gt's merge gate is in progress; finish it first (wave.sh merge $RUN_DIR $gt)"
+  await_gate "$t" "$wait" "$wt"
+}
+
+# await_gate ticket wait worktree: wait up to `wait` seconds for the gate's
+# outcome and finish it (exits: 0 merged, 7 red, 19 parked); 20 while it runs.
+await_gate() {
+  local t="$1" wait="$2" wt="$3" result= end=0
+  result=$(gate_result)
+  end=$((SECONDS + wait))
+  while [ ! -f "$result" ] && [ "$SECONDS" -lt "$end" ] && gate_alive; do
+    sleep 0.5
+  done
+  if [ -f "$result" ]; then
+    finish_gate "$t" "$wt" "$result"
+    exit 0
+  fi
+  if gate_alive; then
+    state_die 20 "wave.sh: #$t's merge gate is running ($(get '.merge_gate | if .mode == "ci" then "CI on \(.branch)" else "the suite here" end')); wait (wait-any.sh), then run wave.sh merge $RUN_DIR $t again"
+  fi
+  state_die 20 "wave.sh: #$t's merge gate ended without an outcome; run wave.sh merge $RUN_DIR $t again to resume or retry it"
+}
+
+# finish_gate ticket worktree result-file: act on the gate's outcome. Green
+# records the merge; red undoes it and blocks the ticket (7); on CI, no
+# verdict undoes it and parks the run (19). Undo first, then clear the gate's
+# record: a crash between the two leaves the record, never an ungated merge.
+GATE_JSON=
+finish_gate() {
+  local t="$1" wt="$2" result="$3" n= pre= sha= mode= rc= suite= record= log= worker_wt= url= why= minutes=
+  n=$(get '.merge_gate.attempt') pre=$(get '.merge_gate.pre') sha=$(get '.merge_gate.sha') mode=$(get '.merge_gate.mode')
+  suite=$(get '.plan.suite_command')
+  # Finished before (a crash after recording it): only the record is left.
+  if [ "$(get --arg t "$t" --arg s "$sha" '.tickets[$t] | .status == "merged" and .merge_commit == $s')" = true ]; then
+    apply '.merge_gate = null'
+    printf '%s\n' "$sha"
+    return 0
+  fi
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ] \
+    || die "the integration worktree $wt is at $(git -C "$wt" rev-parse --short HEAD), not the merge commit #$t's gate judged ($sha); left as it is for the Artisan"
+  rc=$(jq -r '.exit_code // 1' "$result")
+  log="merges/$t.$n.suite.log"
+  if [ "$mode" = local ]; then
+    if [ "$rc" -ne 0 ]; then
+      git -C "$wt" reset -q --hard "$pre"
+      apply '.tickets[$t].suite = {command: $c, passed: false, log: $l, mode: "local"} | .merge_gate = null' \
+        --arg t "$t" --arg c "$suite" --arg l "$log"
+      block "$t" "the suite failed after merging ($log); the merge was undone"
+      state_die 7 "wave.sh: #$t not merged: the suite failed after the merge; see $RUN_DIR/$log"
+    fi
+    record=$(jq -nc --arg c "$suite" --arg l "$log" '{command: $c, passed: true, log: $l, mode: "local"}')
+  else
+    GATE_JSON=$(jq -c '.record' "$result")
+    jq -e 'type == "object"' <<<"$GATE_JSON" >/dev/null 2>&1 \
+      || GATE_JSON=$(get -c '.merge_gate | {mode: "ci", workflow, branch, sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
+    if [ "$rc" -ne 0 ]; then
+      git -C "$wt" reset -q --hard "$pre"
+      apply '.merge_gate = null'
+      url=$(jq -r '.url // "no run"' <<<"$GATE_JSON")
+      if [ "$rc" -eq 7 ]; then
+        apply '.tickets[$t].suite = ({command: $c, passed: false}
+            + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
+          --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
+        block "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
+        state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
+      fi
+      why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
+      minutes=$(ci_setting timeout_minutes)
+      [ -n "$minutes" ] || minutes=30
+      apply '.ci_park = ({ticket: $t, attempt: $n, pre: $pre, sha: $sha, minutes: $m, at: $now}
+            + ($g | {workflow, branch, run_id, url, conclusion, why}))
+        | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $t,
+            question: "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+            status: "waiting", at: $now}]
+        | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why}; $now)' \
+        --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --argjson m "$minutes" --argjson g "$GATE_JSON"
+      state_die 19 "wave.sh: #$t not merged: $why; the run is parked on CI (wave.sh unpark-ci retries the gate)"
+    fi
     record=$(jq -c --arg c "$suite" '{command: $c, passed: true}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}' <<<"$GATE_JSON")
-  else
-    if ! (cd "$wt" && sh -c "$suite") >"$log" 2>&1; then
-      git -C "$wt" reset -q --hard "$pre"
-      apply '.tickets[$t].suite = {command: $c, passed: false, log: $l, mode: "local"}' --arg t "$t" --arg c "$suite" --arg l "merges/$t.$n.suite.log"
-      block "$t" "the suite failed after merging (merges/$t.$n.suite.log); the merge was undone"
-      state_die 7 "wave.sh: #$t not merged: the suite failed after the merge; see $log"
-    fi
-    record=$(jq -nc --arg c "$suite" --arg l "merges/$t.$n.suite.log" '{command: $c, passed: true, log: $l, mode: "local"}')
   fi
-  sha=$(git -C "$wt" rev-parse HEAD)
   "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$sha"
   record_session_cost "$t" "$n"
-  apply '.tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
+  apply '.tickets[$t].suite = $r | .merge_gate = null' --arg t "$t" --argjson r "$record"
   worker_wt=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   if [ -n "$worker_wt" ] && [ -d "$worker_wt" ]; then
     git -C "$MAIN" worktree remove "$worker_wt" 2>/dev/null \
@@ -824,72 +1005,22 @@ ci_setting() { # key
   printf '%s\n' "$v"
 }
 
-# ci_gate ticket attempt worktree pre: the merge commit at the worktree's
-# HEAD goes to a unique ci/<run>-<ticket>-<attempt>-<ts> branch and the gate
-# workflow runs there (merge-gate.sh ci, which deletes the branch). Green
-# sets GATE_JSON. Red (failure or timed_out) undoes the merge and blocks the
-# ticket (7), the run's URL in the reason. No verdict (CI unavailable or slow,
-# or a run concluded cancelled, skipped or the like) undoes the merge
-# and parks the run with reason ci (19); the ticket is not at fault, so it
-# stays returned, and clearing the park (wave.sh unpark-ci) retries the gate
-# on the same merge commit. The gate in progress is recorded first (ci_gate),
-# so a crash mid-gate is found and undone at the next merge.
-GATE_JSON=
-ci_gate() {
-  local t="$1" n="$2" wt="$3" pre="$4" sha= wf= minutes= branch= rc=0 url= why=
-  sha=$(git -C "$wt" rev-parse HEAD)
-  wf=$(ci_setting workflow)
-  if [ -z "$wf" ]; then
-    git -C "$wt" reset -q --hard "$pre"
-    die "#$t not merged: this machine gates merges on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set this machine's merge_gate to local (machine-setup.sh merge-gate local)"
-  fi
-  minutes=$(ci_setting timeout_minutes)
-  [ -n "$minutes" ] || minutes=30
-  branch="ci/$RUN_ID-$t-$n-$(state_now)"
-  # Leftovers of a gate that crashed (the ci_gate record is cleared at the next merge).
-  "$SCRIPT_DIR/merge-gate.sh" sweep --prefix "ci/$RUN_ID-" --dir "$wt" >/dev/null 2>&1 || true
-  apply '.ci_gate = {ticket: $t, attempt: $n, pre: $pre, sha: $sha, branch: $b, at: $now}' \
-    --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --arg b "$branch"
-  GATE_JSON=$("$SCRIPT_DIR/merge-gate.sh" ci --repo "$(get '.repo')" --workflow "$wf" --branch "$branch" \
-    --sha "$sha" --dir "$wt" --timeout-minutes "$minutes") || rc=$?
-  jq -e 'type == "object"' <<<"$GATE_JSON" >/dev/null 2>&1 \
-    || GATE_JSON=$(jq -nc --arg wf "$wf" --arg b "$branch" --arg sha "$sha" \
-         '{mode: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
-  # Undo first, then clear the record: a crash between the two leaves the
-  # record, which the next merge finds and undoes, never an ungated merge.
-  [ "$rc" -eq 0 ] || git -C "$wt" reset -q --hard "$pre"
-  apply '.ci_gate = null'
-  [ "$rc" -ne 0 ] || return 0
-  url=$(jq -r '.url // "no run"' <<<"$GATE_JSON")
-  if [ "$rc" -eq 7 ]; then
-    apply '.tickets[$t].suite = ({command: $c, passed: false}
-        + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
-      --arg t "$t" --arg c "$(get '.plan.suite_command')" --argjson g "$GATE_JSON"
-    block "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
-    state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
-  fi
-  why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
-  apply '.ci_park = ({ticket: $t, attempt: $n, pre: $pre, sha: $sha, minutes: $m, at: $now}
-        + ($g | {workflow, branch, run_id, url, conclusion, why}))
-    | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $t,
-        question: "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
-        status: "waiting", at: $now}]
-    | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why}; $now)' \
-    --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --argjson m "$minutes" --argjson g "$GATE_JSON"
-  state_die 19 "wave.sh: #$t not merged: $why; the run is parked on CI (wave.sh unpark-ci retries the gate)"
-}
-
-# A CI gate in progress whose outcome never came back (the orchestrator ended
-# mid-gate): undo its merge commit and keep it for the ticket's next merge to
-# gate again (ci_retry). Its branch goes at the next gate's sweep.
-abandon_pending_ci_gate() { # integration worktree
-  local wt="$1" t= pre= sha=
-  [ "$(get '.ci_gate != null')" = true ] || return 0
-  t=$(get -r '.ci_gate.ticket') pre=$(get -r '.ci_gate.pre') sha=$(get -r '.ci_gate.sha')
-  if [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ]; then git -C "$wt" reset -q --hard "$pre"; fi
-  apply '.tickets[$t].ci_retry = {pre: $pre, sha: $sha, at: $now}
-    | event({event: "ci-gate-abandoned", ticket: $t, branch: .ci_gate.branch}; $now)
-    | .ci_gate = null' --arg t "$t" --arg pre "$pre" --arg sha "$sha"
+# abandon_gate worktree: a gate whose runner died with no outcome and nothing
+# to wait on (a local suite cut off, or a CI gate cut off before its run was
+# dispatched): stop anything left in its runner's group, undo its merge
+# commit and keep it for the ticket's next merge to gate again (ci_retry).
+# A CI gate's branch goes at the next gate's sweep.
+abandon_gate() {
+  local wt="$1" pid= sha=
+  pid=$(gate_pid)
+  ! state_is_uint "$pid" || kill -KILL "-$pid" 2>/dev/null || true
+  sha=$(get '.merge_gate.sha')
+  if [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ]; then git -C "$wt" reset -q --hard "$(get '.merge_gate.pre')"; fi
+  apply '.merge_gate as $g
+    | .tickets[$g.ticket].ci_retry = {pre: $g.pre, sha: $g.sha, at: $now}
+    | event({event: (if $g.mode == "ci" then "ci-gate-abandoned" else "merge-gate-abandoned" end),
+             ticket: $g.ticket, branch: ($g.branch // null)}; $now)
+    | .merge_gate = null'
 }
 
 # A conflict left in progress whose resolution never came back (the
@@ -908,12 +1039,13 @@ abandon_pending_resolution() { # integration worktree
 
 cmd_resolved() {
   open_run "${1:-}"
-  local t="${2:-}" gave_up=
+  local t="${2:-}" gave_up= wait=$DEFAULT_GATE_WAIT_SECONDS
   [ -n "$t" ] || usage
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
       --gave-up) [ $# -ge 2 ] || usage; gave_up=$2; shift 2 ;;
+      --wait) [ $# -ge 2 ] || usage; wait=$(gate_wait_arg "$2"); shift 2 ;;
       *) usage ;;
     esac
   done
@@ -963,7 +1095,7 @@ cmd_resolved() {
     || die "could not commit the resolved merge of #$t"
   apply '.tickets[$t].resolve.outcome = "resolved"
     | event({event: "resolve", ticket: $t, outcome: "resolved"}; $now)' --arg t "$t"
-  finish_merge "$t" "$n" "$wt" "$pre"
+  finish_merge "$t" "$n" "$wt" "$pre" "$wait"
 }
 
 # ------------------------------------------------------------- unpark-ci

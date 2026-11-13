@@ -206,7 +206,7 @@ start_one() { # ticket: sets WORKTREE
   is_hands_on "$t" || die "#$t is not a hands-on ticket (no ready-for-human label, not the plan's hands-on pick)"
   blockers_merged "$t" || state_die 5 "human.sh: #$t waits: a blocker is not merged into $(integration_branch) yet"
   ib=$(integration_branch)
-  base=$(git -C "$MAIN" rev-parse "refs/heads/$ib")
+  base=$(integration_tip)
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   wt="$WT_ROOT/$RUN_ID-$t.human"
   mkdir -p "$WT_ROOT"

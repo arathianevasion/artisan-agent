@@ -32,6 +32,15 @@ apply() {
 }
 
 integration_branch() { get '.integration.branch'; }
+# The integration branch's gated tip: while a merge gate runs (wave.sh merge,
+# merge_gate in the state file) the branch already holds the merge commit the
+# gate is judging, so new work branches from the commit before it.
+integration_tip() {
+  local pre=""
+  pre=$(get '.merge_gate.pre // ""')
+  if [ -n "$pre" ]; then printf '%s\n' "$pre"
+  else git -C "$MAIN" rev-parse -q --verify "refs/heads/$(integration_branch)"; fi
+}
 integration_worktree() {
   local wt=
   wt=$(get '.integration.worktree // ""')
