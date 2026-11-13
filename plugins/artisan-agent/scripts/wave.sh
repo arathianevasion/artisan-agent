@@ -734,7 +734,13 @@ is_urgent_sync() { [ "$(get --arg t "$1" '.tickets[$t].urgent // false')" = true
 # gate_failed ticket reason: the merge was undone. A ticket is blocked; an
 # urgent ticket's main sync queues a decision (its PR is merged already).
 gate_failed() {
-  if is_urgent_sync "$1"; then queue_sync_decision "$1" "$2"; else block "$1" "$2"; fi
+  if is_urgent_sync "$1"; then
+    # Its resolve try is spent on a merge that was undone: the next urgent-finish starts afresh.
+    apply '.tickets[$t].resolve = null' --arg t "$1"
+    queue_sync_decision "$1" "$2"
+  else
+    block "$1" "$2"
+  fi
 }
 
 # ship_urgent ticket sha: the full suite is green with main in the
@@ -783,7 +789,9 @@ cmd_merge() {
   # merge was recorded just before a crash leaves its ticket merged, not
   # returned, and only finishing it clears the record.
   settle_gate "$t" "$wait" "$wt"
-  [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] \
+  # (An urgent ticket's own gate to retry, after its runner died or a CI park
+  # cleared, is the one merge it may take: main joining the integration branch.)
+  [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] || [ "$(get --arg t "$t" '.tickets[$t].ci_retry != null')" = true ] \
     || state_die 6 "wave.sh: #$t is urgent: it ships through its own end gate and PR to main (end-gate.sh urgent-open), never into the integration branch"
   check_returned wave.sh "$t" "not merged"
   n=$ATTEMPT
@@ -1081,7 +1089,7 @@ abandon_pending_resolution() { # integration worktree
   git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$(get --arg t "$t" '.tickets[$t].resolve.pre')"
   apply '.tickets[$t].resolve.outcome = "abandoned"' --arg t "$t"
   if is_urgent_sync "$t"; then
-    queue_sync_decision "$t" "main's conflict with the integration branch was never resolved (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"
+    queue_sync_decision "$t" "main's conflict in $(join_paths "$(get --arg t "$t" '.tickets[$t].resolve.paths')") was never resolved (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"
     return 0
   fi
   block "$t" "its conflict resolution never finished (the merge was aborted); its one /artisan-agent:resolve-conflicts try is used"

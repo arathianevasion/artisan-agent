@@ -607,6 +607,9 @@ cmd_urgent_finish() {
   state=$(gh pr view "$num" -R "$repo" --json state -q .state) || die "could not read $url"
   [ "$state" = MERGED ] || refuse "$url is $state: merge it first; main joins the integration branch after"
   oid=$(gh pr view "$num" -R "$repo" --json mergeCommit -q '.mergeCommit.oid // ""' 2>/dev/null || true)
+  # A resolved main merge is gating (wave.sh resolved): finish it there.
+  [ "$(get -r --arg t "$U" '.merge_gate.ticket // ""')" != "$U" ] \
+    || state_die 20 "end-gate.sh: main's merge into the integration branch is in its merge gate; run wave.sh merge $RUN_DIR $U to wait on it"
   wt=$(integration_worktree); ib=$(integration_branch); base=$(main_branch)
   suite=$(get -r '.plan.suite_command // ""')
   [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after main joins the integration branch"
@@ -624,8 +627,8 @@ cmd_urgent_finish() {
     paths=$(jq -r 'join(" ")' <<<"$pjson")
     if [ "$(get --arg t "$U" '.tickets[$t].resolve != null')" = true ] || [ -z "$paths" ]; then
       git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
-      queue_sync_decision "$U" "merging $ref into $ib conflicts in ${paths:-unknown paths}; its one /artisan-agent:resolve-conflicts try is used"
-      refuse "merging $ref into $ib conflicts in ${paths:-unknown paths}; the one resolve try is used, so nothing changed and a decision is queued"
+      queue_sync_decision "$U" "merging $ref into $ib conflicts in ${paths:-unknown paths}; $([ -n "$paths" ] && echo "its one /artisan-agent:resolve-conflicts try is used" || echo "it failed with no conflicted paths to resolve")"
+      refuse "merging $ref into $ib failed (${paths:-no conflicted paths}); nothing changed and a decision is queued"
     fi
     # Left in progress for the one try at resolving it (as wave.sh merge does).
     head=$(git -C "$wt" rev-parse "$ref")

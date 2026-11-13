@@ -503,6 +503,24 @@ test_a_second_conflict_after_the_try_is_used_aborts_and_queues_a_decision() {
   assert_eq "$((before + 1))" "$(state_get '.decisions | length')"
 }
 
+test_urgent_finish_waits_on_a_main_merge_that_is_in_its_merge_gate() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  resolve_by_hand
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.merge_gate = {ticket: "3", attempt: 1}' >/dev/null
+  assert_status 20 "$E" urgent-finish "$RUN_DIR" 3
+}
+
+test_a_red_suite_after_a_resolved_main_merge_leaves_urgent_finish_free_to_try_again() {
+  setup_urgent_conflict
+  assert_status 11 "$E" urgent-finish "$RUN_DIR" 3
+  resolve_by_hand
+  : >"$UWT/BROKEN"
+  git -C "$UWT" add -f BROKEN
+  assert_status 7 "$W" resolved "$RUN_DIR" 3
+  assert_eq null "$(state_get '.tickets["3"].resolve')"
+}
+
 test_the_runs_own_prs_leave_out_the_urgent_ticket() {
   setup_urgent_returned
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["3"].merge_commit = "abc" | .tickets["3"].status = "merged"
