@@ -96,7 +96,7 @@ if [ "$line" -eq 1 ]; then
 fi
 
 seen=$(cat "$run_dir/.digest-seen" 2>/dev/null || echo 0)
-case "$seen" in '' | *[!0-9]*) seen=0 ;; esac
+state_is_uint "$seen" || seen=0
 
 echo "## Run $run_id is open"
 echo

@@ -164,7 +164,7 @@ require_in_scope() {
 cmd_decide() {
   local run_dir="$1" id="$2" choice="$3" d=
   shift 3
-  case "$id" in '' | *[!0-9]*) usage ;; esac
+  state_is_uint "$id" || usage
   [ -n "$choice" ] || usage
   d=$(jq -n --arg c "$choice" '{choice: $c, by: "Artisan"}')
   while [ $# -gt 0 ]; do
