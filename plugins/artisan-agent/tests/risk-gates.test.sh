@@ -98,14 +98,72 @@ test_a_planned_risk_gate_also_covers_the_tickets_own_seam_card() {
   assert_eq "risk-1" "$("$G" due "$RUN_DIR")" "one risk gate per ticket, not two"
 }
 
-test_a_merge_at_the_review_band_raises_a_risk_gate_on_its_dependents_alone() {
+test_a_merge_at_the_review_band_opens_a_risk_gate_issue_on_its_dependents_alone() {
   setup_risk '[]'
   merged_with_cards 1 none
+  local num
   "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 55
-  assert_eq waiting "$(state_get '.tickets["1"].risk_gate.status')"
+  num=$(state_get '.review_gates[0].issue')
+  assert_eq "Risk gate: #1 (Ticket 1), merged at 55% context, the review band (run r1)" "$(jq -r .title "$FAKE_GH_DIR/issue-$num.json")"
+  assert_contains "$(jq -r '.labels[].name' "$FAKE_GH_DIR/issue-$num.json")" review-gate
+  assert_eq "[1,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")" "only #2 waits"
+  assert_eq "[4]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-3.json")" "#3 is not held"
+  # The packet says why it fired.
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "merged while the orchestrator was at 55% context"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "Look over what merged"
+  # One source of truth: no hold flag, one review-gate decision.
+  assert_eq null "$(state_get '.tickets["1"].risk_gate')"
+  assert_eq "review-gate" "$(state_get '.decisions[-1].kind')"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "risk-gate")] | length')"
+  assert_eq "risk-gate" "$(state_get '[.events[] | select(.event == "risk-gate")] | .[0].event')"
+  # Gating again changes nothing and opens nothing.
+  local before
+  before=$(state_get '.review_gates | length')
+  "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 60
+  assert_eq "$before" "$(state_get '.review_gates | length')"
+  assert_eq 55 "$(state_get '.tickets["1"].context_risk.percent')"
+  # The reconciler holds #2 through the gate; #3 goes ahead.
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["4"].status = "merged"'
   "$PLUGIN_ROOT/scripts/reconcile.sh" "$RUN_DIR" >/dev/null 2>&1 || true
   assert_eq "3" "$(state_get '.frontier | join(",")')" "#2 waits, #3 goes ahead"
-  "$PLUGIN_ROOT/scripts/drain.sh" gate-cleared "$RUN_DIR" 1
-  assert_eq "clear 13 false" "$(state_get '.decisions[] | select(.kind == "risk-gate") | "\(.choice) \(.job) \(.changed)"')"
+  # Approving releases #2.
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  "$PLUGIN_ROOT/scripts/reconcile.sh" "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq "2,3" "$(state_get '.frontier | join(",")')"
+  assert_eq "approved 13 false" "$(state_get '.review_gates[0].status as $s | .decisions[] | select(.kind == "review-gate") | "\($s) \(.job) \(.changed)"')"
+}
+
+test_a_context_gate_can_be_deferred_like_any_risk_gate() {
+  setup_risk '[]'
+  merged_with_cards 1 none
+  "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 52
+  local num
+  num=$(state_get '.review_gates[0].issue')
+  "$PLUGIN_ROOT/scripts/gate-action.sh" defer "$RUN_DIR" "$num" --why "later" >/dev/null
+  assert_eq deferred "$(state_get '.review_gates[0].status')"
+  assert_contains "$("$PLUGIN_ROOT/scripts/gate-action.sh" deferred "$RUN_DIR" 2>&1)" "merged at 52% context"
+}
+
+test_a_merge_at_the_band_whose_tracker_failed_is_opened_by_sync() {
+  setup_risk '[]'
+  merged_with_cards 1 none
+  # The tracker is unreachable for the open; the fact is still recorded.
+  local save=$PATH
+  mkdir -p "$TEST_TMPDIR/nogh"
+  printf '#!/bin/sh\nexit 1\n' >"$TEST_TMPDIR/nogh/gh"; chmod +x "$TEST_TMPDIR/nogh/gh"
+  PATH="$TEST_TMPDIR/nogh:$PATH" "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 1 58 >/dev/null 2>&1 && fail "should report the failed open"
+  assert_eq 58 "$(state_get '.tickets["1"].context_risk.percent')"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1)"
+  PATH=$save
+  assert_contains "$("$G" sync "$RUN_DIR")" "risk-context-1"
+  assert_eq 1 "$(state_get '.review_gates | length')"
+}
+
+test_a_legacy_risk_gate_flag_still_holds_its_dependents() {
+  setup_risk '[]'
+  merged_with_cards 1 none
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].risk_gate = {status: "waiting", percent: 55, at: 1}'
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["4"].status = "merged"'
+  "$PLUGIN_ROOT/scripts/reconcile.sh" "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq "3" "$(state_get '.frontier | join(",")')"
 }

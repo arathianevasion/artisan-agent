@@ -134,7 +134,8 @@ Top level:
 | `tracker_closed` | `true` once the ticket is closed on the tracker with its evidence posted |
 | `wave` | the wave its last dispatch belonged to (the last orchestrator's wave; 0 before any) |
 | `resolve` | its one conflict-resolution try: `{attempt, paths, pre, outcome, why?, at}`, `outcome` `pending` (the merge left in progress), `resolved`, `unresolved` or `abandoned` |
-| `risk_gate` | `{status, percent, at, cleared_at?}` when it merged while the orchestrator was at the review band (`drain.sh gate`): `waiting` holds its dependents off the frontier and out of `wave.sh dispatch` until `cleared` |
+| `context_risk` | `{percent, at}` when it merged while the orchestrator was at the review band (`drain.sh gate`): the fact that raises the risk gate `risk-context-<t>`, which holds its dependents like any review gate |
+| `risk_gate` | legacy, from before that gate was an issue: `{status, percent, at, cleared_at?}`; `waiting` still holds its dependents off the frontier and out of `wave.sh dispatch` until `cleared` (`drain.sh gate-cleared`). Nothing writes it now |
 | `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
@@ -169,7 +170,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `suite` | absent (ticket field): no merge attempted |
 | `tracker_closed` | `false` (ticket field) |
 | `wave` | `0` (ticket field) |
-| `resolve`, `risk_gate`, `blocked_reason` | absent (ticket fields) |
+| `resolve`, `risk_gate`, `context_risk`, `blocked_reason` | absent (ticket fields) |
 | `questions`, `answers` | `[]` (ticket fields) |
 
 #54 added `events`, `plan.suite_command`, `plan.orchestrator`, the ticket's `tracker_closed`, and (with the two-tier scripts) `integration.worktree`, `integration.base`, the ticket's `worktree`, `base` and `suite`. It also let a ticket's `cost_usd` fall back to the session's `total_cost_usd` when the result file has none. Reviewed in #96: none of these changed the meaning or type of a field that existed before (the cost fallback only fills a value that was `null`), so none needed a bump.

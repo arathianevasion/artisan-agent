@@ -51,11 +51,11 @@ A risk gate holds only the dependents of one merged ticket, until the Artisan an
 |---|---|---|
 | a planned risk gate (an escalation test) | the ticket merges | a `review-gate` issue, `Risk gate: #<t> (<title>), <test> (run <id>)`, opened by `gate.sh sync` (from `wave.sh close` and `wave.sh status`) like a slice gate of one ticket: the same packet, native blocking of the dependents, `gate_holds` before it opens, and every answer (`gate.sh approve`, `change`, `guardrail`; `gate-action.sh redirect`, `bypass`, `defer`) |
 | a new-seam card: a decision card in the ticket's evidence naming controversy criterion 3 (#87) | the ticket merges | the same, id `risk-seam-<t>`, `Risk gate: …, new seam (decision card) …`; none where a planned risk gate already covers the ticket |
-| a merge processed at the review band (50% context or more) | the orchestrator runs `drain.sh gate` after the merge (`skills/implement-plan/references/context-drain.md`) | `tickets.<t>.risk_gate`, a `risk-gate` decision; cleared with `drain.sh gate-cleared` |
+| a merge processed at the review band (50% context or more) | the orchestrator runs `drain.sh gate` after the merge (`skills/implement-plan/references/context-drain.md`) | `tickets.<t>.context_risk` (the percentage), then a `risk-context-<t>` review gate and a `review-gate` decision, as for any risk gate. A state file from before this holds `tickets.<t>.risk_gate`, which still holds dependents and is cleared with `drain.sh gate-cleared` |
 
 The first two are computed from the plan and the evidence alone (`slice_gates` in `scripts/lib/state-lib.sh`), so a crash between the merge and the issue still holds the dependents. A gate the Artisan removed at the plan step still fires on a new-seam card: new seams are never left unreviewed.
 
-**For the retro**, every risk-gate answer records its job (13) and whether the Artisan changed anything: `changed` on the `review-gate` decision (a card changed or a rework ticket made), `changed: false` on a cleared `risk-gate` decision.
+**For the retro**, every risk-gate answer records its job (13) and whether the Artisan changed anything: `changed` on the `review-gate` decision (a card changed or a rework ticket made), `changed: false` on a legacy `risk-gate` decision cleared with `drain.sh gate-cleared`.
 
 ## The end gate
 
