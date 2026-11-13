@@ -18,6 +18,7 @@ The plan proposes one slice gate per slice, a risk gate for every ticket meeting
    | `judgement-criteria` | acceptance criteria that read as judgement rather than behaviour |
 
    Also record the draft's `route` (`feature`, `small-change` or `bug`; default `feature`), each ticket's `slice` (from the to-plan graph; none means its own slice) and `plan` (its plan issue, for a per-plan PR boundary), and, for a bug, the ticket's `failing_test` (the test named in its acceptance criteria).
+   For areas (#77), also record each ticket's `paths`: the files its brief says it touches.
 2. `gate-plan.sh propose <draft.json>` writes the draft's `gates` and prints them as a table: gate, kind, when it opens, why, and whether it can be removed.
 3. Show the table under `plan.sh render`'s. The Artisan's changes:
 
@@ -28,6 +29,8 @@ The plan proposes one slice gate per slice, a risk gate for every ticket meeting
    | move a risk gate | `gate-plan.sh move <draft.json> risk-N --after T` |
 
    Each prints the table again. Ids are positional, as the run numbers them (`slice-<n>`, `risk-<n>`, `end`), so read them from the last table shown.
+
+**Areas.** Config `areas.<name>` has `paths` and `gates` (`slice`, `risk` or both). `propose` puts a ticket in every area a path of its `paths` equals or lies inside, writes `tickets.<t>.areas` (which the plan, and so the packet's "Areas" section, carries) and names them under the table. An area's `gates` is what its tickets get: `slice` a slice gate of the ticket alone, `risk` a risk gate (test "area <name> gate setting", joined with any escalation tests into the ticket's one risk gate). A ticket in several areas gets the union: the strictest setting wins. With no areas configured nothing changes.
 
 **Exception gates can't be removed or moved.** They are never placed in the plan: the run opens one whenever it gives up on a ticket, its check won't go green or the budget overruns (`references/gate-actions.md`), whatever `plan.gates` says. `gate-plan.sh` refuses any `exception*` id (6).
 

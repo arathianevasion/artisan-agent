@@ -267,8 +267,8 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | Command | Does | Returns |
 |---|---|---|
 | `guardrails.sh wave-start <run-dir> <wave>` | called by `wave.sh launch`: fetches the team, product and individual sources, brings `main` into the integration branch if a product guardrail changed, records the plugin version and each source's commit in the state file | one JSON line; 6 on a conflict (decision queued, wave not recorded) |
-| `guardrails.sh resolve [--run-dir D] [--role R]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
-| `guardrails.sh table [--run-dir D]` | the packet's "Guardrails applied" section | a markdown table |
+| `guardrails.sh resolve [--run-dir D] [--role R] [--ticket T,T] [--areas A,A]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
+| `guardrails.sh table [--run-dir D] [--ticket T,T] [--areas A,A]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
 | `guardrails.sh loosen --level L --who NAME --reason TEXT --id ID --strict N --evidence TEXT` | the retro's loosening path: lowers an existing guardrail's strictness and records a `loosen` move with its evidence, who and run | 2 with no evidence or an agent `--who`, 5 when `--strict` isn't lower, 7 for the scope floor (`key: scope-floor`) or a defer-only gate (`defer_only: true`), 8 when the latest `health --record` report doesn't propose it (or there is none); `--override-reason TEXT [--run-dir D]` proceeds and records the reason and who as a bypass |
 | `guardrail-health.sh health\|spot-check\|spot-check-record\|audit\|hands-on\|backstop --runs DIR...` | the retro's guardrail health (fired, bypassed or never fired, with origin), loosen and tighten proposals at the threshold, the spot-check, miss and discard audits, the hands-on question and nudge, and the backstop scan. Reads run history, changes nothing but the `spot-check` event and, with `health --record`, the latest report `loosen` follows (`ARTISAN_HEALTH_DIR`). Rules and event shapes: `references/guardrail-health.md`; tested in `tests/guardrail-health.test.sh` | JSON, or a markdown table with `--table` |
@@ -391,7 +391,7 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 
 | Command | Tier | Does | Exit status |
 | :- | :- | :- | :- |
-| `gate-plan.sh propose <draft>` | Engineering chat | writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
+| `gate-plan.sh propose <draft> [--config FILE]` | Engineering chat | applies per-area gate settings (the strictest wins) and names each ticket's `areas`; writes the draft's `gates`: a slice gate per slice, a risk gate per ticket with an `escalation`, the end gate (doubling as the slice gate for a `small-change` or `bug` route); prints the table | 0, 1, 2 |
 | `gate-plan.sh render\|remove\|move <draft> ...` | Engineering chat | the table; remove a slice, risk or end gate; move a slice or risk gate (`--after T`, `--tickets T,T`). An exception gate, or moving the end gate, is refused | 0, 1, 2, 6 |
 | `gate.sh sync\|due\|open` | both | as for slice gates; also opens a risk gate (`risk-<n>` from the plan, `risk-seam-<t>` from a new-seam card) once its ticket merges | as above |
 | `end-gate.sh status <run-dir>` | Engineering chat | `not-due`, `due`, `open`, `removed`, `approved` or `ended` | 0 |
