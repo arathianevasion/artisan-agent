@@ -8,7 +8,8 @@ test_probe() {
   [ -z "${ARTISAN_FINDINGS_FILE:-}" ] || echo '{"title":"fake"}' >> "$ARTISAN_FINDINGS_FILE"
   [ -z "${ARTISAN_RESULT_FILE:-}" ] || echo fake > "$ARTISAN_RESULT_FILE"
   [ -z "${ARTISAN_RUN_DIR:-}" ] || touch "$ARTISAN_RUN_DIR/leak"
-  left=$(compgen -v ARTISAN_ || true)
+  # lib.sh sets its own ARTISAN_USAGE_FILE inside the test folder (#72); not a caller leak.
+  left=$(compgen -v ARTISAN_ | grep -vx ARTISAN_USAGE_FILE || true)
   [ -z "$left" ] || { echo "leaked: $left" >&2; exit 1; }
 }
 EOF

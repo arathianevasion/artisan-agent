@@ -13,6 +13,7 @@
 #   gh api repos/<o>/<r>/issues/<n>/dependencies/blocked_by
 #   gh issue view <n> [-R repo] [--json fields] [-q|--jq filter] [--comments]
 #   gh issue list [-R repo] [--state open|closed|all] [--json fields] [-q filter]
+#                         (an empty tracker lists [] and exits 0, as real gh does)
 #   gh issue comment <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue edit <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue close <n> [-R repo] [--comment|-c TEXT]
@@ -178,7 +179,8 @@ case "${1:-} ${2:-}" in
     fi ;;
   "issue list")
     shift 2; parse "$@"
-    all=$(for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] && cat "$f"; done | jq -s --arg s "$state" \
+    # A glob that matches nothing leaves the literal pattern: skip it, so an empty tracker lists [].
+    all=$(for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] || continue; cat "$f"; done | jq -s --arg s "$state" \
       'map(select($s == "all" or .state == $s)) | sort_by(.number)')
     if [ -n "$json" ]; then emit "$all"
     else printf '%s' "$all" | jq -r '.[] | "\(.number)\t\(.state | ascii_upcase)\t\(.title)"'; fi ;;
