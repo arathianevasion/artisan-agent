@@ -14,6 +14,9 @@ Usage:
       the issue body, top to bottom: header, summary line, decision cards,
       uncertainties, evidence by criterion (with guardrails applied, checks
       proven to fail, cost against estimate and the diffs), overall action.
+  python3 -I packet.py risk < view.json
+      the "Risk" section of an urgent ticket's end gate packet: the escalation
+      tests it meets (plan.tickets.<t>.escalation), or "No escalation tests met."
   python3 -I packet.py chat < view.json
       the compressed packet: a counts line, one table row per decision
       (low confidence in bold), then "Keep all, or name one to change."
@@ -168,6 +171,39 @@ def card_block(c):
     return lines
 
 
+# An urgent ticket's end gate packet names the escalation tests it meets (the
+# names gate-plan.sh uses), with what to look over for each.
+ESCALATION = {
+    "new-seam": ("new seam or module boundary",
+                 "who else will call it, and whether its shape is one you would want to keep"),
+    "tracer-bullet": ("first tracer bullet through a new layer",
+                      "that the thin path is the right one before more is built on it"),
+    "vocabulary-adr": ("change to vocabulary or an ADR",
+                       "the new wording or decision against GLOSSARY.md and docs/adr/"),
+    "judgement-criteria": ("judgement-like acceptance criteria",
+                           "that the reading the worker chose is the one you meant"),
+}
+
+
+def risk_section(view):
+    state = view["state"]
+    plan_tickets = state.get("plan", {}).get("tickets") or {}
+    ts = [t for t in view["gate"]["tickets"] if plan_tickets.get(t, {}).get("urgent")]
+    if not ts:
+        return []
+    rows = []
+    for t in ts:
+        for e in plan_tickets[t].get("escalation") or []:
+            if e in ESCALATION:
+                label, look = ESCALATION[e]
+            elif e.startswith("area:"):
+                label, look = "area %s gate setting" % e[5:], "that the change in this area is what you want"
+            else:
+                label, look = e, "what it asks of you"
+            rows.append("- `%s`: %s (#%s). Look over: %s." % (e, label, t, look))
+    return ["## Risk", ""] + (rows or ["No escalation tests met."]) + [""]
+
+
 GATE_HEADER = "| Gate | Role needed | Slice | Tickets blocked |"  # `packet.py header`
 
 
@@ -296,7 +332,7 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == "header":
         print(GATE_HEADER)
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat"):
+    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat", "risk"):
         sys.stderr.write(__doc__)
         sys.exit(2)
     view = json.load(sys.stdin)
@@ -304,6 +340,8 @@ def main():
     if cmd == "cards":
         json.dump(cards(view), sys.stdout)
         sys.stdout.write("\n")
+    elif cmd == "risk":
+        sys.stdout.write("\n".join(risk_section(view)) + "\n")
     elif cmd == "body":
         sys.stdout.write(body(view))
     else:
