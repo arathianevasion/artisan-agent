@@ -159,3 +159,35 @@ test_bad_j_and_shard_arguments_are_usage_errors() {
   assert_status 2 "$TESTS_DIR/run.sh" --shard nonsense "$FIXTURES/passing"
   assert_status 2 "$TESTS_DIR/run.sh" --bogus "$FIXTURES/passing"
 }
+
+# ------------------------------------------------- negated piped grep -q
+
+# A negated `grep -q` at the end of a pipe passes when it should fail: grep
+# exits at the first match, printf takes SIGPIPE, pipefail makes the pipeline
+# 141, and `!` turns that into success. Assert with assert_not_contains.
+negated_piped_greps() { # file...  -> "file:line:text" for each offender
+  grep -nE '^[[:space:]]*![^|]*\|[[:space:]]*grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*q' "$@" || true
+}
+
+test_assert_not_contains_passes_when_the_needle_is_absent() {
+  (assert_not_contains "alpha beta" "gamma") || fail "failed though the needle is absent"
+}
+
+test_assert_not_contains_fails_when_the_needle_is_present() {
+  local status=0
+  (assert_not_contains "alpha beta" "beta" "custom message") >/dev/null 2>&1 || status=$?
+  assert_eq 1 "$status" "exit status when the needle is present"
+}
+
+test_the_negated_grep_detector_flags_a_negated_piped_grep() {
+  printf '%s\n' '  ! printf "%s" "$out" | grep -qF -- "x" || fail y' >"$TEST_TMPDIR/bad.sh"
+  assert_contains "$(negated_piped_greps "$TEST_TMPDIR/bad.sh" /dev/null)" "bad.sh:1:"
+  printf '%s\n' '  printf "%s" "$out" | grep -q x || fail y' >"$TEST_TMPDIR/ok.sh"
+  assert_eq "" "$(negated_piped_greps "$TEST_TMPDIR/ok.sh" /dev/null)" "non-negated pipe"
+}
+
+test_no_test_file_negates_a_piped_grep_q() {
+  local hits
+  hits=$(negated_piped_greps "$TESTS_DIR"/*.test.sh)
+  [ -z "$hits" ] || fail "negated piped grep -q (use assert_not_contains): $hits"
+}

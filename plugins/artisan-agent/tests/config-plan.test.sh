@@ -275,14 +275,14 @@ test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() 
   assert_eq 1 "$(printf '%s\n' "$out" | grep -c 'runs alone')" "one warning, for the undeclared ticket"
   assert_contains "$out" "#11 runs alone: no expected files, so it's treated as touching everything. Name its files to let it share a wave."
   # The Wave column is gone; the headings keep the grouping.
-  ! printf "%s" "$out" | grep -qF -- "| Wave |" || fail "unexpected: ""| Wave |"
+  assert_not_contains "$out" "| Wave |"
   assert_contains "$out" "### Wave 2"
   # A fully declared plan prints no warning.
   jq '.tickets["11"].expected_files = ["src/billing/"]' "$TEST_TMPDIR/d2.json" >"$TEST_TMPDIR/d3.json"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d3.json") >"$TEST_TMPDIR/plan3.json"
   out=$(plan render "$TEST_TMPDIR/plan3.json")
-  ! printf "%s" "$out" | grep -qF -- "runs alone" || fail "unexpected: ""runs alone"
-  ! printf "%s" "$out" | grep -qF -- "none declared" || fail "unexpected: ""none declared"
+  assert_not_contains "$out" "runs alone"
+  assert_not_contains "$out" "none declared"
 }
 
 # --------------------------------------------------------------- overrides

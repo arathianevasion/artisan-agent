@@ -17,6 +17,14 @@ assert_contains() { # haystack needle [message]
   esac
 }
 
+# No pipe: `! printf ... | grep -q` passes on a match when printf takes SIGPIPE
+# under pipefail, so never assert absence that way.
+assert_not_contains() { # haystack needle [message]
+  case "$1" in
+    *"$2"*) fail "${3:-assert_not_contains}: [$2] unexpectedly found in [$1]" ;;
+  esac
+}
+
 assert_status() { # expected-status command...
   local want="$1" got=0
   shift
