@@ -56,6 +56,11 @@
 #       /artisan-agent:implement. A retry is a fresh worker on the same
 #       branch, given the failed attempt's evidence, and only once the
 #       failed attempt's session has ended (8 until then). Prints its pid.
+#       An urgent ticket (lever.sh urgent) takes the one extra slot above Max
+#       Agents (9 while another urgent ticket holds it), skips the blocker and
+#       overlap checks and branches from main; keeps the guard and its cost cap.
+#       A ticket the Artisan stopped and steered (lever.sh steer) is dispatched
+#       again like a retry, with their notes in its prompt.
 #   wave.sh merge <run-dir> <ticket>
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the plan's suite command
@@ -490,23 +495,37 @@ cmd_dispatch() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  local status= in_flight= max=
+  local status= in_flight= max= urgent=
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
   [ "$(get --arg t "$t" '.tickets[$t].human == null')" = true ] \
     || die "#$t is a hands-on ticket, held for the Artisan (human.sh); it is never dispatched to a worker"
-  in_flight=$(get '[.tickets[] | select(.status == "in_flight")] | length')
   max=$(get '.plan.max_agents // 5')
-  [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
+  urgent=$(get --arg t "$t" '.tickets[$t].urgent // false')
+  if [ "$urgent" = true ]; then
+    # The one extra slot above Max Agents (lever.sh urgent): a second urgent
+    # ticket waits until the first has left it.
+    in_flight=$(get --arg t "$t" '[.tickets | to_entries[] | select(.key != $t and .value.status == "in_flight" and (.value.urgent // false))] | length')
+    [ "$in_flight" -lt 1 ] || state_die 9 "wave.sh: the urgent slot is taken: another urgent ticket is in flight; #$t waits"
+  else
+    in_flight=$(get '[.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length')
+    [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
+  fi
   # The plan-window guard and the budget (budget.sh, #72): 18 parked, 17 the
   # overrun gate, 12 halted. Work already in flight is never stopped.
   "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
-  check_blockers "$t"
-  "$SCRIPT_DIR/wave-width.sh" check "$RUN_DIR" "$t" || exit $?
+  # An urgent ticket was approved by being marked urgent: it dispatches at
+  # once, whatever blocks it or runs beside it.
+  if [ "$urgent" != true ]; then
+    check_blockers "$t"
+    "$SCRIPT_DIR/wave-width.sh" check "$RUN_DIR" "$t" || exit $?
+  fi
 
   local ib= base= branch= n= wt= prev= repo= title= path= expected= estimate= minutes= model= turns= deadline= prompt= pid= ref=
   ib=$(integration_branch)
   base=$(git -C "$MAIN" rev-parse "refs/heads/$ib")
+  # An urgent ticket branches from main, not from the integration branch.
+  [ "$urgent" != true ] || base=$(git -C "$MAIN" rev-parse "refs/heads/$(main_branch)") || die "no main branch to branch #$t from"
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   n=$(( $(get --arg t "$t" '.tickets[$t].attempts') + 1 ))
   wt="$WT_ROOT/$RUN_ID-$t.$n"
@@ -554,7 +573,7 @@ cmd_dispatch() {
 /artisan-agent:implement $ref: $title
 
 You are the worker for ticket $t, attempt $n, in run $RUN_ID.
-- Base: $base (the integration branch $ib). Your branch: $branch, already checked out here.
+- Base: $base ($([ "$urgent" = true ] && echo "main, because this ticket is urgent and ships on its own PR to main" || echo "the integration branch $ib")). Your branch: $branch, already checked out here.
 - Expected output: $expected
 - Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR (plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
@@ -570,6 +589,11 @@ EOF
   if [ "$(get --arg t "$t" '(.tickets[$t].notes // []) | length')" -gt 0 ]; then
     printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
     get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
+  fi
+  # Steering (lever.sh steer): the Artisan stopped the last attempt and gave notes.
+  if [ "$(get --arg t "$t" '(.tickets[$t].steering // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan stopped an earlier attempt to steer you. This is not a failed attempt: continue from the branch, and follow their notes:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].steering[] | "  - \(.note) (attempt \(.attempt))"' >>"$prompt"
   fi
   if [ "$n" -gt 1 ] && [ "$(get --arg t "$t" '.tickets[$t].failures | length')" -gt 0 ]; then
     printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
@@ -599,6 +623,12 @@ EOF
   apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
     --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
+}
+
+# The branch the Artisan's PRs go to (and an urgent ticket branches from).
+main_branch() {
+  [ -z "${ARTISAN_MAIN_BRANCH:-}" ] || { printf '%s\n' "$ARTISAN_MAIN_BRANCH"; return; }
+  git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || echo main
 }
 
 # failure_evidence ticket attempt: what a retry's fresh worker is told about
@@ -675,6 +705,8 @@ cmd_merge() {
   local t="${2:-}"
   [ -n "$t" ] || usage
   local n= branch= wt= ib= suite= pre= title=
+  [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] \
+    || state_die 6 "wave.sh: #$t is urgent: it ships through its own end gate and PR to main (end-gate.sh urgent-open), never into the integration branch"
   check_returned wave.sh "$t" "not merged"
   n=$ATTEMPT
   branch=$(get --arg t "$t" '.tickets[$t].branch')

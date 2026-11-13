@@ -28,6 +28,9 @@
 #   gh issue edit <n> --add-label L / --remove-label L (also with a body)
 #   gh pr create [-R repo] --base B --head H --title T (--body B | --body-file F)
 #                         records pr-<n>.json {number, base, head, title, body}; prints its URL
+#   gh pr view <n|url> [-R repo] --json state,mergeCommit [-q filter]
+#                         from pr-<n>.json: state (OPEN unless the file says otherwise) and
+#                         mergeCommit {oid}; a test merges a PR by setting state and merge_oid
 # Anything else fails with exit 1. Needs jq.
 
 set -euo pipefail
@@ -250,5 +253,19 @@ case "${1:-} ${2:-}" in
     jq -n --argjson n "$num" --arg b "$base" --arg h "$head" --arg t "$title" --arg body "$body" \
       '{number: $n, base: $b, head: $h, title: $t, body: $body}' >"$FAKE_GH_DIR/pr-$num.json"
     echo "https://github.com/${FAKE_GH_REPO:-local/sample}/pull/$num" ;;
+  "pr view")
+    shift 2
+    n= filter=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --json) shift 2 ;;
+        -q|--jq) filter=$2; shift 2 ;;
+        *) n=${1##*/}; shift ;;
+      esac
+    done
+    [ -f "$FAKE_GH_DIR/pr-$n.json" ] || { echo "gh: no pull request #$n (HTTP 404)" >&2; exit 1; }
+    out=$(jq -c '{state: (.state // "OPEN"), mergeCommit: (if .merge_oid then {oid: .merge_oid} else null end)}' "$FAKE_GH_DIR/pr-$n.json")
+    if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;
 esac

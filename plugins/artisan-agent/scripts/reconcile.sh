@@ -16,7 +16,9 @@
 #   4. marks closed any queued ticket the tracker has closed without a merge;
 #   5. writes the frontier: queued tickets, open on the tracker, not labelled
 #      ready-for-human and not held for the Artisan (human.sh), whose blockers are all merged into the integration
-#      branch (blockers in the run) or closed (blockers outside it).
+#      branch (blockers in the run) or closed (blockers outside it). Higher
+#      plan.tickets.<t>.priority first (a ticket added mid-run, lever.sh add),
+#      then by number; an urgent ticket is never on it (it dispatches at once).
 # Prints the frontier, one ticket per line. Running it again on the same git
 # and tracker state changes nothing. The run folder must sit at
 # <checkout>/.artisan-agent/runs/<run-id>.
@@ -117,6 +119,7 @@ reconcile() {
         | select($tr[$t].state == "open")
         | select(($tr[$t].labels | index("ready-for-human")) == null)
         | select($s.tickets[$t].human == null)
+        | select(($s.tickets[$t].urgent // false) | not)
         | select((($s.plan.hands_on.ticket // "") | tostring) != $t)
         | select(all($tr[$t].blocked_by[];
             if $s.tickets[.number] != null
@@ -125,7 +128,7 @@ reconcile() {
                  and ((.number | tostring) as $b | $s | gate_holds($b) | not)
             else .state == "closed" end))
         | $t
-      ] | .frontier |= sort_by(tonumber? // .)' --argjson tr "$tracker"
+      ] | .frontier |= sort_by([-($s.plan.tickets[.].priority // 0), (tonumber? // .)])' --argjson tr "$tracker"
 
   state_commit "$RUN_DIR" "$tmp"
 }

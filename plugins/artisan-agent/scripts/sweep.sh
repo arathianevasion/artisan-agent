@@ -10,6 +10,10 @@
 #   2. an exit record results/<ticket>.<attempt>.exit.json and no result -> failed attempt
 #   3. past its deadline -> the worker is stopped, failed attempt
 #   4. its worker pid is no longer alive -> failed attempt
+# Two requests are read from files the chat leaves while a wave holds the
+# lock (scripts/lever.sh): an attempt the Artisan stopped
+# (steering/<ticket>.<attempt>.json) is steering, not a failed attempt, and
+# work they approved (levers/*.json) joins the run.
 # A failed attempt sends the ticket back to queued, or, once it has used the
 # run's attempts per ticket, to blocked with an exception decision queued for
 # the Artisan. New lines in results/findings/<ticket>.jsonl join the findings
@@ -99,6 +103,14 @@ sweep() {
 
   step() { state_step "$tmp" "$@"; }
 
+  # Work the Artisan approved while a wave held the lock (lever.sh add and
+  # urgent leave a request in levers/): it joins the run now.
+  local req=
+  for req in "$RUN_DIR"/levers/*.json; do
+    [ -f "$req" ] || continue
+    step "$STATE_JQ_DEFS"'scope_add($r[0]; $now)' --slurpfile r "$req" --argjson now "$now"
+  done
+
   tickets=$(jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | .key' "$tmp")
   for t in $tickets; do
     pid=$(jq -r --arg t "$t" '.tickets[$t].pid // ""' "$tmp")
@@ -120,7 +132,13 @@ sweep() {
       session_cost=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$attempt/output.json" 2>/dev/null || echo null)
       [ -n "$session_cost" ] || session_cost=null
       step "$STATE_JQ_DEFS"'attempt_cost($t; .tickets[$t].attempts; $usd)' --arg t "$t" --argjson usd "$session_cost"
-      step "$FAIL_FILTER" --arg t "$t" --arg reason "exited without a result" --argjson now "$now"
+      if [ -f "$RUN_DIR/steering/$t.$attempt.json" ]; then
+        # The Artisan stopped this attempt (lever.sh steer): steering, not a failure.
+        step "$STATE_JQ_DEFS"'steered($t; $note; $now)' --arg t "$t" --argjson now "$now" \
+          --arg note "$(jq -r '.note // ""' "$RUN_DIR/steering/$t.$attempt.json")"
+      else
+        step "$FAIL_FILTER" --arg t "$t" --arg reason "exited without a result" --argjson now "$now"
+      fi
     elif [ -n "$deadline" ] && [ "$now" -gt "$deadline" ]; then
       [ -n "$pid" ] && stop_worker "$pid"
       step "$FAIL_FILTER" --arg t "$t" --arg reason "past deadline; stopped" --argjson now "$now"

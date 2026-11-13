@@ -4,6 +4,8 @@
 # (without it the hook says so on stderr and lets the call through).
 #   protect.sh main-edit   PreToolUse on Edit|Write|MultiEdit|NotebookEdit
 #   protect.sh run-start   UserPromptExpansion and PreToolUse(Skill) for implement-plan
+#                          (while a run holds the lock only a resume, "add <tickets>"
+#                          or "urgent <ticket>" passes: the last two are the add-work flow)
 # Both refuse by printing the host's deny/block JSON and exit 0.
 # Details: guard/README.md, "Main-checkout protection and the run lock".
 set -uo pipefail
@@ -70,6 +72,13 @@ case "$mode" in
     esac
     case "$resume" in
       "" | resume | "$run_id" | "resume $run_id") exit 0 ;;
+    esac
+    # Adding work to the running run is not a second run either: "add <tickets>"
+    # and "urgent <ticket>" go through to the add-work flow
+    # (skills/implement-plan/SKILL.md, "Adding to a running run"), and are not
+    # refused or queued as a separate plan.
+    case "$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]')" in
+      add | add\ * | add-work | add-work\ * | urgent | urgent\ * | --urgent\ *) exit 0 ;;
     esac
     msg="Blocked by the artisan-agent run lock: run $run_id (pid $pid) holds the lock, and a repo has one run at a time."
     if (cd "$cwd" && "$HERE/queue-plan.sh" "$request") >/dev/null 2>&1; then

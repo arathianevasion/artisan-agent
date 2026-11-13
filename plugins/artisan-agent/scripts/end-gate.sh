@@ -42,6 +42,26 @@
 #       once every PR is cut: removes the in-run label from every ticket in
 #       scope, records the run's end and prints the retro offer.
 #
+# An urgent ticket (lever.sh urgent, references/run-levers.md) ships through
+# its own end gate and PR, scoped to that one ticket and based on main, with
+# this same packet, PR body and cut. From the Engineering chat, once the
+# ticket has returned and been verified:
+#   end-gate.sh urgent-packet <run-dir> <ticket>
+#       the packet for that ticket alone, as it would be opened now.
+#   end-gate.sh urgent-open <run-dir> <ticket>
+#       opens "End gate: urgent #<t> (run <id>)" and queues its decision. 6
+#       unless the ticket has returned with a passing verdict at its tip.
+#   end-gate.sh urgent-approve <run-dir> <ticket> [--by NAME] [--why W]
+#   end-gate.sh urgent-cut <run-dir> <ticket> --body-file F [--title T]
+#       builds pr/<run-id>/urgent-<t> at the ticket's tip (never through the
+#       integration branch), pushes it when there is an origin, opens the PR
+#       to main with the body upstream `pr` wrote. Prints the URL; again, the same.
+#   end-gate.sh urgent-finish <run-dir> <ticket>
+#       once the Artisan has merged that PR: merges main into the integration
+#       branch in its worktree, runs the plan's full suite there (red undoes
+#       the merge, queues a decision, exit 7), marks the ticket merged and
+#       takes the in-run label off. 6 while the PR is not merged.
+#
 # Environment: ARTISAN_HOME, ARTISAN_TEAM_CACHE (as guardrails.sh);
 # ARTISAN_MAIN_BRANCH, the branch PRs go to (default the main checkout's).
 #
@@ -65,6 +85,7 @@ refuse() { state_die 6 "end-gate.sh: $*"; }
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOME_DIR=${ARTISAN_HOME:-$CFG/artisan-agent}
 TEAM_CACHE=${ARTISAN_TEAM_CACHE:-$CFG/artisan-agent-team}
+URGENT=
 PACKET() { python3 -I "$SCRIPT_DIR/lib/packet.py" "$@"; }
 
 # ------------------------------------------------------------------ status
@@ -140,7 +161,7 @@ pr_plan() { # boundary-value
   get -c --arg b "$1" --arg run "$RUN_ID" --arg main "$(main_branch)" '
     . as $s
     | ((.integration.merges // []) | map(.ticket | tostring)) as $m0
-    | (if $m0 == [] then [.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null)] else $m0 end) as $m1
+    | (if $m0 == [] then [.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null and ($s.tickets[.].urgent // false | not))] else $m0 end) as $m1
     | [$m1 | to_entries[] | .value as $v | select(.key as $k | $m1[$k + 1:] | index($v) | not) | $v
        | select($s.tickets[.].status? == "merged")] as $order
     | def key($t): ($s.plan.tickets[$t] // {}) as $p | ($s.plan.tickets[$p.rework_of // ""] // {}) as $o
@@ -254,6 +275,7 @@ packet() {
   local def= b= gview= title=
   def=$(end_def)
   title="End gate: run $RUN_ID"
+  [ -z "$URGENT" ] || title="End gate: urgent #$URGENT (run $RUN_ID)"
   echo "# $title"
   echo
   if [ "$(jq -r '.bug // false' <<<"$def")" = true ] || [ "$(get -r '.plan.route // ""')" = bug ]; then
@@ -294,6 +316,17 @@ packet() {
       | "| #\($t)" + (($s.plan.tickets[$t].title // null) | if . then " (\(.))" else "" end)
         + " | \($s.tickets[$t].status // "queued") | " + (($s.tickets[$t].merge_commit // null) | if . then "`\(.[0:7])`" else "-" end) + " |"'
     echo
+  fi
+  if [ -n "$URGENT" ]; then
+    echo "## PR to main"
+    echo
+    echo "One PR for #$URGENT alone, based on \`$(main_branch)\`; the run's other tickets are not in it. Its body is written with upstream \`pr\`. Once it is merged, \`end-gate.sh urgent-finish\` merges \`$(main_branch)\` into the integration branch and runs the full suite."
+    echo
+    echo "## Overall action"
+    echo
+    echo "- **approve**: the PR to \`$(main_branch)\` is cut."
+    echo "- **not yet**: say what is wrong. The gate stays open and nothing is cut."
+    return 0
   fi
   echo "## Deferred gates"
   echo
@@ -432,10 +465,190 @@ cmd_finish() {
   echo "Next: offer the retro, /artisan-agent:retro."
 }
 
+# ------------------------------------------------------------ urgent ticket
+
+# An urgent ticket (lever.sh urgent) ships through its own end gate and PR,
+# scoped to that one ticket and based on main, with the same packet, PR body
+# (upstream `pr`) and cut as the run's. Its gate lives in urgent_gates.<t>.
+
+urgent_args() { # run-dir ticket: opens the run, sets U
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  U=$2
+  [ "$(get --arg t "$U" '.tickets[$t].urgent // false')" = true ] || refuse "#$U is not an urgent ticket (lever.sh urgent)"
+}
+U=
+ugate() { get -r --arg t "$U" "$1" ; }
+ustatus() { ugate '.urgent_gates[$t].status // ""'; }
+
+cmd_urgent_packet() {
+  urgent_args "$@"
+  local tmp= real=
+  tmp=$(mktemp "${TMPDIR:-/tmp}/urgent-packet.XXXXXX")
+  jq --arg t "$U" '.plan.scope = [$t] | .plan.gates = [] | .plan.route = "" | .end_gate = {}' "$FILE" >"$tmp"
+  real=$FILE; FILE=$tmp; URGENT=$U
+  packet || { FILE=$real; URGENT=; rm -f "$tmp"; return 1; }
+  FILE=$real; URGENT=; rm -f "$tmp"
+}
+
+cmd_urgent_open() {
+  urgent_args "$@"
+  local num= repo= title= url= dir= st= tip=
+  num=$(ugate '.urgent_gates[$t].issue // empty')
+  if [ -n "$num" ]; then echo "$num"; return 0; fi
+  st=$(get --arg t "$U" '.tickets[$t].status')
+  [ "$st" = returned ] || refuse "#$U is $st: its end gate opens once its work has returned and been verified"
+  tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$(get --arg t "$U" '.tickets[$t].branch')") || die "no branch for #$U"
+  [ "$(get --arg t "$U" --arg tip "$tip" '.tickets[$t].evidence | if . != null and .verdict == "pass" and .commit == $tip then "pass" else "" end')" = pass ] \
+    || refuse "#$U has no passing verdict at $tip: run verify.sh start, then verify.sh judge"
+  repo=$(get -r .repo); title="End gate: urgent #$U (run $RUN_ID)"
+  dir="$RUN_DIR/gates"; mkdir -p "$dir"
+  cmd_urgent_packet "$RUN_DIR" "$U" >"$dir/urgent-$U.md"
+  num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title \
+          | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
+  if [ -z "$num" ]; then
+    url=$(gh issue create -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/urgent-$U.md")") \
+      || die "could not open the urgent end gate's issue"
+    num=${url##*/}
+  fi
+  apply '
+    .urgent_gates = ((.urgent_gates // {}) | .[$t] = {status: "open", issue: $num, title: $title, opened_at: $now})
+    | .decisions += [{id: ((.decisions | length) + 1), kind: "end-gate", gate: "urgent-\($t)", issue: $num,
+        question: "\($title) is #\($num): approve to cut its PR to main.", status: "waiting", at: $now}]
+    | event({event: "gate-opened", gate: "urgent-\($t)", kind: "end", issue: $num}; $now)' \
+    --arg t "$U" --argjson num "$num" --arg title "$title"
+  echo "$num"
+}
+
+cmd_urgent_approve() {
+  urgent_args "$@"
+  shift 2
+  local by=Artisan why= issue=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --by) [ $# -ge 2 ] || usage; by=$2; shift 2 ;;
+      --why) [ $# -ge 2 ] || usage; why=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  case "$(ustatus)" in
+    open) ;;
+    "") refuse "open #$U's end gate first (end-gate.sh urgent-open)" ;;
+    *) refuse "#$U's end gate is already $(ustatus)" ;;
+  esac
+  issue=$(ugate '.urgent_gates[$t].issue // empty')
+  apply '
+    .urgent_gates[$t] += {status: "approved", approved_at: $now, by: $by}
+    | decide((.decisions | map(select(.kind == "end-gate" and .gate == "urgent-\($t)" and .status == "waiting")) | first | .id // -1);
+        {choice: "approve", by: $by, job: 13, changed: false} + (if $why == "" then {} else {why: $why} end); $now)
+    | event({event: "end-gate-approved", gate: "urgent-\($t)", by: $by}; $now)' \
+    --arg t "$U" --arg by "$by" --arg why "$why"
+  if [ -n "$issue" ]; then
+    gh issue close "$issue" -R "$(get -r .repo)" --comment "Approved by $by. PR to $(main_branch): #$U alone.$([ -n "$why" ] && printf ' Why: %s' "$why")" >/dev/null \
+      || die "approved in the state file, but could not close #$issue"
+  fi
+  echo "approved: #$U ships on its own PR to $(main_branch); next: write its body with upstream pr, then end-gate.sh urgent-cut"
+}
+
+cmd_urgent_cut() {
+  urgent_args "$@"
+  shift 2
+  local body= title= url= branch= base= repo= tip=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --body-file) [ $# -ge 2 ] || usage; body=$2; shift 2 ;;
+      --title) [ $# -ge 2 ] || usage; title=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$body" ] || usage
+  case "$(ustatus)" in
+    approved | ended) ;;
+    *) refuse "the PR waits for #$U's end gate approval (end-gate.sh urgent-approve)" ;;
+  esac
+  url=$(ugate '.urgent_gates[$t].pr.url // empty')
+  if [ -n "$url" ]; then echo "$url"; return 0; fi
+  [ -f "$body" ] || die "no body file at $body"
+  tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$(get --arg t "$U" '.tickets[$t].branch')") || die "no branch for #$U"
+  branch="pr/$RUN_ID/urgent-$U"; base=$(main_branch); repo=$(get -r .repo)
+  git -C "$MAIN" branch -f "$branch" "$tip" >/dev/null || die "could not create $branch"
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+    git -C "$MAIN" push -q origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
+  fi
+  [ -n "$title" ] || title="Urgent #$U: $(get -r --arg t "$U" '.plan.tickets[$t].title // "untitled"')"
+  url=$(gh pr create -R "$repo" --base "$base" --head "$branch" --title "$title" --body-file "$body") \
+    || die "could not open the PR for $branch (the branch is kept)"
+  url=$(printf '%s\n' "$url" | tail -1)
+  apply '.urgent_gates[$t].pr = {url: $url, branch: $branch, base: $base, at: $now}
+    | event({event: "pr-cut", gate: "urgent-\($t)", branch: $branch, base: $base, tickets: [$t], url: $url}; $now)' \
+    --arg t "$U" --arg url "$url" --arg branch "$branch" --arg base "$base"
+  echo "$url"
+}
+
+# Once the urgent PR is merged: main comes into the integration branch, the
+# full suite runs there, and the ticket is merged for the run (it is on main).
+cmd_urgent_finish() {
+  urgent_args "$@"
+  local url= num= state= oid= wt= ib= pre= suite= log= ref= base= sha= paths= repo=
+  case "$(ustatus)" in
+    ended) echo "#$U already shipped and synced"; return 0 ;;
+    approved) ;;
+    *) refuse "#$U's end gate is not approved" ;;
+  esac
+  url=$(ugate '.urgent_gates[$t].pr.url // empty')
+  [ -n "$url" ] || refuse "cut #$U's PR first (end-gate.sh urgent-cut)"
+  num=${url##*/}; repo=$(get -r .repo)
+  state=$(gh pr view "$num" -R "$repo" --json state -q .state) || die "could not read $url"
+  [ "$state" = MERGED ] || refuse "$url is $state: merge it first; main joins the integration branch after"
+  oid=$(gh pr view "$num" -R "$repo" --json mergeCommit -q '.mergeCommit.oid // ""' 2>/dev/null || true)
+  wt=$(integration_worktree); ib=$(integration_branch); base=$(main_branch)
+  suite=$(get -r '.plan.suite_command // ""')
+  [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after main joins the integration branch"
+  [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
+  ref=$base
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+    git -C "$MAIN" fetch -q origin "$base" >&2 || die "could not fetch origin $base"
+    ref="origin/$base"
+  fi
+  pre=$(git -C "$wt" rev-parse HEAD)
+  if ! git -C "$wt" -c user.name="${GIT_AUTHOR_NAME:-Artisan-Agent}" -c user.email="${GIT_AUTHOR_EMAIL:-artisan-agent@localhost}" \
+       merge --no-edit -m "Merge $base into $ib (urgent #$U shipped)" "$ref" >/dev/null 2>&1; then
+    paths=$(git -C "$wt" diff --name-only --diff-filter=U | tr '\n' ' ')
+    git -C "$wt" merge --abort >/dev/null 2>&1 || git -C "$wt" reset -q --hard "$pre"
+    die "merging $ref into $ib conflicts in ${paths:-unknown paths}; nothing changed. Resolve it by hand in $wt (git merge $ref), then run this again"
+  fi
+  mkdir -p "$RUN_DIR/merges"
+  log="$RUN_DIR/merges/urgent-$U.suite.log"
+  if ! (cd "$wt" && sh -c "$suite") >"$log" 2>&1; then
+    git -C "$wt" reset -q --hard "$pre"
+    apply '.decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
+        question: "Merging main into the integration branch after urgent #\($t) shipped made the suite fail (merges/urgent-\($t).suite.log); the merge was undone. Fix the integration branch, or take it yourself?",
+        status: "waiting", at: $now}]
+      | event({event: "main-sync-red", ticket: $t, log: $l}; $now)' --arg t "$U" --arg l "merges/urgent-$U.suite.log"
+    state_die 7 "end-gate.sh: merging $ref into $ib made the suite fail; the merge was undone (see $log)"
+  fi
+  sha=$(git -C "$wt" rev-parse HEAD)
+  apply '
+    .tickets[$t] |= (.status = "merged" | .pid = null | .merge_commit = (if $oid == "" then $sha else $oid end)
+      | .suite = {command: $suite, passed: true, log: $l}
+      | .shipped = {pr: $url, main_merged_into: $ib, sync_commit: $sha, at: $now})
+    | .urgent_gates[$t] += {status: "ended", ended_at: $now, sync_commit: $sha}
+    | event({event: "urgent-shipped", ticket: $t, pr: $url, sync_commit: $sha}; $now)' \
+    --arg t "$U" --arg oid "$oid" --arg sha "$sha" --arg suite "$suite" --arg l "merges/urgent-$U.suite.log" \
+    --arg url "$url" --arg ib "$ib"
+  gh issue edit "$U" -R "$repo" --remove-label in-run >/dev/null 2>&1 || echo "end-gate.sh: could not remove in-run from #$U" >&2
+  echo "#$U shipped: $url merged; $base is in $ib ($sha) with the full suite green. Close it with wave.sh close."
+}
+
 [ $# -ge 1 ] || usage
 cmd=$1
 shift
 case "$cmd" in
+  urgent-packet) cmd_urgent_packet "$@" ;;
+  urgent-open) cmd_urgent_open "$@" ;;
+  urgent-approve) cmd_urgent_approve "$@" ;;
+  urgent-cut) cmd_urgent_cut "$@" ;;
+  urgent-finish) cmd_urgent_finish "$@" ;;
   status) cmd_status "$@" ;;
   packet) cmd_packet "$@" ;;
   open) cmd_open "$@" ;;

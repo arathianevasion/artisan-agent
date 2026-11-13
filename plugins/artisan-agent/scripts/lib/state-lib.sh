@@ -375,6 +375,45 @@ STATE_JQ_DEFS='
   def decide($id; $d; $at):
     .decisions |= map(if .id == $id and .status == "waiting"
       then . + $d + {status: "decided", decided_at: $at} else . end);
+  # Steering (#76): the Artisan stopped this attempt and gave notes. The ticket
+  # goes back to queued with the notes kept; it is not a failed attempt, so it
+  # costs none of the attempts_per_ticket allowance.
+  def steered($t; $note; $at):
+    .tickets[$t] |= (
+      .steering = ((.steering // []) + [{attempt: .attempts, note: $note, at: $at}])
+      | .pid = null | .status = "queued")
+    | event({event: "steered", ticket: $t, attempt: .tickets[$t].attempts, note: $note}; $at);
+  # Work added to a running run (#76): the ticket joins the scope with its
+  # estimate, and the run budget grows by the estimate plus the overrun
+  # allowance. $r is the approved request: ticket, model, estimate_usd, title?,
+  # minutes?, expected_files?, priority?, urgent?, by?. Idempotent.
+  def r2: (. * 100 | round) / 100;
+  def scope_add($r; $at):
+    ($r.ticket | tostring) as $t
+    | if (.plan.scope | map(tostring) | index($t)) != null then .
+      else
+        (.plan.config.overrun_allowance_percent // 25) as $pct
+        | ($r.estimate_usd | r2) as $est
+        | (($est * (1 + $pct / 100)) | r2) as $inc
+        | (.plan.budget_usd) as $before
+        | .plan.scope += [$t]
+        | .plan.tickets[$t] = ({model: $r.model, estimate_usd: $est,
+              priority: ($r.priority // (if $r.urgent == true then 2 else 1 end)),
+              expected: {minutes: ($r.minutes // 30)},
+              caps: {max_budget_usd: ($est * 2 | r2), max_turns: ([($est * 40 | ceil), 20] | max),
+                     deadline_seconds: (($r.minutes // 30) * 120 | ceil)}}
+            + (if $r.title then {title: $r.title} else {} end)
+            + (if $r.expected_files then {expected_files: $r.expected_files} else {} end)
+            + (if $r.urgent == true then {urgent: true} else {added: true} end))
+        | .plan.estimate_usd = (if .plan.estimate_usd == null then null else (.plan.estimate_usd + $est | r2) end)
+        | .plan.budget_usd = (if $before == null then null else ($before + $inc | r2) end)
+        | .tickets[$t] = new_ticket($t)
+        | (if $r.urgent == true then .tickets[$t].urgent = true else . end)
+        | .plan.additions = ((.plan.additions // []) + [{ticket: $t, urgent: ($r.urgent == true), estimate_usd: $est,
+            budget_before: $before, budget_after: .plan.budget_usd, by: ($r.by // "Artisan"), at: $at}])
+        | event({event: (if $r.urgent == true then "urgent-added" else "work-added" end), ticket: $t,
+                 estimate_usd: $est, budget_usd: .plan.budget_usd}; $at)
+      end;
   def out_of_run: ["dropped", "resliced", "bypassed", "deferred", "sent_back"];
   def waiting_non_gate_decisions:
     [.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
