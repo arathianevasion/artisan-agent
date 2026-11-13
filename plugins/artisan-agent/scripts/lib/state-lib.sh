@@ -275,7 +275,8 @@ state_usage() {
 #   decide(id; d; at): waiting decision id decided, with the decision record d
 #     (references/decision-record.md); unchanged when it is not waiting
 #   out_of_run: the statuses that take a ticket out of the run without a
-#     merge (references/gate-actions.md); with merged and closed, it is done
+#     merge (references/gate-actions.md), sent_back (left with its dropped or
+#     resliced blocker) included; with merged and closed, it is done
 #   gate_holds(t): t is in a slice gate that is due: its dependents wait
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
@@ -330,7 +331,7 @@ STATE_JQ_DEFS='
   def decide($id; $d; $at):
     .decisions |= map(if .id == $id and .status == "waiting"
       then . + $d + {status: "decided", decided_at: $at} else . end);
-  def out_of_run: ["dropped", "resliced", "bypassed", "deferred"];
+  def out_of_run: ["dropped", "resliced", "bypassed", "deferred", "sent_back"];
   def gate_holds($t):
     . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
 '

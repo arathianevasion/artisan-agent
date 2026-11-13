@@ -23,14 +23,18 @@
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
-#       "next: <launch|wait|halted|decide|parked|blocked|done>", then a
+#       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
 #       ticket table. "parked" (with a line naming it) means only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
 #       ("waiting on N reviews", gate-action.sh parked), or dispatch is
 #       parked on plan usage (budget.sh guard: a "parked <window>" line,
 #       printed with the reviews line when both hold; each logs one "parked"
-#       event whose reason says which). A waiting risk gate (drain.sh gate) holds only its
+#       event whose reason says which). "stranded" means only tickets that
+#       wait for good behind a dropped or resliced one are left: one line per
+#       blocker ("#12 dropped: #14, #15 can't start") and the command that
+#       sends them back to triage (gate-action.sh send-back); "blocked" is
+#       any other cause. A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
 #
 # Usage, from the orchestrator:
@@ -334,7 +338,7 @@ record_orchestrator_cost() { # id attempt
 
 cmd_status() {
   open_run "${1:-}"
-  local last id attempt wave pid cls next reconciled=1 waiting o parked= usage_park= reviews
+  local last id attempt wave pid cls next reconciled=1 waiting o parked= usage_park= reviews stranded=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -402,12 +406,15 @@ $reviews"
                | select(. as $st | $st == "merged" or $st == "closed" or ($o | index($st)))] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
       elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
+      # Tickets left waiting for good behind a dropped or resliced one (#116).
+      elif stranded=$("$SCRIPT_DIR/gate-action.sh" stranded "$RUN_DIR" 2>/dev/null); then next=stranded
       else next=blocked
       fi
       ;;
   esac
   echo "next: $next"
   [ "$next" != parked ] || echo "$parked"
+  [ "$next" != stranded ] || echo "$stranded"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo

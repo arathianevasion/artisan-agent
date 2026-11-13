@@ -35,7 +35,17 @@
 #       for a fresh worker given the notes, with one more attempt. reslice:
 #       out of the run, labelled needs-triage, to be sliced again. take:
 #       labelled ready-for-human, built by the Artisan (human.sh). drop: out
-#       of the run, left open. The gate closes.
+#       of the run, left open. The gate closes. reslice and drop first print
+#       the impact (everything in scope that depends on the ticket, directly
+#       or through others, and whether each slice can still be reviewed end
+#       to end), then those dependents leave the run with it: back to
+#       needs-triage with a comment, native blockers kept (status sent_back).
+#   gate-action.sh send-back <run-dir> [--by NAME] [--why W]
+#       without a gate: the tickets stranded behind a dropped or resliced one
+#       (what an older run left) go back to triage the same way.
+#   gate-action.sh stranded <run-dir>
+#       exit 0 and one line per dropped or resliced blocker ("#12 dropped:
+#       #14, #15 can't start") when tickets are stranded; 1 when none are.
 #   gate-action.sh chat <run-dir>
 #       every open or deferred exception gate, compressed, with its choices.
 #   gate-action.sh list <run-dir>
@@ -60,7 +70,7 @@
 # once wave.sh status says the wave has ended. (gate.sh approve keeps an
 # answer given then and folds it in later.)
 #
-# Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 6 refused
+# Exit status: 0 ok, 1 error (stranded: none stranded), 2 usage, 3 the state lock is held, 6 refused
 # (not a gate of this run, not open, or not an action this gate takes).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs jq and gh.
@@ -207,6 +217,79 @@ open_dependents() {
     printf '%s\n' "$d"
   done
 }
+
+
+# downstream ticket...: the in-scope tickets still to run (queued or blocked)
+# that depend on any of these, directly or through others, one per line, in
+# ticket order. The tracker's native edges say who depends on whom.
+downstream() {
+  local seen=" $* " d st b changed=1 found=
+  while [ "$changed" -eq 1 ]; do
+    changed=0
+    for d in $(get '.plan.scope[]'); do
+      case "$seen" in *" $d "*) continue ;; esac
+      st=$(get --arg d "$d" '.tickets[$d].status // ""')
+      case "$st" in queued | blocked) ;; *) continue ;; esac
+      for b in $seen; do
+        if blocks "$d" "$b"; then
+          seen="$seen$d "
+          found="$found $d"
+          changed=1
+          break
+        fi
+      done
+    done
+  done
+  [ -z "$found" ] || printf '%s\n' $found | sort -n
+}
+
+# json_list word...: the words as a JSON array of strings.
+json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
+
+# impact ticket dependents...: what taking the ticket out of the run does to
+# the rest of it: who goes with it, and whether each slice can still be
+# reviewed end to end.
+impact() {
+  local t="$1" ds
+  shift
+  ds=$(json_list "$@")
+  get --arg t "$t" --argjson ds "$ds" "$STATE_JQ_DEFS"'
+    ([$t] + $ds) as $out
+    | (if $ds == [] then "Nothing else in the run depends on #\($t)."
+       else "\($ds | map("#" + .) | join(", ")) depend on #\($t), directly or through others, so they leave the run with it and go back to needs-triage." end) as $who
+    | ([slice_gates[] | select(.tickets | any(. as $x | $out | index($x)))
+        | "slice \"\(.slice)\" loses \([.tickets[] | select(. as $x | $out | index($x))] | map("#" + .) | join(", "))"]) as $slices
+    | $who + " " + (if $slices == [] then "Every slice can still be reviewed end to end."
+        else "Not every slice survives (" + ($slices | join("; ")) + "), so it cannot be reviewed end to end as planned." end)'
+}
+
+# stranded: JSON [{blocker, status, waiting: [tickets]}], one per dropped or
+# resliced ticket that still holds tickets in the run that can never start.
+stranded() {
+  local out='[]' b w
+  for b in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "dropped" or .tickets[$t].status == "resliced") | $t'); do
+    w=$(json_list $(downstream "$b"))
+    [ "$w" != "[]" ] || continue
+    out=$(jq -c --arg b "$b" --arg s "$(get --arg b "$b" '.tickets[$b].status')" --argjson w "$w" \
+      '. + [{blocker: $b, status: $s, waiting: $w}]' <<<"$out")
+  done
+  printf '%s\n' "$out"
+}
+
+# send_back blocker how dependent...: each dependent leaves the run and goes
+# back to needs-triage with a comment, keeping its native blockers.
+send_back() {
+  local from="$1" how="$2" d
+  shift 2
+  for d in "$@"; do
+    gh issue edit "$d" -R "$(repo)" --add-label needs-triage --remove-label in-run >/dev/null \
+      || die "could not relabel #$d"
+    comment "$d" "Taken out of run $RUN_ID: it depends on #$from, which $how. It goes back to needs-triage to be grilled again and keeps its blockers; it is not re-added to this run.${WHY:+ Why: $WHY}"
+  done
+}
+
+# hashes word...: "#a, #b" for the words.
+hashes() { printf '%s\n' "$@" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g'; }
 
 # ------------------------------------------------------ review-gate actions
 
@@ -410,8 +493,12 @@ cmd_take() {
 }
 
 out_of_run() { # choice status label-to-add tracker-note
-  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t
+  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t ds dl say
   t=$(g .ticket)
+  ds=$(downstream "$t" | tr '\n' ' ')
+  # The impact first, before anything changes.
+  # shellcheck disable=SC2086
+  echo "Impact: $(impact "$t" $ds)"
   REDIRECT=
   hold
   if [ -n "$label" ]; then
@@ -420,10 +507,19 @@ out_of_run() { # choice status label-to-add tracker-note
     gh issue edit "$t" -R "$(repo)" --remove-label in-run >/dev/null || die "could not relabel #$t"
   fi
   comment "$t" "Taken out of run $RUN_ID at exception gate #$issue by $BY: $note${WHY:+ Why: $WHY}"
+  # shellcheck disable=SC2086
+  send_back "$t" "was $status at its exception gate" $ds
   close_exception "$issue" "$choice, by $BY: #$t leaves the run. $note"
-  record_answer decided "$choice" outcome '.tickets[$t] |= (.status = $st | .pid = null)' \
-    --arg t "$t" --arg st "$status" --argjson rec '{}'
-  echo "#$t $status: it leaves the run$( [ -n "$(open_dependents)" ] && echo "; $(dependents_line) still wait(s) on it" )"
+  # shellcheck disable=SC2086
+  dl=$(json_list $ds)
+  record_answer decided "$choice" outcome '.tickets[$t] |= (.status = $st | .pid = null)
+    | reduce $ds[] as $d (.; .tickets[$d] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $t, at: $now})
+        | event({event: "sent-back", ticket: $d, from: $t}; $now))' \
+    --arg t "$t" --arg st "$status" --argjson ds "$dl" --argjson rec "{\"sent_back\": $dl}"
+  say="#$t $status: it leaves the run"
+  # shellcheck disable=SC2086
+  [ -z "${ds// /}" ] || say="$say; $(hashes $ds) go back to needs-triage with it"
+  echo "$say"
 }
 
 cmd_reslice() {
@@ -446,6 +542,49 @@ cmd_drop() {
   out_of_run "$issue" drop dropped "" "dropped from the run; the ticket stays open."
 }
 
+
+# send-back: the stranded tickets (what an older run left behind when it
+# dropped or resliced a ticket) go back to triage, as a drop's dependents do.
+cmd_send_back() {
+  [ $# -ge 1 ] || usage
+  open_run "$1"
+  shift
+  parse_opts "$@"
+  local st n b w d all=" " dl
+  st=$(stranded)
+  if [ "$st" = "[]" ]; then echo "No ticket is stranded."; return 0; fi
+  hold
+  for n in $(jq -r 'keys[]' <<<"$st"); do
+    b=$(jq -r ".[$n].blocker" <<<"$st")
+    w=
+    for d in $(jq -r ".[$n].waiting[]" <<<"$st"); do
+      case "$all" in *" $d "*) ;; *) w="$w $d"; all="$all$d " ;; esac
+    done
+    [ -n "$w" ] || continue
+    # shellcheck disable=SC2086
+    send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status') at its exception gate" $w
+    # shellcheck disable=SC2086
+    dl=$(json_list $w)
+    apply 'reduce $ds[] as $d (.; .tickets[$d] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $b, at: $now})
+        | event({event: "sent-back", ticket: $d, from: $b, by: $by}; $now))' \
+      --arg b "$b" --argjson ds "$dl" --arg by "$BY"
+    # shellcheck disable=SC2086
+    echo "sent back to needs-triage, out of the run: $(hashes $w) (stranded behind #$b)"
+  done
+}
+
+# stranded <run-dir>: exit 0 with one line per dropped or resliced blocker
+# when tickets in the run wait on it for good; 1 when none do.
+cmd_stranded() {
+  [ $# -eq 1 ] || usage
+  open_run "$1"
+  local st
+  st=$(stranded)
+  [ "$st" != "[]" ] || return 1
+  jq -r '.[] | "#\(.blocker) \(.status): \(.waiting | map("#" + .) | join(", ")) can'"'"'t start"' <<<"$st"
+  echo "send them back to triage: gate-action.sh send-back $RUN_DIR"
+}
+
 # ------------------------------------------------------- opening, syncing
 
 # Why a ticket stopped, as the exception gate's kind of exception.
@@ -459,6 +598,8 @@ reason_of() { # ticket
 exception_body() { # gate-json
   jq -rn --argjson gt "$1" --slurpfile s "$FILE" '
     $s[0] as $s | $gt.ticket as $t | $s.tickets[$t] as $k | $s.plan.tickets[$t] as $p
+    | ($gt.downstream // ($gt.dependents | map(.number))) as $dn
+    | (if $dn == [] then "" else "; " + ($dn | map("#" + .) | join(", ")) + " (everything that depends on it, directly or through others) leave(s) the run with it and go back to `needs-triage`" end) as $leaves
     | "| Gate | Role needed | Ticket | Tickets blocked |",
     "|---|---|---|---|",
     "| exception | Engineering | #\($t) (\($p.title // "untitled")) | \(if $gt.dependents == [] then "nothing" else $gt.dependents | map("#" + .number + " (" + (.title // "untitled") + ")") | join(", ") end) |",
@@ -483,15 +624,15 @@ exception_body() { # gate-json
     "| Say | Does |",
     "|---|---|",
     "| retry with notes | a fresh worker on the same branch, given your notes and one more attempt |",
-    "| reslice | leaves the run labelled `needs-triage`, to be sliced again |",
+    "| reslice | leaves the run labelled `needs-triage`, to be sliced again\($leaves) |",
     "| take it myself | labelled `ready-for-human`; you build it in your own worktree |",
-    "| drop | leaves the run; the ticket stays open and its dependents keep waiting |",
+    "| drop | leaves the run; the ticket stays open\($leaves) |",
     "| bypass | leaves the run; its dependents go ahead without it; recorded with who |",
     "| defer | its dependents go ahead now; this gate stays open until the end gate |"'
 }
 
 open_exception() { # decision-json
-  local dec="$1" did t reason title headline deps='[]' d st gate num url body attempts
+  local downstream_t dec="$1" did t reason title headline deps='[]' d st gate num url body attempts
   did=$(jq -r .id <<<"$dec")
   t=$(jq -r .ticket <<<"$dec")
   [ "$(get --arg id "exception-$did" '[(.exception_gates // [])[] | select(.id == $id)] | length')" -eq 0 ] || return 0
@@ -505,6 +646,7 @@ open_exception() { # decision-json
     *) title="Exception gate: #$t is blocked (run $RUN_ID)"
        headline="#$t is blocked: $(get --arg t "$t" '.tickets[$t].blocked_reason // "see the run"')." ;;
   esac
+  downstream_t=$(json_list $(downstream "$t"))
   # The in-run tickets still to run that #t blocks natively.
   for d in $(get '.plan.scope[]'); do
     [ "$d" != "$t" ] || continue
@@ -516,9 +658,9 @@ open_exception() { # decision-json
     fi
   done
   gate=$(jq -nc --arg id "exception-$did" --arg t "$t" --arg title "$title" --arg headline "$headline" \
-    --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" \
+    --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" --argjson dn "$downstream_t" \
     '{id: $id, kind: "exception", reason: $reason, title: $title, headline: $headline, ticket: $t,
-      tickets: [$t], decision: $did, dependents: $deps, cards: []}')
+      tickets: [$t], decision: $did, dependents: $deps, downstream: $dn, cards: []}')
   num=$(gh issue list -R "$(repo)" --state open --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
@@ -630,9 +772,9 @@ cmd_chat() {
   echo "| Choice | Does |"
   echo "|---|---|"
   echo "| retry with notes | a fresh worker given your notes, one more attempt |"
-  echo "| reslice | out of the run, labelled needs-triage |"
+  echo "| reslice | out of the run, labelled needs-triage; everything that depends on it goes back to triage with it |"
   echo "| take it myself | ready-for-human, built by you |"
-  echo "| drop | out of the run; its dependents keep waiting |"
+  echo "| drop | out of the run; everything that depends on it goes back to needs-triage with it |"
   echo "| bypass | out of the run; its dependents go ahead |"
   echo "| defer | its dependents go ahead; the gate waits for the end gate |"
 }
@@ -669,6 +811,8 @@ case "$cmd" in
   reslice) cmd_reslice "$@" ;;
   take) cmd_take "$@" ;;
   drop) cmd_drop "$@" ;;
+  send-back) cmd_send_back "$@" ;;
+  stranded) cmd_stranded "$@" ;;
   sync) cmd_sync "$@" ;;
   parked) cmd_parked "$@" ;;
   chat) cmd_chat "$@" ;;
