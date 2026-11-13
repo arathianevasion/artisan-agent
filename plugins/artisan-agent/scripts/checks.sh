@@ -28,9 +28,10 @@
 #       run's suite command (the command `checks.sh suite` prints, or --suite
 #       CMD when the plan's suite_command differs) is not run: it stays for the
 #       merge gate and is listed in not_run, "<command>: left to the merge
-#       gate (it is the run's suite command)". The verifier and the merge gate
-#       never pass --worker, so they still run it. A check is the suite when
-#       its command equals that command exactly.
+#       gate (it is the run's suite command)". The merge gate never passes
+#       --worker; the verifier passes it (with --suite) only on a machine whose
+#       merge gate runs on CI (merge-gate.sh), otherwise it runs the suite
+#       too. A check is the suite when its command equals that command exactly.
 #       --out also writes the JSON to FILE (atomically) and each check's full
 #       output beside it, in FILE's name with .logs/<n>.log.
 #       Exit 0 every check passed, 7 a check failed, 16 nothing to run.

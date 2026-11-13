@@ -115,7 +115,7 @@ init_write() {
         orchestrators: [],
         review_gates: [],
         overrun_gates: [],
-        usage_park: null,
+        usage_park: null, ci_park: null, ci_gate: null,
         usage_verdict: null,
         exception_gates: [],
         halted: null,

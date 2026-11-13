@@ -142,6 +142,10 @@ _Avoid_: staging branch, run branch
 The run's own checkout of its integration branch, where merges and the full suite run, so no session changes the main checkout.
 _Avoid_: merge worktree
 
+**Merge gate**:
+The full suite after each merge into the integration branch: green keeps the merge, red undoes it and blocks the ticket. The machine chooses where it runs: locally in the integration worktree, or on CI, where the project's gate workflow runs on the merge commit itself.
+_Avoid_: post-merge check, CI check
+
 **Wave digest**:
 What the Artisan sees after each wave: each ticket's status and verdict, what it cost against its estimate, and what runs next.
 _Avoid_: wave report, wave summary
@@ -163,7 +167,7 @@ The check before every dispatch that the Artisan's claude.ai plan has room in it
 _Avoid_: rate limiter, usage check
 
 **Park**:
-To hold a run's new dispatch while work in flight carries on, until something outside the run changes: the Artisan finishes a hands-on ticket, reviews come back, or plan usage resets. A parked run is waiting, not stuck; `wave.sh status` says `next: parked` and why.
+To hold a run's new dispatch while work in flight carries on, until something outside the run changes: the Artisan finishes a hands-on ticket, reviews come back, plan usage resets, or CI is back for a merge gate that got no conclusion. A parked run is waiting, not stuck; `wave.sh status` says `next: parked` and why.
 _Avoid_: pause, suspend, halt (that stops the run)
 
 ### Judgement

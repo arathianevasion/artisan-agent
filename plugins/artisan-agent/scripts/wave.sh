@@ -27,7 +27,8 @@
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
 #       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
-#       ticket table. "parked" (with a line naming it) means only a hands-on
+#       ticket table. "parked" (with a line naming it) means the merge gate
+#       on CI got no conclusion ("parked ci: ...", cleared with unpark-ci), or only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
 #       ("waiting on N reviews", gate-action.sh parked), or dispatch is
@@ -63,15 +64,22 @@
 #       again like a retry, with their notes in its prompt.
 #   wave.sh merge <run-dir> <ticket>
 #       merge a completed worker's branch --no-ff into the integration
-#       branch in the integration worktree, run the plan's suite command
-#       there, record the merge and remove the worker's worktree. Prints the
+#       branch in the integration worktree, run the merge gate (the plan's
+#       suite command there, or on a machine whose merge gate runs on CI,
+#       merge-gate.sh, the project's gate workflow on the merge commit; never
+#       the suite here), record the merge with the gate's record and remove
+#       the worker's worktree. Prints the
 #       merge commit. 8: the worker is still running. 13: not verified (no
 #       passing verdict from verify.sh for this attempt and commit; nothing
 #       changes). 11: a conflict, left in
 #       progress for its one /artisan-agent:resolve-conflicts try (then
 #       wave.sh resolved; the conflicted paths are a JSON array in the state
 #       file's conflict event, exactly as git reports them). 6: refused, or a conflict after that try was used,
-#       7: suite red (both mark the ticket blocked and queue a decision).
+#       7: suite red, or CI red (both mark the ticket blocked and queue a
+#       decision). 19: parked on CI: CI gave no conclusion in time, so the
+#       merge is undone, the ticket stays returned and nothing merges or
+#       dispatches until unpark-ci; a gate a crash cut short is undone here
+#       and gated again.
 #       An attempt that did not complete is a failed attempt: queued for a
 #       fresh worker, or blocked once it has used its attempts (6).
 #   wave.sh resolved <run-dir> <ticket> [--gave-up REASON]
@@ -80,6 +88,9 @@
 #       changes or untracked files left, or gave up (the merge is aborted
 #       and the untracked files removed); 7: suite red. Either way the ticket is blocked
 #       with its branch and worktree kept.
+#   wave.sh unpark-ci <run-dir> [--by NAME]
+#       the Artisan clears a park on CI: the parked ticket's next merge
+#       retries the gate on the same merge commit. 6: not parked on CI.
 #   wave.sh block <run-dir> <ticket> <reason>
 #       block a returned ticket the orchestrator won't merge (its diff misses
 #       the expected output): queues an exception decision, logs the event.
@@ -103,7 +114,8 @@
 # conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
 # expected files overlap, 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
-# 17 the overrun gate holds dispatch, 18 parked on plan usage. One table of every code, with
+# 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
+# CI. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.

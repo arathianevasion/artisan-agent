@@ -54,7 +54,7 @@ Ask exactly these five. Recommend an answer for each (ARTISAN.md rule 2).
 1. **How are PRs cut: per slice, per plan or per ticket?** Recommend per slice. Then ask at what level it holds: product (this repo, in the PR), individual (every project of theirs, committed to the individual home) or team (the team guardrails repo: draft the line and tell the Artisan to land it there by PR; setup never edits another repo).
 2. **What should always come back to you?** Seeds the `## Always ask` sections: product taste goes to `PRODUCT_STANDARDS.md`, engineering taste to `CODING_STANDARDS.md`. Offer examples from the project (pricing, schema changes, new dependencies, public APIs).
 3. **Is there a team guardrails repo?** `owner/name`, or none (the default).
-4. **Which of these commands are the project's checks?** Show the `check` lines from `scan` as a table (command, where it was found), recommending which to keep. Each one chosen is then proven to fail.
+4. **Which of these commands are the project's checks?** Show the `check` lines from `scan` as a table (command, where it was found), recommending which to keep. Each one chosen is then proven to fail. When the repo has workflows in `.github/workflows`, also ask, within this question, which one is the **gate workflow**: the one a machine whose merge gate runs on CI (`machine-setup.sh merge-gate`) dispatches after each merge instead of running the suite itself. Recommend the workflow that runs the full suite; it needs a `workflow_dispatch` trigger, and `apply` refuses one without it, naming it. Put its file name in the answers as `ci_gate_workflow`; it is recorded as `ci_gate.workflow` in `.artisan-agent/config.yml` (added to a config that has none; a different one already there is kept).
 5. **Why does this product matter to you?** In their own words. Say it stays private in their individual home and never goes in the PR, and that skipping is fine. Skip the question entirely when `scan` says `motivation recorded`; a skip never blocks setup, and a skipped answer is simply asked again on a later run.
 
 ## Proving a check fails
@@ -94,7 +94,8 @@ The worktree is removed afterwards whatever happens; the main checkout is never 
                "break_cmd": "sed -i.bak 's/toBe(3)/toBe(4)/' cart.test.ts && rm cart.test.ts.bak",
                "break": "flipped the expected total in cart.test.ts",
                "prepare": "npm ci" }],
-  "hook_fallback": false
+  "hook_fallback": false,
+  "ci_gate_workflow": "ci.yml"
 }
 ```
 
