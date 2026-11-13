@@ -31,10 +31,11 @@ Without `--approve` nothing is recorded. Approved, the ticket joins `plan.scope`
 Marking a ticket `urgent` is its scope approval:
 
 ```bash
-lever.sh urgent <run> <ticket> --model M --estimate-usd N [--title T]
+lever.sh urgent <run> <ticket> --model M --estimate-usd N [--title T] [--escalation a,b]
 ```
 
 - It joins the scope at once and its estimate joins the run budget, as for an addition.
+- **Escalation tests.** The chat works out which escalation tests the ticket meets as for a planned ticket (`references/end-gate.md`, "Gate placement") and passes them as `--escalation` (`new-seam`, `tracer-bullet`, `vocabulary-adr`, `judgement-criteria`; with `--expected-files`, the config's area settings add `area:<name>`). `lever.sh` runs them through `gate-plan.sh propose`, so the names and the unknown-test refusal (exit 2) are the plan step's, and records them as `plan.tickets.<t>.escalation`. The ticket gets **no** slice or risk gate (a risk gate holds dependents, and it has none in the run); its own end gate packet shows them instead.
 - It dispatches at once (`lever.sh pending <run>` lists the urgent tickets waiting; the orchestrator dispatches them after every sweep) on **one extra slot above Max Agents**: urgent tickets are counted apart from Max Agents, one at a time. A second urgent ticket gets exit 9 from `wave.sh dispatch` and waits for the slot.
 - It **branches from `main`**, not the integration branch, and skips the blocker and overlap checks. It **keeps its gates and cost cap**: the usage and budget guard, its caps, the verifier.
 - It is never on the frontier, never merges into the integration branch (`wave.sh merge` refuses, 6), and is left out of the run's own PRs.

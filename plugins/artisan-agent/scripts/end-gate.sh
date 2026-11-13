@@ -319,6 +319,9 @@ packet() {
     echo
   fi
   if [ -n "$URGENT" ]; then
+    # The escalation tests it meets: it gets no risk gate (no dependents wait
+    # on it), so its own end gate covers what a risk gate would have.
+    jq -n --slurpfile s "$FILE" --arg t "$URGENT" '{gate: {tickets: [$t]}, state: $s[0]}' | PACKET risk
     echo "## PR to main"
     echo
     echo "One PR for #$URGENT alone, based on \`$(main_branch)\`; the run's other tickets are not in it. Its body is written with upstream \`pr\`. Once it is merged, \`end-gate.sh urgent-finish\` merges \`$(main_branch)\` into the integration branch and runs the full suite."

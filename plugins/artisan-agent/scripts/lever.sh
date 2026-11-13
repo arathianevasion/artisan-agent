@@ -16,7 +16,7 @@
 #       sweep records it from steering/<ticket>.<attempt>.json).
 #   lever.sh add <run-dir> <ticket> --model M --estimate-usd N [--title T]
 #                [--minutes N] [--expected-files a,b/] [--priority N]
-#                [--approve] [--by NAME]
+#                [--escalation a,b] [--approve] [--by NAME]
 #       add a ticket to the running run. Without --approve it records nothing
 #       and prints the one-line approval: model, estimate and the new run
 #       budget (the scope gate). With --approve the ticket joins the scope at
@@ -28,7 +28,13 @@
 #       its estimate joins the run budget, and wave.sh dispatch sends it at
 #       once on the one extra slot above Max Agents (a second urgent ticket
 #       waits), from main. It keeps its gates and cost cap, and ships through
-#       its own end gate and PR (end-gate.sh urgent-*).
+#       its own end gate and PR (end-gate.sh urgent-*). --escalation names the
+#       escalation tests the ticket meets (new-seam, tracer-bullet,
+#       vocabulary-adr, judgement-criteria), worked out as for a planned
+#       ticket; with --expected-files, the project's area settings add theirs
+#       (gate-plan.sh names them all). They are recorded on the ticket and its
+#       end gate packet shows them under "Risk". No risk gate is opened: an
+#       urgent ticket has no dependents in the run to hold. 2: an unknown test.
 #   lever.sh pending <run-dir>
 #       the urgent tickets still to dispatch, one per line (the orchestrator
 #       reads this after every sweep).
@@ -131,11 +137,27 @@ approval_line() { # kind ticket model estimate title
        + " (estimate plus the \($pct)% overrun allowance)")' "$FILE"
 }
 
+# escalation_tests ticket tests files: the escalation tests an urgent ticket
+# meets, named as the plan step names them. gate-plan.sh propose does the work
+# on a one-ticket draft, so the tests, their vocabulary and the area settings
+# are the planned ticket's. Prints a JSON list; exit 2 on an unknown test.
+escalation_tests() {
+  local t="$1" esc="$2" files="$3" draft= out= rc=0
+  draft=$(mktemp "${TMPDIR:-/tmp}/urgent-draft.XXXXXX")
+  jq -n --arg t "$t" --arg esc "$esc" --arg files "$files" '
+    {scope: [$t], tickets: {($t): ({escalation: ($esc | split(",") | map(select(. != "")))}
+      + (if $files == "" then {} else {expected_files: ($files | split(",") | map(select(. != "")))} end))}}' >"$draft"
+  out=$("$SCRIPT_DIR/gate-plan.sh" propose "$draft" 2>&1 >/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then rm -f "$draft"; state_die "$rc" "lever.sh: ${out#gate-plan.sh: }"; fi
+  jq -c --arg t "$t" '[.gates[]? | select(.kind == "risk" and .after == $t) | .tests[]]' "$draft"
+  rm -f "$draft"
+}
+
 cmd_add() { # kind run-dir ticket ...
   local kind="$1"
   shift
   open_run "${1:-}"
-  local t="${2:-}" model= est= title= minutes= files= priority= approve=0 by=Artisan req= rc=0
+  local t="${2:-}" model= est= title= minutes= files= priority= approve=0 by=Artisan req= rc=0 esc= tests='[]'
   [ -n "$t" ] || usage
   state_is_uint "$t" || usage
   shift 2
@@ -148,6 +170,7 @@ cmd_add() { # kind run-dir ticket ...
       --expected-files) [ $# -ge 2 ] || usage; files=$2; shift 2 ;;
       --priority) [ $# -ge 2 ] || usage; priority=$2; shift 2 ;;
       --by) [ $# -ge 2 ] || usage; by=$2; shift 2 ;;
+      --escalation) [ $# -ge 2 ] || usage; esc=$2; shift 2 ;;
       --approve) approve=1; shift ;;
       *) usage ;;
     esac
@@ -159,6 +182,7 @@ cmd_add() { # kind run-dir ticket ...
   [ "$(get --arg t "$t" '.plan.scope | map(tostring) | index($t) != null')" != true ] \
     || refuse "#$t is already in the run's scope"
   [ "$(get '.end_gate.status // "" | . == "ended"')" != true ] || refuse "the run has ended"
+  [ "$kind" != urgent ] || tests=$(escalation_tests "$t" "$esc" "$files") || exit "$?"
   approval_line "$kind" "$t" "$model" "$est" "$title"
   if [ "$kind" = add ] && [ "$approve" -eq 0 ]; then
     echo "Nothing is recorded. Approve with: lever.sh add $RUN_DIR $t --model $model --estimate-usd $est --approve"
@@ -167,12 +191,13 @@ cmd_add() { # kind run-dir ticket ...
   mkdir -p "$RUN_DIR/levers"
   req="$RUN_DIR/levers/$kind-$t.json"
   jq -n --arg t "$t" --arg model "$model" --argjson est "$est" --arg title "$title" --arg minutes "$minutes" \
-    --arg files "$files" --arg priority "$priority" --arg by "$by" --arg kind "$kind" '
+    --arg files "$files" --arg priority "$priority" --arg by "$by" --arg kind "$kind" --argjson tests "$tests" '
     {ticket: $t, model: $model, estimate_usd: $est, by: $by, urgent: ($kind == "urgent")}
     + (if $title == "" then {} else {title: $title} end)
     + (if $minutes == "" then {} else {minutes: ($minutes | tonumber)} end)
     + (if $files == "" then {} else {expected_files: ($files | split(",") | map(select(. != ""))) } end)
-    + (if $priority == "" then {} else {priority: ($priority | tonumber)} end)' >"$req.tmp.$$"
+    + (if $priority == "" then {} else {priority: ($priority | tonumber)} end)
+    + (if $tests == [] then {} else {escalation: $tests} end)' >"$req.tmp.$$"
   mv "$req.tmp.$$" "$req"
   run_sweep || rc=$?
   case "$rc" in

@@ -387,7 +387,7 @@ STATE_JQ_DEFS='
   # Work added to a running run (#76): the ticket joins the scope with its
   # estimate, and the run budget grows by the estimate plus the overrun
   # allowance. $r is the approved request: ticket, model, estimate_usd, title?,
-  # minutes?, expected_files?, priority?, urgent?, by?. Idempotent.
+  # minutes?, expected_files?, escalation?, priority?, urgent?, by?. Idempotent.
   def r2: (. * 100 | round) / 100;
   def scope_add($r; $at):
     ($r.ticket | tostring) as $t
@@ -405,6 +405,7 @@ STATE_JQ_DEFS='
                      deadline_seconds: (($r.minutes // 30) * 120 | ceil)}}
             + (if $r.title then {title: $r.title} else {} end)
             + (if $r.expected_files then {expected_files: $r.expected_files} else {} end)
+            + (if $r.escalation then {escalation: $r.escalation} else {} end)
             + (if $r.urgent == true then {urgent: true} else {added: true} end))
         | .plan.estimate_usd = (if .plan.estimate_usd == null then null else (.plan.estimate_usd + $est | r2) end)
         | .plan.budget_usd = (if $before == null then null else ($before + $inc | r2) end)

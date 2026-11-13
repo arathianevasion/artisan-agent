@@ -249,9 +249,10 @@ test_an_urgent_ticket_is_never_on_the_frontier_and_never_merges_into_the_integra
 
 # An urgent ticket 3 whose work (agent/3, from main) has returned and passed
 # verification, with the run's integration branch already moved on by ticket 1.
+# Any arguments are more options for lever.sh urgent.
 setup_urgent_returned() {
   setup_levers
-  "$L" urgent "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 --title "Hotfix" >/dev/null
+  "$L" urgent "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 --title "Hotfix" "$@" >/dev/null
   git_quiet -C "$PROJECT" branch agent/3 main
   git_quiet -C "$PROJECT" worktree add "$TEST_TMPDIR/w3" agent/3
   echo fix >"$TEST_TMPDIR/w3/fix.txt"
@@ -300,6 +301,43 @@ test_the_urgent_ticket_ships_through_its_own_end_gate_and_pr_scoped_to_it_and_ba
   assert_eq pr/r1/urgent-3 "$(jq -r .head "$pr")"
   assert_eq "body from pr" "$(jq -r .body "$pr")"
   assert_eq "$URGENT_TIP" "$(git -C "$PROJECT" rev-parse pr/r1/urgent-3)" "the PR is the urgent ticket's own work, not the integration branch"
+}
+
+test_an_urgent_packet_names_the_escalation_tests_the_ticket_meets_as_gate_plan_names_them() {
+  setup_urgent_returned --escalation new-seam,vocabulary-adr
+  assert_eq '["new-seam","vocabulary-adr"]' "$(state_get '.plan.tickets["3"].escalation | tojson')"
+  local packet=
+  packet=$("$E" urgent-packet "$RUN_DIR" 3)
+  assert_contains "$packet" "## Risk"
+  assert_contains "$packet" '`new-seam`: new seam or module boundary'
+  assert_contains "$packet" '`vocabulary-adr`: change to vocabulary or an ADR'
+  case "$packet" in *"No escalation tests met"*) fail "it named tests and also said none: $packet" ;; esac
+  case "$packet" in *tracer-bullet*) fail "named a test the ticket does not meet" ;; esac
+  # Risk sits ahead of the PR section and the overall action.
+  local order=
+  order=$(printf '%s\n' "$packet" | grep '^## ' | cut -d' ' -f2 | tr '\n' ' ')
+  assert_eq "Risk PR Overall " "$order"
+}
+
+test_an_urgent_packet_with_no_escalation_tests_says_so_in_one_line() {
+  setup_urgent_returned
+  local packet=
+  packet=$("$E" urgent-packet "$RUN_DIR" 3)
+  assert_contains "$packet" "## Risk"
+  assert_contains "$packet" "No escalation tests met"
+}
+
+test_an_unknown_escalation_test_is_a_usage_error_and_records_nothing() {
+  setup_levers
+  assert_status 2 "$L" urgent "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 --escalation nonsense
+  assert_eq 0 "$(state_get '[.plan.scope[] | select(. == "3")] | length')"
+}
+
+test_an_urgent_ticket_meeting_escalation_tests_opens_no_risk_gate() {
+  setup_urgent_returned --escalation new-seam
+  "$E" urgent-open "$RUN_DIR" 3 >/dev/null
+  assert_eq 0 "$(state_get '[.plan.gates[]? | select(.kind == "risk")] | length')"
+  assert_eq 0 "$(grep -l 'Risk gate' "$FAKE_GH_DIR"/issue-*.json 2>/dev/null | wc -l | tr -d ' ')" "no risk gate issue"
 }
 
 test_after_the_urgent_pr_merges_main_joins_the_integration_branch_with_the_full_suite_green() {
