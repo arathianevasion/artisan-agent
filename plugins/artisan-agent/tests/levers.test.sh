@@ -101,6 +101,20 @@ test_steering_stops_the_worker_and_redispatches_it_with_the_notes_not_as_a_faile
   wait_for "$RUN_DIR/results/1.2.exit.json" 60
 }
 
+test_a_steered_attempt_does_not_use_up_the_tickets_failed_attempts() {
+  setup_levers
+  # Attempt 1 steered, attempt 2 fails once: with two attempts allowed, it is queued again, not blocked.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] += {status: "in_flight", attempts: 2, pid: 1, steering: [{attempt: 1, note: "n", at: 1}]}
+'
+  . "$PLUGIN_ROOT/scripts/lib/state-lib.sh"
+  jq --argjson now 5 "$STATE_JQ_DEFS"'failed_attempt("1"; "boom"; $now)' "$RUN_DIR/state.json" >"$TEST_TMPDIR/after.json"
+  assert_eq queued "$(jq -r '.tickets["1"].status' "$TEST_TMPDIR/after.json")"
+  assert_eq 0 "$(jq -r '[.decisions[] | select(.kind == "exception")] | length' "$TEST_TMPDIR/after.json")"
+  # A second failure uses the allowance up.
+  jq --argjson now 6 "$STATE_JQ_DEFS"'.tickets["1"].attempts = 3 | failed_attempt("1"; "boom"; $now)' "$TEST_TMPDIR/after.json" >"$TEST_TMPDIR/after2.json"
+  assert_eq blocked "$(jq -r '.tickets["1"].status' "$TEST_TMPDIR/after2.json")"
+}
+
 test_steering_a_ticket_that_is_not_in_flight_is_refused() {
   setup_levers
   assert_status 6 "$L" steer "$RUN_DIR" 1 --note "x"

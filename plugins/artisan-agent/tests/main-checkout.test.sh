@@ -118,13 +118,15 @@ run_start_args() { # args [tool]: implement-plan with these arguments
 test_adding_tickets_or_an_urgent_ticket_to_the_running_run_is_let_through_not_refused_or_queued() {
   make_repo; stub_gh; hold_lock
   local a=
-  for a in "add #45 #46" "Add 45" "urgent #47" "URGENT 47" "add-work #45" "--urgent #47"; do
+  for a in "add #45 #46" "Add 45" "urgent #47" "URGENT 47" "add-work #45" "--urgent #47" "add #45, #46"; do
     assert_eq "" "$(run_start_args "$a" | "$PROTECT" run-start)" "UserPromptExpansion: $a"
     assert_eq "" "$(run_start_args "$a" tool | "$PROTECT" run-start)" "Skill tool: $a"
   done
   assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a separate plan"
   # A different request is still refused and queued.
   assert_contains "$(run_start_args "build the urgent report" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "add login page" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "urgent" | "$PROTECT" run-start)" '"decision":"block"'
   assert_contains "$(run_start_args "address #45" | "$PROTECT" run-start)" '"decision":"block"'
 }
 

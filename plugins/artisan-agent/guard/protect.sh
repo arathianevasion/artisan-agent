@@ -77,8 +77,10 @@ case "$mode" in
     # and "urgent <ticket>" go through to the add-work flow
     # (skills/implement-plan/SKILL.md, "Adding to a running run"), and are not
     # refused or queued as a separate plan.
+    # The request must name a ticket (#45 or 45): "add login page" is a new plan.
     case "$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]')" in
-      add | add\ * | add-work | add-work\ * | urgent | urgent\ * | --urgent\ *) exit 0 ;;
+      add\ * | add-work\ * | urgent\ * | --urgent\ *)
+        if printf '%s' "$resume" | grep -Eq '(^|[^[:alnum:]])#?[0-9]+([^[:alnum:]]|$)'; then exit 0; fi ;;
     esac
     msg="Blocked by the artisan-agent run lock: run $run_id (pid $pid) holds the lock, and a repo has one run at a time."
     if (cd "$cwd" && "$HERE/queue-plan.sh" "$request") >/dev/null 2>&1; then

@@ -315,8 +315,8 @@ STATE_JQ_DEFS='
     | .tickets[$t] |= (
         .failures += [{attempt: .attempts, reason: $reason, at: $at}]
         | .pid = null
-        | .status = (if .attempts >= $max then "blocked" else "queued" end))
-    | if $tk.attempts >= $max then
+        | .status = (if (.attempts - ((.steering // []) | length)) >= $max then "blocked" else "queued" end))
+    | if ($tk.attempts - (($tk.steering // []) | length)) >= $max then
         .decisions += [{
           id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
           question: "Ticket \($t) failed \($tk.attempts) attempts (last: \($reason)). Retry with notes, reslice, take it myself or drop; or bypass or defer its exception gate?",

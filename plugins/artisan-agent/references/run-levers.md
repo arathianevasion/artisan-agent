@@ -52,4 +52,4 @@ lever.sh urgent <run> <ticket> --model M --estimate-usd N [--title T]
 
 ## Starting `/implement-plan` while a run holds the lock
 
-The run-start hook (`guard/protect.sh run-start`) refuses a second plan and leaves it as a `plan` issue. It lets two requests through to the add-work flow instead, because they are not a second run: a request whose first word is `add` (or `add-work`) with tickets to add, and one whose first word is `urgent` (or `--urgent`) with an urgent ticket. The chat then follows `skills/implement-plan/SKILL.md`, "Adding to a running run".
+The run-start hook (`guard/protect.sh run-start`) refuses a second plan and leaves it as a `plan` issue. It lets two requests through to the add-work flow instead, because they are not a second run: a request whose first word is `add` (or `add-work`) and that names the tickets to add (`#45`), and one whose first word is `urgent` (or `--urgent`) and names the urgent ticket. `add login page` names no ticket, so it is a new plan and is refused as before. The chat then follows `skills/implement-plan/SKILL.md`, "Adding to a running run".
