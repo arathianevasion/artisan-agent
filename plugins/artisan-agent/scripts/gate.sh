@@ -78,8 +78,9 @@
 # logs guardrail-fired when it opens.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held (sync and
-# open only; the Artisan's actions are kept and folded in later), 6 refused
-# (no such open gate or card, or the card is already decided).
+# open only; the Artisan's actions are kept and folded in later), 4 not a
+# ticket of the run (bug), 6 refused (no such open gate or card, or the card
+# is already decided).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs jq, python3 and gh.
 
