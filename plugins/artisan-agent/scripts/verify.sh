@@ -39,7 +39,9 @@
 #       With checks recorded, a verdict without their results is an error (the
 #       verifier did not run them), and a red one makes every criterion that
 #       cites it unmet, or every criterion when none does.
-#       A fail posts the evidence comment on the ticket. Exit 0 pass, 6 fail
+#       An unmet criterion on which the verifier named a guardrail (its
+#       `guardrail`, an id from guardrails.sh resolve) logs guardrail-fired
+#       in the same write. A fail posts the evidence comment on the ticket. Exit 0 pass, 6 fail
 #       or a second verifier failure (blocked), 8 the verifier is still
 #       running, 14 the verifier failed once: start it again.
 #
@@ -443,7 +445,10 @@ cmd_judge() {
   apply '.tickets[$t].evidence = $ev[0]
     | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
-             met: $ev[0].criteria_met, total: $ev[0].criteria_total}; $now)' \
+             met: $ev[0].criteria_met, total: $ev[0].criteria_total}; $now)
+    | reduce ($ev[0].acceptance[] | select((.met | not) and (.guardrail // "") != "")) as $c (.;
+        event({event: "guardrail-fired", guardrail: $c.guardrail, ticket: $t, attempt: $n,
+               criterion: $c.criterion, by: "verifier"}; $now))' \
     --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract"
   remove_worktree "$wt"
 

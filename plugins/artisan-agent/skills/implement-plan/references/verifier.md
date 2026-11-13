@@ -36,4 +36,6 @@ Write one JSON object to the result file the runner names (`$ARTISAN_RESULT_FILE
 }
 ```
 
+When a criterion is unmet because the change breaks a guardrail in force (your prompt names how to list them, `guardrails.sh resolve`), put that guardrail's `id` on the entry as `"guardrail": "<id>"`, beside `met: false`. It tells the retro the guardrail fired; leave it off when no guardrail is why.
+
 `verdict` is `pass` only when every criterion is met. Then end your reply with the completion line the runner asked for.

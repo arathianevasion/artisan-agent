@@ -78,12 +78,17 @@ def align(criteria, verdict, record):
         w = find(claims, c)
         if w is None and len(claims) == len(criteria):
             w = claims[i]
-        out.append({
+        met = bool(e) and e.get("met") is True
+        entry = {
             "criterion": c,
-            "met": bool(e) and e.get("met") is True,
+            "met": met,
             "evidence": (e.get("evidence") or {}) if e else {"why": "the verifier gave no verdict on this criterion"},
             "claimed": None if w is None else w.get("met") is True,
-        })
+        }
+        # The guardrail an unmet criterion broke, as the verifier named it.
+        if not met and e and isinstance(e.get("guardrail"), str) and e["guardrail"]:
+            entry["guardrail"] = e["guardrail"]
+        out.append(entry)
     return out
 
 

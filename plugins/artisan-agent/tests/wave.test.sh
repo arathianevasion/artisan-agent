@@ -78,7 +78,7 @@ EOF
 
 # The verifier: a verdict in the evidence format on the criteria verify.sh
 # gave it, after VERIFIER_SLEEP seconds, each met unless VERIFIER_UNMET names
-# it. VERIFIER_MODE=garbage writes something that is not a verdict.
+# it (naming VERIFIER_GUARDRAIL on it, if set). VERIFIER_MODE=garbage writes something that is not a verdict.
 write_verifier_script() {
   export FAKE_CLAUDE_SCRIPT_VERIFIER="$TEST_TMPDIR/verifier.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF'
@@ -87,8 +87,9 @@ sleep "${VERIFIER_SLEEP:-0}"
 echo "$PWD" >>"$ARTISAN_RUN_DIR/../verifier-dirs"
 key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
 if [ "${VERIFIER_MODE:-}" = garbage ]; then echo '{"verdict": "pass"}' >"$ARTISAN_RESULT_FILE"; exit 0; fi
-jq --arg unmet "${VERIFIER_UNMET:-}" '{verdict: "pass", acceptance: [.[] | {criterion: .,
-    met: (. != $unmet), evidence: (if . == $unmet then {why: "not in the diff"} else {checks: [{command: "sh check.sh", result: "suite ok"}]} end)}],
+jq --arg unmet "${VERIFIER_UNMET:-}" --arg g "${VERIFIER_GUARDRAIL:-}" '{verdict: "pass", acceptance: [.[] | {criterion: .,
+    met: (. != $unmet), evidence: (if . == $unmet then {why: "not in the diff"} else {checks: [{command: "sh check.sh", result: "suite ok"}]} end)}
+    + (if . == $unmet and $g != "" then {guardrail: $g} else {} end)],
   unsure: [], notes: "checked by behaviour"}' "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
 EOF
 }

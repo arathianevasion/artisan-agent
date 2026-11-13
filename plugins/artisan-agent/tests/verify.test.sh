@@ -489,3 +489,23 @@ EOF2
   judge_verifier 1
   assert_eq "error the verifier did not run the recorded checks" "$JUDGE_OUT"
 }
+
+# ------------------------------------------- guardrail-fired (#122)
+
+test_v_an_unmet_criterion_naming_a_guardrail_logs_guardrail_fired() {
+  setup_wave
+  export VERIFIER_UNMET="It says hi" VERIFIER_GUARDRAIL="greeting-tone"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.attempts_per_ticket = 1'
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  assert_eq '[{"guardrail":"greeting-tone","ticket":"1","criterion":"It says hi","by":"verifier"}]' \
+    "$(state_get '[.events[] | select(.event == "guardrail-fired") | {guardrail, ticket, criterion, by}]' | jq -c .)"
+  assert_eq greeting-tone "$(state_get '.tickets["1"].evidence.acceptance[1].guardrail')"
+}
+
+test_v_align_keeps_a_guardrail_only_on_an_unmet_criterion() {
+  local py="$PLUGIN_ROOT/scripts/lib/criteria.py"
+  echo '["A thing", "B thing"]' >c.json
+  echo '{"acceptance": [{"criterion": "A thing", "met": true, "guardrail": "g1"}, {"criterion": "B thing", "met": false, "guardrail": "g2"}]}' >v.json
+  assert_eq '[null,"g2"]' "$(python3 -I "$py" align c.json v.json missing.json | jq -c 'map(.guardrail)')"
+}

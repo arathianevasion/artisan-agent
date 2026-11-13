@@ -4,24 +4,40 @@ The retro prunes as well as adds (#74). `${CLAUDE_PLUGIN_ROOT}/scripts/guardrail
 
 ## Health
 
-`guardrail-health.sh health --runs <run folder>... [--misses retro/misses.jsonl] [--threshold 3] [--table]` shows every guardrail in force (`guardrails.sh resolve`) as **fired**, **bypassed** (with each reason) or **never fired**, with its origin. A move is proposed once its evidence reaches the threshold (default 3 events; the config's evidence threshold is passed as `--threshold`).
+`guardrail-health.sh health --runs <run folder>... [--misses retro/misses.jsonl] [--bugs retro/bugs.jsonl] [--threshold 3] [--table]` shows every guardrail in force (`guardrails.sh resolve`) as **fired**, **bypassed** (with each reason) or **never fired**, with its origin. A move is proposed once its evidence reaches the threshold (default 3 events; the config's evidence threshold is passed as `--threshold`).
 
 | Evidence | Counts toward | Event it reads |
 |---|---|---|
 | A bypass with a reason | loosen | `guardrail-bypassed` (`guardrail`, `reason`) |
 | A gate in the guardrail's area approved unchanged | loosen | `gate-decision` with `outcome: keep` and no redirect |
 | A guardrail that never fired | loosen (one per run that recorded guardrail events) | no `guardrail-fired` or `guardrail-bypassed` for it, in a run that recorded any |
-| A redirect at a gate in the area | tighten | `gate-decision` with `outcome: change` or a `redirect` |
+| A card changed or a gate redirected in the area | tighten | `gate-decision` with `outcome: change` or `redirect: true` |
 | A spot-check answered "I'd have decided differently" | tighten | `spot-check` with `answer: differently` |
 | A counted triage miss | tighten | a line of `retro/misses.jsonl` |
-| A shipped bug traced to the area | tighten | `shipped-bug` |
+| A bug traced to the area, caught at a gate or shipped | tighten | `bug-found` (`where: gate`), a line of `retro/bugs.jsonl` (`where: shipped`), or an older run's `shipped-bug` |
 
-An event belongs to a guardrail when its `guardrail` is the guardrail's `id`, or its `area` is the guardrail's `area`. Rules:
+An event belongs to a guardrail when its `guardrail` is the guardrail's `id`, its `area` (or any of its `areas`) is the guardrail's `area`, or it names a built-in: `scope-floor` belongs to the guardrail keyed `scope-floor`, `defer-only` to one marked `defer_only`. Rules:
 
 - **The scope floor and defer-only gates never loosen.** A guardrail is protected when its `key` is `scope-floor` or it has `defer_only: true`. Its loosen evidence is listed under `never_loosen`, with no proposal; `guardrails.sh loosen` refuses it (7).
 - **Evidence both ways** (loosen and tighten both at the threshold) is raised as a `conflict` move: neither is proposed.
 - **Guardrail conflicts** (`resolve`'s `conflicts` and `overridden`) are carried in the output for the retro to raise.
 - Fewer events than the threshold propose nothing.
+
+## Where the events come from
+
+Each is written in the same one-step state write as the change it belongs to (`references/state-file.md`). A run from before these events has none, which already reads as "no evidence".
+
+| Event | Written by | Fields |
+|---|---|---|
+| `guardrail-fired` | a gate a guardrail opened, when it opens: an area's risk gate (`gate.sh open`; `guardrail: "area:<name>"`, `area`), an exception gate whose exception decision names a guardrail (`gate-action.sh sync`; the scope floor's is `scope-floor`), the overrun gate (`budget.sh guard`; `defer-only`). Each such gate records them under `guardrails` (`[{guardrail, area?}]`) | `guardrail`, `area?`, `gate`, `tickets?` |
+| `guardrail-fired` | `verify.sh judge`, for each unmet criterion on which the verifier named a guardrail (`guardrail: <id>`) | `guardrail`, `ticket`, `attempt`, `criterion`, `by: "verifier"` |
+| `guardrail-bypassed` | `gate-action.sh bypass` (or closing it by hand) of a gate with `guardrails`, one per guardrail; a gate no guardrail opened logs none. Also `guardrails.sh loosen --override-reason --run-dir` | `guardrail`, `area?`, `gate`, `reason` (the `--why`, or null), `by` |
+| `gate-decision` | `gate.sh change` and `gate.sh guardrail` (a card), `gate-action.sh redirect` (the gate, `card: null`) | `gate`, `card`, `by`, `outcome` (`keep` or `change`), `redirect`, `areas` (every area of the card's ticket, or of the gate's tickets for a redirect) |
+| `bug-found` | the Artisan flagging a bug at any review gate: `--bug` on `gate.sh change`, `gate-action.sh redirect`, `retry` or `take`; `gate.sh bug <run> <ticket> --gate end` (or `urgent-<t>`, or any gate) where there is no card to change | `ticket`, `areas`, `where: "gate"`, `gate`, `by`, `why?` |
+
+### Bugs found after shipping
+
+At the retro, `guardrail-health.sh bugs --runs ... --since <the last retro's date> [--bugs <run>/retro/bugs.jsonl] [--table]` lists the `bug` issues opened since then whose title or body mentions (`#<n>`) a ticket a run closed, with that ticket's areas (`--issues FILE` stands in for `gh issue list --label bug --json number,title,body,createdAt,url`). A mention can be loose, so the Artisan confirms each one: `bug-confirm --runs ... --out <run>/retro/bugs.jsonl --issue N --ticket T [--by NAME]` appends `{issue, ticket, areas, where: "shipped", run, by, at}`, once per issue and ticket (6 when no run given closed the ticket). Only confirmed lines count, read by `health --bugs`; nothing is written into old runs' state files.
 
 ## Loosening follows a report
 

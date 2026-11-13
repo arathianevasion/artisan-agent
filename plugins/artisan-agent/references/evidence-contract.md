@@ -35,7 +35,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 
 | Field | Required | Values |
 |---|---|---|
-| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met`, `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md` |
+| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met`, `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health |
 | `verdict` | no | `pass` or `fail`; advisory, since the contract recomputes it |
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
