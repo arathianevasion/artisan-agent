@@ -20,7 +20,8 @@ UPSTREAM=mattpocock-skills
 MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
 list="$HERE/replaced-skills.list"
-hook_command='${CLAUDE_PLUGIN_ROOT}/guard/block-replaced.sh'
+# The placeholder is double-quoted so an install path with a space stays one word.
+hook_command='"${CLAUDE_PLUGIN_ROOT}/guard/block-replaced.sh"'
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 while [ $# -gt 0 ]; do
@@ -82,8 +83,9 @@ json_hooks_body() { # the "hooks" object value
 # hook: the fallbacks for the other two are the git pre-commit hook and
 # implement-plan's own lock check (guard/README.md).
 json_plugin_hooks_body() {
-  local protect='${CLAUDE_PLUGIN_ROOT}/guard/protect.sh'
-  local compact='${CLAUDE_PLUGIN_ROOT}/scripts/compact-hook.sh'
+  local protect='"${CLAUDE_PLUGIN_ROOT}/guard/protect.sh"'
+  local compact='"${CLAUDE_PLUGIN_ROOT}/scripts/compact-hook.sh"'
+  protect=$(json_escape "$protect"); compact=$(json_escape "$compact")
   printf '{"UserPromptExpansion":[{"matcher":"%s","hooks":[{"type":"command","command":"%s"}]},' \
     "$(matcher)" "$(json_escape "$hook_command")"
   printf '{"matcher":"^(artisan-agent:)?implement-plan$","hooks":[{"type":"command","command":"%s run-start"}]}],' "$protect"
