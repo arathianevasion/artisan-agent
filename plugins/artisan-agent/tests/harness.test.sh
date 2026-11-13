@@ -197,3 +197,16 @@ test_no_test_file_negates_a_piped_grep_q() {
   hits=$(negated_piped_greps "$TESTS_DIR"/*.test.sh)
   [ -z "$hits" ] || fail "negated piped grep -q (use assert_not_contains): $hits"
 }
+
+# --- fake-claude's stray (#145) ---
+
+test_no_fake_claude_stray_outlives_a_test_that_leaves_one() {
+  local out= status=0 folder=
+  export STRAY_RECORD="$TEST_TMPDIR.stray"
+  out=$("$TESTS_DIR/run.sh" "$FIXTURES/stray-sleep" 2>&1) || status=$?
+  assert_eq 0 "$status" "the stray was started under the test's folder: $out"
+  folder=$(cat "$STRAY_RECORD")
+  rm -f "$STRAY_RECORD"
+  [ -n "$folder" ] || fail "the inner test never recorded its folder"
+  ! pgrep -f "fake-claude-stray:$folder" >/dev/null || fail "a fake-claude-stray outlived its test"
+}
