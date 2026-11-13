@@ -789,14 +789,16 @@ cmd_list() {
 
 cmd_deferred() {
   open_run "${1:-}"
-  if [ "$(get '[(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "deferred")] | length')" -eq 0 ]; then
+  local sel=""
+  sel=$(state_deferred_gates_jq)
+  if [ "$(get "$sel | length")" -eq 0 ]; then
     echo "No gate is deferred."
     return 0
   fi
   echo "| Gate | Issue | Kind | Deferred by | Why | Went ahead |"
   echo "|---|---|---|---|---|---|"
-  get '[(.review_gates // [])[], (.exception_gates // [])[]] | .[] | select(.status == "deferred")
-    | "| \(.title) | #\(.issue) | \(.kind // "slice") | \(.deferral.by) | \(.deferral.why // "-") | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
+  get "$sel"'[]
+    | "| \(.title) | #\(.issue) | \(.kind) | \(.by) | \(.why // "-") | \(if .dependents == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
 }
 
 [ $# -ge 1 ] || usage

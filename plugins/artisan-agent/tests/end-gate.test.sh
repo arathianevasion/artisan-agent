@@ -126,6 +126,29 @@ test_the_end_gate_lists_deferred_gates_of_both_kinds_and_carried_cards() {
   assert_contains "$err" "#42"
 }
 
+test_the_end_gate_lists_and_waits_on_a_deferred_overrun_gate() {
+  setup_end
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .overrun_gates = [{id: "overrun-1", kind: "exception", title: "Exception gate: overrun (run r1)", issue: 50,
+       status: "deferred", gate_actions: ["defer"], deferred_at: 5,
+       decision: {card: 1, option: "raise", choice: "raise the budget to $2.75", why: "demo first", by: "Artisan", job: 10, at: 5}},
+      {id: "overrun-2", kind: "exception", title: "Exception gate: overrun 2 (run r1)", issue: 51, status: "open"}]'
+  local body= err=
+  body=$("$E" packet "$RUN_DIR")
+  assert_contains "$body" "| Exception gate: overrun (run r1) | #50 | overrun | Artisan | demo first | - |"
+  assert_not_contains "$body" "overrun 2"
+  product_boundary slice
+  err=$("$E" approve "$RUN_DIR" 2>&1) && fail "approved with a deferred overrun gate"
+  assert_status 6 "$E" approve "$RUN_DIR"
+  assert_contains "$err" "Exception gate: overrun (run r1) #50"
+  assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "| #50 | overrun | Artisan |"
+}
+
+test_a_run_with_no_overrun_gates_lists_no_deferred_gate() {
+  setup_end
+  assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "No gate is deferred."
+}
+
 test_a_one_ticket_bug_run_has_one_end_gate_leading_with_the_failing_test() {
   make_project
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"

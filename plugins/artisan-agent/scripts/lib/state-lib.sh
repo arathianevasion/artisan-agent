@@ -21,6 +21,18 @@ state_jq_row_def() { # prints the jq def that renders an array as a markdown tab
   printf '%s' 'def row: "| " + join(" | ") + " |";'
 }
 
+# The deferred gates the end gate lists and waits on, one jq selector for both
+# readers (gate-action.sh deferred, end-gate.sh open_deferred): review, exception
+# and overrun gates (#131). Emits {title, issue, kind, by, why, dependents}; an
+# overrun gate keeps its deferral in .decision, the others in .deferral.
+state_deferred_gates_jq() {
+  printf '%s' '[((.review_gates // [])[], (.exception_gates // [])[]
+      | select(.status == "deferred")
+      | {title, issue, kind: (.kind // "slice"), by: .deferral.by, why: .deferral.why, dependents: (.dependents // [])}),
+    ((.overrun_gates // [])[] | select(.status == "deferred")
+      | {title, issue, kind: "overrun", by: .decision.by, why: .decision.why, dependents: []})]'
+}
+
 state_require_jq() {
   command -v jq >/dev/null 2>&1 || state_die 1 "jq is required but was not found on PATH"
 }
