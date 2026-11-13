@@ -95,3 +95,7 @@ After approval:
 ## State
 
 `end_gate`: `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source: guardrail|approved, level?, by?}, prs: [{n, branch, base, tickets, url, at}], ended_at}`. Decisions of kind `end-gate` (job 13) and `pr-boundary` (job 17). Events `gate-opened` (`kind: "end"`), `end-gate-approved` (`by`, `boundary`, `source`, `changed`), `pr-cut` (`n`, `branch`, `base`, `tickets`, `url`) and `run-ended` (`prs`). `review_gates[].kind` is `slice` or `risk`. Details in `references/state-file.md`.
+
+## An urgent ticket's own end gate
+
+An urgent ticket (`references/run-levers.md`) is not part of the run's end gate or its PRs. It gets the same gate and the same PR path, scoped to that one ticket and based on `main`: `end-gate.sh urgent-packet`, `urgent-open` (a `review-gate` issue, `End gate: urgent #<t> (run <id>)`, and an `end-gate` decision), `urgent-approve`, `urgent-cut` (the branch `pr/<run-id>/urgent-<t>` at the ticket's tip, the PR to `main` with the body upstream `pr` wrote) and, once the Artisan has merged it, `urgent-finish`, which merges `main` into the integration branch and runs the full suite there. State: `urgent_gates.<t>` (`references/state-file.md`).

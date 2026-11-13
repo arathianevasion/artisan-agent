@@ -7,6 +7,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `run-ticket.sh` | Launches one capped headless worker (or, with `--role orchestrator`, a wave's orchestrator; with `--role verifier`, a ticket's verifier) detached; always leaves an exit record. Refuses to launch into a run folder with no state file (exit 4) | the runner's PID, at once |
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
+| `lever.sh` | The levers on a running run (#76): `steer` (stop a worker and redispatch it with the Artisan's notes, recorded as steering, not a failed attempt), `add` (a ticket joins the run after a one-line approval of model, estimate and new budget, ahead of lower-priority work) and `urgent` (its own approval; one extra slot above Max Agents, from `main`, its own end gate and PR through `end-gate.sh urgent-*`) ([`references/run-levers.md`](../references/run-levers.md); `tests/levers.test.sh`) | lines; 3 the state lock is held (the request is kept for the sweep), 6 refused |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
 | `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`; `--worker` skips the check that is the suite, left to the merge gate). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
@@ -37,6 +38,8 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `verify/claims/<t>.<v>/` | `verify.sh start` | the claim on verifier `<v>`: one start launches it, however many run at once |
 | `verify/checks/<t>.<v>.json`, `.logs/` | the verifier, through `checks.sh run --out` | the checks it ran (recorded, or its fallback) and their full output |
 | `verify/<t>.<n>.evidence.json`, `.comment.md` | `verify.sh judge` | the evidence contract as built (also in the state file), and the comment posted on a fail |
+| `steering/<t>.<n>.json` | `lever.sh steer` | the Artisan stopped attempt n and gave notes; the sweep records it as steering, not a failure |
+| `levers/<kind>-<t>.json` | `lever.sh add`, `urgent` | an approved addition or urgent ticket; the sweep puts it in the scope |
 | `.wait-any.seen` | `wait-any.sh` | what the waiting caller has already seen |
 
 `wait-any.sh` watches only `results/`. Anything starting with a dot is a write in progress and is skipped.
