@@ -29,4 +29,4 @@ jobs:
       - name: Run the script test harness (as a non-root user)
         run: |
           chown -R tester "$GITHUB_WORKSPACE"
-          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh'
+          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(nproc)"'
