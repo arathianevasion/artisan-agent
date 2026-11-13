@@ -508,7 +508,7 @@ out_of_run() { # choice status label-to-add tracker-note
   fi
   comment "$t" "Taken out of run $RUN_ID at exception gate #$issue by $BY: $note${WHY:+ Why: $WHY}"
   # shellcheck disable=SC2086
-  send_back "$t" "was $status at its exception gate" $ds
+  send_back "$t" "was $status" $ds
   close_exception "$issue" "$choice, by $BY: #$t leaves the run. $note"
   # shellcheck disable=SC2086
   dl=$(json_list $ds)
@@ -562,7 +562,7 @@ cmd_send_back() {
     done
     [ -n "$w" ] || continue
     # shellcheck disable=SC2086
-    send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status') at its exception gate" $w
+    send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" $w
     # shellcheck disable=SC2086
     dl=$(json_list $w)
     apply 'reduce $ds[] as $d (.; .tickets[$d] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $b, at: $now})
