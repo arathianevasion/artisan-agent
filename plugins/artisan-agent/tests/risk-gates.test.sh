@@ -75,6 +75,15 @@ test_an_escalated_ticket_gets_a_risk_gate_holding_only_its_dependents() {
   assert_eq free "$("$G" holds "$RUN_DIR" 1)"
 }
 
+test_an_area_risk_gate_says_which_area_asked_for_it() {
+  setup_risk '[{"kind": "risk", "after": "1", "tests": ["new-seam", "area:billing"]}]'
+  merged_with_cards 1 none
+  local num=
+  num=$("$G" open "$RUN_DIR" risk-1)
+  assert_eq "Risk gate: #1 (Ticket 1), new seam or module boundary, area billing gate setting (run r1)" \
+    "$(jq -r .title "$FAKE_GH_DIR/issue-$num.json")"
+}
+
 test_a_new_seam_card_raises_a_risk_gate_the_plan_did_not_place() {
   setup_risk '[]'
   merged_with_cards 1 3

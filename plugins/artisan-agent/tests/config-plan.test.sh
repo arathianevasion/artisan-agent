@@ -461,3 +461,11 @@ test_build_refuses_a_ticket_with_no_blocked_by_and_accepts_an_empty_list() {
   assert_contains "$(cat "$TEST_TMPDIR/err")" "ticket 11 has no blocked_by"
   "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json" >/dev/null
 }
+
+test_a_tickets_areas_in_the_draft_reach_the_plan() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets |= with_entries(.value.areas = ["billing"])' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '["billing"]' "$(jq -c '[.tickets[].areas] | unique | .[0]' "$TEST_TMPDIR/plan.json")"
+}

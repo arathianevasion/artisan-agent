@@ -331,7 +331,8 @@ STATE_JQ_DEFS='
   def escalation_label:
     {"new-seam": "new seam or module boundary", "tracer-bullet": "first tracer bullet through a new layer",
      "vocabulary-adr": "change to vocabulary or an ADR", "judgement-criteria": "judgement-like acceptance criteria",
-     "seam-card": "new seam (decision card)"}[.] // .;
+     "seam-card": "new seam (decision card)"}[.]
+    // (if startswith("area:") then "area \(.[5:]) gate setting" else . end);
   def seam_card: ((.criterion? // "") | tostring) == "3";
   def slice_gates:
     . as $s
