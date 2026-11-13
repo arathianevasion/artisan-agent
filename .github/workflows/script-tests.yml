@@ -40,7 +40,7 @@ jobs:
       - name: Run the script test harness (as a non-root user)
         run: |
           chown -R tester "$GITHUB_WORKSPACE"
-          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh'
+          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"'
 
   script-tests-macos:
     name: Script tests (macOS, Apple bash 3.2)
@@ -58,4 +58,4 @@ jobs:
           git config --global user.name CI
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
-          /bin/bash plugins/artisan-agent/tests/run.sh
+          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"

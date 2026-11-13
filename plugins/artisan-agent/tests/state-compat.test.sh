@@ -129,7 +129,7 @@ test_the_reference_lists_every_optional_field_with_its_default() {
   section=$(sed -n '/^## Optional fields/,/^## Where a run lives/p' "$ref")
   assert_contains "$section" "Default when missing"
   for f in $OPTIONAL_TOP $OPTIONAL_PLAN $OPTIONAL_TICKET; do
-    printf '%s\n' "$section" | grep -Eq "^\| .*\`(plan\.)?$f\`.* \| " \
+    printf '%s\n' "$section" | grep -E "^\| .*\`(plan\.)?$f\`.* \| " >/dev/null \
       || fail "references/state-file.md has no Optional fields row for $f"
   done
 }
