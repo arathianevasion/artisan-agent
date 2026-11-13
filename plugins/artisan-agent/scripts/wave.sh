@@ -408,6 +408,7 @@ $reviews"
   esac
   echo "next: $next"
   [ "$next" != parked ] || echo "$parked"
+  [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
   echo

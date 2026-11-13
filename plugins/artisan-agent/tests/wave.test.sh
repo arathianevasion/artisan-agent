@@ -219,6 +219,7 @@ test_the_chat_learns_of_completion_from_the_exit_record_and_sweep_alone() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "orchestrator: completed - (wave 1, attempt 1"
   assert_contains "$out" "next: done"
+  assert_contains "$out" "run the end gate: end-gate.sh open $RUN_DIR"
   assert_contains "$out" "| Ticket | Wave | Model | Status |"
   assert_contains "$out" "| #1 (Add hello) | 1 | claude-sonnet-5-5 | merged as "
   assert_eq "$CHAT" "$(readlink "$RUN_DIR/state.lock")" "the chat holds the lock between waves"
