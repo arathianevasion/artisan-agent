@@ -4,6 +4,8 @@ A **gate** is a point where the Artisan reviews work before what depends on it c
 
 Skills cite this file rather than copying it.
 
+A **risk gate** placed on a ticket (an escalation test, or a worker's new-seam card) is opened, held and answered exactly as a slice gate of that one ticket, with kind `risk` and its own title; placement, risk gates and the end gate are `references/end-gate.md` (#71).
+
 ## Slices in the plan
 
 The plan's `gates` lists the slice gates the Artisan approved. A slice gate names its tickets one of three ways:

@@ -94,7 +94,7 @@ test_killed_worker_leaves_an_exit_record_and_no_stray_processes() {
   ! pgrep -g "$worker" >/dev/null || fail "the worker's stray background sleep survived"
 }
 
-test_passes_the_caps_and_json_output_to_claude() {
+test_passes_the_caps_and_stream_json_output_to_claude() {
   setup_run
   launch complete
   wait_for_file "$EXIT_RECORD"
@@ -102,7 +102,8 @@ test_passes_the_caps_and_json_output_to_claude() {
   args=$(cat "$FAKE_CLAUDE_ARGS")
   assert_contains "$args" "[-p]"
   assert_contains "$args" "[--output-format]
-[json]"
+[stream-json]
+[--verbose]"
   assert_contains "$args" "[--max-budget-usd]
 [3.00]" "budget is twice the 1.50 estimate"
   assert_contains "$args" "[--max-turns]
@@ -110,6 +111,49 @@ test_passes_the_caps_and_json_output_to_claude() {
   assert_eq 3.00 "$(field "$EXIT_RECORD" max_budget_usd)"
   assert_eq 60 "$(field "$EXIT_RECORD" max_turns)"
   assert_eq 3600 "$(field "$EXIT_RECORD" deadline_seconds)" "deadline is twice the 30 expected minutes"
+}
+
+test_worker_usage_is_recorded_with_the_time_it_was_received() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=3
+  launch stream
+  local u="$RUN/workers/46.1/usage.json" i=0 before after
+  while ! jq -e '.rate_limits.seven_day' "$u" >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -lt 100 ] || fail "no usage.json while the worker ran"; sleep 0.1
+  done
+  before=$(date +%s)
+  assert_eq worker "$(jq -r .source "$u")"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$u")" "utilisation 0.29 is 29 percent"
+  assert_eq 1794610800 "$(jq -r '.rate_limits.seven_day.resets_at' "$u")"
+  [ $((before - $(jq -r .received_at "$u"))) -lt 30 ] || fail "received_at is not the time the runner saw it"
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$u")" "the second window joins the first"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$u")" "and the first stays"
+  after=$(jq -r '.rate_limits.five_hour.at' "$u")
+  [ "$after" -ge "$(jq -r '.rate_limits.seven_day.at' "$u")" ] || fail "each window keeps its own time"
+}
+
+test_two_events_between_polls_both_count() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=0
+  launch stream
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$RUN/workers/46.1/usage.json")"
+  assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$RUN/workers/46.1/usage.json")"
+}
+
+test_output_json_is_the_streams_result_event() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=1
+  launch stream
+  wait_for_file "$EXIT_RECORD"
+  assert_eq result "$(jq -r .type "$RUN/workers/46.1/output.json")"
+  assert_eq success "$(jq -r .subtype "$RUN/workers/46.1/output.json")"
+  assert_eq 4 "$(jq -r .num_turns "$RUN/workers/46.1/output.json")"
+  assert_eq 1 "$(wc -l <"$RUN/workers/46.1/output.json" | tr -d ' ')"
+  [ "$(wc -l <"$RUN/workers/46.1/stream.jsonl" | tr -d ' ')" -ge 4 ] || fail "the whole stream is kept"
+  assert_status 0 "$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46
+  assert_eq "completed -" "$("$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46)"
 }
 
 test_small_estimates_get_a_floor_of_twenty_turns() {

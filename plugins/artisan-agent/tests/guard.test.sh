@@ -119,7 +119,7 @@ test_dependency_list_and_replaced_list_do_not_overlap() {
 }
 
 test_dependency_list_has_wayfinder_and_not_to_plan() {
-  dep_names | grep -qx wayfinder || fail "wayfinder missing from the dependency list"
+  dep_names | grep -x wayfinder >/dev/null || fail "wayfinder missing from the dependency list"
   if dep_names | grep -qx to-plan; then fail "to-plan is ours and must not be on the dependency list"; fi
 }
 

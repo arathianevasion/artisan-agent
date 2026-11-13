@@ -12,8 +12,8 @@ newest_changelog_version() {
 test_plugin_version_is_semver() {
   local version=
   version=$(manifest_version)
-  printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' \
-    || fail "plugin.json version [$version] is not semver"
+  printf '%s\n' "$version" | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' \
+    >/dev/null || fail "plugin.json version [$version] is not semver"
 }
 
 test_newest_changelog_entry_matches_plugin_version() {

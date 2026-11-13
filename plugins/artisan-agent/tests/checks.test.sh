@@ -63,6 +63,48 @@ test_c_run_runs_only_the_recorded_checks_and_reports_each() {
   assert_contains "$(cat "$TEST_TMPDIR/checks.logs/2.log")" "lint ok"
 }
 
+# A project that recorded one check, its whole suite (./test.sh).
+setup_with_suite_check() {
+  seed_checks
+  git -C "$P" push -q origin main
+  answers '{"checks":[{"command":"./test.sh","break_cmd":"echo broken >value","break":"wrote a wrong value"}]}'
+  run_setup >/dev/null
+  merge_setup_pr
+}
+
+test_c_a_worker_skips_a_recorded_check_that_is_the_suite_and_says_so() {
+  setup_with_suite_check
+  local out rc=0
+  out=$(cd "$P" && "$CHECKS" run --worker) || rc=$?
+  assert_eq 0 "$rc"
+  assert_eq "[]" "$(printf '%s' "$out" | jq -c .results)"
+  assert_eq "./test.sh: left to the merge gate (it is the run's suite command)" "$(printf '%s' "$out" | jq -r '.not_run[0]')"
+}
+
+test_c_the_verifier_and_the_gate_still_run_the_suite_check() {
+  setup_with_suite_check
+  local out
+  out=$(cd "$P" && "$CHECKS" run)
+  assert_eq "./test.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
+  assert_eq "[]" "$(printf '%s' "$out" | jq -c .not_run)"
+  [ "$(cd "$P" && "$CHECKS" suite)" = "./test.sh" ] || fail "the gate's suite is not the check"
+}
+
+test_c_a_worker_skips_the_check_equal_to_the_plans_suite_command_and_runs_the_rest() {
+  setup_with_checks
+  local out
+  out=$(cd "$P" && "$CHECKS" run --worker --suite ./test.sh)
+  assert_eq "./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
+  assert_contains "$(printf '%s' "$out" | jq -r '.not_run[0]')" "./test.sh: left to the merge gate"
+}
+
+test_c_a_worker_still_runs_every_check_when_none_is_the_suite() {
+  setup_with_checks
+  local out
+  out=$(cd "$P" && "$CHECKS" run --worker)
+  assert_eq "./test.sh:true ./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
+}
+
 test_c_a_red_recorded_check_is_reported_red_and_the_rest_still_run() {
   setup_with_checks
   echo broken >"$P/value"

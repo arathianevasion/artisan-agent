@@ -129,7 +129,10 @@ build_view() { # id dependents-json
   done
   jq -n --argjson g "$def" --argjson deps "$deps" --slurpfile s "$FILE" \
     --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" '
-    {gate: ($g + {kind: "slice", title: "Slice gate: \($g.slice) (run \($run))", dependents: $deps}),
+    {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps,
+                  title: (if $g.kind == "risk"
+                          then "Risk gate: \($g.tickets | map(. as $t | "#\($t)" + ($s[0].plan.tickets[$t].title // null | if . then " (\(.))" else "" end)) | join(", ")), \($g.why) (run \($run))"
+                          else "Slice gate: \($g.slice) (run \($run))" end)}),
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
 
@@ -204,7 +207,7 @@ cmd_open() {
       | ([$v.gate.tickets[] as $t | $v.state.tickets[$t].evidence.unsure[]?] | length) as $u
       | ($v.provisional | split("\n") | map(capture("^\\| #(?<t>[^ |]+) \\|").t) ) as $other
       | .review_gates = ((.review_gates // []) + [{
-          id: $v.gate.id, kind: "slice", slice: $v.gate.slice, title: $v.gate.title,
+          id: $v.gate.id, kind: $v.gate.kind, slice: $v.gate.slice, title: $v.gate.title,
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
           status: "open", opened_at: $now, decisions: [], reworks: []}])
@@ -254,7 +257,8 @@ card_json() { # card-number
 # The one filter that writes an action into the state file. Applying the same
 # action twice changes nothing (its key is recorded on its decisions).
 ACTION_FILTER='
-  ((.review_gates // []) | map(.id) | index($a.gate)) as $i
+  . as $s0
+  | ((.review_gates // []) | map(.id) | index($a.gate)) as $i
   | if $i == null or any(.review_gates[$i].decisions[]; .action == $a.key) then .
     else
       .review_gates[$i].decisions += ($a.decisions | map(. + {action: $a.key}))
@@ -273,6 +277,7 @@ ACTION_FILTER='
           .review_gates[$i].status = "approved" | .review_gates[$i].approved_at = $now
           | .decisions |= map(if .kind == "review-gate" and .gate == $a.gate and .status == "waiting"
               then .status = "decided" | .choice = "approve" | .by = $a.by | .job = 13 | .decided_at = $now
+                | .changed = (any($s0.review_gates[$i].decisions[]; .outcome? == "change") or ($s0.review_gates[$i].reworks // []) != [])
               else . end)
           | (if $a.closed_on_tracker then
                .review_gates[$i].closed_on_tracker = true | .review_gates[$i].carried = $a.carried
@@ -543,7 +548,7 @@ view_of() { # recorded-gate-json: its view, with the cards and dependents record
   if [ -f "$f" ]; then
     jq --slurpfile s "$FILE" --argjson g "$g" '.state = $s[0] | .gate.issue = $g.issue' "$f"
   else
-    jq -n --slurpfile s "$FILE" --argjson g "$g" '{gate: ($g + {kind: "slice"}), state: $s[0], guardrails: "", provisional: ""}'
+    jq -n --slurpfile s "$FILE" --argjson g "$g" '{gate: ($g + {kind: ($g.kind // "slice")}), state: $s[0], guardrails: "", provisional: ""}'
   fi
 }
 

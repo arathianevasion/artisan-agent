@@ -8,7 +8,7 @@
 # The optional fields, as the reference's "Optional fields" table lists them.
 OPTIONAL_TOP='events orchestrators findings_read relays lessons review_gates halted waves location provisional_shown'
 OPTIONAL_PLAN='gates overrides suite_command checks orchestrator'
-OPTIONAL_TICKET='attempt_costs verifications worktree base suite tracker_closed wave resolve risk_gate questions answers blocked_reason'
+OPTIONAL_TICKET='attempt_costs verifications worktree base suite tracker_closed wave resolve risk_gate context_risk questions answers blocked_reason'
 
 # drop_field jq-path: remove a field from the state file in place.
 drop_field() {
@@ -129,7 +129,7 @@ test_the_reference_lists_every_optional_field_with_its_default() {
   section=$(sed -n '/^## Optional fields/,/^## Where a run lives/p' "$ref")
   assert_contains "$section" "Default when missing"
   for f in $OPTIONAL_TOP $OPTIONAL_PLAN $OPTIONAL_TICKET; do
-    printf '%s\n' "$section" | grep -Eq "^\| .*\`(plan\.)?$f\`.* \| " \
+    printf '%s\n' "$section" | grep -E "^\| .*\`(plan\.)?$f\`.* \| " >/dev/null \
       || fail "references/state-file.md has no Optional fields row for $f"
   done
 }

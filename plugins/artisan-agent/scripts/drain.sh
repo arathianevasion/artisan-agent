@@ -52,15 +52,21 @@
 #                       <run-dir>/chat-compact-asked is cleared when the
 #                       reading falls back under the line (a compaction)
 #         unknown -     no reading: say nothing
-#       The window is ARTISAN_CONTEXT_WINDOW, else chat_context.window_tokens
-#       (1,000,000, the Opus chat's window; recorded, never forced).
+#       The window is ARTISAN_CONTEXT_WINDOW, else the one the status-line
+#       capture recorded for this transcript's session (statusline.sh window),
+#       else chat_context.window_tokens (1,000,000, the Opus chat's window;
+#       recorded, never forced).
 #   drain.sh gate <run-dir> <ticket> <percent>
-#       a merge processed at the review band: a risk gate on the merged
-#       ticket. Its dependents don't dispatch until it is cleared (wave.sh
-#       dispatch exit 5, and the reconciler leaves them off the frontier);
-#       nothing else waits. A decision for the Artisan, event "risk-gate".
+#       a merge processed at the review band: records tickets.<t>.context_risk
+#       (event "risk-gate") and opens a risk gate on the merged ticket through
+#       `gate.sh open` (id risk-context-<t>): a review-gate issue that natively
+#       blocks only its in-run dependents, with a packet saying the merge
+#       happened at <percent>% context. Approve, redirect, bypass and defer
+#       are the gate actions (gate-action.sh). Gating again opens nothing new.
 #   drain.sh gate-cleared <run-dir> <ticket> [--by NAME]
-#       the Artisan reviewed it: its dependents may dispatch.
+#       only for a state file from before the gate was an issue, which holds
+#       tickets.<t>.risk_gate = waiting: clears that flag. Newer runs answer
+#       the review-gate issue instead (gate-action.sh).
 #
 # Environment: ARTISAN_CONTEXT_WINDOW overrides the window (tokens). Without
 # it the window is 1,000,000 for a model id ending "[1m]" or once the context
@@ -324,7 +330,10 @@ cmd_chat() {
   [ -n "$transcript" ] || usage
   warn=$(chat_setting warn_percent)
   compact=$(chat_setting compact_percent)
-  window=${ARTISAN_CONTEXT_WINDOW:-$(chat_setting window_tokens)}
+  # The window the status-line capture saw for this chat's own model (#72),
+  # else the expected one.
+  window=${ARTISAN_CONTEXT_WINDOW:-$("$SCRIPT_DIR/statusline.sh" window --transcript "$transcript" 2>/dev/null \
+    || chat_setting window_tokens)}
   reading=$(percent_of "$transcript" "$window")
   pct=${reading%% *}
   marker="$RUN_DIR/chat-compact-asked"
@@ -357,14 +366,16 @@ cmd_gate() {
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$2" || exit $?
   [ "$(get --arg t "$2" '.tickets[$t].status')" = merged ] \
     || state_die 6 "drain.sh: #$2 is not merged; a risk gate is for a merge processed at the review band"
+  # The merge at this context percentage is the fact; the gate is the hold.
+  # Gating again keeps the first percentage and opens nothing new.
   apply '
-    if .tickets[$t].risk_gate.status? == "waiting" then .
-    else .tickets[$t].risk_gate = {status: "waiting", percent: $pct, at: $now}
-      | .decisions += [{id: ((.decisions | length) + 1), kind: "risk-gate", ticket: $t,
-          question: "#\($t) merged while the orchestrator was at \($pct)% context. Recommended: look over its merge before its dependents start; they wait for it, nothing else does. Clear it, or block its dependents?",
-          status: "waiting", at: $now}]
+    if .tickets[$t].context_risk? != null then .
+    else .tickets[$t].context_risk = {percent: $pct, at: $now}
       | event({event: "risk-gate", ticket: $t, percent: $pct}; $now) end' \
-    --arg t "$2" --argjson pct "$3"
+    --arg t "$2" --argjson pct "$3" || exit $?
+  # Opened like any risk gate. If this fails (the tracker is down), the fact
+  # is recorded and `gate.sh sync` (wave.sh close and status call it) opens it.
+  "$SCRIPT_DIR/gate.sh" open "$RUN_DIR" "risk-context-$2" >/dev/null || exit $?
 }
 
 cmd_gate_cleared() {
@@ -384,7 +395,7 @@ cmd_gate_cleared() {
     .tickets[$t].risk_gate.status = "cleared"
     | .tickets[$t].risk_gate.cleared_at = $now
     | .decisions |= map(if .kind == "risk-gate" and .ticket == $t and .status == "waiting"
-                        then .status = "decided" | .choice = "clear" | .by = $by | .decided_at = $now
+                        then .status = "decided" | .choice = "clear" | .by = $by | .job = 13 | .changed = false | .decided_at = $now
                         else . end)
     | event({event: "risk-gate-cleared", ticket: $t, by: $by}; $now)' \
     --arg t "$t" --arg by "$by"

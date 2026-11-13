@@ -59,7 +59,7 @@ test_to_spec_keeps_upstream_template_and_seam_check() {
     assert_eq "$(template_of "$up")" "$(template_of "$TOSPEC")" "spec template differs from upstream"
   fi
   for h in '## Problem Statement' '## Solution' '## User Stories' '## Implementation Decisions' '## Testing Decisions' '## Out of Scope' '## Further Notes'; do
-    template_of "$TOSPEC" | grep -qxF "$h" || fail "template lacks $h"
+    template_of "$TOSPEC" | grep -xF "$h" >/dev/null || fail "template lacks $h"
   done
   grep -q 'Sketch the seams' "$TOSPEC" || fail "no seam check"
   grep -q 'ideal number is one' "$TOSPEC" || fail "seam guidance dropped"

@@ -76,14 +76,17 @@ Each ticket gets its own worker spec, designed from the ticket body, not a templ
 
 Open with the ADR and guardrail check, as `${CLAUDE_PLUGIN_ROOT}/references/adr-check.md` describes it: it is part of this approval, and it is run here when the route skipped `/artisan-agent:to-plan` (a Small change, a Bug, or a Feature without chunks), including a one-ticket run. It also holds the ADR adjustment loop.
 
+**If the run lock is held** (the precondition's `run-lock.sh check` exited 3) the plan waits as a `plan` issue, and the Artisan's approval of this envelope is recorded on it with `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh approve-envelope --repo <owner/name> <plan issue>`; a plan that starts at once never calls it. When a sweep later prints `ACTION start-plan <issue> envelope-approved`, don't ask for the approval again. See `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/labels-and-envelope.md`.
+
 The plan step sets the run's envelope in one approval: scope, waves, a model per ticket, the estimate per ticket and in total, Max Agents, gates and every config number. Proposing the waves is yours (job 11); the rest is the Artisan's to approve or change.
 
 1. **Write the draft** as JSON in the run folder (`$(${CLAUDE_PLUGIN_ROOT}/scripts/state.sh run-dir <run-id>)/draft.json`): `run_id`, `repo` (`owner/name` on the tracker, as `docs/agents/issue-tracker.md` names it), `integration_branch` (`run/<run-id>`), `scope` (exactly the defined set of work), `waves`, `gates`, `suite_command` (leave it out to run the project's recorded checks; with none recorded, name the suite you found and add `suite_found`, where you found it; `${CLAUDE_PLUGIN_ROOT}/references/checks.md`), and per ticket `title`, `model`, `blocked_by` (copied from that ticket's `blocked_by` in `resolve-scope.sh`'s output, `[]` for none; `plan.sh build` refuses a ticket without it), `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). Shape and rules: `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Config and the plan step".
 2. **Hands-on ticket.** Suggest at most one, off the critical path, with its focus; a critical-path pick shows its delay before the Artisan confirms: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`.
 3. **Build the plan:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh build --draft <draft.json> > <run folder>/plan.json`. It reads the project config (`.artisan-agent/config.yml`), estimates each ticket in estimated dollars and sets each ticket's caps, the total and the budget.
-4. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed: a table per wave with each ticket's number and description, wave, model, estimate and expected output, then every number the run uses. Underneath, add your tier mapping, the suite command, and what each check actually covers (from the preconditions).
+4. **Show it:** `${CLAUDE_PLUGIN_ROOT}/scripts/plan.sh render <plan.json>`, as printed: a table per wave with each ticket's number and description, wave, model, estimate and expected output, then every number the run uses. Underneath, add your tier mapping, the suite command, and what each check actually covers (from the preconditions). Then the gates: propose them with `${CLAUDE_PLUGIN_ROOT}/scripts/gate-plan.sh propose <draft.json>` and show its table; the Artisan moves or removes slice, risk and end gates, never exception gates (`${CLAUDE_PLUGIN_ROOT}/references/end-gate.md`, "Gate placement").
 5. **Iterate until approved.** A change to the scope, waves, a model or an expected size goes into the draft; a number the Artisan overrides for this run is a `--set key=value` on the build (for example `--set max_agents=3`). Rebuild and show it again. Never edit `config.yml` for an override: it holds the project's numbers, and changing them for good is job 23, by PR.
 6. **Start the run:** `${CLAUDE_PLUGIN_ROOT}/scripts/state.sh init <run folder> <plan.json>`. From here the run's numbers come from the state file's `plan.config`; a number overridden mid-run goes through `state.sh override`.
+   Then, once, before the first wave launches: `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh label-run --repo <owner/name> <run folder>` labels every in-scope ticket `in-run` with one run comment. Details, and the approval recorded when the run can't start at once: `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/labels-and-envelope.md`.
 
 The approved scope is the run's scope, exactly: `state.sh dispatch` and `run-ticket.sh` refuse any ticket outside it (exit 4), and `run-ticket.sh` refuses to launch anything into a run folder with no state file. A ticket that should join gets its own plan step and approval first. Review capacity comes from Max Agents and the gates the Artisan approved; never size waves by guessing what the Artisan can review. Dispatch nothing before approval.
 
@@ -114,7 +117,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `launch` | Show the wave digest (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
 | `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
-| `parked` | Only a hands-on ticket the Artisan is building, and work behind it, is left. Say which ticket, as `status` prints it, and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. |
+| `parked` | Say why, as `status` prints it (one line per reason). A hands-on ticket the Artisan is building, and work behind it, is all that is left: say which ticket and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. "Waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`. "parked <window>" on plan usage: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
 
@@ -128,6 +131,8 @@ If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline),
 | #13 (billing tab) | 1 | claude-opus-5-5 | blocked: the suite failed after merging |
 
 Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
+
+**Budget and plan usage.** An `overrun` decision (the overrun gate, defer only) or a `parked …` line on plan usage: follow `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md` (`scripts/budget.sh`).
 
 **Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
 
@@ -151,6 +156,8 @@ When `status` says `done`, or the run halts, report:
 | #14 (export CSV) | 2 | claude-sonnet-5-5 | blocked: merge conflict in `export.py`; branch `agent/14` kept |
 
 Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
+
+Before the summary, when `status` says `done`, run the end gate and cut the PRs to `main` (`${CLAUDE_PLUGIN_ROOT}/scripts/end-gate.sh`; `${CLAUDE_PLUGIN_ROOT}/references/end-gate.md`): it lists every deferred gate and carried card, the PRs follow the `pr-boundaries` guardrail, and `end-gate.sh finish` takes the `in-run` labels off.
 
 Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/skills/retro/SKILL.md`).
 

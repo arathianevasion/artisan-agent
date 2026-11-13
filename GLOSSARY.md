@@ -150,6 +150,22 @@ _Avoid_: wave report, wave summary
 Where an open run stands, read first by any chat that picks the run up, after compaction, on resume or in a new session.
 _Avoid_: run summary (that's the end-of-run report)
 
+**Budget**:
+A run's spending limit in estimated dollars: the approved estimate plus the overrun allowance (25% by default). Only the Artisan raises it, at the overrun gate.
+_Avoid_: cap (that's one ticket's limit), quota
+
+**Overrun gate**:
+The exception gate a run hits when its projected spend crosses the budget. It holds new dispatch, never work in flight, and offers three choices: raise the budget, cut scope or stop. It is a defer-only gate: the Artisan picks one, and it's reviewed again at the end gate.
+_Avoid_: budget alert, cost gate
+
+**Plan-window guard**:
+The check before every dispatch that the Artisan's claude.ai plan has room in its five-hour and seven-day usage windows. When a window is near its limit, or its reading is unknown or stale, the guard parks the run instead of letting work be cut off midway.
+_Avoid_: rate limiter, usage check
+
+**Park**:
+To hold a run's new dispatch while work in flight carries on, until something outside the run changes: the Artisan finishes a hands-on ticket, reviews come back, or plan usage resets. A parked run is waiting, not stuck; `wave.sh status` says `next: parked` and why.
+_Avoid_: pause, suspend, halt (that stops the run)
+
 ### Judgement
 
 **Taste**:
