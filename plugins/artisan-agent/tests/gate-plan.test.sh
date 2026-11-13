@@ -104,3 +104,76 @@ test_a_proposal_already_in_the_plan_is_kept_until_the_artisan_reproposes() {
   assert_eq 4 "$(jq '.gates | length' draft.json)"
   assert_contains "$(cat out.md)" "| risk-3 | risk | #3 (billing tab) merges |"
 }
+
+# Areas (#77): per-area gate settings at the plan step.
+
+areas_config() {
+  cat >areas.yml <<'YML'
+areas:
+  billing:
+    paths: [src/billing/, db/migrations/]
+    gates: [risk]
+  export:
+    paths: [src/export]
+    gates: [slice]
+  docs:
+    paths: [docs/]
+YML
+}
+
+test_with_no_areas_configured_the_proposal_is_unchanged() {
+  draft feature
+  jq '.tickets["3"].paths = ["src/billing/tab.sh"]' draft.json >d && mv d draft.json
+  : >empty.yml
+  "$GP" propose draft.json --config empty.yml >out.md
+  assert_eq '[{"kind":"slice","slice":"export"},{"kind":"slice","slice":"billing"},{"kind":"risk","after":"1","tests":["new-seam"]},{"kind":"risk","after":"3","tests":["judgement-criteria","vocabulary-adr"]},{"kind":"end"}]' \
+    "$(jq -c .gates draft.json)"
+  assert_eq 'false' "$(jq 'any(.tickets[]; has("areas"))' draft.json)"
+  assert_not_contains "$(cat out.md)" "| Ticket | Areas |"
+}
+
+test_a_ticket_belongs_to_every_area_its_paths_fall_under_and_the_plan_names_them() {
+  draft feature
+  areas_config
+  jq '.tickets["2"].paths = ["src/export/csv.sh", "docs/csv.md", "src/exporter/x.sh"]' draft.json >d && mv d draft.json
+  "$GP" propose draft.json --config areas.yml >out.md
+  assert_eq '["docs","export"]' "$(jq -c '.tickets["2"].areas' draft.json)"
+  assert_contains "$(cat out.md)" "| Ticket | Areas |"
+  assert_contains "$(cat out.md)" "| #2 (CSV header) | docs, export |"
+}
+
+test_a_ticket_in_two_areas_gets_the_stricter_gate_setting_of_the_two() {
+  draft feature
+  areas_config
+  jq '.tickets["2"].paths = ["src/export/csv.sh", "db/migrations/001.sql"]' draft.json >d && mv d draft.json
+  "$GP" propose draft.json --config areas.yml >out.md
+  # export asks for its own slice gate, billing for a risk gate: both, so the union
+  assert_eq '{"kind":"slice","after":"2"}' "$(jq -c '.gates[] | select(.kind == "slice" and .after == "2")' draft.json)"
+  assert_eq '{"kind":"risk","after":"2","tests":["area:billing"]}' "$(jq -c '.gates[] | select(.kind == "risk" and .after == "2")' draft.json)"
+  assert_contains "$(cat out.md)" "area billing gate setting"
+}
+
+test_an_area_risk_setting_joins_the_tickets_own_escalation_in_one_risk_gate() {
+  draft feature
+  areas_config
+  jq '.tickets["1"].paths = ["src/billing/x.sh"]' draft.json >d && mv d draft.json
+  "$GP" propose draft.json --config areas.yml >/dev/null
+  assert_eq '[{"kind":"risk","after":"1","tests":["new-seam","area:billing"]}]' \
+    "$(jq -c '[.gates[] | select(.kind == "risk" and .after == "1")]' draft.json)"
+}
+
+test_an_area_with_no_gate_setting_changes_no_gate() {
+  draft feature
+  areas_config
+  jq '.tickets["2"].paths = ["docs/a.md"]' draft.json >d && mv d draft.json
+  "$GP" propose draft.json --config areas.yml >/dev/null
+  assert_eq '["docs"]' "$(jq -c '.tickets["2"].areas' draft.json)"
+  assert_eq '[{"kind":"slice","slice":"export"},{"kind":"slice","slice":"billing"},{"kind":"risk","after":"1","tests":["new-seam"]},{"kind":"risk","after":"3","tests":["judgement-criteria","vocabulary-adr"]},{"kind":"end"}]' \
+    "$(jq -c .gates draft.json)"
+}
+
+test_an_unknown_area_gate_setting_is_refused() {
+  draft feature
+  printf 'areas:\n  x:\n    paths: [a/]\n    gates: [loud]\n' >bad.yml
+  assert_status 2 "$GP" propose draft.json --config bad.yml
+}

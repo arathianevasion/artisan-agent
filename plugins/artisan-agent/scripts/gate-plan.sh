@@ -4,12 +4,20 @@
 # ${CLAUDE_PLUGIN_ROOT}/references/end-gate.md, "Gate placement".
 #
 # Usage, from the Engineering chat at the plan step:
-#   gate-plan.sh propose <draft.json>
+#   gate-plan.sh propose <draft.json> [--config FILE]
 #       writes the draft's `gates`: one slice gate per slice (a ticket with no
 #       `slice` is its own), a risk gate per ticket whose `escalation` names
 #       an escalation test, and the end gate. For `route` "small-change" or
 #       "bug" there is no slice gate: the end gate doubles as one (and, for a
 #       bug, leads with the failing test). Prints the table, as render does.
+#       Areas (#77): a ticket belongs to every area in the config (`areas.<name>`:
+#       `paths`, `gates`) that a path in its draft `paths` falls under (a path
+#       equal to, or inside, an area path). The ticket's `areas` is written to
+#       the draft and named under the table. An area's `gates` list says what
+#       its tickets get: `slice` (a slice gate of the ticket alone) and/or
+#       `risk` (a risk gate, test `area:<name>`). A ticket in several areas gets
+#       the union, the strictest setting. With no areas configured, nothing
+#       changes. --config reads FILE instead of the project's config.yml.
 #   gate-plan.sh render <draft.json>
 #       the gates as a Markdown table, numbered as the run will number them
 #       (slice-<n>, risk-<n>, end).
@@ -22,8 +30,9 @@
 #       refused (6); remove it instead.
 #
 # Draft fields read: scope, route (feature, small-change or bug; default
-# feature), tickets.<t>.title, .slice, .escalation (any of new-seam,
-# tracer-bullet, vocabulary-adr, judgement-criteria). Every command except
+# feature), tickets.<t>.title, .slice, .paths (the files it touches, for areas),
+# .escalation (any of new-seam, tracer-bullet, vocabulary-adr,
+# judgement-criteria). Every command except
 # render rewrites the draft in place and prints the table.
 #
 # Exit status: 0 ok, 1 error, 2 usage (or an unknown escalation test), 4 a
@@ -35,6 +44,7 @@
 set -euo pipefail
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 die() { echo "gate-plan.sh: $*" >&2; exit "${2:-1}"; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
@@ -43,7 +53,8 @@ TESTS='["new-seam","tracer-bullet","vocabulary-adr","judgement-criteria"]'
 # Positional ids, as scripts/lib/state-lib.sh numbers them in the run.
 JQ_DEFS='
   def test_label: {"new-seam": "new seam or module boundary", "tracer-bullet": "first tracer bullet through a new layer",
-              "vocabulary-adr": "change to vocabulary or an ADR", "judgement-criteria": "judgement-like acceptance criteria"}[.] // .;
+              "vocabulary-adr": "change to vocabulary or an ADR", "judgement-criteria": "judgement-like acceptance criteria"}[.]
+              // (if startswith("area:") then "area \(.[5:]) gate setting" else . end);
   def ids: [.gates // [] | to_entries[] | (if .value.kind == "end" then "end" else "\(.value.kind)-\(.key + 1)" end)];
   def tref($d): "#\(.)" + (($d.tickets[.].title // null) | if . then " (\(.))" else "" end);
 '
@@ -77,29 +88,56 @@ cmd_render() {
             else "the end gate, before the PRs to main" end)
          + " | yes |"),
       "",
+      ([$d.scope // [] | .[] | tostring | select(($d.tickets[.].areas // []) | length > 0)] as $in
+       | if ($in | length) == 0 then empty
+         else "| Ticket | Areas |", "|---|---|",
+              ($in[] | . as $t | "| \($t | tref($d)) | \($d.tickets[$t].areas | join(", ")) |"), "" end),
       "Exception gates are never placed here: the run opens one whenever it gives up on a ticket or a check won'"'"'t go green, and none can be removed."' "$1"
 }
 
 cmd_propose() {
-  [ $# -eq 1 ] || usage
+  local f="" config="" cfg="" areas="{}" a=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --config) [ $# -ge 2 ] || usage; config=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$f" ] || usage; f=$1; shift ;;
+    esac
+  done
+  [ -n "$f" ] || usage
+  set -- "$f"
   need_draft "$1"
-  local bad=
+  if [ -n "$config" ]; then cfg=$("$SCRIPT_DIR/config.sh" show --file "$config") || exit 1
+  elif git rev-parse --git-common-dir >/dev/null 2>&1; then cfg=$("$SCRIPT_DIR/config.sh" show) || exit 1
+  else cfg='{}'; fi # outside a repository there is no project config: no areas
+  areas=$(jq -c '.areas // {}' <<<"$cfg")
+  a=$(jq -r '[.[] | (.gates // [])[] | select(. != "slice" and . != "risk")] | unique | join(", ")' <<<"$areas")
+  [ -z "$a" ] || die "an area's gates may be slice or risk, not: $a" 2
+  local bad=""
   bad=$(jq -r --argjson ok "$TESTS" '[.tickets // {} | to_entries[] | .value.escalation // [] | .[] | select(. as $e | $ok | index($e) | not)] | unique | join(", ")' "$1")
   [ -z "$bad" ] || die "unknown escalation test: $bad (one of new-seam, tracer-bullet, vocabulary-adr, judgement-criteria)" 2
   case "$(jq -r '.route // "feature"' "$1")" in feature|small-change|bug) ;; *) die "route must be feature, small-change or bug" 2 ;; esac
   write "$1" '
-    . as $d | (.route // "feature") as $route
+    def under($p; $f): ($p | tostring | sub("/+$"; "")) as $b | ($f == $b or ($f | startswith($b + "/")));
+    def areas_of($paths): [$areas | to_entries[] | select(.value.paths // [] | any(. as $p | $paths | any(. as $f | under($p; $f)))) | .key];
+    def has_gate($names; $g): [$names[] | $areas[.].gates // [] | .[]] | index($g) != null;
+    . as $orig | (.route // "feature") as $route
     | [(.scope // [])[] | tostring] as $scope
+    | (reduce $scope[] as $t (.; areas_of(($orig.tickets[$t].paths // []) | map(tostring)) as $a
+                              | if $a == [] then del(.tickets[$t].areas) else .tickets[$t].areas = $a end)) as $d
     | (if $route == "feature" then
          [$scope[] as $t | ($d.tickets[$t].slice // null) as $s
-          | if $s == null then {kind: "slice", after: $t} else {kind: "slice", slice: $s} end]
+          | if $s == null or has_gate($d.tickets[$t].areas // []; "slice") then {kind: "slice", after: $t} else {kind: "slice", slice: $s} end]
          | reduce .[] as $g ([]; if index([$g]) then . else . + [$g] end)
        else [] end) as $slices
-    | [$scope[] as $t | ($d.tickets[$t].escalation // []) as $e | select($e != [])
+    | [$scope[] as $t
+       | (($d.tickets[$t].escalation // [])
+          + [($d.tickets[$t].areas // [])[] | select(has_gate([.]; "risk")) | "area:" + .]) as $e
+       | select($e != [])
        | {kind: "risk", after: $t, tests: $e}] as $risks
     | ({kind: "end"} + (if $route == "feature" then {} else {doubles_as_slice: true} end)
        + (if $route == "bug" then {bug: true} else {} end)) as $end
-    | .gates = $slices + $risks + [$end]'
+    | $d | .gates = $slices + $risks + [$end]' --argjson areas "$areas"
   cmd_render "$1"
 }
 
