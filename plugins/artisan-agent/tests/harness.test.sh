@@ -91,12 +91,12 @@ test_parallel_jobs_really_overlap() {
   mkdir "$TEST_TMPDIR/three"
   local n
   for n in 1 2 3; do
-    printf 'test_s%s() { sleep 2; }\n' "$n" >"$TEST_TMPDIR/three/t$n.test.sh"
+    printf 'test_s%s() { sleep 3; }\n' "$n" >"$TEST_TMPDIR/three/t$n.test.sh"
   done
   start=$(date +%s)
   "$TESTS_DIR/run.sh" -j 3 "$TEST_TMPDIR/three" >/dev/null 2>&1
   end=$(date +%s)
-  [ $((end - start)) -lt 5 ] || fail "three 2s tests took $((end - start))s under -j 3"
+  [ $((end - start)) -lt 8 ] || fail "three 3s tests took $((end - start))s under -j 3"
 }
 
 test_every_parallel_job_has_its_own_scratch_directory_and_no_artisan_variables() {
@@ -134,7 +134,7 @@ test_shards_together_cover_every_test_exactly_once() {
   all=$("$TESTS_DIR/run.sh" "$FIXTURES/many" 2>&1 | grep -E '^(ok|FAIL) ')
   assert_eq 7 "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" "tests in the fixture"
   shard=""
-  for i in 1 2 3; do
+  for i in $(seq 1 $n); do
     shard="$shard$("$TESTS_DIR/run.sh" --shard "$i/$n" "$FIXTURES/many" 2>&1 | grep -E '^(ok|FAIL) ')
 "
   done
