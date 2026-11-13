@@ -110,7 +110,7 @@ cmd_add() {
     jq -cn --arg title "$title" --arg why "$why" --args \
       '{title: $title, why: $why, blocks: $ARGS.positional, source: "result-notes"}' "$@" >>"$f"
   fi
-  "$SCRIPT_DIR/sweep.sh" "$RUN_DIR"
+  "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard
 }
 
 case "$cmd" in

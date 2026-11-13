@@ -5,8 +5,9 @@
 # ${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md. State file:
 # references/state-file.md.
 #
-# Usage, from the orchestrator (wave.sh dispatch calls guard) and the chat
-# (wave.sh status calls guard):
+# Usage, from the orchestrator (wave.sh dispatch and sweep.sh call guard) and
+# the chat (wave.sh launch calls guard, before anything starts; wave.sh status
+# never does: it only reads, with "parked" and "last"):
 #   budget.sh guard <run-dir>
 #       may anything new dispatch? First the plan-window guard, then the
 #       budget. Prints one line: "ok ...", "parked <window> ..." (18) or
@@ -15,6 +16,15 @@
 #       crossing it opens the overrun gate (a review-gate issue holding the
 #       packet), queues an "overrun" decision and logs "overrun-gate". Work in
 #       flight is never stopped. Refuses with 12 while the run is halted.
+#       Every call records its verdict and the time it was first seen
+#       (usage_verdict), but writes only when the verdict (ok and line)
+#       changes: a repeat reading leaves the state file untouched.
+#   budget.sh parked <run-dir>
+#       read-only: the "parked <window> ..." line and exit 0 while the run is
+#       parked on plan usage (as the guard last left it), otherwise exit 1.
+#   budget.sh last <run-dir>
+#       read-only: the guard's current verdict and since when it has held
+#       ("usage guard: <line>, since <time>").
 #   budget.sh usage <run-dir>
 #       the plan-window verdict alone, read-only: "ok 5h <p>% 7d <p>%",
 #       "park five-hour|seven-day <p>% ...resets <time>" or "park unknown <why>"
@@ -41,7 +51,9 @@
 #       after the reset). raise: the new ceiling for the window that parked
 #       the run (seven-day: seven_day_ceiling_percent; five-hour: the reserve
 #       becomes 100 - percent), a run override; 6 for an unknown reading.
-#       stop: the run halts. 6: not parked.
+#       stop: the run halts. 6: not parked. raise changes the state in one
+#       write (the run override and the answer together): a failure leaves it
+#       as it was.
 #
 # Environment: ARTISAN_USAGE_FILE, ARTISAN_HOME, CLAUDE_CONFIG_DIR place the
 # usage file (statusline.sh path). The reading's age is measured on the real
@@ -62,6 +74,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/config-lib.sh
+. "$SCRIPT_DIR/lib/config-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -127,8 +141,10 @@ worker_readings() {
 verdict() {
   local f= reading= reserve= ceiling= stale= workers= running=
   f=$(usage_file)
-  reserve=$(get '.plan.config.usage_reserve.five_hour_reserve_percent // 20')
-  ceiling=$(get '.plan.config.usage_reserve.seven_day_ceiling_percent // 90')
+  # A raise is judged against its own new limit before it is written
+  # (cmd_park), so the answer and the override land in one write.
+  reserve=${VERDICT_RESERVE:-$(get '.plan.config.usage_reserve.five_hour_reserve_percent // 20')}
+  ceiling=${VERDICT_CEILING:-$(get '.plan.config.usage_reserve.seven_day_ceiling_percent // 90')}
   stale=$(get '.plan.config.stale_usage_minutes // 10')
   reading=null
   [ -s "$f" ] && reading=$(jq -c 'if type == "object" then . else null end' "$f" 2>/dev/null || echo null)
@@ -215,21 +231,46 @@ record_park() {
     end' --argjson v "$1"
 }
 
-# unpark how by: the park ends, its decision decided.
-clear_park() {
-  apply '
+# The park ends, its decision decided ($how, $by).
+UNPARK_JQ='
+  def unpark:
     if .usage_park == null then .
     else event({event: "unparked", reason: "usage", window: .usage_park.window, how: $how, by: $by}; $now)
       | .decisions |= map(if .kind == "usage" and .status == "waiting"
                           then .status = "decided" | .choice = $how | .by = $by | .decided_at = $now else . end)
       | .usage_park = null
-    end' --arg how "$1" --arg by "$2"
+    end;'
+
+# unpark how by
+clear_park() {
+  apply "$UNPARK_JQ"'unpark' --arg how "$1" --arg by "$2"
+}
+
+# parked_line: what a park says, from the state file alone.
+parked_line() {
+  get "$WHEN_JQ"'"parked \(.usage_park.window): \(.usage_park.why)"
+    + (if .usage_park.resets_at then "; resets \(.usage_park.resets_at | when)" else "" end)
+    + (if .usage_park.resume then "; the Artisan said resume: waiting for a fresh reading under the limits" else "; waiting for the Artisan (budget.sh park)" end)'
+}
+
+# note_verdict verdict-json: the guard's current verdict and when it was first
+# seen, for the status to show (it only reads). A call whose verdict (ok and
+# line) is the one on record writes nothing, so a repeat leaves the state
+# byte-identical; "at" is when this verdict began, not when it was last read.
+note_verdict() {
+  local line= same=
+  line=$(verdict_line "$1")
+  same=$(get --argjson v "$1" --arg line "$line" '.usage_verdict != null and .usage_verdict.ok == $v.ok and .usage_verdict.line == $line')
+  [ "$same" = true ] && return 0
+  apply "$WHEN_JQ"'.usage_verdict = {ok: $v.ok, line: $line, at: $now}' \
+    --argjson v "$1" --arg line "$line"
 }
 
 # usage_guard: 0 to carry on; otherwise prints the park and exits 18.
 usage_guard() {
   local v=
   v=$(verdict)
+  note_verdict "$v"
   if [ "$(get '.usage_park != null')" = true ]; then
     # Parked: only the Artisan's resume (or a raised ceiling) lets dispatch
     # carry on, and then only on a fresh reading under the limits.
@@ -237,15 +278,25 @@ usage_guard() {
       clear_park resume "$(get -r '.usage_park.resume.by')"
       return 0
     fi
-    get "$WHEN_JQ"'"parked \(.usage_park.window): \(.usage_park.why)"
-      + (if .usage_park.resets_at then "; resets \(.usage_park.resets_at | when)" else "" end)
-      + (if .usage_park.resume then "; the Artisan said resume: waiting for a fresh reading under the limits" else "; waiting for the Artisan (budget.sh park)" end)'
+    parked_line
     exit 18
   fi
   [ "$(jq -r .ok <<<"$v")" = true ] && return 0
   record_park "$v"
   printf 'parked %s\n' "$(verdict_line "$v" | sed 's/^park //')"
   exit 18
+}
+
+cmd_parked() {
+  open_run "${1:-}"
+  [ "$(get '.usage_park != null')" = true ] || return 1
+  parked_line
+}
+
+cmd_last() {
+  open_run "${1:-}"
+  get "$WHEN_JQ"'if .usage_verdict == null then "usage guard: not run yet (the sweep or wave.sh launch runs it)"
+    else "usage guard: \(.usage_verdict.line), since \(.usage_verdict.at | when)" end'
 }
 
 # ------------------------------------------------------- the overrun gate
@@ -461,7 +512,7 @@ cmd_overrun() {
 
 cmd_park() {
   open_run "${1:-}"
-  local opt="${2:-}" window= pct= v= key= value= cur=
+  local opt="${2:-}" window= pct= v= key= value= cur= ok=
   [ -n "$opt" ] || usage
   shift 2
   parse_by "$@"
@@ -491,10 +542,22 @@ cmd_park() {
           ;;
         *) state_die 6 "budget.sh: the reading is unknown, so there is no ceiling to raise; resume (once a fresh reading is under the limits) or stop" ;;
       esac
-      "$SCRIPT_DIR/state.sh" override "$RUN_DIR" "$key" "$value" >/dev/null
-      apply '.usage_park.resume = {by: $by, at: $now, after: null, raised: {key: $key, value: $value}}
-             | event({event: "ceiling-raised", key: $key, value: $value, by: $by}; $now)' \
-        --arg by "$BY" --arg key "$key" --argjson value "$value"
+      # One write: the run override, the answer and, when the raised limit
+      # already clears the reading, the end of the park, together or not at all.
+      if [ "$window" = seven-day ]; then v=$(VERDICT_CEILING=$pct verdict); else v=$(VERDICT_RESERVE=$value verdict); fi
+      if [ "$(jq -r .ok <<<"$v")" = true ]; then ok=true; else ok=false; fi
+      apply "$CONFIG_JQ_DEFS$UNPARK_JQ"'.plan |= run_override($key; $value)
+             | .usage_park.resume = {by: $by, at: $now, after: null, raised: {key: $key, value: $value}}
+             | event({event: "ceiling-raised", key: $key, value: $value, by: $by}; $now)
+             | if $ok then unpark else . end' \
+        --arg by "$BY" --arg key "$key" --argjson value "$value" --argjson ok "$ok" --arg how raise
+      if [ "$ok" = true ]; then
+        echo "resumed: $(verdict_line "$v")"
+      else
+        get "$WHEN_JQ"'"resume recorded: dispatch carries on once a fresh reading is under the limits"
+          + (if .usage_park.resets_at then " (the window resets \(.usage_park.resets_at | when))" else "" end)'
+      fi
+      return 0
       ;;
     stop)
       [ "${#ARGS[@]}" -eq 0 ] || usage
@@ -523,6 +586,8 @@ cmd=$1
 shift
 case "$cmd" in
   guard) [ $# -eq 1 ] || usage; cmd_guard "$1" ;;
+  parked) [ $# -eq 1 ] || usage; cmd_parked "$1" ;;
+  last) [ $# -eq 1 ] || usage; cmd_last "$1" ;;
   usage) [ $# -eq 1 ] || usage; cmd_usage "$1" ;;
   project) [ $# -eq 1 ] || usage; open_run "$1"; project ;;
   packet)

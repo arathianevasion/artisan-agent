@@ -89,7 +89,7 @@ reconcile() {
 
   # The sweep, under this call's lock, after git: a worker whose branch is
   # already merged is not a failed attempt.
-  ARTISAN_WRITER_PID=$(state_writer_pid) "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" || return $?
+  ARTISAN_WRITER_PID=$(state_writer_pid) "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard || return $?
   cp "$file" "$tmp"
 
   # Tracker: state, labels and blockers for every ticket in scope.

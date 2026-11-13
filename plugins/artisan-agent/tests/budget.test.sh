@@ -372,3 +372,222 @@ test_a_window_past_its_reset_counts_as_empty() {
     >"$ARTISAN_USAGE_FILE"
   assert_status 0 "$B" guard "$RUN_DIR"
 }
+
+# ---------------------------------------------- the guard's home (#120)
+
+# tracker_sum: a checksum of every file the fake tracker holds.
+# (Not the call log: reading is allowed, and test_status... checks for writes.)
+tracker_sum() { (cd "$FAKE_GH_DIR" && find . -type f ! -name calls | sort | xargs cat | cksum); }
+
+test_status_only_reads_with_a_guard_condition_that_would_park_or_open_the_gate() {
+  setup_budget
+  seed_overrun
+  usage_reading 85 20
+  # Both the usage park and the overrun gate are due; status must do neither.
+  local before= tb= out=
+  # The first status lets the reconciler derive the frontier from the tracker
+  # (it always has); the guard is what must not move, so it is checked on the
+  # state that first run left, and by what the guard owns: park, verdict, gate.
+  "$W" status "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq "null null 0" "$(state_get '"\(.usage_park) \(.usage_verdict) \((.overrun_gates // []) | length)"')" "the first status already left the guard alone"
+  before=$(cat "$RUN_DIR/state.json")
+  tb=$(tracker_sum)
+  out=$("$W" status "$RUN_DIR" 2>&1 || true)
+  assert_eq "$before" "$(cat "$RUN_DIR/state.json")" "status left the state file unchanged"
+  assert_eq "$tb" "$(tracker_sum)" "status left the tracker unchanged"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "--method" "status made no write call on the tracker"
+  assert_eq null "$(state_get .usage_park)"
+  assert_eq 0 "$(state_get '(.overrun_gates // []) | length')"
+  assert_contains "$out" "usage guard: not run yet"
+  assert_not_contains "$out" "next: parked"
+}
+
+test_the_sweep_runs_the_guard_and_parks_and_status_then_shows_its_last_verdict() {
+  setup_budget
+  usage_reading 85 20
+  local out= when=
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/sweep.err"
+  assert_contains "$(cat "$TEST_TMPDIR/sweep.err")" "parked five-hour 85%"
+  assert_eq five-hour "$(state_get .usage_park.window)"
+  assert_eq usage "$(state_get '.events[] | select(.event == "parked") | .reason')"
+  assert_eq waiting "$(state_get '.decisions[] | select(.kind == "usage") | .status')"
+  # Status reads what the sweep left: parked, and the verdict with its time.
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "parked five-hour: the five-hour window is within the 20% reserve"
+  when=$(state_get '.usage_verdict.at | strflocaltime("%a %d %b %H:%M %Z")')
+  assert_contains "$out" "usage guard: park five-hour 85%"
+  assert_contains "$out" "since $when"
+  # Status itself neither unparks nor re-parks: one park, one event.
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "parked")] | length')"
+}
+
+test_a_repeat_guard_reading_writes_nothing_and_a_changed_one_does() {
+  setup_budget
+  usage_reading 30 20
+  local before= first_at=
+  export ARTISAN_NOW=5000
+  "$B" guard "$RUN_DIR" >/dev/null
+  first_at=$(state_get .usage_verdict.at)
+  assert_eq 5000 "$first_at" "the first guard call records the verdict"
+  before=$(cat "$RUN_DIR/state.json")
+  export ARTISAN_NOW=5001
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq "$before" "$(cat "$RUN_DIR/state.json")" "the same reading a second later left state.json byte-identical"
+  # A second sweep and a second launch-style guard call hold to the same rule.
+  export ARTISAN_NOW=5002
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1 || true
+  export ARTISAN_NOW=5003
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq 5000 "$(state_get .usage_verdict.at)" "the verdict still says since when it was first seen"
+  # A changed reading is a changed verdict: it writes.
+  usage_reading 50 20
+  export ARTISAN_NOW=5004
+  "$B" guard "$RUN_DIR" >/dev/null
+  assert_eq 5004 "$(state_get .usage_verdict.at)" "a changed reading writes"
+  assert_contains "$(state_get .usage_verdict.line)" "5h 50%"
+  unset ARTISAN_NOW
+}
+
+test_the_sweep_opens_the_overrun_gate_as_before() {
+  setup_budget
+  seed_overrun
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/sweep.err"
+  assert_contains "$(cat "$TEST_TMPDIR/sweep.err")" "overrun #4"
+  assert_eq "Exception gate: overrun (run r1)" "$(jq -r .title "$FAKE_GH_DIR/issue-4.json")"
+  assert_eq waiting "$(state_get '.decisions[] | select(.kind == "overrun") | .status')"
+}
+
+test_the_reconciler_and_findings_sweeps_do_not_run_the_guard() {
+  setup_budget
+  usage_reading 85 20
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq null "$(state_get .usage_park)"
+}
+
+# A mv that logs each write of the state file and can fail the nth and later.
+mv_shim() { # dir fail-after
+  mkdir -p "$1"
+  cat >"$1/mv" <<SH
+#!/bin/sh
+for a in "\$@"; do last=\$a; done
+case "\$last" in
+  */state.json)
+    n=\$(cat "$1/count" 2>/dev/null || echo 0)
+    if [ "\$n" -ge "$2" ]; then echo "mv: simulated failure" >&2; exit 1; fi
+    echo \$((n + 1)) >"$1/count"; echo "\$@" >>"$1/log" ;;
+esac
+exec /bin/mv "\$@"
+SH
+  chmod +x "$1/mv"
+}
+
+test_park_raise_is_one_state_write_and_a_failure_leaves_the_state_as_it_was() {
+  setup_budget
+  usage_reading 85 20
+  assert_status 18 "$B" guard "$RUN_DIR"
+  local before= out= st=0 p=$PATH
+  before=$(cat "$RUN_DIR/state.json")
+  # A write that fails: nothing of the raise lands, neither override nor answer.
+  mv_shim "$TEST_TMPDIR/shim-fail" 0
+  PATH="$TEST_TMPDIR/shim-fail:$p" "$B" park "$RUN_DIR" raise 95 >/dev/null 2>&1 || st=$?
+  [ "$st" -ne 0 ] || fail "the raise should fail when its write fails"
+  assert_eq "$before" "$(cat "$RUN_DIR/state.json")" "a failed raise leaves the state as it was"
+  # A write that fails after the first: the raise needs only one, so it lands whole.
+  mv_shim "$TEST_TMPDIR/shim-one" 1
+  out=$(PATH="$TEST_TMPDIR/shim-one:$p" "$B" park "$RUN_DIR" raise 95)
+  assert_eq 1 "$(cat "$TEST_TMPDIR/shim-one/count")" "exactly one state write"
+  assert_contains "$out" "resumed: ok 5h 85%"
+  assert_eq 5 "$(state_get .plan.config.usage_reserve.five_hour_reserve_percent)"
+  assert_eq null "$(state_get .usage_park)"
+  assert_eq ceiling-raised "$(state_get '.events[] | select(.event == "ceiling-raised") | .event')"
+  assert_eq raise "$(state_get '.events[] | select(.event == "unparked") | .how')"
+}
+
+test_a_raise_that_does_not_clear_the_reading_records_the_answer_in_one_write() {
+  setup_budget
+  usage_reading 85 20
+  assert_status 18 "$B" guard "$RUN_DIR"
+  mv_shim "$TEST_TMPDIR/shim-one" 1
+  local out=
+  out=$(PATH="$TEST_TMPDIR/shim-one:$PATH" "$B" park "$RUN_DIR" raise 84 2>&1) || fail "raise: $out"
+  assert_eq 1 "$(cat "$TEST_TMPDIR/shim-one/count")"
+  assert_contains "$out" "resume recorded"
+  assert_eq 16 "$(state_get .plan.config.usage_reserve.five_hour_reserve_percent)"
+  assert_eq true "$(state_get '.usage_park.resume != null')"
+}
+
+test_launch_runs_the_guard_between_waves_and_a_park_refuses_it() {
+  setup_budget
+  "$W" start "$RUN_DIR" >/dev/null
+  usage_reading 85 20
+  local out= st=0
+  out=$("$W" launch "$RUN_DIR" 2>&1) || st=$?
+  assert_eq 18 "$st" "launch is where the guard runs when no orchestrator's sweep does"
+  assert_contains "$out" "parked five-hour 85%"
+  assert_eq five-hour "$(state_get .usage_park.window)"
+  assert_eq usage "$(state_get '.events[] | select(.event == "parked") | .reason')"
+  assert_eq 0 "$(state_get '(.orchestrators // []) | length')" "no orchestrator was launched"
+}
+
+test_launch_opens_the_overrun_gate_and_refuses() {
+  setup_budget
+  "$W" start "$RUN_DIR" >/dev/null
+  seed_overrun
+  local st=0
+  "$W" launch "$RUN_DIR" >/dev/null 2>&1 || st=$?
+  assert_eq 17 "$st"
+  assert_eq 1 "$(state_get '(.overrun_gates // []) | length')"
+}
+
+# A run parked on usage while it also waits behind an open review (#70, #72):
+# one `parked` event per reason, both reasons in status, and clearing one
+# leaves the run parked on the other.
+seed_waiting_on_a_review() {
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .tickets["1"] |= (.status = "merged" | .merge_commit = "abc1234")
+    | .frontier = []
+    | .review_gates = [{id: "g1", kind: "slice", title: "Slice gate: greeting (run r1)", issue: 9, status: "open"}]'
+  jq -n '{number: 9, title: "Slice gate: greeting (run r1)", state: "open", labels: [{name: "review-gate"}], body: "x"}' \
+    >"$FAKE_GH_DIR/issue-9.json"
+  echo '[9]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  echo '[9]' >"$FAKE_GH_DIR/blocked_by-3.json"
+}
+
+test_a_run_parked_on_usage_and_on_reviews_names_both_logs_each_once_and_clears_one_at_a_time() {
+  setup_budget
+  seed_waiting_on_a_review
+  local out= n=
+  # Reviews alone first.
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "parked: waiting on 1 review: Slice gate: greeting (run r1) #9"
+  # The usage park arrives (the sweep's guard).
+  usage_reading 85 20
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)
+  assert_contains "$out" "parked five-hour: the five-hour window is within the 20% reserve"
+  assert_contains "$out" "parked: waiting on 1 review: Slice gate: greeting (run r1) #9"
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)   # asking again adds nothing
+  "$W" status "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "parked" and .reason == "usage")] | length')" "one usage park event"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "parked" and .reason == "reviews")] | length')" "one reviews park event"
+  # Clear the usage park (a lower reading and a resume): still parked on the review.
+  "$B" park "$RUN_DIR" resume >/dev/null
+  usage_reading 5 20
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1
+  assert_eq null "$(state_get .usage_park)"
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)
+  assert_contains "$out" "next: parked"
+  assert_not_contains "$out" "parked five-hour"
+  assert_contains "$out" "parked: waiting on 1 review"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "parked" and .reason == "reviews")] | length')" "the review park is not logged again"
+  # And the other way: usage again, then the review closes: parked on usage alone.
+  usage_reading 85 20
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-9.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-9.json"
+  out=$("$W" status "$RUN_DIR" 2>/dev/null || true)
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "parked five-hour"
+  assert_not_contains "$out" "waiting on 1 review"
+}

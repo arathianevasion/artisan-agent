@@ -6,7 +6,7 @@
 . "$TESTS_DIR/helpers/run-state.sh"
 
 # The optional fields, as the reference's "Optional fields" table lists them.
-OPTIONAL_TOP='events orchestrators findings_read relays lessons review_gates halted waves location provisional_shown'
+OPTIONAL_TOP='events orchestrators findings_read relays lessons review_gates halted waves location provisional_shown usage_verdict'
 OPTIONAL_PLAN='gates overrides suite_command checks orchestrator'
 OPTIONAL_TICKET='attempt_costs verifications worktree base suite tracker_closed wave resolve risk_gate context_risk questions answers blocked_reason'
 
