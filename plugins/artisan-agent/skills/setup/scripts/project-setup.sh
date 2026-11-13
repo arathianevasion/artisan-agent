@@ -206,7 +206,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who=
+  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf=
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -233,6 +233,31 @@ cmd_apply() {
     echo "unchanged: .artisan-agent/config.yml"
     if [ -n "$team" ] && ! grep -qxF "team_guardrails_repo: $team" "$f"; then
       echo "kept: .artisan-agent/config.yml exists; set team_guardrails_repo: $team in it by hand if you want it"
+    fi
+  fi
+  # The gate workflow, for a machine whose merge gate runs on CI (#139): it
+  # must be in .github/workflows and have a workflow_dispatch trigger, or
+  # setup refuses it, naming it. Recorded as ci_gate.workflow when the config
+  # has none yet; a different one already there is kept.
+  gate_wf=$(jq -r '.ci_gate_workflow // ""' "$answers")
+  if [ -n "$gate_wf" ]; then
+    case "$gate_wf" in */* | .* | *[!A-Za-z0-9_.-]*) die "ci_gate_workflow is a file name in .github/workflows, got: $gate_wf" ;; esac
+    "$ROOT/scripts/merge-gate.sh" workflow-check "$wt/.github/workflows/$gate_wf" \
+      || die "refused the gate workflow .github/workflows/$gate_wf: the merge gate on CI starts it with workflow_dispatch"
+    cur_wf=$("$ROOT/scripts/config.sh" show --file "$f" | jq -r '.ci_gate.workflow // ""') || die "cannot read $f"
+    if [ "$cur_wf" = "$gate_wf" ]; then
+      echo "unchanged: the gate workflow is $gate_wf"
+    elif [ -n "$cur_wf" ]; then
+      echo "kept: .artisan-agent/config.yml names the gate workflow $cur_wf; change ci_gate.workflow by hand if you want $gate_wf"
+    else
+      awk -v wf="$gate_wf" '
+        /^ci_gate:[[:space:]]*$/ { print; blk = 1; seen = 1; next }
+        blk && /^  workflow:[[:space:]]*$/ { print "  workflow: " wf; done = 1; next }
+        blk && /^[^ ]/ { if (!done) print "  workflow: " wf; done = 1; blk = 0 }
+        { print }
+        END { if (blk && !done) print "  workflow: " wf; if (!seen) printf "\nci_gate:\n  workflow: %s\n", wf }' "$f" >"$tmp/config.yml"
+      cp "$tmp/config.yml" "$f"
+      echo "changed: the gate workflow is $gate_wf (ci_gate.workflow)"
     fi
   fi
   if ! grep -qsx '.artisan-agent/runs/' "$wt/.gitignore"; then

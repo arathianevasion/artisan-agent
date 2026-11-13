@@ -5,6 +5,11 @@
 #   machine-setup.sh scan           list removal offers, one per line: ID<TAB>KIND<TAB>description
 #   machine-setup.sh remove ID...   apply only the offers the Artisan said yes to
 #   machine-setup.sh check          report any missing tool the pipeline's scripts need (jq, perl)
+#   machine-setup.sh merge-gate [auto|local|ci]
+#                                   this machine's merge gate (#139), in host.json in the individual
+#                                   home: with no argument, print it as merge-gate.sh resolves it; with
+#                                   one, record it (other keys kept). auto (the default) is local on
+#                                   macOS and ci on Linux: where the full suite runs after each merge
 #
 # Everything lives under CLAUDE_CONFIG_DIR (default $HOME/.claude). Nothing is deleted:
 # skill copies move to $CFG/skills/.trash. ARTISAN_CLAUDE_BIN overrides the claude binary.
@@ -85,6 +90,23 @@ cmd_init() {
   json autoupdate "$CFG"
   [ "$tools_rc" = 0 ] || echo "setup finished, but jq or perl is missing (see above); install it before running workers" >&2
   return "$tools_rc"
+}
+
+# The merge gate is the machine's choice, so it lives in host.json beside the
+# host record, never in the individual home's git history.
+cmd_merge_gate() {
+  local want="${1:-}" f="$HOME_DIR/host.json" tmp=
+  if [ -z "$want" ]; then "$HERE/../../../scripts/merge-gate.sh" show; return; fi
+  case "$want" in auto | local | ci) ;; *) echo "merge_gate must be auto, local or ci, not \"$want\"" >&2; return 2 ;; esac
+  command -v jq >/dev/null 2>&1 || { echo "missing: jq"; return 1; }
+  mkdir -p "$HOME_DIR"
+  if [ -f "$f" ] && [ "$(jq -r '.merge_gate // ""' "$f")" = "$want" ]; then
+    echo "unchanged: merge_gate is $want in $f"
+    return 0
+  fi
+  tmp="$f.tmp.$$"
+  { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq --arg m "$want" '.merge_gate = $m' >"$tmp" && mv -f "$tmp" "$f"
+  echo "changed: merge_gate is $want in $f"
 }
 
 cmd_scan() {
@@ -179,5 +201,6 @@ case ${1:-} in
   check) cmd_check ;;
   scan) cmd_scan ;;
   remove) shift; cmd_remove "$@" ;;
+  merge-gate) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh merge-gate [auto|local|ci]" >&2; exit 2; }; cmd_merge_gate "$@" ;;
   *) echo "usage: machine-setup.sh init|check|scan|remove ID..." >&2; exit 2 ;;
 esac

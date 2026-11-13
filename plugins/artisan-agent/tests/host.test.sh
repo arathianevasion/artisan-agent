@@ -282,3 +282,34 @@ test_a_resumed_run_is_checked_against_the_tickets_it_has_left() {
   assert_status 0 "$L" check --run-dir "$RUN_DIR" --margin-minutes 0 --now $((1000000 + 2592000 - 35 * 60))
   assert_status 15 "$L" check --run-dir "$RUN_DIR" --margin-minutes 0 --now $((1000000 + 2592000 - 35 * 60 + 1))
 }
+
+# ---- the machine's merge gate lives in host.json too (#139)
+
+test_machine_setup_records_the_merge_gate_and_it_does_not_make_a_host_or_a_legacy_stamp() {
+  fake_host linux
+  unset ARTISAN_MERGE_GATE
+  local M="$PLUGIN_ROOT/skills/setup/scripts/machine-setup.sh" L="$PLUGIN_ROOT/scripts/login-check.sh"
+  assert_eq ci "$("$M" merge-gate | jq -r .mode)" "auto on Linux, with no host.json"
+  assert_contains "$("$M" merge-gate local)" "changed: merge_gate is local"
+  assert_contains "$("$M" merge-gate local)" "unchanged:"
+  assert_eq local "$("$PLUGIN_ROOT/scripts/merge-gate.sh" mode)" "a Linux laptop gating locally"
+  assert_status 2 "$M" merge-gate cloud
+  # Not a host, and not an old login stamp either.
+  assert_status 1 "$L" legacy
+  assert_contains "$("$L" check --span-minutes 10)" "no host here"
+  # Host setup keeps it, and the machine becomes a host.
+  "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null
+  assert_eq "true local" "$(jq -r '"\(.configured) \(.merge_gate)"' "$(AH)/host.json")"
+}
+
+test_cleanup_of_an_old_stamp_keeps_the_merge_gate() {
+  fake_host linux
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  mkdir -p "$(AH)"
+  echo '{"login_at":1000000,"merge_gate":"local"}' >"$(AH)/host.json"
+  assert_contains "$("$L" legacy)" "legacy:"
+  "$L" cleanup >/dev/null
+  assert_eq '{"merge_gate":"local"}' "$(jq -c . "$(AH)/host.json")"
+  assert_eq 1000000 "$(jq .login_at "$(AH)/login.json")"
+  assert_status 1 "$L" legacy
+}

@@ -380,3 +380,44 @@ test_setup_skill_asks_exactly_five_questions() {
   local f="$PLUGIN_ROOT/skills/setup/PROJECT.md"
   assert_eq 5 "$(sed -n '/^## The five questions/,/^## /p' "$f" | grep -c '^[0-9]\. \*\*')"
 }
+
+seed_workflow() { # name trigger-line
+  mkdir -p "$P/.github/workflows"
+  printf 'name: CI\non:\n  push:\n%s\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps: []\n' "$2" >"$P/.github/workflows/$1"
+  git -C "$P" add -A && git -C "$P" commit -q -m "workflow $1"
+  git -C "$P" push -q origin main
+}
+
+test_setup_records_the_gate_workflow_and_refuses_one_without_workflow_dispatch() {
+  seed
+  seed_workflow ci.yml '  workflow_dispatch:'
+  seed_workflow push-only.yml '  pull_request:'
+  local wt= rc=0 err=
+  wt=$("$PS" begin "$P")
+  answers '{"ci_gate_workflow":"push-only.yml"}'
+  err=$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json" 2>&1 >/dev/null) || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$err" "push-only.yml has no workflow_dispatch trigger"
+  assert_contains "$err" "refused the gate workflow .github/workflows/push-only.yml"
+  answers '{"ci_gate_workflow":"missing.yml"}'
+  assert_status 1 "$PS" apply "$wt" "$TEST_TMPDIR/answers.json"
+  answers '{"ci_gate_workflow":"ci.yml"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "changed: the gate workflow is ci.yml"
+  assert_eq "\"ci.yml\"" "$("$PLUGIN_ROOT/scripts/config.sh" get ci_gate.workflow --file "$wt/.artisan-agent/config.yml")"
+  assert_eq 30 "$("$PLUGIN_ROOT/scripts/config.sh" get ci_gate.timeout_minutes --file "$wt/.artisan-agent/config.yml")"
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "unchanged: the gate workflow is ci.yml"
+}
+
+test_setup_adds_the_gate_workflow_to_a_config_that_predates_it() {
+  seed
+  seed_workflow ci.yml '  workflow_dispatch:'
+  mkdir -p "$P/.artisan-agent"
+  printf 'max_agents: 3\n' >"$P/.artisan-agent/config.yml"
+  git -C "$P" add -A && git -C "$P" commit -q -m config && git -C "$P" push -q origin main
+  local wt=
+  wt=$("$PS" begin "$P")
+  answers '{"ci_gate_workflow":"ci.yml"}'
+  "$PS" apply "$wt" "$TEST_TMPDIR/answers.json" >/dev/null
+  assert_eq "\"ci.yml\"" "$("$PLUGIN_ROOT/scripts/config.sh" get ci_gate.workflow --file "$wt/.artisan-agent/config.yml")"
+  assert_eq 3 "$("$PLUGIN_ROOT/scripts/config.sh" get max_agents --file "$wt/.artisan-agent/config.yml")"
+}

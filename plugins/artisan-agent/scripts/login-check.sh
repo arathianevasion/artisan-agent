@@ -50,8 +50,9 @@ usage() { state_usage "$0"; }
 
 # A machine is the host when host setup wrote host.json (configured: true).
 is_host() { [ -f "$HOST_FILE" ] && jq -e '.configured == true' "$HOST_FILE" >/dev/null 2>&1; }
-# host.json that exists but host setup did not write: an old login stamp made it.
-is_legacy() { [ -f "$HOST_FILE" ] && ! is_host; }
+# host.json that host setup did not write but an old login stamp did. One that
+# holds only other machine settings (merge_gate, machine-setup.sh) is neither.
+is_legacy() { [ -f "$HOST_FILE" ] && ! is_host && jq -e 'has("login_at") or has("login_lifetime_days")' "$HOST_FILE" >/dev/null 2>&1; }
 # The login stamp: login.json, else (a host set up before #108) host.json.
 login_source() { if [ -f "$LOGIN_FILE" ]; then echo "$LOGIN_FILE"; else echo "$HOST_FILE"; fi; }
 
@@ -153,6 +154,10 @@ cmd_cleanup() { # move a stamp out of host.json into login.json
     tmp="$HOST_FILE.tmp.$$"
     jq 'del(.login_at, .login_lifetime_days)' "$HOST_FILE" >"$tmp" && mv -f "$tmp" "$HOST_FILE"
     echo "changed: moved the login stamp to $LOGIN_FILE; $HOST_FILE kept (this machine is a host)"
+  elif jq -e 'del(.login_at, .login_lifetime_days) | length > 0' "$HOST_FILE" >/dev/null 2>&1; then
+    tmp="$HOST_FILE.tmp.$$"
+    jq 'del(.login_at, .login_lifetime_days)' "$HOST_FILE" >"$tmp" && mv -f "$tmp" "$HOST_FILE"
+    echo "changed: moved the login stamp to $LOGIN_FILE; $HOST_FILE kept for its other settings; this machine is not a host"
   else
     rm -f "$HOST_FILE"
     echo "changed: moved the login stamp to $LOGIN_FILE and removed $HOST_FILE; this machine is not a host"
