@@ -114,7 +114,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `launch` | Show the wave digest (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
 | `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
-| `parked` | Only a hands-on ticket the Artisan is building, and work behind it, is left. Say which ticket, as `status` prints it, and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. |
+| `parked` | Say why, as `status` prints it (one line per reason). A hands-on ticket the Artisan is building, and work behind it, is all that is left: say which ticket and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. "Waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`. "parked <window>" on plan usage: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
 
@@ -128,6 +128,8 @@ If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline),
 | #13 (billing tab) | 1 | claude-opus-5-5 | blocked: the suite failed after merging |
 
 Under it, one line each for: cost so far against the budget (`.costs`, `.plan.budget_usd`), findings logged, review remarks not acted on, and what runs next.
+
+**Budget and plan usage.** An `overrun` decision (the overrun gate, defer only) or a `parked …` line on plan usage: follow `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md` (`scripts/budget.sh`).
 
 **Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
 

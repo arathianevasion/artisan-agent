@@ -39,6 +39,8 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/retro/scripts/retro.sh` (usage at it
 
 Every retro, after the lessons are delivered, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/upstream-check.sh" refresh` then `... run <run>/retro/upstream` (usage and files at the script's top; the judgement agent's brief is `JUDGE.md`). With upstream unchanged it prints "no upstream change" and runs nothing else: say that in one line. With upstream moved it runs the mechanical check (a script) and the judgement check (an agent), and prints tables of port candidates, behaviour changes and kept skills that start breaking `ARTISAN.md`. A breaking change files a pipeline ticket and withholds the offer; otherwise it ends "Update upstream to X?", with other moved plugins from the marketplace to offer the same way. Show the tables as printed, ask once, and on yes run `file-ports <run>/retro/upstream` (one pipeline ticket per improvement worth porting). It reads the replaced and dependency lists from the guard and the individual home's `upstream-notes.md`. Tests: `tests/upstream-check.test.sh`.
 
+**Prices.** In the same pass, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/model-prices.sh" run <run>/retro/prices` (usage at its top; the agent's brief is `PRICES.md`). It compares `references/model-prices.json`, which the plan step estimates from, with Anthropic's published pricing. It prints "no price change" (say so in one line and stop) or a table of the models that differ ending "Update model prices?". Show the table as printed, ask once, and on yes run `model-prices.sh apply <run>/retro/prices/published.json`; the change goes in the project PR's commit or a plugin PR when the file is the plugin's own. Tests: `tests/model-prices.test.sh`.
+
 ## Homes
 
 | Kind | Home | Delivered as |
