@@ -63,7 +63,7 @@ export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
 # the printer never reads a half-written result. Always exits 0.
 run_one() {
   local resdir=$1 file=$2 name=$3 idx=$4
-  local tmp= markdir= marker= output= status=
+  local tmp= markdir= marker= output= status= pid=
   tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/artisan-test.XXXXXX")" && pwd -P)
   markdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-pass.XXXXXX")
   marker="$markdir/passed"
@@ -83,6 +83,13 @@ run_one() {
     output="${output:+$output
 }run.sh: test exited 0 but never reached its end (no pass marker)"
   fi
+  # No process a test started outlives it (#137): end whatever still names the
+  # test's own folder, and its process group, before the folder goes. Not by a
+  # recorded pid: pids wrap (see kill_test_processes in lib.sh).
+  for pid in $(pgrep -f "$tmp" 2>/dev/null); do
+    [ "$pid" != "$$" ] || continue
+    kill -KILL "-$pid" "$pid" 2>/dev/null || true
+  done
   rm -rf "$tmp" "$tmp.usage.json" "$markdir"   # lib.sh's usage reading sits beside the test's folder
   printf '%s\n' "$output" >"$resdir/$idx.out"
   [ "$status" -eq 0 ] || status=1
