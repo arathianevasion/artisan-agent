@@ -62,14 +62,20 @@
 #       overlap checks and branches from main; keeps the guard and its cost cap.
 #       A ticket the Artisan stopped and steered (lever.sh steer) is dispatched
 #       again like a retry, with their notes in its prompt.
-#   wave.sh merge <run-dir> <ticket>
+#   wave.sh merge <run-dir> <ticket> [--wait SECONDS]
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the merge gate (the plan's
 #       suite command there, or on a machine whose merge gate runs on CI,
 #       merge-gate.sh, the project's gate workflow on the merge commit; never
 #       the suite here), record the merge with the gate's record and remove
-#       the worker's worktree. Prints the
-#       merge commit. 8: the worker is still running. 13: not verified (no
+#       the worker's worktree. Prints the merge commit. The gate runs
+#       detached (merge-gate.sh start) and writes its outcome under results/;
+#       this call waits for it at most SECONDS (default 60), so no call nears
+#       a 2-minute Bash timeout. 20: the gate is still running (or another
+#       ticket's gate is in progress, named): wait-any.sh, then merge again,
+#       which finishes that same gate, waits on it again, resumes a CI gate
+#       whose runner died on its same run and branch, or (a gate that died
+#       with nothing to wait on) undoes it and gates the merge commit again. 8: the worker is still running. 13: not verified (no
 #       passing verdict from verify.sh for this attempt and commit; nothing
 #       changes). 11: a conflict, left in
 #       progress for its one /artisan-agent:resolve-conflicts try (then
@@ -81,11 +87,12 @@
 #       merge is undone, the ticket stays returned and nothing merges or
 #       dispatches until unpark-ci; a gate a crash cut short is undone here
 #       and gated again.
+#       While a gate runs, new work branches from the commit before its merge.
 #       An attempt that did not complete is a failed attempt: queued for a
 #       fresh worker, or blocked once it has used its attempts (6).
-#   wave.sh resolved <run-dir> <ticket> [--gave-up REASON]
+#   wave.sh resolved <run-dir> <ticket> [--gave-up REASON] [--wait SECONDS]
 #       after /artisan-agent:resolve-conflicts: commit the resolved merge and
-#       run the suite as merge does. 6: still conflicted, markers, unstaged
+#       run the gate as merge does (20: still running; merge finishes it). 6: still conflicted, markers, unstaged
 #       changes or untracked files left, or gave up (the merge is aborted
 #       and the untracked files removed); 7: suite red, or CI red. Either way
 #       the ticket is blocked with its branch and worktree kept. 19: parked on
@@ -117,7 +124,7 @@
 # expected files overlap, 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
-# CI. One table of every code, with
+# CI, 20 the merge gate is still running. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.

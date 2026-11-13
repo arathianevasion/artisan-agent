@@ -22,7 +22,7 @@ Expected files are a forecast. A worker that strays outside its set can still co
 
 ## Merges
 
-Only verified work merges: a fresh verifier's `pass` for the ticket's current attempt at its branch tip (`verify.sh`; the verifiers for a wave's returned tickets run in parallel, before the merges). Then one ticket at a time, into the integration branch, in the integration worktree: `wave.sh merge`, a `--no-ff` merge followed by the plan's full `suite_command`. The suite runs after **every** merge, on the integration branch exactly as that merge left it, so a break is always attributable to one ticket. Never start a merge while another is unfinished.
+Only verified work merges: a fresh verifier's `pass` for the ticket's current attempt at its branch tip (`verify.sh`; the verifiers for a wave's returned tickets run in parallel, before the merges). Then one ticket at a time, into the integration branch, in the integration worktree: `wave.sh merge`, a `--no-ff` merge followed by the plan's full `suite_command` (the merge gate, run detached so no call waits on it for long: exit 20 below). The suite runs after **every** merge, on the integration branch exactly as that merge left it, so a break is always attributable to one ticket. Never start a merge while another is unfinished.
 
 | `wave.sh merge` exit | Means | Do |
 |---|---|---|
@@ -32,6 +32,8 @@ Only verified work merges: a fresh verifier's `pass` for the ticket's current at
 | 6 | refused, or a conflict whose try is used | nothing: blocked. If the ticket is `queued` again instead, its attempt didn't complete and it is retried (below) |
 | 8 | its worker is still ending | wait, then merge again |
 | 13 | not verified: no passing verdict for this attempt at this commit | `verify.sh start`, then `judge` (`references/evidence-contract.md`); nothing changed |
+| 19 | parked on CI: CI gave no verdict | merge and dispatch nothing new until the Artisan clears it (`wave.sh unpark-ci`) |
+| 20 | the merge gate is still running (it runs detached; `merge` waits at most a minute) | `wait-any.sh`, then `wave.sh merge` again: it finishes the same gate, never a second one |
 
 ## A conflict: one try, then the Artisan
 
