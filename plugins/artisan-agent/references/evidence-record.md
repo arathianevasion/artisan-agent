@@ -16,7 +16,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `commit` | yes | The branch tip the record describes; `null` only if nothing was committed |
 | `base` | yes | The commit the branch started from |
 | `acceptance` | yes | One entry per acceptance criterion, in the ticket's order (below) |
-| `tests` | yes | `{"suite_passed": true, "command": "...", "summary": "..."}`: the full-suite run at the end, with the command and its result line. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
+| `tests` | yes | `{"suite_passed": true, "files": ["tests/test_export.py"], "full_suite": "left to the merge gate", "command": "...", "summary": "..."}`: the test files the worker ran (`tests.files`, non-empty: the ones covering its change), whether they passed (`suite_passed`, kept under that name for the readers of the state file), the command and its result line, and `full_suite`, which says the full suite is left to the merge gate (`wave.sh merge` / `wave.sh resolved`). A worker does not run the full suite: it can outlast a foreground command, and a verifier reads `tests.files` to know what was and wasn't checked. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
 | `checks` | yes | The output of `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`, as it is: `{"recorded": true, "results": [{"command", "passed", "exit_code", "result"}], "not_run": [...]}` with the project's recorded checks, exactly those; with none recorded, `{"recorded": false, "fallback": "no recorded checks (<reason>): found <commands>", "results": [...]}`. See `${CLAUDE_PLUGIN_ROOT}/references/checks.md` |
 | `unsure` | yes | What the worker was unsure of, one sentence each; `[]` if nothing |
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
@@ -101,7 +101,7 @@ For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decisio
       }
     }
   ],
-  "tests": { "suite_passed": true, "command": "python3 -m unittest", "summary": "Ran 12 tests ... OK" },
+  "tests": { "suite_passed": true, "files": ["tests/test_export.py"], "full_suite": "left to the merge gate", "command": "python3 -m unittest tests/test_export.py", "summary": "Ran 4 tests ... OK" },
   "checks": {
     "recorded": true,
     "file": "/work/repo/CODING_STANDARDS.md",

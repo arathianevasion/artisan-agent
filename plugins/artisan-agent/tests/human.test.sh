@@ -16,9 +16,9 @@ write_hands_on_draft() { # hands_on-json
     run_id: "r1", repo: "local/sample", integration_branch: "run/r1", scope: ["10", "11", "12"],
     waves: [["10", "12"], ["11"]], hands_on: $h,
     tickets: {
-      "10": {title: "Schema", model: "claude-sonnet-5-5", expected_output: "x", expected: {minutes: 3, input_tokens: 1000, output_tokens: 1000}},
+      "10": {title: "Schema", blocked_by: [], model: "claude-sonnet-5-5", expected_output: "x", expected: {minutes: 3, input_tokens: 1000, output_tokens: 1000}},
       "11": {title: "Endpoint", model: "claude-sonnet-5-5", expected_output: "x", expected: {minutes: 5, input_tokens: 1000, output_tokens: 1000}, blocked_by: ["10"]},
-      "12": {title: "Docs", model: "claude-sonnet-5-5", expected_output: "x", expected: {minutes: 2, input_tokens: 1000, output_tokens: 1000}}}}' \
+      "12": {title: "Docs", blocked_by: [], model: "claude-sonnet-5-5", expected_output: "x", expected: {minutes: 2, input_tokens: 1000, output_tokens: 1000}}}}' \
     >"$TEST_TMPDIR/draft.json"
 }
 
@@ -211,4 +211,40 @@ test_h_done_while_a_wave_holds_the_lock_is_filed_and_taken_later() {
   "$SCRIPTS/state.sh" unlock "$RUN_DIR" "$other"
   ARTISAN_WRITER_PID=$CHAT "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
   assert_eq returned "$(state_get '.tickets["1"].status')"
+}
+
+# The plan drafted through resolve-scope.sh: ticket 2 is blocked by 1 on the
+# fake tracker, and the draft copies each ticket's blocked_by from its output.
+scoped_plan() { # hands_on-json
+  setup_wave '["1","2"]'
+  local scope
+  scope=$("$SCRIPTS/resolve-scope.sh" --repo local/sample 1 2)
+  jq -n --argjson h "$1" --argjson s "$scope" '{
+    run_id: "r1", repo: "local/sample", integration_branch: "run/r1", scope: ["1", "2"],
+    waves: [["1"], ["2"]], hands_on: $h,
+    tickets: ($s.tickets | map({key: (.number | tostring), value: {
+      title, blocked_by: (.blocked_by | map(tostring)), model: "claude-sonnet-5-5", expected_output: "x",
+      expected: {minutes: 5, input_tokens: 1000, output_tokens: 1000}}}) | from_entries)}' >"$TEST_TMPDIR/draft.json"
+  build_plan
+}
+
+test_h_a_pick_on_the_critical_path_is_critical_with_a_delay_when_blocked_by_comes_from_resolve_scope() {
+  scoped_plan '{"ticket": "1", "focus": "the hard part", "minutes": 20}'
+  assert_eq '["1"]' "$(jq -c '.tickets["2"].blocked_by' "$TEST_TMPDIR/plan.json")"
+  assert_eq true "$(jq -r .hands_on.on_critical_path "$TEST_TMPDIR/plan.json")"
+  assert_eq 15 "$(jq -r .hands_on.delay_minutes "$TEST_TMPDIR/plan.json")"
+  assert_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan.json")" "| #1 (Add hello) | the hard part | yes | about 15 min later |"
+}
+
+test_h_a_run_with_only_the_hands_on_ticket_and_its_dependents_parks_from_a_resolve_scope_plan() {
+  scoped_plan '{"ticket": "1", "focus": "the hard part"}'
+  jq '.labels = [{name: "ready-for-human"}]' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/i.tmp" && mv "$FAKE_GH_DIR/i.tmp" "$FAKE_GH_DIR/issue-1.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" ".plan.tickets = $(jq -c '.tickets' "$TEST_TMPDIR/plan.json")"
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  "$SCRIPTS/human.sh" sync "$RUN_DIR" >/dev/null
+  local out
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "hands-on ticket #1"
 }

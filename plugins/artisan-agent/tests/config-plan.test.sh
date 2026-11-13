@@ -13,10 +13,10 @@ write_draft() {
     run_id: "r1", repo: "owner/repo", integration_branch: "run/r1",
     scope: ["10", "11"], waves: [["10"], ["11"]], gates: [{kind: "end"}],
     tickets: {
-      "10": {title: "Retry failed uploads", model: "claude-sonnet-5-5",
+      "10": {title: "Retry failed uploads", model: "claude-sonnet-5-5", blocked_by: [],
              expected_output: "uploads retry twice",
              expected: {input_tokens: 2000000, output_tokens: 100000, minutes: 30}},
-      "11": {title: "Billing tab", model: "claude-opus-5-5",
+      "11": {title: "Billing tab", model: "claude-opus-5-5", blocked_by: [],
              expected_output: "billing tab shows invoices",
              expected: {input_tokens: 1000000, output_tokens: 50000, minutes: 45}}
     }}' >"$1"
@@ -170,9 +170,9 @@ tiny_draft() {
     run_id: "r1", repo: "owner/repo", integration_branch: "run/r1",
     scope: ["10", "11"], waves: [["10", "11"]], gates: [],
     tickets: {
-      "10": {title: "Typo", model: "claude-sonnet-5-5",
+      "10": {title: "Typo", model: "claude-sonnet-5-5", blocked_by: [],
              expected: {input_tokens: 100000, output_tokens: 5000, minutes: 10}},
-      "11": {title: "Billing tab", model: "claude-opus-5-5",
+      "11": {title: "Billing tab", model: "claude-opus-5-5", blocked_by: [],
              expected: {input_tokens: 1000000, output_tokens: 50000, minutes: 45}}
     }}' >"$1"
 }
@@ -450,4 +450,14 @@ test_standards_names_the_file_the_checks_are_read_from() {
   mv "$PROJECT/CODING_STANDARDS.md" "$TEST_TMPDIR/standards.md"
   write_draft "$TEST_TMPDIR/draft.json"
   assert_eq recorded "$(cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --standards "$TEST_TMPDIR/standards.md" | jq -r .suite_source)"
+}
+
+test_build_refuses_a_ticket_with_no_blocked_by_and_accepts_an_empty_list() {
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq 'del(.tickets["11"].blocked_by)' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  local rc=0
+  "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/d2.json" >"$TEST_TMPDIR/out" 2>"$TEST_TMPDIR/err" || rc=$?
+  assert_eq 1 "$rc" "build exit"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "ticket 11 has no blocked_by"
+  "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json" >/dev/null
 }
