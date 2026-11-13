@@ -355,7 +355,7 @@ cmd_open() {
 }
 
 open_deferred() {
-  get -r '[(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "deferred") | "\(.title) #\(.issue)"] | join("; ")'
+  get -r "$(state_deferred_gates_jq)"'| map("\(.title) #\(.issue)") | join("; ")'
 }
 
 cmd_approve() {

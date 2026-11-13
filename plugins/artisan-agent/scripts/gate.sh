@@ -487,7 +487,7 @@ cmd_sync() {
   done
   # A gate closed on the tracker by hand is approved by whoever closed it.
   repo=$(get '.repo')
-  for issue in $(get '(.review_gates // [])[] | select(.status == "open") | .issue'); do
+  for issue in $(get '(.review_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue'); do
     state=$(gh api "repos/$repo/issues/$issue" 2>/dev/null | jq -r '.state // empty') || continue
     if [ "$(printf '%s' "$state" | tr 'A-Z' 'a-z')" = closed ]; then
       GATE=$(recorded "$issue")

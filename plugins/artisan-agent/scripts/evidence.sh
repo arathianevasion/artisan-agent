@@ -100,7 +100,7 @@ cmd_digest() {
   local scope=wave wave=
   while [ $# -gt 0 ]; do
     case "$1" in
-      --wave) [ $# -ge 2 ] || usage; case "$2" in '' | *[!0-9]*) usage ;; esac; wave=$2; shift 2 ;;
+      --wave) [ $# -ge 2 ] || usage; state_is_uint "$2" || usage; wave=$2; shift 2 ;;
       --all) scope=all; shift ;;
       *) usage ;;
     esac

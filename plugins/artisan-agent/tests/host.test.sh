@@ -235,6 +235,16 @@ test_a_host_refuses_a_run_the_login_would_not_outlast() {
   assert_contains "$msg" "stamp"
 }
 
+test_login_check_refuses_an_empty_minutes_value() {
+  fake_host macos; make_host
+  L="$PLUGIN_ROOT/scripts/login-check.sh"
+  "$L" stamp --at 1000000 >/dev/null
+  assert_status 2 "$L" check --span-minutes 60 --margin-minutes "" --now 3500000
+  assert_status 2 "$L" check --span-minutes 6x --now 3500000
+  msg=$("$L" check --span-minutes 60 --margin-minutes "" --now 3500000 2>&1 || true)
+  assert_contains "$msg" "minutes must be whole numbers"
+}
+
 test_a_host_with_no_login_stamp_refuses() {
   fake_host macos
   mkdir -p "$CLAUDE_CONFIG_DIR/artisan-agent"

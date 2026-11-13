@@ -21,6 +21,18 @@ state_jq_row_def() { # prints the jq def that renders an array as a markdown tab
   printf '%s' 'def row: "| " + join(" | ") + " |";'
 }
 
+# The deferred gates the end gate lists and waits on, one jq selector for both
+# readers (gate-action.sh deferred, end-gate.sh open_deferred): review, exception
+# and overrun gates (#131). Emits {title, issue, kind, by, why, dependents}; an
+# overrun gate keeps its deferral in .decision, the others in .deferral.
+state_deferred_gates_jq() {
+  printf '%s' '[((.review_gates // [])[], (.exception_gates // [])[]
+      | select(.status == "deferred")
+      | {title, issue, kind: (.kind // "slice"), by: .deferral.by, why: .deferral.why, dependents: (.dependents // [])}),
+    ((.overrun_gates // [])[] | select(.status == "deferred")
+      | {title, issue, kind: "overrun", by: .decision.by, why: .decision.why, dependents: []})]'
+}
+
 state_require_jq() {
   command -v jq >/dev/null 2>&1 || state_die 1 "jq is required but was not found on PATH"
 }
@@ -43,7 +55,7 @@ state_writer_pid() {
 # counts as dead.
 state_pid_alive() {
   local pid="$1" stat=
-  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  state_is_uint "$pid" || return 1
   stat=$(ps -o stat= -p "$pid" 2>/dev/null) || return 1
   [ -n "$stat" ] || return 1
   case "$stat" in Z*) return 1 ;; esac

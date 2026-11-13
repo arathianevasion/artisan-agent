@@ -121,7 +121,12 @@ cmd_install() {
       *) usage ;;
     esac
   done
-  case "$refresh" in '' | *[!0-9]* | 0) usage ;; esac
+  # install runs from the plugin's scripts directory; the installed copy
+  # (capture) stays standalone and never needs the library.
+  # shellcheck source=lib/state-lib.sh
+  . "$(dirname "$SELF")/lib/state-lib.sh" 2>/dev/null \
+    || die "install needs the plugin's scripts/lib/state-lib.sh beside it; run install from the plugin, not the installed copy"
+  state_is_uint "$refresh" && [ "$refresh" -gt 0 ] || usage
   command -v jq >/dev/null 2>&1 || die "jq is required"
   mkdir -p "$HOME_DIR" "$CFG" || die "could not create $HOME_DIR"
   target="$HOME_DIR/statusline.sh"

@@ -476,7 +476,7 @@ cmd_park() {
     raise)
       [ "${#ARGS[@]}" -eq 1 ] || usage
       pct=${ARGS[0]}
-      case "$pct" in '' | *[!0-9]*) usage ;; esac
+      state_is_uint "$pct" || usage
       [ "$pct" -le 100 ] || usage
       case "$window" in
         seven-day)
