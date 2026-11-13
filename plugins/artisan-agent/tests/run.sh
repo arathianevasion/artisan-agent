@@ -80,7 +80,7 @@ for file in "$suite_dir"/*.test.sh; do
       output="${output:+$output
 }run.sh: test exited 0 but never reached its end (no pass marker)"
     fi
-    rm -rf "$tmp" "$markdir"
+    rm -rf "$tmp" "$tmp.usage.json" "$markdir"   # lib.sh's usage reading sits beside the test's folder
     if [ "$status" -eq 0 ]; then
       echo "ok   $label"
       passed=$((passed + 1))

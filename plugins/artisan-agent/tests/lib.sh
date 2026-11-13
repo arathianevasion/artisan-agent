@@ -37,3 +37,12 @@ kill_test_processes() {
     kill -KILL "-$pid" "$pid" 2>/dev/null || true
   done
 }
+
+# A fresh plan-usage reading well under the limits, so the usage guard
+# (budget.sh, #72) lets every test's dispatch through; tests of the guard
+# write their own. Never the machine's own reading. Beside the test's folder,
+# not in it (tests check what lands there); run.sh removes it.
+export ARTISAN_USAGE_FILE="$TEST_TMPDIR.usage.json"
+jq -nc --argjson t "$(date +%s)" '{schema_version: 1, written_at: $t,
+  rate_limits: {at: $t, five_hour: {used_percentage: 10, resets_at: ($t + 3600)},
+                seven_day: {used_percentage: 20, resets_at: ($t + 86400)}}}' >"$ARTISAN_USAGE_FILE"

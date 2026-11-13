@@ -8,10 +8,11 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `questions.sh` | A worker's filed question, the ticket that waits on it, the answer's way back, pull-or-carry-on for a deferral, provisional cards ([`references/worker-questions.md`](../references/worker-questions.md); `tests/questions.test.sh`) | a ticket number, or lines and tables |
-| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
+| `checks.sh` | The one reader of the recorded checks (`CODING_STANDARDS.md` `## Checks`): `json`, `list`, `suite` (the plan's `suite_command`), `run` (the evidence's `checks`; `--worker` skips the check that is the suite, left to the merge gate). Worker, verifier and plan step read checks only through it ([`references/checks.md`](../references/checks.md); `tests/checks.test.sh`) | JSON or lines; 7 a check red, 16 none recorded / nothing to run |
 | `verify.sh`, `evidence.sh` | A fresh verifier per ticket, and the evidence contract shown on the ticket and in the wave digest ("Verification and evidence", below) | one verdict line; Markdown |
 | `move.sh` | Moves an idle run between laptop and always-on host through its `runs/<id>` branch; the run lock travels with the state; `out` marks the local copy moved before the push and undoes it if the push fails, so the run is never live twice (`skills/implement-plan/references/host-and-move.md`; `tests/move.test.sh`) | lines; 3 not live here, 4 not idle, 5 live elsewhere, 6 a push refused |
 | `upstream-check.sh` | The retro's upstream-updates check: refresh, compare, mechanical check, judgement agent, report, port tickets (`skills/retro/SKILL.md`, "Upstream check"; `tests/upstream-check.test.sh`) | lines and tables; 10 moved |
+| `model-prices.sh` | The retro's price check (#91): a capped agent reads Anthropic's published pricing, compare against `references/model-prices.json`, offer the update; nothing changes until `apply` (`skills/retro/PRICES.md`; `tests/model-prices.test.sh`) | "no price change"; a table, 10 differ |
 | `login-check.sh` | The login-expiry check before a run on the host; `stamp` records the login in `login.json` (never `host.json`); `legacy` and `cleanup` fix a `host.json` an old stamp made (`skills/setup/HOST.md`; `tests/host.test.sh`) | 15 refused |
 | `host-notice.sh` | Before a run starts: does this project's `host_configured` send it to a host this machine is not? Prints the one-line notice and offer (`skills/setup/HOST.md`; `tests/host.test.sh`) | 0 run here, 10 offer the host first (this script's own; not `wave.sh`'s 10) |
 
@@ -181,7 +182,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `wave.sh start <run-dir> [--base REF]` | Engineering chat | creates the integration branch and the run's integration worktree, `<repo>-wt/run-<run-id>` | 0, 1 |
 | `wave.sh launch <run-dir> [--resume] [--handoff]` | Engineering chat (`--handoff`: the orchestrator, through `drain.sh handoff`) | refuses while the run is halted (12) unless `--resume` records the Artisan's decision to carry on; launches the next wave's orchestrator detached (`run-ticket.sh --role orchestrator --lock-from <chat pid>`), in the integration worktree, briefed by `skills/implement-plan/references/orchestrator.md`; the next wave once the last orchestrator completed, the same wave again if it failed | 3 while an orchestrator runs; 6 a `--handoff` from anyone but the running orchestrator that recorded it |
 | `wave.sh status <run-dir>` | Engineering chat | the orchestrator's state from its exit record; once it has ended, takes the lock back, reconciles and says what's next (`launch`, `wait`, `halted`, `decide`, `parked`, `blocked`, `done`), with a ticket table | 0 |
-| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9) and its expected files overlap nothing in flight or in this wave (10); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10 |
+| `wave.sh dispatch <run-dir> <ticket>` | orchestrator | refuses unless in scope (4), queued, every blocker merged into the integration branch or closed (5), a slot free under Max Agents (9), its expected files overlap nothing in flight or in this wave (10) and `budget.sh guard` passes (12, 17, 18); then a worktree from the integration tip and a worker running `/artisan-agent:implement`. A retry waits for the failed session to end (8) and carries its failure evidence | 0, 1, 4, 5, 8, 9, 10, 12, 17, 18 |
 | `wave.sh merge <run-dir> <ticket>` | orchestrator | refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last); merges `--no-ff` in the integration worktree, runs `plan.suite_command`, records the merge, removes the worker's worktree | 6 refused or conflict after its try, 7 suite red (both undo and block), 8 worker still running, 11 conflict left for its one try, 13 not verified |
 | `wave.sh resolved <run-dir> <ticket> [--gave-up WHY]` | orchestrator | after `/artisan-agent:resolve-conflicts`: aborts and blocks if anything is still conflicted, marked or unstaged (or it gave up), else commits the merge and runs the suite as `merge` does | 0, 6, 7 |
 | `wave-width.sh pick <run-dir>` / `check <run-dir> <ticket>` | orchestrator | the tickets to dispatch now: the smallest of Max Agents less those in flight, the frontier, and tickets with non-overlapping `expected_files`; `check` is dispatch's overlap refusal | 0, 10 |
@@ -206,7 +207,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 ## Exit status
 
-Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
+Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budget.sh`'s 17 and 18), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
 
 | Code | Means | From | Do |
 | :- | :- | :- | :- |
@@ -227,6 +228,10 @@ Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16), in o
 | 14 | the verifier itself failed (no attempt used) | `verify.sh judge` | `verify.sh start` once more |
 | 15 | the claude.ai login would expire mid-run, or the host has no login stamp | `launch` (a wave launch, on a host) | log in again, `login-check.sh stamp` |
 | 16 | no checks recorded (`list`, `suite`), or nothing to run (`run`) | `checks.sh` | fall back to discovery and say so (`references/checks.md`) |
+| 17 | the overrun gate holds new dispatch: the projection crossed the budget | `dispatch`, `budget.sh guard` | dispatch nothing new; finish what is in flight; the Artisan answers the gate |
+| 18 | parked on plan usage: a window near its limit, or the reading unknown | `dispatch`, `budget.sh guard`, `budget.sh usage` | dispatch nothing new; finish what is in flight; the Artisan resumes, raises the ceiling or stops |
+
+`dispatch` (through `budget.sh guard`) also refuses with 12 while the run is halted.
 
 # Verification and evidence
 
@@ -346,6 +351,22 @@ Neither tier ever stops to compact (#59); the chat is compacted by Claude Code a
 | `adr-check.sh affected <check.json> --adr N` | the tickets citing ADR N: the ones to re-check after it is edited | 0, 1, 2 |
 
 The edit itself is not scripted: the Artisan approves a drafted diff, it lands by a short PR (`doc-change.sh`, upstream `pr`) before dispatch, then `affected` names the tickets to re-check.
+
+# Cost and usage limits
+
+`budget.sh` holds back new dispatch when the projected spend crosses the budget (the overrun gate) or plan usage nears its limits (the plan-window guard); `statusline.sh` is the status-line capture that writes the usage reading and the context window. Never stops work in flight. The rules, the packet and the answers: `references/cost-and-usage.md`. Tested in `tests/budget.test.sh` (seeded costs and readings, the fake `gh`) and `tests/statusline.test.sh` (an isolated `CLAUDE_CONFIG_DIR`).
+
+| Command | Tier | Does | Exit status |
+| :- | :- | :- | :- |
+| `budget.sh guard <run-dir>` | both (`wave.sh dispatch`, `wave.sh status`) | the plan-window guard, then the budget: records a park (`usage` decision, `parked`) or opens the overrun gate (`review-gate` issue with the packet, `overrun` decision, `overrun-gate`) the first time | 0, 12, 17, 18 |
+| `budget.sh usage <run-dir>` / `project <run-dir>` / `packet <run-dir>` | either | read-only: the plan-window verdict; the projection as JSON; the latest overrun gate's packet | 0, 18 / 0 / 0, 1 |
+| `budget.sh overrun <run-dir> raise <usd> \| cut <t>... \| stop` | Engineering chat | the overrun gate's answer, one card; the gate is deferred, its only action (`--action` anything else: 6) | 0, 2, 6 |
+| `budget.sh park <run-dir> resume \| raise <percent> \| stop` | Engineering chat | the answer to a usage park | 0, 2, 6 |
+| `statusline.sh` | Claude Code's status line | writes `<home>/usage.json` and `<home>/sessions/<id>.json`, prints the line (a chained one's, if any) | 0 |
+| `statusline.sh install [--refresh S]` | setup | copies the capture into the individual home and points the user's `statusLine` at it, every 60 seconds, chaining a status line already there | 0, 1 |
+| `statusline.sh window --transcript F` / `path` | `drain.sh chat`, `budget.sh` | the window captured for that session; the usage file's path | 0, 1 |
+
+`ARTISAN_USAGE_FILE` overrides the usage file (`tests/lib.sh` points every test at a fresh, low reading of its own).
 
 # Two chats
 
