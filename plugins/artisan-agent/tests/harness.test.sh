@@ -193,7 +193,7 @@ test_the_negated_grep_detector_flags_a_negated_piped_grep() {
 }
 
 test_no_test_file_negates_a_piped_grep_q() {
-  local hits
+  local hits=
   hits=$(negated_piped_greps "$TESTS_DIR"/*.test.sh)
   [ -z "$hits" ] || fail "negated piped grep -q (use assert_not_contains): $hits"
 }
