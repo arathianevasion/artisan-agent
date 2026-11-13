@@ -16,7 +16,7 @@
 #       sweep records it from steering/<ticket>.<attempt>.json).
 #   lever.sh add <run-dir> <ticket> --model M --estimate-usd N [--title T]
 #                [--minutes N] [--expected-files a,b/] [--priority N]
-#                [--escalation a,b] [--approve] [--by NAME]
+#                [--approve] [--by NAME]
 #       add a ticket to the running run. Without --approve it records nothing
 #       and prints the one-line approval: model, estimate and the new run
 #       budget (the scope gate). With --approve the ticket joins the scope at
@@ -24,6 +24,7 @@
 #       dispatches in the next wave ahead of lower-priority tickets. Both the
 #       estimate and the overrun allowance on it join the run budget.
 #   lever.sh urgent <run-dir> <ticket> --model M --estimate-usd N [same options]
+#                [--escalation a,b]
 #       marking a ticket urgent is its scope approval: it is recorded at once,
 #       its estimate joins the run budget, and wave.sh dispatch sends it at
 #       once on the one extra slot above Max Agents (a second urgent ticket
@@ -142,7 +143,7 @@ approval_line() { # kind ticket model estimate title
 # on a one-ticket draft, so the tests, their vocabulary and the area settings
 # are the planned ticket's. Prints a JSON list; exit 2 on an unknown test.
 escalation_tests() {
-  local t="$1" esc="$2" files="$3" draft= out= rc=0
+  local t="$1" esc="$2" files="$3" draft="" out="" rc=0
   draft=$(mktemp "${TMPDIR:-/tmp}/urgent-draft.XXXXXX")
   jq -n --arg t "$t" --arg esc "$esc" --arg files "$files" '
     {scope: [$t], tickets: {($t): ({escalation: ($esc | split(",") | map(select(. != "")))}
@@ -182,6 +183,7 @@ cmd_add() { # kind run-dir ticket ...
   [ "$(get --arg t "$t" '.plan.scope | map(tostring) | index($t) != null')" != true ] \
     || refuse "#$t is already in the run's scope"
   [ "$(get '.end_gate.status // "" | . == "ended"')" != true ] || refuse "the run has ended"
+  [ "$kind" = urgent ] || [ -z "$esc" ] || usage
   [ "$kind" != urgent ] || tests=$(escalation_tests "$t" "$esc" "$files") || exit "$?"
   approval_line "$kind" "$t" "$model" "$est" "$title"
   if [ "$kind" = add ] && [ "$approve" -eq 0 ]; then
