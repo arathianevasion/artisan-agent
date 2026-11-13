@@ -1,16 +1,23 @@
 name: Script tests
 
+# CI runs on pull requests and on demand only, never on a plain push. A session on
+# the Mac gates locally until it opens a PR; a session on the VM dispatches this
+# workflow against a throwaway branch to gate a merge.
 on:
-  push:
+  pull_request:
     # Documentation outside the plugin isn't read by any test.
     paths-ignore: ['*.md', 'docs/**']
-  pull_request:
-    paths-ignore: ['*.md', 'docs/**']
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Linux runner (macOS always runs on macos-latest)
+        type: choice
+        options: [github, ubicloud]
+        default: github
 
-# A newer push to the same branch or PR cancels its older run. Every push to main
-# gets its own group, so no main run is cancelled or dropped while queued.
+# A newer run for the same PR or branch cancels its older run.
 concurrency:
-  group: script-tests-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: script-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,10 +26,11 @@ permissions:
 jobs:
   script-tests:
     name: Script tests (Linux)
-    # GitHub-hosted (free for this public repo: 4 vCPU, 16 GB). The job runs in a
-    # throwaway container. Never point a public repo's jobs at a self-hosted runner:
-    # a pull request from a fork could run code on that machine.
-    runs-on: ubuntu-latest
+    # GitHub-hosted by default (free for this public repo: 4 vCPU, 16 GB). Ubicloud
+    # only when someone with write access dispatches it; a pull request (fork or not)
+    # always gets ubuntu-latest. The job runs in a throwaway container. Never point a
+    # public repo's jobs at a self-hosted runner: a fork's PR could run code on it.
+    runs-on: ${{ inputs.runner == 'ubicloud' && 'ubicloud-standard-4' || 'ubuntu-latest' }}
     timeout-minutes: 45
     container:
       image: ubuntu:24.04
