@@ -1,6 +1,6 @@
 {
   "name": "artisan-agent",
-  "description": "Private marketplace for Artisan Agent: a pipeline where agents do most of the delivery and the Artisan sets the guardrails and supplies the taste.",
+  "description": "Marketplace for Artisan Agent: a pipeline where agents do most of the delivery and the Artisan sets the guardrails and supplies the taste.",
   "owner": {
     "name": "arathianevasion"
   },
