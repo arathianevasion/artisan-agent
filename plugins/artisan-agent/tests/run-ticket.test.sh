@@ -133,6 +133,15 @@ test_worker_usage_is_recorded_with_the_time_it_was_received() {
   [ "$after" -ge "$(jq -r '.rate_limits.seven_day.at' "$u")" ] || fail "each window keeps its own time"
 }
 
+test_two_events_between_polls_both_count() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=0
+  launch stream
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$RUN/workers/46.1/usage.json")"
+  assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$RUN/workers/46.1/usage.json")"
+}
+
 test_output_json_is_the_streams_result_event() {
   setup_run
   export FAKE_CLAUDE_SLEEP=1

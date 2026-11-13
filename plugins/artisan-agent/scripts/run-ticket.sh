@@ -294,24 +294,26 @@ set +m
 # a resent old limit must not pass as fresh). Windows accumulate: an event
 # names one window, and each keeps the time it was last seen. Utilisation is
 # a fraction (0.29); the reading holds percent, as the status line does.
-last_usage_line=
+usage_seen=0
 record_usage() {
-  local line now
-  line=$(grep '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" 2>/dev/null | tail -n 1) || true
-  [ -n "$line" ] && [ "$line" != "$last_usage_line" ] || return 0
-  last_usage_line=$line
+  local lines total now
+  total=$(grep -c '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" 2>/dev/null) || total=0
+  [ "$total" -gt "$usage_seen" ] || return 0
+  # Every event since the last look, in order, so two landing between polls
+  # both count; the later one wins a window.
+  lines=$(grep '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" | tail -n +$((usage_seen + 1)))
+  usage_seen=$total
   now=$(date +%s)
-  jq -c --argjson now "$now" --arg t "$ticket" --argjson n "$attempt" \
+  jq -nc --argjson now "$now" --arg t "$ticket" --argjson n "$attempt" \
     --slurpfile prev <(cat "$worker_dir/usage.json" 2>/dev/null || echo null) '
-    ($prev[0].rate_limits // {}) as $old
-    | (.rate_limit_info // {}) as $i
-    | ([($i.unifiedWindows // {}) | to_entries[]
-        | select((.key == "five_hour" or .key == "seven_day") and (.value.utilization | type) == "number")
-        | {key, value: {used_percentage: ((.value.utilization * 10000 | round) / 100), resets_at: (.value.resetsAt // null), at: $now}}]
-       | from_entries) as $new
-    | select(($new | length) > 0)
-    | {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: ($old + $new)}' \
-    <<<"$line" >"$worker_dir/.usage.json.tmp" 2>/dev/null \
+    reduce (inputs | (.rate_limit_info.unifiedWindows // {}) | to_entries[]
+            | select((.key == "five_hour" or .key == "seven_day") and (.value.utilization | type) == "number"))
+      as $e (($prev[0].rate_limits // {});
+        .[$e.key] = {used_percentage: (($e.value.utilization * 10000 | round) / 100),
+                     resets_at: ($e.value.resetsAt // null), at: $now})
+    | select(length > 0)
+    | {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: .}' \
+    <<<"$lines" >"$worker_dir/.usage.json.tmp" 2>/dev/null \
     && [ -s "$worker_dir/.usage.json.tmp" ] && mv "$worker_dir/.usage.json.tmp" "$worker_dir/usage.json" \
     || rm -f "$worker_dir/.usage.json.tmp"
   return 0
