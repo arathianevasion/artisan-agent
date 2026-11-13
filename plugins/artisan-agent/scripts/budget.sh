@@ -100,37 +100,82 @@ project() { get "$PROJECTION_JQ projection"; }
 
 # ---------------------------------------------------------- the usage guard
 
+# running_workers: how many in-flight tickets have a live worker (a runner
+# pid that is still there). Nothing running means nothing is spending.
+running_workers() {
+  local pid n=0
+  for pid in $(get -r '[.tickets[] | select(.status == "in_flight") | .pid // empty] | .[]'); do
+    kill -0 "$pid" 2>/dev/null && n=$((n + 1))
+  done
+  echo "$n"
+}
+
+# worker_readings: a JSON array of every worker's usage.json in this run
+# (run-ticket.sh writes it: the latest rate_limit_event, with its own time).
+worker_readings() {
+  local f
+  for f in "$RUN_DIR"/workers/*/usage.json; do
+    [ -s "$f" ] && jq -c 'if type == "object" then . else empty end' "$f" 2>/dev/null
+  done | jq -sc '.'
+}
+
 # verdict: the plan-window verdict as JSON {ok, window, used, limit,
-# resets_at, why} from the usage file and this run's thresholds.
+# resets_at, why} from the freshest reading per window across the status-line
+# capture and every worker, and this run's thresholds. With no fresh reading
+# from any source: unknown (park) while workers run, and no park while none
+# does (nothing is spending); ok then carries idle: true.
 verdict() {
-  local f reading reserve ceiling stale
+  local f reading reserve ceiling stale workers running
   f=$(usage_file)
   reserve=$(get '.plan.config.usage_reserve.five_hour_reserve_percent // 20')
   ceiling=$(get '.plan.config.usage_reserve.seven_day_ceiling_percent // 90')
   stale=$(get '.plan.config.stale_usage_minutes // 10')
   reading=null
   [ -s "$f" ] && reading=$(jq -c 'if type == "object" then . else null end' "$f" 2>/dev/null || echo null)
-  jq -nc --argjson u "$reading" --arg f "$f" --argjson now "$(date +%s)" \
+  workers=$(worker_readings)
+  running=$(running_workers)
+  jq -nc --argjson u "$reading" --argjson w "$workers" --argjson running "$running" --arg f "$f" \
+    --argjson now "$(date +%s)" \
     --argjson reserve "$reserve" --argjson ceiling "$ceiling" --argjson stale "$stale" '
     def unknown($why): {ok: false, window: "unknown", why: $why, used: null, limit: null, resets_at: null};
     # A window Claude Code dropped (its reset passed) or past its own reset is empty.
     def used($w): if $w == null or (($w.resets_at // 0) > 0 and $w.resets_at <= $now) then 0
                   else ($w.used_percentage // 0) end;
-    if $u == null then unknown("no usage reading at \($f): the status-line capture is not installed or has not run (statusline.sh install)")
-    elif ($u.rate_limits.at // null) == null then unknown("the usage reading has no plan usage: the status line has not seen rate limits (a claude.ai login, after a first response)")
-    elif ($now - $u.rate_limits.at) > ($stale * 60) then
-      unknown("the usage reading is \((($now - $u.rate_limits.at) / 60) | floor) minutes old; older than \($stale) counts as unknown (is a chat with the status line open?)")
-    else
-      $u.rate_limits as $r
-      | if used($r.five_hour) >= (100 - $reserve) then
-          {ok: false, window: "five-hour", used: used($r.five_hour), limit: (100 - $reserve),
-           resets_at: $r.five_hour.resets_at, why: "the five-hour window is within the \($reserve)% reserve"}
-        elif used($r.seven_day) > $ceiling then
-          {ok: false, window: "seven-day", used: used($r.seven_day), limit: $ceiling,
-           resets_at: $r.seven_day.resets_at, why: "the seven-day window passed \($ceiling)%"}
-        else {ok: true, window: null, five_hour: used($r.five_hour), seven_day: used($r.seven_day),
-              age_seconds: ($now - $r.at)} end
-    end'
+    # Every reading of one window: {source, at, w}. The status line stamps both
+    # windows with its capture time; a worker stamps each window it saw.
+    def cands($k):
+      [(if ($u.rate_limits.at // null) != null then {source: "status-line", at: $u.rate_limits.at, w: ($u.rate_limits[$k] // null)} else empty end),
+       ($w[] | select((.rate_limits[$k] // null) != null)
+        | {source: "worker", at: (.rate_limits[$k].at // .received_at), w: .rate_limits[$k]})];
+    def freshest($k): [cands($k)[] | select(($now - .at) <= ($stale * 60))] | max_by(.at);
+    (cands("five_hour") + cands("seven_day")) as $all
+    | (freshest("five_hour")) as $f5 | (freshest("seven_day")) as $f7
+    | if $f5 == null and $f7 == null then
+        if $running == 0 then
+          {ok: true, idle: true, window: null, five_hour: 0, seven_day: 0, age_seconds: null,
+           why: "no fresh usage reading, and no worker is running, so nothing is spending"}
+        elif ($all | length) == 0 then
+          if $u == null and ($w | length) == 0 then
+            unknown("no usage reading at \($f): the status-line capture is not installed or has not run (statusline.sh install), and no worker has reported one")
+          else
+            unknown("the usage reading has no plan usage: the status line has not seen rate limits (a claude.ai login, after a first response), and no worker has reported one")
+          end
+        else
+          ($all | max_by(.at)) as $n
+          | unknown("the freshest usage reading (\($n.source)) is \((($now - $n.at) / 60) | floor) minutes old; older than \($stale) counts as unknown while \($running) worker(s) run (is a chat with the status line open?)")
+        end
+      else
+        ($f5.w) as $r5 | ($f7.w) as $r7
+        | if used($r5) >= (100 - $reserve) then
+            {ok: false, window: "five-hour", used: used($r5), limit: (100 - $reserve),
+             resets_at: $r5.resets_at, why: "the five-hour window is within the \($reserve)% reserve"}
+          elif used($r7) > $ceiling then
+            {ok: false, window: "seven-day", used: used($r7), limit: $ceiling,
+             resets_at: $r7.resets_at, why: "the seven-day window passed \($ceiling)%"}
+          else {ok: true, window: null, five_hour: used($r5), seven_day: used($r7),
+                source: ([$f5, $f7] | map(select(. != null)) | max_by(.at) | .source),
+                age_seconds: ($now - ([$f5, $f7] | map(select(. != null) | .at) | max))} end
+      end'
 }
 
 # when epoch -> a local time the Artisan can read, or "unknown".
@@ -138,7 +183,8 @@ WHEN_JQ='def when: if . == null then "unknown" else (strflocaltime("%a %d %b %H:
 
 verdict_line() { # verdict-json
   jq -r "$WHEN_JQ"'
-    if .ok then "ok 5h \(.five_hour | floor)% 7d \(.seven_day | floor)%"
+    if .ok and .idle then "ok \(.why)"
+    elif .ok then "ok 5h \(.five_hour | floor)% 7d \(.seven_day | floor)%"
     elif .window == "unknown" then "park unknown: \(.why)"
     else "park \(.window) \(.used | floor)% (limit \(.limit)%): \(.why); resets \(.resets_at | when)" end' <<<"$1"
 }

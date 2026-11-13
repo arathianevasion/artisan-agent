@@ -28,7 +28,9 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `results/<t>.<n>.result.json` | the worker (path in `$ARTISAN_RESULT_FILE`) | the worker's result file; its shape belongs to the worker skill |
 | `results/findings/<t>.jsonl` | the worker (path in `$ARTISAN_FINDINGS_FILE`) | one finding per line, appended across attempts |
 | `workers/<t>.<n>/runner.pid` | runner | the runner's PID, for the sweep |
-| `workers/<t>.<n>/output.json` | `claude --output-format json` | the session's JSON output, including its result text |
+| `workers/<t>.<n>/output.json` | the runner | the stream's final `result` event (what `--output-format json` printed), including its result text |
+| `workers/<t>.<n>/stream.jsonl` | `claude --output-format stream-json --verbose` | the session's whole event stream |
+| `workers/<t>.<n>/usage.json` | the runner | the latest `rate_limit_event`, per window, with the time the runner received it (the usage guard reads it) |
 | `workers/<t>.<n>/prompt.md`, `stderr.log`, `runner.log` | runner | the full prompt as sent, and logs |
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |
@@ -295,7 +297,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `gate-action.sh approve <run-dir> <issue>` | either chat | a review gate: `gate.sh approve`, with optional `--why`, `--confidence`, `--level`, `--reach`, `--area`; an exception gate is refused | 0, 1, 2, 6 |
 | `gate-action.sh redirect <run-dir> <issue> --notes T \| --mine` | either chat | a rework ticket in the run (`ready-for-agent`, or `ready-for-human` with `--mine`), natively blocking the dependents; the gate closes; prints the ticket | 0, 1, 2, 3, 6 |
 | `gate-action.sh bypass\|defer <run-dir> <issue>` | either chat | bypass: closed unreviewed, who recorded; defer: the dependents go ahead, the gate stays open until the end gate. Either kind of gate | 0, 1, 2, 3, 6 |
-| `gate-action.sh retry <run-dir> <issue> --notes T`, `reslice`, `take`, `drop` | either chat | an exception gate: the ticket queued with the notes and one more attempt, or out of the run (`needs-triage`), or `ready-for-human`, or dropped; the gate closes | 0, 1, 2, 3, 6 |
+| `gate-action.sh retry <run-dir> <issue> --notes T`, `reslice`, `take`, `drop` | either chat | an exception gate: the ticket queued with the notes and one more attempt, or out of the run (`needs-triage`), or `ready-for-human`, or dropped; the gate closes. reslice and drop print the impact first, and their dependents leave the run with them (`sent_back`, `needs-triage`). `send-back <run-dir>` does that for tickets stranded by an older run; `stranded <run-dir>` lists them | 0, 1, 2, 3, 6 |
 | `gate-action.sh sync <run-dir>` | `wave.sh status` | opens an exception gate per `exception` decision waiting without one; bypasses one closed by hand: `opened #<issue> <gate-id>` | 0, 1, 3 |
 | `gate-action.sh parked <run-dir> [--record]` | `wave.sh status` | 0 and `parked: waiting on N reviews: …` when every ticket left waits behind an open gate (`next: parked`); 1 otherwise | 0, 1 |
 | `gate-action.sh chat\|list\|deferred <run-dir>` | either chat | the open exception gates with their choices; every gate; the deferred gates, for the end gate | 0 |

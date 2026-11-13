@@ -258,12 +258,14 @@ test_the_exception_choices_leave_the_ticket_and_dependents_as_stated() {
       reslice)
         assert_eq "resliced closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "needs-triage,ready-for-agent" "$(labels 3)"
-        assert_eq "[3,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "reslice: 4 keeps waiting on 3; the closed gate's edge stays" ;;
+        assert_eq "[3,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "reslice: 4 keeps its blockers"
+        assert_eq "sent_back needs-triage,ready-for-agent" "$(state_get '.tickets["4"].status') $(labels 4)" "reslice: 4 goes back to triage" ;;
       drop)
         assert_eq "dropped closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "ready-for-agent" "$(labels 3)"
         assert_eq "open" "$(issue_state 3)"
-        assert_eq "1" "$(frontier)" "drop: 4 keeps waiting" ;;
+        assert_eq "1" "$(frontier)" "drop: 4 is out of the run, not on the frontier"
+        assert_eq "sent_back needs-triage,ready-for-agent" "$(state_get '.tickets["4"].status') $(labels 4)" "drop: 4 goes back to triage" ;;
       bypass)
         assert_eq "bypassed closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "[]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")"
@@ -415,4 +417,96 @@ test_a_seeded_check_that_wont_go_green_raises_an_exception_gate() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_eq merged "$(state_get '.tickets["2"].status')"
   assert_contains "$out" "parked: waiting on 1 review: Exception gate: #3's check won't go green (run r1) #$num; 2 tickets wait behind it: #3, #4"
+}
+
+# ---------------------------------------------- dependents leave with a drop (#116)
+
+# 3 is blocked-by chain: 4 depends on 3, and 2 on 4 (and 1).
+chain_run() {
+  setup_run
+  echo '[3]' >"$FAKE_GH_DIR/blocked_by-4.json"
+  echo '[1,4]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "slice", slice: "greeting", tickets: ["1","2"]}]'
+  gave_up_on_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  GATE_NO=$(state_get '.exception_gates[0].issue')
+}
+
+test_a_drop_lists_what_leaves_with_it_before_it_applies() {
+  chain_run
+  local choice out
+  for choice in drop reslice; do
+    [ "$choice" = drop ] || { kill_workers; rm -rf "$TEST_TMPDIR/project" "$TEST_TMPDIR/tracker"; chain_run; }
+    # The gate's table row says it too.
+    assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$GATE_NO.json")" "#2, #4 (everything that depends on it"
+    out=$("$A" "$choice" "$RUN_DIR" "$GATE_NO" --by Andrew)
+    # The impact comes before the confirmation line.
+    assert_eq "Impact: #2, #4 depend on #3, directly or through others, so they leave the run with it and go back to needs-triage. Not every slice survives (slice \"greeting\" loses #2), so it cannot be reviewed end to end as planned." \
+      "$(printf '%s\n' "$out" | sed -n 1p)" "$choice"
+    assert_contains "$(printf '%s\n' "$out" | sed -n 2p)" "it leaves the run; #2, #4 go back to needs-triage with it"
+    assert_eq "sent_back sent_back" "$(state_get '"\(.tickets["2"].status) \(.tickets["4"].status)"')" "$choice: B and C are out of the run"
+    assert_eq "needs-triage" "$(labels 4 | tr ',' '\n' | grep -x needs-triage)" "$choice"
+    assert_eq "needs-triage" "$(labels 2 | tr ',' '\n' | grep -x needs-triage)" "$choice"
+    assert_eq "" "$(labels 4 | tr ',' '\n' | grep -x in-run || true)" "$choice"
+    assert_contains "$(cat "$FAKE_GH_DIR/comments-4.md")" "Taken out of run r1: it depends on #3, which was"
+    assert_contains "$(cat "$FAKE_GH_DIR/comments-4.md")" "grilled again"
+    assert_eq "[3,$GATE_NO]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "$choice: native blockers kept"
+    assert_eq "sent-back 2 3" "$(state_get '[.events[] | select(.event == "sent-back")][0] | "\(.event) \(.ticket) \(.from)"')"
+    if [ "$choice" = drop ]; then
+      assert_eq "open ready-for-agent" "$(issue_state 3) $(labels 3)" "A open, unlabelled by the run"
+    else
+      assert_contains "$(labels 3)" needs-triage
+    fi
+  done
+}
+
+test_a_drop_with_no_dependents_says_so() {
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []'
+  echo '[]' >"$FAKE_GH_DIR/blocked_by-4.json"
+  gave_up_on_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  local out
+  out=$("$A" drop "$RUN_DIR" "$(state_get '.exception_gates[0].issue')")
+  assert_contains "$out" "Impact: Nothing else in the run depends on #3. Every slice can still be reviewed end to end."
+}
+
+# The old way: A dropped, its dependents left queued behind it.
+seed_stranded() {
+  setup_run
+  echo '[3]' >"$FAKE_GH_DIR/blocked_by-4.json"
+  echo '[4]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []
+    | .tickets["1"].status = "merged" | .tickets["3"].status = "dropped"'
+}
+
+test_stranded_tickets_give_next_stranded_never_a_bare_blocked() {
+  seed_stranded
+  local out
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: stranded"
+  assert_contains "$out" "#3 dropped: #2, #4 can't start"
+  assert_contains "$out" "gate-action.sh send-back $RUN_DIR"
+  case "$out" in *"next: blocked"*|*"next: done"*) fail "stranded run reported: $out" ;; esac
+}
+
+test_send_back_clears_the_stranded_and_the_run_reaches_done() {
+  seed_stranded
+  local out
+  out=$("$A" send-back "$RUN_DIR" --by Andrew)
+  assert_contains "$out" "sent back to needs-triage, out of the run: #2, #4 (stranded behind #3)"
+  assert_eq "sent_back sent_back" "$(state_get '"\(.tickets["2"].status) \(.tickets["4"].status)"')"
+  assert_contains "$(labels 2)" needs-triage
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-2.md")" "depends on #3"
+  assert_eq "dropped" "$(state_get '.tickets["3"].status')"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: done"
+  assert_contains "$("$A" send-back "$RUN_DIR")" "No ticket is stranded."
+}
+
+test_bypass_still_lets_dependents_go_ahead() {
+  chain_run
+  "$A" bypass "$RUN_DIR" "$GATE_NO" --by Andrew >/dev/null
+  assert_eq "queued" "$(state_get '.tickets["4"].status')"
+  assert_eq "[]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")"
+  assert_eq "1 4" "$(frontier)"
 }

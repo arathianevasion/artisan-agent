@@ -47,9 +47,9 @@ The overrun gate, the third kind of exception, is #72's.
 | The Artisan says | Call | The ticket | Its dependents | The gate |
 |---|---|---|---|---|
 | retry with notes | `gate-action.sh retry <run> <issue> --notes "…"` | `queued`, with one more attempt (`extra_attempts`) and the notes in `notes`; the next `wave.sh dispatch` is a fresh worker on the same branch whose prompt carries the notes and the failure evidence | wait for it to merge | closed |
-| reslice | `gate-action.sh reslice <run> <issue>` | out of the run as `resliced`, labelled `needs-triage`, `in-run` removed; its replacements join a run through their own plan step | keep waiting on it | closed |
+| reslice | `gate-action.sh reslice <run> <issue>` | out of the run as `resliced`, labelled `needs-triage`, `in-run` removed; its replacements join a run through their own plan step | **leave with it** (see below) | closed |
 | take it myself | `gate-action.sh take <run> <issue>` | `queued` and labelled `ready-for-human`: the Artisan builds it in their own worktree (`human.sh`; the last worker's clean worktree is removed to free the branch), then the same verifier, suite and merge | wait for it to merge | closed |
-| drop | `gate-action.sh drop <run> <issue>` | out of the run as `dropped`, `in-run` removed, left open | keep waiting on it | closed |
+| drop | `gate-action.sh drop <run> <issue>` | out of the run as `dropped`, `in-run` removed, left open, no new label | **leave with it** (see below) | closed |
 | bypass | `gate-action.sh bypass <run> <issue>` | out of the run as `bypassed`, `in-run` removed | **go ahead**: its native edges to them are removed (kept in `bypass.released`) | closed, who recorded |
 | defer | `gate-action.sh defer <run> <issue>` | `deferred`, still in the run's record | **go ahead** now, as for bypass | open until the end gate |
 
@@ -71,9 +71,15 @@ followed by the decisions waiting. A `parked` event (`reason: "reviews"`, `detai
 
 A deferred gate never parks the run: its dependents already went ahead.
 
+## Dependents leave with a dropped or resliced ticket
+
+Everything in scope still to run (`queued` or `blocked`) that depends on the ticket, directly or through others (the tracker's native edges), leaves the run with it. The reply opens with `Impact: …` before anything changes: who goes, and which slices can no longer be reviewed end to end. The exception gate's table row for drop and reslice lists the same tickets (`downstream` on the gate). Then each dependent is labelled `needs-triage`, loses `in-run`, gets a comment naming the run and the ticket and saying it needs grilling again, keeps its native blockers, and becomes `sent_back` (`sent_back: {from, at}`, a `sent-back` event, and `outcome.sent_back` on the gate). They come back through triage and their own plan step; they are not re-added to this run. Bypass is unchanged: its dependents go ahead.
+
+**Stranded.** A state written before this (or an edge case) can leave dropped or resliced tickets with dependents still `queued` behind them. `wave.sh status` then says `next: stranded` instead of `blocked`, with one line per blocker (`#12 dropped: #14, #15 can't start`) and the command: `gate-action.sh send-back <run>` (no gate needed; `--by`, `--why`), which does to the stranded tickets what the drop does to dependents. `gate-action.sh stranded <run>` prints the lines (exit 0) or exits 1 when none. A stranded ticket is never finished, so the run is never `done` while one remains.
+
 ## Done, with tickets out of the run
 
-`wave.sh status` says `done` when every ticket in scope is merged, closed, or out of the run at a gate (`dropped`, `resliced`, `bypassed`, `deferred`: `out_of_run` in `scripts/lib/state-lib.sh`). The run summary puts those first, and the end gate lists the deferred gates.
+`wave.sh status` says `done` when every ticket in scope is merged, closed, or out of the run (`dropped`, `resliced`, `bypassed`, `deferred` at a gate, or `sent_back` with its blocker: `out_of_run` in `scripts/lib/state-lib.sh`). The run summary puts those first, and the end gate lists the deferred gates.
 
 ## Kept for the retro
 
