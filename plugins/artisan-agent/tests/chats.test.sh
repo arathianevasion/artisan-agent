@@ -223,6 +223,7 @@ test_due_follows_the_sweep_interval() {
 
 test_a_run_started_through_implement_plan_labels_every_ticket_once() {
   setup_chats
+  ticket 1
   ticket 2
   "$C" label-run "$RUN_DIR"
   "$C" label-run "$RUN_DIR"
