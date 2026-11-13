@@ -120,6 +120,25 @@ test_the_packet_follows_variant_b_top_to_bottom() {
   done
 }
 
+test_the_packet_names_the_areas_its_tickets_belong_to() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing", "docs"]'
+  local num= body=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
+  assert_contains "$body" "### Areas"
+  assert_contains "$body" "| #1 | billing, docs |"
+}
+
+test_the_packet_has_no_areas_section_when_no_ticket_has_an_area() {
+  setup_gate
+  merged_with_evidence 1
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "### Areas"
+}
+
 test_the_gate_blocks_only_the_slice_dependents_natively() {
   setup_gate
   merged_with_evidence 1

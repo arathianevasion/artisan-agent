@@ -13,13 +13,17 @@
 #       each source's commit in the state file (state.sh wave-start). Prints
 #       one JSON line. Exit 6: main would not merge cleanly (a decision is
 #       queued, the wave is not recorded).
-#   guardrails.sh resolve [--run-dir D] [--role product|engineering]
+#   guardrails.sh resolve [--run-dir D] [--role product|engineering] [--ticket T[,T...]] [--areas A[,A...]]
 #       the guardrails in force, as JSON: {sources, applied, own_reviews,
 #       overridden, conflicts}. With --run-dir it reads each source at the
 #       commit the latest wave recorded, so an edit made mid-wave applies
 #       from the next one; without it, each source as committed now.
 #       --role keeps an individual guardrail only if it has no role or this one.
-#   guardrails.sh table [--run-dir D] [--role R]
+#       --ticket (with --run-dir) and --areas keep an area-scoped guardrail (one
+#       with an `area`) only if that area is among the tickets' areas
+#       (`plan.tickets.<t>.areas`, set by gate-plan.sh propose) or the named
+#       ones; with neither, every guardrail is listed, area-scoped or not.
+#   guardrails.sh table [--run-dir D] [--role R] [--ticket T[,T...]] [--areas A[,A...]]
 #       the "Guardrails applied" section for a packet, a markdown table.
 #   guardrails.sh tighten --level individual|product|team --who NAME --reason TEXT
 #       [--id ID] [--key K --value V --rule TEXT] [--strict N] [--evidence TEXT]
@@ -221,9 +225,18 @@ read_level() {
     'select(type == "object") | . + {level: $l, version: $v}' || true
 }
 
-# resolve_json run-dir role
+# resolve_json run-dir role tickets areas
 resolve_json() {
-  local run=$1 role=$2 m= src= tdir= repo= recs=
+  local run=$1 role=$2 tickets=${3:-} areas=${4:-} m= src= tdir= repo= recs= scoped=null
+  if [ -n "$tickets" ] && [ -z "$run" ]; then state_die 2 "guardrails.sh: --ticket needs --run-dir"; fi
+  if [ -n "$tickets" ] || [ -n "$areas" ]; then
+    scoped=$(jq -nc --arg a "$areas" '$a | split(",") | map(select(. != ""))')
+    if [ -n "$tickets" ]; then
+      state_require_run_dir "$run"
+      scoped=$(jq -c --arg t "$tickets" --argjson a "$scoped" \
+        '. as $s | $a + [($t | split(",") | map(select(. != ""))[]) as $k | ($s.plan.tickets[$k].areas // [])[]] | unique' "$(state_file "$run")")
+    fi
+  fi
   if [ -n "$run" ]; then
     state_require_run_dir "$run"
     m=$(main_checkout "$run")
@@ -241,7 +254,7 @@ resolve_json() {
     read_level product "$m" "$(jq -r '.product.commit // ""' <<<"$src")" "$PRODUCT_FILE"
     read_level individual "$HOME_DIR" "$(jq -r '.individual.commit // ""' <<<"$src")" "$SHARED_FILE"
   })
-  jq -n --argjson src "$src" --arg role "$role" --argjson recs "$(printf '%s\n' "$recs" | jq -sc '.')" '
+  jq -n --argjson src "$src" --arg role "$role" --argjson scoped "$scoped" --argjson recs "$(printf '%s\n' "$recs" | jq -sc '.')" '
     def rank: {product: 3, team: 2, individual: 1}[.level];
     def strict: (.strict // 0);
     def slim: {key, level, id, value, strict: strict, version, rule: (.rule // null), scope: (.scope // null), role: (.role // null), area: (.area // null), origin: (.origin // null), moves: (.moves // []), protected: ((.key == "scope-floor") or (.defer_only == true))};
@@ -254,7 +267,8 @@ resolve_json() {
       | ($diff | map(select(.level == "individual" and .scope == "own-reviews"
                             and ($shared | length) > 0 and strict > ($win | strict)))) as $stricter
       | {win: $win, own: $stricter, lost: ($diff - $stricter)};
-    ($recs | map(select(.level != "individual" or $role == "" or (.role // "") == "" or .role == $role))) as $all
+    ($recs | map(select(.level != "individual" or $role == "" or (.role // "") == "" or .role == $role))
+           | map(select($scoped == null or (.area // "") == "" or (.area as $a | $scoped | index($a) != null)))) as $all
     | [$all | group_by(.key)[] | classify] as $res
     | {sources: $src,
        applied: [$res[].win | slim],
@@ -264,27 +278,31 @@ resolve_json() {
 }
 
 cmd_resolve() {
-  local run="" role=""
+  local run="" role="" tickets="" areas=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --run-dir) [ $# -ge 2 ] || usage; run=$2; shift 2 ;;
       --role) [ $# -ge 2 ] || usage; role=$2; shift 2 ;;
+      --ticket) [ $# -ge 2 ] || usage; tickets=$2; shift 2 ;;
+      --areas) [ $# -ge 2 ] || usage; areas=$2; shift 2 ;;
       *) usage ;;
     esac
   done
-  resolve_json "$run" "$role"
+  resolve_json "$run" "$role" "$tickets" "$areas"
 }
 
 cmd_table() {
-  local run="" role="" json=
+  local run="" role="" json="" tickets="" areas=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --run-dir) [ $# -ge 2 ] || usage; run=$2; shift 2 ;;
       --role) [ $# -ge 2 ] || usage; role=$2; shift 2 ;;
+      --ticket) [ $# -ge 2 ] || usage; tickets=$2; shift 2 ;;
+      --areas) [ $# -ge 2 ] || usage; areas=$2; shift 2 ;;
       *) usage ;;
     esac
   done
-  json=$(resolve_json "$run" "$role")
+  json=$(resolve_json "$run" "$role" "$tickets" "$areas")
   jq -r "$(state_jq_row_def)"'
     "| Guardrail | Level | Version | Says |",
     "|---|---|---|---|",

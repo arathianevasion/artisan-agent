@@ -193,3 +193,31 @@ test_working_as_a_pair_doc_ships_in_the_plugin() {
     grep -qi "$w" "$f" || fail "the pair doc does not say: $w"
   done
 }
+
+# Areas (#77): an area-scoped guardrail applies only to tickets touching its area.
+
+test_an_area_scoped_guardrail_applies_only_to_tickets_touching_that_area() {
+  setup_levels
+  { rec p-1 naming short 1
+    rec p-2 money-rounding cents 1 | jq -c '.area = "billing"'; } >"$PROJECT/.artisan-agent/guardrails.jsonl"
+  commit_all "$PROJECT" product
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"] | .plan.tickets["2"].areas = ["docs"]'
+  keys() { jq -r '[.applied[].key] | sort | join(" ")'; }
+  assert_eq "money-rounding naming" "$("$G" resolve --run-dir "$RUN_DIR" --ticket 1 | keys)"
+  assert_eq "naming" "$("$G" resolve --run-dir "$RUN_DIR" --ticket 2 | keys)"
+  assert_eq "naming" "$("$G" resolve --run-dir "$RUN_DIR" --ticket 3 | keys)" "a ticket in no area"
+  assert_eq "money-rounding naming" "$("$G" resolve --run-dir "$RUN_DIR" --ticket 2,1 | keys)" "a slice touching billing"
+  assert_eq "money-rounding naming" "$("$G" resolve --areas billing | keys)"
+  assert_contains "$("$G" table --run-dir "$RUN_DIR" --ticket 1)" "money-rounding = cents"
+  assert_not_contains "$("$G" table --run-dir "$RUN_DIR" --ticket 2)" "money-rounding"
+}
+
+test_with_no_areas_every_guardrail_is_listed_as_before() {
+  setup_levels
+  { rec p-1 naming short 1
+    rec p-2 money-rounding cents 1 | jq -c '.area = "billing"'; } >"$PROJECT/.artisan-agent/guardrails.jsonl"
+  commit_all "$PROJECT" product
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  assert_eq "money-rounding naming" "$("$G" resolve --run-dir "$RUN_DIR" | jq -r '[.applied[].key] | sort | join(" ")')"
+}

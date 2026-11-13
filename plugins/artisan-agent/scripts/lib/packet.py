@@ -223,6 +223,12 @@ def body(view):
                 t, cell(a.get("criterion")), "proven" if proven(a) else "**needs you**", cell(shown)))
     else:
         out += ["No criteria recorded."]
+    plan_tickets = state.get("plan", {}).get("tickets") or {}
+    in_areas = [(t, plan_tickets.get(t, {}).get("areas") or []) for t in gate["tickets"]]
+    in_areas = [(t, a) for t, a in in_areas if a]
+    if in_areas:
+        out += ["", "### Areas", "", "| Ticket | Areas |", "|---|---|"]
+        out += ["| #%s | %s |" % (t, cell(", ".join(a))) for t, a in in_areas]
     out += ["", "### Guardrails applied", ""]
     waves = state.get("waves") or []
     version = waves[-1].get("plugin_version") if waves else None

@@ -122,7 +122,7 @@ cmd_holds() {
 build_view() { # id dependents-json
   local def="$1" deps="$2" guard= prov= t=
   gates_dir >/dev/null
-  guard=$("$SCRIPT_DIR/guardrails.sh" table --run-dir "$RUN_DIR" 2>"$RUN_DIR/gates/.guardrails.err") \
+  guard=$("$SCRIPT_DIR/guardrails.sh" table --run-dir "$RUN_DIR" --ticket "$(jq -r '.tickets | map(tostring) | join(",")' <<<"$def")" 2>"$RUN_DIR/gates/.guardrails.err") \
     || guard="Could not be read: $(tr '\n' ' ' <"$RUN_DIR/gates/.guardrails.err")"
   prov=$("$SCRIPT_DIR/questions.sh" provisional "$RUN_DIR" 2>/dev/null) || prov=""
   # The slice's own decisions are its cards; the listing keeps the rest.
