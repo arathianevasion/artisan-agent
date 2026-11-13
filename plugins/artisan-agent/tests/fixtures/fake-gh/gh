@@ -35,7 +35,7 @@
 #                         starts a workflow_dispatch run (run-<id>.json, ids from 9001) on the
 #                         branch's tip in the git repo FAKE_GH_REMOTE (a path; the branch must exist
 #                         there). How it goes, from files the test writes in $FAKE_GH_DIR:
-#                           ci-outcome      success (default) | failure | never (stays in_progress)
+#                           ci-outcome      success (default) | any other conclusion (failure, cancelled, ...) | never (stays in_progress)
 #                           ci-sha          a head SHA to report instead of the branch's tip
 #                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down

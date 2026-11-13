@@ -84,6 +84,49 @@ test_mg_a_red_ci_run_undoes_the_merge_and_blocks_the_ticket_naming_the_run() {
   [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran on this machine"
 }
 
+test_mg_a_timed_out_ci_run_is_red_undoes_the_merge_and_blocks_the_ticket() {
+  setup_ci
+  verified_ticket
+  echo timed_out >"$FAKE_GH_DIR/ci-outcome"
+  merge_1
+  assert_eq 7 "$MERGE_STATUS"
+  assert_eq blocked "$(state_get '.tickets["1"].status')"
+  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "timed_out"
+  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "https://github.com/local/sample/actions/runs/9001"
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "the merge was undone"
+  assert_eq "ci false timed_out" "$(state_get '.tickets["1"].suite | "\(.mode) \(.passed) \(.conclusion)"')"
+  assert_eq null "$(state_get '.ci_park')" "red blocks, it does not park"
+  assert_eq "" "$(ci_branches)" "the ci branch is gone after a fail"
+}
+
+test_mg_a_cancelled_ci_run_parks_the_run_unblocked_and_clearing_the_park_retries_the_gate() {
+  setup_ci 30 '["1","2"]'
+  verified_ticket
+  echo cancelled >"$FAKE_GH_DIR/ci-outcome"
+  merge_1
+  assert_eq 19 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq returned "$(state_get '.tickets["1"].status')" "CI never judged it: not blocked"
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "the merge was undone"
+  assert_eq "" "$(ci_branches)" "the ci branch is gone after a park"
+  assert_eq "cancelled https://github.com/local/sample/actions/runs/9001" \
+    "$(state_get '.ci_park | "\(.conclusion) \(.url)"')"
+  local parked_sha= out=
+  parked_sha=$(state_get '.ci_park.sha')
+  assert_eq "ci 1" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.ticket)"')"
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "cancelled"
+  assert_contains "$out" "https://github.com/local/sample/actions/runs/9001"
+  assert_status 19 "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 2
+  rm -f "$FAKE_GH_DIR/ci-outcome"
+  "$SCRIPTS/wave.sh" unpark-ci "$RUN_DIR" >/dev/null
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "retry: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "$parked_sha" "$(state_get '.tickets["1"].merge_commit')" "the same merge commit, gated again"
+  assert_eq "" "$(ci_branches)"
+}
+
 test_mg_a_green_run_for_another_commit_does_not_count_and_the_run_parks() {
   setup_ci 0
   verified_ticket
@@ -110,7 +153,7 @@ test_mg_no_conclusion_in_time_parks_the_run_and_clearing_the_park_retries_the_ga
   assert_eq "ci 1" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.ticket)"')"
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
-  assert_contains "$out" "parked ci: #1's merge gate got no conclusion from CI"
+  assert_contains "$out" "parked ci: #1's merge gate got no verdict from CI"
   assert_contains "$out" "wave.sh unpark-ci"
   # Parked: nothing merges or dispatches.
   merge_1

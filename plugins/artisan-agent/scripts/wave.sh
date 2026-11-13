@@ -28,7 +28,7 @@
 #       sweep, the tracker). First line "orchestrator: <state>", second
 #       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
 #       ticket table. "parked" (with a line naming it) means the merge gate
-#       on CI got no conclusion ("parked ci: ...", cleared with unpark-ci), or only a hands-on
+#       on CI got no verdict ("parked ci: ...", cleared with unpark-ci), or only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
 #       ("waiting on N reviews", gate-action.sh parked), or dispatch is
@@ -75,8 +75,9 @@
 #       progress for its one /artisan-agent:resolve-conflicts try (then
 #       wave.sh resolved; the conflicted paths are a JSON array in the state
 #       file's conflict event, exactly as git reports them). 6: refused, or a conflict after that try was used,
-#       7: suite red, or CI red (both mark the ticket blocked and queue a
-#       decision). 19: parked on CI: CI gave no conclusion in time, so the
+#       7: suite red, or CI red: failure or timed_out (both mark the ticket
+#       blocked and queue a decision). 19: parked on CI: CI gave no verdict
+#       (none in time, unreachable, or a run cancelled or the like), so the
 #       merge is undone, the ticket stays returned and nothing merges or
 #       dispatches until unpark-ci; a gate a crash cut short is undone here
 #       and gated again.
@@ -425,7 +426,7 @@ cmd_status() {
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
       elif [ "$(get '.ci_park != null')" = true ]; then next=parked
-        parked=$(get -r '.ci_park | "parked ci: #\(.ticket)'"'"'s merge gate got no conclusion from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
+        parked=$(get -r '.ci_park | "parked ci: #\(.ticket)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
       elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
         # Parked on usage and behind open reviews too: both reasons show.
         if [ "$reconciled" -eq 1 ] && reviews=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then
@@ -826,8 +827,9 @@ ci_setting() { # key
 # ci_gate ticket attempt worktree pre: the merge commit at the worktree's
 # HEAD goes to a unique ci/<run>-<ticket>-<attempt>-<ts> branch and the gate
 # workflow runs there (merge-gate.sh ci, which deletes the branch). Green
-# sets GATE_JSON. Red undoes the merge and blocks the ticket (7), the run's
-# URL in the reason. No conclusion (CI unavailable or slow) undoes the merge
+# sets GATE_JSON. Red (failure or timed_out) undoes the merge and blocks the
+# ticket (7), the run's URL in the reason. No verdict (CI unavailable or slow,
+# or a run concluded cancelled, skipped or the like) undoes the merge
 # and parks the run with reason ci (19); the ticket is not at fault, so it
 # stays returned, and clearing the park (wave.sh unpark-ci) retries the gate
 # on the same merge commit. The gate in progress is recorded first (ci_gate),
@@ -868,9 +870,9 @@ ci_gate() {
   fi
   why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
   apply '.ci_park = ({ticket: $t, attempt: $n, pre: $pre, sha: $sha, minutes: $m, at: $now}
-        + ($g | {workflow, branch, run_id, url, why}))
+        + ($g | {workflow, branch, run_id, url, conclusion, why}))
     | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $t,
-        question: "The merge gate for #\($t) got no conclusion from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+        question: "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
         status: "waiting", at: $now}]
     | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why}; $now)' \
     --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --argjson m "$minutes" --argjson g "$GATE_JSON"

@@ -22,10 +22,14 @@
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
 #       or fail. Prints the gate's record as JSON: {mode: "ci", workflow,
 #       branch, sha, run_id, url, conclusion, jobs: [{name, conclusion}]}
-#       (run_id, url, conclusion null when no run concluded; with a "why").
-#       Exit 0 the run concluded success, 7 it concluded anything else, 19
-#       no conclusion: the push or dispatch failed, or none within M minutes
-#       (default 30). A run for any other SHA never counts.
+#       (run_id, url, conclusion null when no run concluded; with a "why"
+#       when CI gave no verdict). Exit 0 the run concluded success; 7 red:
+#       it concluded failure or timed_out (the suite failed or hung); 19 no
+#       verdict: the push or dispatch failed, none concluded within M minutes
+#       (default 30), or the run concluded anything else (cancelled, skipped,
+#       stale, startup_failure, action_required or a conclusion not known
+#       here), so CI never judged the commit. A run for any other SHA never
+#       counts.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -43,8 +47,8 @@
 # ARTISAN_HOME, CLAUDE_CONFIG_DIR place host.json (as login-check.sh);
 # ARTISAN_CI_POLL_SECONDS, the wait between readings (default 20).
 #
-# Exit status: 0 ok, 1 error, 2 usage, 7 CI concluded red, 19 no CI
-# conclusion (scripts/README.md, "Exit status").
+# Exit status: 0 ok, 1 error, 2 usage, 7 CI concluded red (failure or
+# timed_out), 19 no CI verdict (scripts/README.md, "Exit status").
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq and, for ci and
 # minutes, gh.
@@ -154,9 +158,16 @@ cmd_ci() {
   view=$(gh run view "$id" -R "$CI_REPO" --json databaseId,headSha,status,conclusion,url,jobs 2>/dev/null) || view=$run
   jq -e --arg sha "$CI_SHA" '.headSha == $sha' <<<"$view" >/dev/null 2>&1 || view=$run
   delete_branch
-  record "$view" ""
   conclusion=$(jq -r '.conclusion // ""' <<<"$view")
-  [ "$conclusion" = success ] || return 7
+  # Only a failed or hung suite is red; any other conclusion means CI never
+  # judged the commit, which is not the ticket's fault.
+  case "$conclusion" in
+    success) record "$view" "" ;;
+    failure | timed_out) record "$view" ""; return 7 ;;
+    *)
+      record "$view" "$CI_WF concluded ${conclusion:-nothing} for $CI_SHA, so CI did not judge it"
+      return 19 ;;
+  esac
 }
 
 # -------------------------------------------------------------------- sweep
