@@ -166,7 +166,9 @@ test_bad_j_and_shard_arguments_are_usage_errors() {
 # exits at the first match, printf takes SIGPIPE, pipefail makes the pipeline
 # 141, and `!` turns that into success. Assert with assert_not_contains.
 negated_piped_greps() { # file...  -> "file:line:text" for each offender
-  grep -nE '^[[:space:]]*![^|]*\|[[:space:]]*grep[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*q' "$@" || true
+  # A `!` (leading, or after `if`, `&&`, `||`, `[`) before a pipe that ends in
+  # `grep` with -q (also inside -qF style flag groups), --quiet or --silent.
+  grep -HnE '(^|[[:space:];&|(])![[:space:]][^|]*\|([^|]*\|)*[[:space:]]*grep[[:space:]][^|]*(-[A-Za-z]*q|--quiet|--silent)' "$@" || true
 }
 
 test_assert_not_contains_passes_when_the_needle_is_absent() {
@@ -180,10 +182,14 @@ test_assert_not_contains_fails_when_the_needle_is_present() {
 }
 
 test_the_negated_grep_detector_flags_a_negated_piped_grep() {
-  printf '%s\n' '  ! printf "%s" "$out" | grep -qF -- "x" || fail y' >"$TEST_TMPDIR/bad.sh"
-  assert_contains "$(negated_piped_greps "$TEST_TMPDIR/bad.sh" /dev/null)" "bad.sh:1:"
+  # Fixtures are built with $not so this file doesn't trip its own guard.
+  local not='!'
+  printf '%s\n' "  $not printf x | grep -qF -- x || fail y" >"$TEST_TMPDIR/bad.sh"
+  assert_contains "$(negated_piped_greps "$TEST_TMPDIR/bad.sh")" "bad.sh:1:"
+  printf '%s\n' "  if $not a | b | grep --quiet x; then :; fi" >"$TEST_TMPDIR/bad2.sh"
+  assert_contains "$(negated_piped_greps "$TEST_TMPDIR/bad2.sh")" "bad2.sh:1:"
   printf '%s\n' '  printf "%s" "$out" | grep -q x || fail y' >"$TEST_TMPDIR/ok.sh"
-  assert_eq "" "$(negated_piped_greps "$TEST_TMPDIR/ok.sh" /dev/null)" "non-negated pipe"
+  assert_eq "" "$(negated_piped_greps "$TEST_TMPDIR/ok.sh")" "non-negated pipe"
 }
 
 test_no_test_file_negates_a_piped_grep_q() {
