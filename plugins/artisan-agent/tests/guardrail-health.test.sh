@@ -298,3 +298,36 @@ test_the_scope_floor_and_defer_only_events_belong_to_their_ledger_guardrails_wha
   out=$("$H" health --runs "$(R r1)")
   assert_eq "floor-1 fired, overrun-1 fired, quiet never fired" "$(jq -r '[.guardrails | sort_by(.id)[] | "\(.id) \(.status)"] | join(", ")' <<<"$out")"
 }
+
+# a run that closed #12 (areas billing) and #13 (no areas); #14 was pulled, never closed
+closing_run() {
+  run r1 '[{"event":"closed","ticket":"13"}]' '{"tickets": {"12": {"status": "merged"}, "13": {"status": "merged"}, "14": {"status": "deferred"}},
+    "plan": {"tickets": {"12": {"areas": ["billing"]}, "13": {}, "14": {"areas": ["billing"]}}}}'
+  cat >"$TEST_TMPDIR/issues.json" <<'JSON'
+[{"number":90,"title":"Totals off after #12","body":"Seen on the invoice page.","createdAt":"2026-03-02T00:00:00Z","url":"u90"},
+ {"number":91,"title":"Crash","body":"Started with #13 and maybe #14; not #120.","createdAt":"2026-03-03T00:00:00Z","url":"u91"},
+ {"number":92,"title":"Old bug about #12","body":"","createdAt":"2026-01-01T00:00:00Z","url":"u92"},
+ {"number":93,"title":"Unrelated","body":"No ticket here","createdAt":"2026-03-04T00:00:00Z","url":"u93"}]
+JSON
+}
+
+test_the_retro_lists_bug_issues_since_the_last_retro_that_mention_a_ticket_a_run_closed() {
+  setup
+  closing_run
+  out=$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json")
+  assert_eq "90:12:billing 91:13:" "$(jq -r '[.candidates[] | "\(.issue):\(.ticket):\(.areas | join(","))"] | join(" ")' <<<"$out")"
+  assert_contains "$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json" --table)" "| #90 | Totals off after #12 | #12 | billing |"
+}
+
+test_only_a_confirmed_bug_counts_and_a_confirmed_one_is_not_listed_again() {
+  setup "$(g bill kt 1 '{"area":"billing"}')"
+  closing_run
+  bugs="$TEST_TMPDIR/bugs.jsonl"
+  assert_eq 0 "$(jq '.guardrails[0].tighten.count' <<<"$("$H" health --runs "$(R r1)" --bugs "$bugs")")"
+  "$H" bug-confirm --runs "$(R r1)" --out "$bugs" --issue 90 --ticket 12 --by Andrew
+  "$H" bug-confirm --runs "$(R r1)" --out "$bugs" --issue 90 --ticket 12 --by Andrew   # once only
+  assert_eq '1 shipped ["billing"] Andrew' "$(jq -sc 'length' "$bugs") $(jq -r '[.where, (.areas | tojson), .by] | join(" ")' "$bugs")"
+  assert_eq 1 "$(jq '.guardrails[0].tighten.count' <<<"$("$H" health --runs "$(R r1)" --bugs "$bugs")")"
+  assert_eq "91" "$(jq -r '[.candidates[].issue] | join(" ")' <<<"$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json" --bugs "$bugs")")"
+  assert_status 6 "$H" bug-confirm --runs "$(R r1)" --out "$bugs" --issue 91 --ticket 14
+}

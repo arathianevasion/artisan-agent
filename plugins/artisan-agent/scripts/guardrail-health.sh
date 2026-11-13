@@ -5,7 +5,7 @@
 # Rules and event shapes: ${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md.
 #
 # Usage (--runs takes run folders, oldest first; --table prints markdown):
-#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--table] [--record]
+#   guardrail-health.sh health --runs DIR... [--threshold N] [--misses FILE] [--bugs FILE] [--table] [--record]
 #       each guardrail in force (guardrails.sh resolve) as fired, bypassed (with
 #       reasons) or never fired, with its origin, and the moves its evidence
 #       supports: loosen or tighten once it reaches the threshold (default 3).
@@ -30,8 +30,19 @@
 #       commits straight to main, PRs and merges with no run record, tickets
 #       closed outside a run. --prs and --closed are JSON files standing in for
 #       `gh pr list` and `gh issue list`.
+#   guardrail-health.sh bugs --runs DIR... [--since DATE] [--issues FILE] [--bugs FILE] [--table]
+#       the retro's candidate bugs: `bug` issues opened since DATE (the last
+#       retro) whose title or body mentions a ticket a run closed (#<n>), each
+#       with that ticket's areas; one already in --bugs is not listed again.
+#       --issues is a JSON file standing in for `gh issue list --label bug`.
+#   guardrail-health.sh bug-confirm --runs DIR... --out FILE --issue N --ticket T [--by NAME]
+#       the Artisan confirmed it: one line in FILE (the run's retro/bugs.jsonl,
+#       read by health --bugs) with the ticket's areas and `where: "shipped"`.
+#       Once per issue and ticket; 6 when no run given closed the ticket.
+#   health --bugs FILE reads that list: each line is tighten evidence in its
+#   ticket's areas, as a `bug-found` event at a gate is.
 #
-# Exit status: 0 ok, 1 error, 2 usage.
+# Exit status: 0 ok, 1 error, 2 usage, 6 refused (bug-confirm).
 # Portable to bash 3.2 and Linux. Needs git, jq (gh for backstop without --prs/--closed).
 
 set -euo pipefail
@@ -308,6 +319,62 @@ cmd_backstop() {
   else printf '%s\n' "$out"; fi
 }
 
+# --------------------------------------------------------------------- bugs
+
+# The tickets the runs closed (merged or closed), each with the areas its run
+# gave it (plan.tickets.<t>.areas) and that run's id.
+CLOSED_JQ='
+  [.[] | . as $s
+   | ([($s.tickets // {}) | to_entries[] | select(.value.status == "merged" or .value.status == "closed") | .key]
+      + [($s.events // [])[] | select(.event == "closed") | .ticket | tostring]) | unique[]
+   | {ticket: ., areas: ($s.plan.tickets[.].areas // []), run: $s.run_id}]
+  | group_by(.ticket) | map(last)'
+
+cmd_bugs() {
+  VALUE_OPTS="--since --issues"
+  parse_common "$@"
+  [ ${#REST[@]} -eq 0 ] || usage
+  local since=${OPT_since:-} issues=${OPT_issues:-} closed= issues_json= repo= out=
+  closed=$(states_json | jq -c "$CLOSED_JQ")
+  if [ -n "$issues" ]; then issues_json=$(cat "$issues")
+  else
+    repo=$(states_json | jq -r '.[0].repo // ""')
+    issues_json=$(gh issue list -R "$repo" --label bug --state all --limit 200 \
+      ${since:+--search "created:>=$since"} --json number,title,body,createdAt,url) \
+      || state_die 1 "guardrail-health.sh: could not list bug issues; pass --issues FILE"
+  fi
+  out=$(jq -n --argjson closed "$closed" --argjson issues "$issues_json" --argjson confirmed "$(bugs_json)" --arg since "$since" '
+    {candidates: [$issues[] | select($since == "" or (.createdAt // "") >= $since) | . as $i
+      | ((.title // "") + " " + (.body // "")) as $text
+      | $closed[] | . as $c | select($text | test("#" + $c.ticket + "(?![0-9])"))
+      | select(.ticket as $t | any($confirmed[]; (.issue | tostring) == ($i.number | tostring) and (.ticket | tostring) == $t) | not)
+      | {issue: $i.number, title: $i.title, url: ($i.url // null), ticket, areas, run}],
+     question: "Is each of these a bug in the ticket it names? Confirm each one that is (bug-confirm); a mention can be loose."}')
+  if [ "$TABLE" = 1 ]; then
+    jq -r "$(state_jq_row_def)"'
+      "| Bug | Title | Ticket a run closed | Areas |", "|---|---|---|---|",
+      (.candidates[] | ["#\(.issue)", .title, "#\(.ticket)", (if .areas == [] then "none" else .areas | join(", ") end)] | row),
+      "", .question' <<<"$out"
+  else printf '%s\n' "$out"; fi
+}
+
+cmd_bug_confirm() {
+  VALUE_OPTS="--out --issue --ticket --by"
+  parse_common "$@"
+  [ ${#REST[@]} -eq 0 ] || usage
+  local out=${OPT_out:-} issue=${OPT_issue:-} ticket=${OPT_ticket:-} by=${OPT_by:-Artisan} hit=
+  [ -n "$out" ] && state_is_uint "$issue" && [ -n "$ticket" ] || usage
+  hit=$(states_json | jq -c --arg t "$ticket" "$CLOSED_JQ"' | map(select(.ticket == $t)) | first // empty')
+  [ -n "$hit" ] || state_die 6 "guardrail-health.sh: no run given closed #$ticket"
+  BUGS=$out
+  if jq -e --arg i "$issue" --arg t "$ticket" 'any(.[]; (.issue | tostring) == $i and (.ticket | tostring) == $t)' <<<"$(bugs_json)" >/dev/null; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$out")"
+  jq -nc --argjson h "$hit" --argjson i "$issue" --arg by "$by" --argjson now "$(state_now)" \
+    '{issue: $i, ticket: $h.ticket, areas: $h.areas, where: "shipped", run: $h.run, by: $by, at: $now}' >>"$out"
+}
+
 [ $# -ge 1 ] || usage
 cmd=$1
 shift
@@ -318,5 +385,7 @@ case "$cmd" in
   audit) cmd_audit "$@" ;;
   hands-on) cmd_hands_on "$@" ;;
   backstop) cmd_backstop "$@" ;;
+  bugs) cmd_bugs "$@" ;;
+  bug-confirm) cmd_bug_confirm "$@" ;;
   *) usage ;;
 esac
