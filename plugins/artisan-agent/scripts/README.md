@@ -228,7 +228,7 @@ Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budg
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
 | 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
-| 7 | the suite went red after the merge (undone, blocked); for `checks.sh run`, a check failed | `merge`, `resolved`, `checks.sh run` | carry on with the rest |
+| 7 | the suite went red after the merge, or on a machine whose merge gate runs on CI, the gate workflow's run concluded anything but success (undone, blocked); for `checks.sh run`, a check failed | `merge`, `resolved`, `checks.sh run`, `merge-gate.sh ci` | carry on with the rest |
 | 8 | a worker or verifier is still running or ending (from `verify.sh start`, also: another call's verifier could not launch or has not come up yet) | `dispatch`, `merge`, `verify.sh start`, `verify.sh judge` | wait, then call again |
 | 9 | no free slot under Max Agents | `dispatch` | wait for a ticket to finish |
 | 10 | its expected files overlap a ticket in flight or in this wave | `dispatch`, `wave-width.sh check` | leave it for a later wave |

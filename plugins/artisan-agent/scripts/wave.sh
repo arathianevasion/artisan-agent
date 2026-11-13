@@ -86,8 +86,9 @@
 #       after /artisan-agent:resolve-conflicts: commit the resolved merge and
 #       run the suite as merge does. 6: still conflicted, markers, unstaged
 #       changes or untracked files left, or gave up (the merge is aborted
-#       and the untracked files removed); 7: suite red. Either way the ticket is blocked
-#       with its branch and worktree kept.
+#       and the untracked files removed); 7: suite red, or CI red. Either way
+#       the ticket is blocked with its branch and worktree kept. 19: parked on
+#       CI, as merge (the resolved merge commit is the one retried).
 #   wave.sh unpark-ci <run-dir> [--by NAME]
 #       the Artisan clears a park on CI: the parked ticket's next merge
 #       retries the gate on the same merge commit. 6: not parked on CI.
@@ -852,9 +853,11 @@ ci_gate() {
   jq -e 'type == "object"' <<<"$GATE_JSON" >/dev/null 2>&1 \
     || GATE_JSON=$(jq -nc --arg wf "$wf" --arg b "$branch" --arg sha "$sha" \
          '{mode: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
+  # Undo first, then clear the record: a crash between the two leaves the
+  # record, which the next merge finds and undoes, never an ungated merge.
+  [ "$rc" -eq 0 ] || git -C "$wt" reset -q --hard "$pre"
   apply '.ci_gate = null'
   [ "$rc" -ne 0 ] || return 0
-  git -C "$wt" reset -q --hard "$pre"
   url=$(jq -r '.url // "no run"' <<<"$GATE_JSON")
   if [ "$rc" -eq 7 ]; then
     apply '.tickets[$t].suite = ({command: $c, passed: false}

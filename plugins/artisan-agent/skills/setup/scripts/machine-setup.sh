@@ -202,5 +202,5 @@ case ${1:-} in
   scan) cmd_scan ;;
   remove) shift; cmd_remove "$@" ;;
   merge-gate) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh merge-gate [auto|local|ci]" >&2; exit 2; }; cmd_merge_gate "$@" ;;
-  *) echo "usage: machine-setup.sh init|check|scan|remove ID..." >&2; exit 2 ;;
+  *) echo "usage: machine-setup.sh init|check|scan|remove ID...|merge-gate [auto|local|ci]" >&2; exit 2 ;;
 esac
