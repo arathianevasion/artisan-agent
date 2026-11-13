@@ -54,6 +54,24 @@ test_send_to_engineering_creates_a_plan_issue_with_those_sub_issues() {
   assert_contains "$("$SCRIPTS/resolve-scope.sh" --repo local/sample 347)" '"number": 345'
 }
 
+test_a_send_whose_link_fails_warns_then_the_next_sweep_links_it() {
+  setup_chats
+  ticket 345
+  ticket 346
+  # 345 already has a parent, so the link fails like GitHub's.
+  echo 99 >"$FAKE_GH_DIR/parent-345"
+  local plan= err="$TEST_TMPDIR/send.err" st=0
+  plan=$("$C" send 345 346 2>"$err") || st=$?
+  assert_eq 0 "$st" "a failed link does not fail the send"
+  assert_eq 347 "$plan"
+  assert_contains "$(cat "$err")" "#345 could not be made a sub-issue of #347"
+  assert_eq "[346]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-347.json")"
+  # The parent goes away; the next sweep links the message issue's missing sub-issue.
+  rm "$FAKE_GH_DIR/parent-345"
+  sweep >/dev/null
+  assert_eq "[346,345]" "$(jq -c . "$FAKE_GH_DIR/sub_issues-347.json")"
+}
+
 test_send_refuses_a_ticket_already_in_a_run() {
   setup_chats
   ticket 345 in-run

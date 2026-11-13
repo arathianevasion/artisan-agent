@@ -285,7 +285,7 @@ test_the_exception_choices_leave_the_ticket_and_dependents_as_stated() {
       reslice)
         assert_eq "resliced closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
         assert_eq "needs-triage,ready-for-agent" "$(labels 3)"
-        assert_eq "[3,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "reslice: 4 keeps its blockers"
+        assert_eq "[3]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "reslice: 4 keeps its blocker, not the closed gate"
         assert_eq "sent_back needs-triage,ready-for-agent" "$(state_get '.tickets["4"].status') $(labels 4)" "reslice: 4 goes back to triage" ;;
       drop)
         assert_eq "dropped closed" "$(state_get '.tickets["3"].status') $(issue_state "$num")"
@@ -477,7 +477,7 @@ test_a_drop_lists_what_leaves_with_it_before_it_applies() {
     assert_eq "" "$(labels 4 | tr ',' '\n' | grep -x in-run || true)" "$choice"
     assert_contains "$(cat "$FAKE_GH_DIR/comments-4.md")" "Taken out of run r1: it depends on #3, which was"
     assert_contains "$(cat "$FAKE_GH_DIR/comments-4.md")" "grilled again"
-    assert_eq "[3,$GATE_NO]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "$choice: native blockers kept"
+    assert_eq "[3]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "$choice: native blockers kept, the closed gate's edge gone"
     assert_eq "sent-back 2 3" "$(state_get '[.events[] | select(.event == "sent-back")][0] | "\(.event) \(.ticket) \(.from)"')"
     if [ "$choice" = drop ]; then
       assert_eq "open ready-for-agent" "$(issue_state 3) $(labels 3)" "A open, unlabelled by the run"

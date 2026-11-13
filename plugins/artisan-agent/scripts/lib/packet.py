@@ -4,6 +4,8 @@
 The rules: ${CLAUDE_PLUGIN_ROOT}/references/review-gates.md.
 
 Usage:
+  python3 -I packet.py header
+      the slice gate body's table header, which chats.sh finds the role by.
   python3 -I packet.py cards < view.json
       the gate's decision cards as a JSON array: every decision the workers
       of the gate's tickets made alone (tickets.<t>.evidence.decisions), in
@@ -166,6 +168,9 @@ def card_block(c):
     return lines
 
 
+GATE_HEADER = "| Gate | Role needed | Slice | Tickets blocked |"  # `packet.py header`
+
+
 def body(view):
     gate, state = view["gate"], view["state"]
     the_cards = gate.get("cards") or cards(view)
@@ -174,7 +179,7 @@ def body(view):
     out = [
         "# %s" % gate["title"],
         "",
-        "| Gate | Role needed | Slice | Tickets blocked |",
+        GATE_HEADER,
         "|---|---|---|---|",
         "| %s | %s | %s | %s |" % (
             gate["kind"], cell(gate.get("role")),
@@ -282,6 +287,9 @@ def chat(view):
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "header":
+        print(GATE_HEADER)
+        return
     if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat"):
         sys.stderr.write(__doc__)
         sys.exit(2)

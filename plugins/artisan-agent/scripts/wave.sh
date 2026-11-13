@@ -383,8 +383,7 @@ cmd_status() {
       # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
       # An exception gate (an exception decision with its issue) holds only
       # its ticket's dependents too.
-      waiting=$(get '[.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
-                                           and (.kind != "exception" or .issue == null))] | length')
+      waiting=$(get "$STATE_JQ_DEFS"'waiting_non_gate_decisions | length')
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted

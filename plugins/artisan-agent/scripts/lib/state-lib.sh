@@ -292,6 +292,8 @@ state_usage() {
 #   out_of_run: the statuses that take a ticket out of the run without a
 #     merge (references/gate-actions.md), sent_back (left with its dropped or
 #     resliced blocker) included; with merged and closed, it is done
+#   waiting_non_gate_decisions: the decisions waiting for the Artisan that no
+#     gate carries: not a risk or review gate, nor an exception with its gate open
 #   gate_holds(t): t is in a slice gate that is due: its dependents wait
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
@@ -374,6 +376,9 @@ STATE_JQ_DEFS='
     .decisions |= map(if .id == $id and .status == "waiting"
       then . + $d + {status: "decided", decided_at: $at} else . end);
   def out_of_run: ["dropped", "resliced", "bypassed", "deferred", "sent_back"];
+  def waiting_non_gate_decisions:
+    [.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+                           and (.kind != "exception" or .issue == null))];
   def gate_holds($t):
     . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
 '

@@ -51,6 +51,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 # shellcheck source=lib/state-lib.sh
 . "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/gate-lib.sh
+. "$SCRIPT_DIR/lib/gate-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -95,7 +97,6 @@ main_checkout() {
 
 RUN_MARK='artisan-agent:run '
 ENVELOPE_MARK='artisan-agent:envelope-approved'
-CLOSED_MARK='artisan-agent:gate-closed-by-hand'
 
 issue_json() { # n: number,title,state,labels,body,comments
   gh issue view "$1" -R "$REPO" --json number,title,state,labels,body,comments 2>/dev/null
@@ -126,6 +127,26 @@ cmd_guard() {
 }
 
 # -------------------------------------------------------------------- send
+
+# link_sub plan child-id: make the child a sub-issue of the plan. A failed link
+# never fails the send: the plan issue exists, the sweep finds it by its label,
+# and the link is only for navigation (the sweep retries it: link_missing_subs).
+link_sub() {
+  gh api --method POST "repos/$REPO/issues/$1/sub_issues" -F "sub_issue_id=$2" >/dev/null 2>&1
+}
+
+# link_missing_subs plan body subs-json: a plan sent from the Product chat whose
+# body lists tickets that are not its sub-issues gets them linked now; a link
+# that fails again stays quiet until the next sweep.
+link_missing_subs() {
+  local plan="$1" body="$2" subs="$3" t= id=
+  case "$body" in *"artisan-agent:sent-from-product"*) ;; *) return 0 ;; esac
+  for t in $(printf '%s\n' "$body" | sed -n 's/^- \[ \] #\([0-9][0-9]*\) .*/\1/p'); do
+    jq -e --argjson t "$t" 'index($t)' <<<"$subs" >/dev/null && continue
+    id=$(gh api "repos/$REPO/issues/$t" 2>/dev/null | jq -er .id 2>/dev/null) || continue
+    link_sub "$plan" "$id" || true
+  done
+}
 
 cmd_send() {
   [ ${#ARGS[@]} -ge 1 ] || usage
@@ -159,8 +180,8 @@ $list
   for t in "${nums[@]}"; do
     out=$(gh api "repos/$REPO/issues/$t") || die "could not read #$t"
     id=$(jq -er .id <<<"$out") || die "no id for #$t"
-    gh api --method POST "repos/$REPO/issues/$plan/sub_issues" -F "sub_issue_id=$id" >/dev/null 2>&1 \
-      || echo "chats.sh: #$t could not be made a sub-issue of #$plan (it may already have a parent); the plan's body lists it" >&2
+    link_sub "$plan" "$id" \
+      || echo "chats.sh: #$t could not be made a sub-issue of #$plan (it may already have a parent); the plan's body lists it; the next sweep tries again" >&2
   done
   echo "$plan"
 }
@@ -205,9 +226,9 @@ cmd_approve_envelope() {
 # One JSON line per open review-gate issue: number, kind, role, job, run, title.
 gate_lines() {
   gh issue list -R "$REPO" --limit 500 --state open --label review-gate --json number,title,body,labels \
-    | jq -c '.[] | select(any((.labels // [])[]; .name == "review-gate"))
+    | jq -c --arg header "$(python3 -I "$SCRIPT_DIR/lib/packet.py" header)" '.[] | select(any((.labels // [])[]; .name == "review-gate"))
       | (.body // "" | split("\n")) as $l
-      | ($l | index("| Gate | Role needed | Slice | Tickets blocked |")) as $i
+      | ($l | index($header)) as $i
       | (if $i == null then [] else ($l[$i + 2] // "" | split("|")) end) as $row
       | ((.title | capture("^(?<k>[A-Za-z]+) gate")? | .k) // "Review") as $kind
       | {number, title,
@@ -325,7 +346,7 @@ sweep_closed_gates() {
     seen=$(mem_get --arg n "$n" '(.closed_announced // []) | index($n | tonumber) // empty')
     [ -z "$seen" ] || continue
     j=$(issue_json "$n") || continue
-    line=$(jq -r --arg m "$CLOSED_MARK" '[(.comments // [])[] | .body // "" | select(contains($m))] | last // ""' <<<"$j" \
+    line=$(jq -r --arg m "$GATE_CLOSED_MARK" '[(.comments // [])[] | .body // "" | select(contains($m))] | last // ""' <<<"$j" \
       | grep -v "^<!--" | sed '/^$/d' | head -n 1 || true)
     [ -n "$line" ] || continue
     out="$out$line
@@ -391,6 +412,7 @@ sweep_plans() {
       | jq -r '[.[] | select((.state // "open" | ascii_downcase) == "open") | "#\(.number)"] | join(", ")') || blockers=""
     subs=$(gh api "repos/$REPO/issues/$n/sub_issues" 2>/dev/null | jq -c '[.[].number]') || subs="[]"
     [ -n "$subs" ] || subs="[]"
+    link_missing_subs "$n" "$(jq -r '.body // ""' <<<"$p")" "$subs"
     if [ "$subs" = "[]" ]; then
       subs=$(jq -c '[.body // "" | scan("- \\[ \\] #([0-9]+)") | .[0] | tonumber]' <<<"$p")
     fi

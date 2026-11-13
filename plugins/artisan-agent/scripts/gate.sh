@@ -78,6 +78,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/gate-lib.sh
+. "$SCRIPT_DIR/lib/gate-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -505,7 +507,7 @@ cmd_sync() {
       # One line on the tracker, so either chat announces it on its next sweep.
       gh issue comment "$issue" -R "$repo" --body "Gate #$issue closed on GitHub: treated as approved; $carried undecided card$([ "$carried" = 1 ] || echo s) carried to the end gate
 
-<!-- artisan-agent:gate-closed-by-hand carried=$carried -->" >/dev/null 2>&1 || true
+<!-- $GATE_CLOSED_MARK carried=$carried -->" >/dev/null 2>&1 || true
     fi
   done
   local num=
