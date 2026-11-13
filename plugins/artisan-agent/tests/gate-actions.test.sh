@@ -575,6 +575,7 @@ test_an_exception_gate_no_guardrail_opened_logs_no_guardrail_event_and_retry_can
   gave_up_on_3
   "$A" sync "$RUN_DIR" >/dev/null
   num=$(state_get '.exception_gates[0].issue')
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "| retry or take, a bug |"
   "$A" retry "$RUN_DIR" "$num" --notes "check the token expiry" --bug >/dev/null
   assert_eq 0 "$(state_get '[.events[] | select(.event | startswith("guardrail"))] | length')"
   assert_eq '{"ticket":"3","areas":["auth"],"where":"gate","gate":"exception-1"}' \

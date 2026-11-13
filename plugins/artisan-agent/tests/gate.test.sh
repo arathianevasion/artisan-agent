@@ -423,6 +423,7 @@ test_flagging_a_change_as_a_bug_logs_bug_found_at_the_gate_in_the_same_write() {
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"]'
   local num=
   num=$("$G" open "$RUN_DIR" slice-1)
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "| \`change <card> to <choice>, a bug\` |"
   "$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --bug --by Andrew >/dev/null
   assert_eq '{"event":"bug-found","ticket":"1","areas":["billing"],"where":"gate","gate":"slice-1","by":"Andrew"}' \
     "$(state_get '.events[] | select(.event == "bug-found") | {event, ticket, areas, where, gate, by}' | jq -c .)"

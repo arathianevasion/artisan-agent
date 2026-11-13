@@ -3,7 +3,8 @@
 #
 #   GATE_CLOSED_MARK: the marker gate.sh sync puts on the tracker comment that
 #     announces a gate closed by hand; chats.sh sweep finds the comment by it.
-#   exception_choices_table body|chat: the exception gate's six choices as a
+#   exception_choices_table body|chat: the exception gate's six choices (and
+#     the "a bug" flag retry and take take) as a
 #     Markdown table. "body" is the table in the gate's issue body (its
 #     reslice and drop rows carry {{leaves}}, for the caller to fill in);
 #     "chat" is the shorter one gate-action.sh chat prints.
@@ -31,5 +32,6 @@ take it myself@labelled `ready-for-human`; you build it in your own worktree@rea
 drop@leaves the run; the ticket stays open{{leaves}}@out of the run; everything that depends on it goes back to needs-triage with it
 bypass@leaves the run; its dependents go ahead without it; recorded with who@out of the run; its dependents go ahead
 defer@its dependents go ahead now; this gate stays open until the end gate@its dependents go ahead; the gate waits for the end gate
+retry or take, a bug@with retry with notes or take it myself, also records a bug found in the ticket at this gate, tighten evidence for its areas at the retro (`--bug`)@with retry or take: also records a bug found in the ticket
 ROWS
 }

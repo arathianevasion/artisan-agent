@@ -330,6 +330,7 @@ packet() {
     echo
     echo "- **approve**: the PR to \`$(main_branch)\` is cut."
     echo "- **not yet**: say what is wrong. The gate stays open and nothing is cut."
+    echo "- **a bug in #$URGENT**: say so with either answer; it is recorded as a bug found at this gate (\`gate.sh bug <run-dir> $URGENT --gate urgent-$URGENT\`), tighten evidence for the ticket's areas at the retro."
     return 0
   fi
   echo "## Deferred gates"
@@ -355,6 +356,7 @@ packet() {
   echo
   echo "- **approve**: the PRs to \`$(main_branch)\` are cut, the \`in-run\` labels come off and the retro is offered."
   echo "- **not yet**: say what is wrong. The end gate stays open and nothing is cut; a fix joins the run through its own plan step."
+  echo "- **a bug in #<ticket>**: say so with either answer; it is recorded as a bug found at this gate (\`gate.sh bug <run-dir> <ticket> --gate end\`), tighten evidence for the ticket's areas at the retro."
 }
 
 cmd_packet() { [ $# -eq 1 ] || usage; open_run "$1"; packet; }

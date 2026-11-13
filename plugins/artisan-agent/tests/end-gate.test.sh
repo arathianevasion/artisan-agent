@@ -331,3 +331,8 @@ test_opening_the_end_gate_deletes_the_runs_leftover_ci_branches() {
   "$E" open "$RUN_DIR" >/dev/null
   assert_eq "ci/r10-1-1-100" "$(git -C "$origin" for-each-ref --format='%(refname:short)' 'refs/heads/ci/')"
 }
+
+test_the_end_gate_packet_offers_flagging_a_bug_by_ticket() {
+  setup_end
+  assert_contains "$("$E" packet "$RUN_DIR")" "**a bug in #<ticket>**"
+}

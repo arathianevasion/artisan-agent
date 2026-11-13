@@ -306,6 +306,7 @@ def body(view):
                 "%s can then dispatch in the next wave" % blocked_list(gate) if gate.get("dependents")
                 else "nothing in the run waits on it"),
             "| `change <card> to <choice>` | a rework ticket in this run for that card; the rest are kept when you approve |",
+            "| `change <card> to <choice>, a bug` | the same, and records a bug found at this gate in the card's ticket: tighten evidence for its areas at the retro (`--bug`); a redirect takes it too |",
             "| `guardrail <card> <level> <reach>` | keeps the card and records it as a guardrail to make (level team, product or individual; reach ticket, area or everywhere) |"]
     return "\n".join(out) + "\n"
 

@@ -331,3 +331,18 @@ test_only_a_confirmed_bug_counts_and_a_confirmed_one_is_not_listed_again() {
   assert_eq "91" "$(jq -r '[.candidates[].issue] | join(" ")' <<<"$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json" --bugs "$bugs")")"
   assert_status 6 "$H" bug-confirm --runs "$(R r1)" --out "$bugs" --issue 91 --ticket 14
 }
+
+test_a_run_with_the_emitted_events_shows_fired_bypassed_and_never_fired() {
+  setup "$(g bill kb 1 '{"area":"billing"}')" "$(g floor-1 scope-floor 9)" "$(g tone kt 1)" "$(g quiet kq 1)"
+  # As the gates and the verifier write them: an area risk gate opened, the
+  # scope floor's exception gate opened and was bypassed, a verifier named tone.
+  run r1 '[{"event":"guardrail-fired","guardrail":"area:billing","area":"billing","gate":"risk-2","tickets":["5"]},
+           {"event":"guardrail-fired","guardrail":"scope-floor","gate":"exception-1","tickets":["6"]},
+           {"event":"guardrail-bypassed","guardrail":"scope-floor","gate":"exception-1","reason":"one extra column","by":"Andrew"},
+           {"event":"guardrail-fired","guardrail":"tone","ticket":"7","attempt":1,"criterion":"Reads well","by":"verifier"}]'
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "bill fired, floor-1 bypassed, quiet never fired, tone fired" \
+    "$(jq -r '[.guardrails | sort_by(.id)[] | "\(.id) \(.status)"] | join(", ")' <<<"$out")"
+  assert_eq "one extra column" "$(jq -r '.guardrails[] | select(.id == "floor-1") | .bypassed[0].reason' <<<"$out")"
+  assert_eq 1 "$(jq '.guardrails[] | select(.id == "quiet") | .loosen.count' <<<"$out")"
+}
