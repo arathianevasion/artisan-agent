@@ -90,7 +90,7 @@ run_one() {
     [ "$pid" != "$$" ] || continue
     kill -KILL "-$pid" "$pid" 2>/dev/null || true
   done
-  rm -rf "$tmp" "$tmp.usage.json" "$markdir"   # lib.sh's usage reading sits beside the test's folder
+  rm -rf "$tmp" "$tmp.usage.json" "$tmp.claude" "$markdir"   # lib.sh's usage reading and config folder sit beside the test's folder
   printf '%s\n' "$output" >"$resdir/$idx.out"
   [ "$status" -eq 0 ] || status=1
   echo "$status" >"$resdir/$idx.status.tmp"

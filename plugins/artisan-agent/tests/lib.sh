@@ -56,6 +56,17 @@ jq -nc --argjson t "$(date +%s)" '{schema_version: 1, written_at: $t,
                 seven_day: {used_percentage: 20, resets_at: ($t + 86400)}}}' >"$ARTISAN_USAGE_FILE"
 
 # The merge gate runs locally in every test (merge-gate.sh), whatever the
-# machine: auto would mean CI on Linux. Tests of the CI gate set their own.
-# Never the machine's own host.json.
-export ARTISAN_MERGE_GATE=local
+# machine: auto would mean CI on Linux. Said the way a machine says it, in a
+# host.json, here in the test's own config folder, so no ARTISAN_* variable
+# reaches a test (run.sh) and never the machine's own host.json. Beside the
+# test's folder, not in it; run.sh removes it. A test that places its own
+# config folder or individual home calls merge_gate_local on it; tests of the
+# CI gate write ci there, or set ARTISAN_MERGE_GATE themselves.
+merge_gate_local() { # individual-home-dir: its host.json gets merge_gate local
+  local f="$1/host.json" j='{}'
+  mkdir -p "$1"
+  [ ! -f "$f" ] || j=$(cat "$f")
+  printf '%s' "$j" | jq '.merge_gate = "local"' >"$f.tmp" && mv "$f.tmp" "$f"
+}
+export CLAUDE_CONFIG_DIR="$TEST_TMPDIR.claude"
+merge_gate_local "$CLAUDE_CONFIG_DIR/artisan-agent"

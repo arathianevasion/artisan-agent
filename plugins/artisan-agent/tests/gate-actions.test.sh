@@ -54,6 +54,7 @@ setup_run() { # [check.sh body]
   PATH="$TESTS_DIR/fixtures/fake-claude:$TESTS_DIR/fixtures/fake-gh:$PATH"
   export PATH FAKE_CLAUDE_MODE=script
   export ARTISAN_HOME="$TEST_TMPDIR/artisan-home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/team-cache"
+  merge_gate_local "$ARTISAN_HOME"   # lib.sh's host.json is not read once ARTISAN_HOME moves
   export CLAUDE_CONFIG_DIR="$TEST_TMPDIR/claude-config"
   CHAT=$(start_worker)
   export ARTISAN_WRITER_PID=$CHAT
