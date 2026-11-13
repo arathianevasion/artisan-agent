@@ -145,7 +145,7 @@ Then the evidence table of the digest, as printed: `${CLAUDE_PLUGIN_ROOT}/script
 While a run holds the lock, `/implement-plan add <tickets>` and `/implement-plan urgent <ticket>` are let through by the run-start hook to this flow; they are not refused or queued as a separate plan. The rules and calls are in `${CLAUDE_PLUGIN_ROOT}/references/run-levers.md`:
 
 - **Add:** one plan step per added ticket (model, estimate, as in step 2), shown as `lever.sh add`'s one-line approval (model, estimate, new run budget). On the Artisan's yes, `lever.sh add … --approve`: it joins the next wave ahead of lower-priority tickets.
-- **Urgent:** marking a ticket `urgent` is its approval: `lever.sh urgent`. It dispatches at once on the one extra slot, from `main`; ship it through `end-gate.sh urgent-open`, `urgent-approve`, `urgent-cut` and, after the Artisan merges the PR, `urgent-finish`.
+- **Urgent:** marking a ticket `urgent` is its approval: `lever.sh urgent`. Work out which escalation tests the ticket meets, as the plan step does, and pass them as `--escalation a,b` (names and rules in `${CLAUDE_PLUGIN_ROOT}/references/run-levers.md`); without it the end gate packet says "No escalation tests met". It dispatches at once on the one extra slot, from `main`; ship it through `end-gate.sh urgent-open`, `urgent-approve`, `urgent-cut` and, after the Artisan merges the PR, `urgent-finish`.
 - **Steer:** when the Artisan wants to change what a worker is doing, `lever.sh steer <run> <ticket> --note "…"`, then dispatch it again. It is steering, not a failed attempt.
 
 ### 7. Findings filed for triage

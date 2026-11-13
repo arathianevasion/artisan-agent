@@ -327,6 +327,13 @@ test_an_urgent_packet_with_no_escalation_tests_says_so_in_one_line() {
   assert_contains "$packet" "No escalation tests met"
 }
 
+test_the_skills_urgent_step_tells_the_chat_to_pass_escalation() {
+  local step=
+  step=$(grep -- '^- \*\*Urgent:\*\*' "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
+  assert_contains "$step" "--escalation"
+  assert_contains "$step" "references/run-levers.md"
+}
+
 test_escalation_is_for_urgent_tickets_only() {
   setup_levers
   assert_status 2 "$L" add "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 --escalation new-seam --approve
