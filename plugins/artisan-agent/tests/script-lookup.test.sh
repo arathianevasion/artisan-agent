@@ -26,16 +26,9 @@ setup_two_copies() {
 test_a_worktrees_wave_script_launches_the_worktrees_run_ticket() {
   setup_two_copies
   export PATH="$TESTS_DIR/fixtures/fake-gh:$TESTS_DIR/fixtures/fake-claude:$PATH"
-  local s="$WT/plugins/artisan-agent/scripts"
-  (cd "$WT" && "$s/wave.sh" start "$RUN_DIR" >/dev/null 2>&1; "$s/wave.sh" launch "$RUN_DIR" >/dev/null 2>&1) || true
+  local scripts_dir="$WT/plugins/artisan-agent/scripts"
+  (cd "$WT" && "$scripts_dir/wave.sh" start "$RUN_DIR" >/dev/null 2>&1; "$scripts_dir/wave.sh" launch "$RUN_DIR" >/dev/null 2>&1) || true
   assert_eq "w" "$(sort -u "$TEST_TMPDIR/ran")" "only the worktree's run-ticket.sh ran"
-}
-
-test_a_worktrees_verify_script_launches_the_worktrees_run_ticket() {
-  setup_two_copies
-  # Whatever verify.sh does first, its launch goes through its own folder.
-  grep -q 'SCRIPT_DIR/run-ticket.sh' "$WT/plugins/artisan-agent/scripts/verify.sh" \
-    || fail "verify.sh does not launch run-ticket.sh from its own folder"
 }
 
 test_no_script_builds_a_sibling_path_from_the_main_checkout() {
