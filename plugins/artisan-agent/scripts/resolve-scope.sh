@@ -12,7 +12,7 @@
 #             `from` is the plan issue it came through, or null when named itself;
 #             `blocked_by` is the numbers of its open blockers (the tracker's native
 #             dependencies; where the tracker has none (HTTP 404), the body's
-#             "Blocked by: #n" line), whether or not they are in the scope. The plan
+#             "Blocked by: #n" line or "## Blocked by" section), whether or not they are in the scope. The plan
 #             step copies it into the draft: the critical path reads it.
 #   skipped   [{number, reason}] closed tickets, left out
 #   outside_blockers  [{plan, blocker}] open plans blocking a named plan that are not
@@ -20,8 +20,9 @@
 # A `plan` issue with no tickets is a queued request (queue-plan.sh leaves
 # them when a run holds the lock), not work to run: exit 3 naming it.
 #
-# A blocker read that fails any other way exits 1 naming the ticket, never an
-# empty list.
+# A plan's `outside_blockers` are read the same way: native dependencies, or on a
+# 404 the plan body's blockers. A blocker read that fails any other way exits 1
+# naming the issue, never an empty list.
 #
 # Exit status: 0 ok, 1 an issue could not be read, 2 bad usage, 3 a plan issue
 # with no tickets. Needs gh and jq. Bash 3.2-safe.
@@ -47,6 +48,24 @@ printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "--rep
 for n in "${NAMED[@]}"; do
   printf '%s' "$n" | grep -Eq '^[0-9]+$' || die "\"$n\" is not an issue number"
 done
+
+# The body's blockers, one parser for tickets and plans: the refs on the first
+# "Blocked by: #a, #b" line, or, when that line is a "## Blocked by" heading, the
+# refs listed below it up to the next heading. Prints the open ones as a JSON array.
+body_blockers() { # number what(ticket|plan)
+  local n=$1 what=$2 body b st out='[]'
+  body=$(gh issue view "$n" -R "$REPO" --json body --jq '.body // ""') || die "cannot read the blockers of $what #$n: cannot read its body"
+  for b in $(printf '%s\n' "$body" | awk '
+    !seen && tolower($0) ~ /^[[:space:]]*(#+[[:space:]]*)?blocked by:?/ { seen = 1; head = ($0 ~ /^[[:space:]]*#+[[:space:]]/); print; next }
+    seen && head && /^[[:space:]]*#+[[:space:]]/ { exit }
+    seen && head { print; next }
+    seen { exit }' | grep -oE '#[0-9]+' | tr -d '#'); do
+    st=$(gh issue view "$b" -R "$REPO" --json state --jq '.state | ascii_downcase') \
+      || die "cannot read the blockers of $what #$n: cannot read #$b"
+    [ "$st" != open ] || out=$(jq -c --argjson b "$b" '. + [$b]' <<<"$out")
+  done
+  printf '%s\n' "$out"
+}
 
 tickets='[]' skipped='[]' outside='[]'
 add_ticket() { # number title state from
@@ -81,8 +100,15 @@ for n in "${NAMED[@]}"; do
   while IFS=$'\t' read -r num title state; do
     add_ticket "$num" "$title" "$state" "$n"
   done < <(jq -r '.[] | [.number, .title, .state] | @tsv' <<<"$members")
-  blockers=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of plan #$n"
-  for b in $(jq -r '.[] | select(.state == "open") | .number' <<<"$blockers"); do
+  if blockers=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>&1); then
+    open_blockers=$(jq -r '.[] | select((.state | ascii_downcase) == "open") | .number' <<<"$blockers") \
+      || die "cannot read the blockers of plan #$n: unreadable answer"
+  else
+    printf '%s' "$blockers" | grep -Eq 'HTTP 404|Not Found' \
+      || die "cannot read the blockers of plan #$n: $blockers"
+    open_blockers=$(body_blockers "$n" plan | jq -r '.[]') || exit 1
+  fi
+  for b in $open_blockers; do
     named=0
     for m in "${NAMED[@]}"; do [ "$m" != "$b" ] || named=1; done
     [ "$named" -eq 1 ] || outside=$(jq -c --argjson p "$n" --argjson b "$b" '. + [{plan: $p, blocker: $b}]' <<<"$outside")
@@ -91,7 +117,7 @@ done
 
 # Each ticket's open blockers.
 ticket_blockers() { # number: prints a JSON array of open blocker numbers
-  local n=$1 deps err body b st out='[]'
+  local n=$1 deps err
   if deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>&1); then
     jq -c '[.[] | select((.state | ascii_downcase) == "open") | .number]' <<<"$deps" \
       || die "cannot read the blockers of #$n: unreadable answer"
@@ -100,14 +126,8 @@ ticket_blockers() { # number: prints a JSON array of open blocker numbers
   err=$deps
   printf '%s' "$err" | grep -Eq 'HTTP 404|Not Found' \
     || die "cannot read the blockers of #$n: $err"
-  # No native dependencies here: the "Blocked by" line at the top of the body.
-  body=$(gh issue view "$n" -R "$REPO" --json body --jq '.body // ""') || die "cannot read the blockers of #$n: cannot read its body"
-  for b in $(printf '%s\n' "$body" | grep -iE '^[[:space:]]*blocked by:?' | head -1 | grep -oE '#[0-9]+' | tr -d '#'); do
-    st=$(gh issue view "$b" -R "$REPO" --json state --jq '.state | ascii_downcase') \
-      || die "cannot read the blockers of #$n: cannot read #$b"
-    [ "$st" != open ] || out=$(jq -c --argjson b "$b" '. + [$b]' <<<"$out")
-  done
-  printf '%s\n' "$out"
+  # No native dependencies here: the "Blocked by" line or section in the body.
+  body_blockers "$n" ticket
 }
 for n in $(jq -r '.[].number' <<<"$tickets"); do
   bl=$(ticket_blockers "$n") || exit 1

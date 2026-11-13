@@ -81,7 +81,7 @@ case " $FAIL " in
   *" $n "*)
     jq -n --arg t "$t" --arg c "$(git rev-parse HEAD)" '{ticket: $t, status: "failed", commit: $c,
       acceptance: [{criterion: "it works", met: false, evidence: {why: "seeded failure"}}],
-      tests: {suite_passed: false, command: "sh check.sh", summary: "1 failed"},
+      tests: {suite_passed: false, files: ["tests/a.test.sh", "tests/b.test.sh"], command: "sh check.sh", summary: "1 failed"},
       unsure: ["whether the seed is right"], decisions: [], review: {ran: false, remarks: []}, findings: [],
       notes: "Seeded failure: the parser half is done, the writer is not."}' >"$ARTISAN_RESULT_FILE"
     echo "$t.$n failed" >>"$WAVES/worker.log"
@@ -445,7 +445,8 @@ test_a_failed_first_attempt_is_retried_by_a_fresh_worker_given_the_failure_evide
   prompt=$(cat "$RUN_DIR/workers/1.2/prompt.md")
   assert_contains "$prompt" "This is a retry, attempt 2 of 2. The last attempt failed: worker reported failed"
   assert_contains "$prompt" "## Failure evidence from attempt 1"
-  assert_contains "$prompt" "- Its evidence record said: status failed, suite_passed false (1 failed)"
+  assert_contains "$prompt" "- Its evidence record said: status failed, covering tests tests/a.test.sh tests/b.test.sh failed (1 failed)"
+  case "$prompt" in *suite_passed*) fail "the failure line still says suite_passed" ;; esac
   assert_contains "$prompt" "- Judged from its files: completed -"
   assert_contains "$prompt" "- Session: success, is_error false, 6 turns"
   assert_contains "$prompt" "- Not met: it works (seeded failure)"
