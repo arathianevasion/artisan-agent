@@ -44,8 +44,8 @@ test_the_helper_registers_the_plugins_hooks_with_absolute_paths() {
   assert_contains "$args" "--settings $f"
   jq -e . "$f" >/dev/null || fail "settings file is not JSON"
   case "$(cat "$f")" in *CLAUDE_PLUGIN_ROOT*) fail "a placeholder was left in the settings file" ;; esac
-  assert_contains "$(cat "$f")" "$PLUGIN_ROOT/scripts/compact-hook.sh session-start"
-  assert_contains "$(cat "$f")" "$PLUGIN_ROOT/guard/protect.sh main-edit"
+  assert_contains "$(cat "$f")" "\\\"$PLUGIN_ROOT/scripts/compact-hook.sh\\\" session-start"
+  assert_contains "$(cat "$f")" "\\\"$PLUGIN_ROOT/guard/protect.sh\\\" main-edit"
   assert_eq "$(jq -S .hooks "$PLUGIN_ROOT/hooks/hooks.json" | grep -c command)" "$(jq -S .hooks "$f" | grep -c command)" "same hooks as hooks.json"
 }
 
