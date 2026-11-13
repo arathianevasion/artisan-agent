@@ -341,7 +341,18 @@ STATE_JQ_DEFS='
         | .key as $t
         | select(all($planned[]; .kind != "risk" or (.tickets | index($t)) == null))
         | {id: "risk-seam-\($t)", kind: "risk", why: ("seam-card" | escalation_label), slice: "#\($t)",
-           role: "Engineering (QA)", problem: null, solution: null, tickets: [$t]}];
+           role: "Engineering (QA)", problem: null, solution: null, tickets: [$t]}]
+    # A merge processed at the review band (drain.sh gate) raises one too:
+    # tickets.<t>.context_risk is the fact that it happened, the gate is the hold.
+    | . as $withseam
+    | $withseam + [$s.tickets | to_entries[]
+        | select(.value.context_risk.percent? != null)
+        | .key as $t | .value.context_risk.percent as $pct
+        | {id: "risk-context-\($t)", kind: "risk", context_percent: $pct,
+           why: "merged at \($pct)% context, the review band", slice: "#\($t)",
+           role: "Engineering (QA)", tickets: [$t],
+           problem: "#\($t) merged while the orchestrator was at \($pct)% context, the review band.",
+           solution: "Look over what merged before its dependents start on it: the cards, the uncertainties and the diff below. Only its dependents wait; nothing else does."}];
   def gate_due($g):
     . as $s
     | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")

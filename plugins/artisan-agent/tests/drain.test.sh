@@ -218,22 +218,25 @@ test_an_idle_orchestrator_with_nothing_left_has_nothing_to_hand_off() {
 
 # ---------------------------------------------------------------- risk gates
 
-test_a_risk_gate_holds_only_its_dependents() {
+# A state file from before the context-band gate was an issue holds
+# tickets.<t>.risk_gate = waiting; that still holds its dependents, and
+# drain.sh gate-cleared still answers it. A new merge at the band opens a
+# review-gate issue instead (tests/risk-gates.test.sh).
+legacy_risk_gate() { # ticket percent
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .tickets[$t].risk_gate = {status: "waiting", percent: ($p | tonumber), at: 1}
+    | .decisions += [{id: ((.decisions | length) + 1), kind: "risk-gate", ticket: $t,
+        question: "old", status: "waiting", at: 1}]' --arg t "$1" --arg p "$2"
+}
+
+test_a_risk_gate_from_an_older_state_file_still_holds_only_its_dependents() {
   setup_run
   # 11 depends on 10; 12 depends on nothing.
   stub_issue 10 open; stub_issue 11 open; stub_issue 12 open
   stub_blocked_by 11 "10:open"
   "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 deadbeef
+  legacy_risk_gate 10 55
   assert_status 6 "$DRAIN" gate "$RUN_DIR" 11 55   # not merged
-  "$DRAIN" gate "$RUN_DIR" 10 55
-  assert_eq waiting "$(state_get '.tickets["10"].risk_gate.status')"
-  assert_eq "risk-gate" "$(state_get '.decisions[-1].kind')"
-  assert_eq "risk-gate" "$(state_get '.events[-1].event')"
-  # Gating again changes nothing.
-  local before
-  before=$(state_sum)
-  "$DRAIN" gate "$RUN_DIR" 10 60
-  assert_eq "$before" "$(state_sum)"
   # The frontier keeps 12 and holds 11 back.
   assert_eq "12" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
   # Cleared: 11 joins the frontier.
@@ -492,7 +495,7 @@ test_a_waiting_risk_gate_does_not_stop_the_chat_launching() {
   stub_issue 10 open; stub_issue 11 open; stub_issue 12 open
   stub_blocked_by 11 "10:open"
   "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 deadbeef
-  "$DRAIN" gate "$RUN_DIR" 10 52
+  legacy_risk_gate 10 52
   local out
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: launch"
