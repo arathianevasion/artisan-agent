@@ -94,6 +94,24 @@ test_settings_json_escapes_the_hook_command() {
   done
 }
 
+test_every_hook_command_runs_when_the_plugin_path_has_a_space() {
+  local root="$TEST_TMPDIR/plug in" cmds= c= out= n=0 f=
+  mkdir -p "$root/guard" "$root/scripts"
+  for f in guard/block-replaced.sh guard/protect.sh scripts/compact-hook.sh; do
+    printf '#!/bin/sh\necho "ran $0 $*"\n' > "$root/$f"
+    chmod +x "$root/$f"
+  done
+  cmds=$("$GUARD" hooks-json | jq -r '.hooks[][].hooks[].command')
+  while IFS= read -r c; do
+    out=$(CLAUDE_PLUGIN_ROOT="$root" sh -c "$c" 2>&1)
+    assert_contains "$out" "ran $root/"
+    n=$((n + 1))
+  done <<EOT
+$cmds
+EOT
+  assert_eq 6 "$n"
+}
+
 test_missing_empty_or_incomplete_list_fails_loudly() {
   assert_status 2 "$GUARD" hooks-json --list "$TEST_TMPDIR/nope.list"
   : > "$TEST_TMPDIR/empty.list"

@@ -21,7 +21,8 @@
 #               one window, utilization a fraction, resetsAt), then FAKE_CLAUDE_SLEEP
 #               seconds later (default 2) a second one for the other window, then
 #               the result event
-#   sleep       leaves a stray background `sleep` in its process group, sleeps
+#   sleep       leaves a stray background `sleep` (argv names the working
+#               folder: fake-claude-stray:<folder>) in its process group, sleeps
 #               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
 #
 # It records its arguments, one "[arg]" per line, to $FAKE_CLAUDE_ARGS, its
@@ -108,7 +109,11 @@ ARTISAN-WORKER: complete"
 ARTISAN-WORKER: complete"
     ;;
   sleep)
-    sleep 300 &
+    # Named for the test's folder (argv "$0"), so tests/run.sh's cleanup, which
+    # ends what names the folder, finds it (#145). The `; :` keeps sh from
+    # exec'ing straight into sleep, which would drop the name. Still in this
+    # process group.
+    sh -c 'sleep 300; :' "fake-claude-stray:$PWD" &
     sleep "${FAKE_CLAUDE_SLEEP:-30}"
     write_result_file
     result success false 4 "Slept.
