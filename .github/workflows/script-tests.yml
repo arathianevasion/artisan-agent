@@ -2,7 +2,16 @@ name: Script tests
 
 on:
   push:
+    # Documentation outside the plugin isn't read by any test.
+    paths-ignore: ['*.md', 'docs/**']
   pull_request:
+    paths-ignore: ['*.md', 'docs/**']
+
+# A newer push to the same branch or PR cancels its older run. Every push to main
+# gets its own group, so no main run is cancelled or dropped while queued.
+concurrency:
+  group: script-tests-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
