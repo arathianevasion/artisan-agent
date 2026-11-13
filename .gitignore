@@ -8,6 +8,10 @@
 *.key
 .claude/settings.local.json
 
+# Claude Code's own agent worktrees (each a checkout of a branch kept on GitHub).
+# .claude/orchestrator/ stays untracked but not ignored, so /move-session carries it.
+.claude/worktrees/
+
 # Scratch and OS noise
 .scratch/
 .DS_Store
