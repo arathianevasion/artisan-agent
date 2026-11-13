@@ -385,7 +385,11 @@ test_status_only_reads_with_a_guard_condition_that_would_park_or_open_the_gate()
   usage_reading 85 20
   # Both the usage park and the overrun gate are due; status must do neither.
   local before= tb= out=
-  "$W" status "$RUN_DIR" >/dev/null 2>&1 || true   # settle whatever the reconciler normalises
+  # The first status lets the reconciler derive the frontier from the tracker
+  # (it always has); the guard is what must not move, so it is checked on the
+  # state that first run left, and by what the guard owns: park, verdict, gate.
+  "$W" status "$RUN_DIR" >/dev/null 2>&1 || true
+  assert_eq "null null 0" "$(state_get '"\(.usage_park) \(.usage_verdict) \((.overrun_gates // []) | length)"')" "the first status already left the guard alone"
   before=$(cat "$RUN_DIR/state.json")
   tb=$(tracker_sum)
   out=$("$W" status "$RUN_DIR" 2>&1 || true)

@@ -250,6 +250,8 @@ cmd_launch() {
   state_lock "$RUN_DIR" "$me" || exit 3
   export ARTISAN_WRITER_PID=$me
 
+  local was_halted=0
+  [ "$(get '.halted != null')" = false ] || was_halted=1
   if [ "$(get '.halted != null')" = true ]; then
     [ "$resume" -eq 1 ] || state_die 12 "wave.sh: the run is halted: $(get '.halted.reason'); nothing launches until the Artisan decides (wave.sh launch --resume carries on)"
     apply '
@@ -262,7 +264,9 @@ cmd_launch() {
 
   # The usage guard between waves (#120): no sweep runs now, and launch is the
   # chat's step that already writes state. A park or the overrun gate refuses.
-  if [ "$handoff" -eq 0 ]; then
+  # A launch that clears a halt (--resume) is the Artisan's own decision; the
+  # halt is already gone by here, and the sweep and dispatch guard the wave.
+  if [ "$handoff" -eq 0 ] && [ "$was_halted" -eq 0 ]; then
     "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
   fi
 
