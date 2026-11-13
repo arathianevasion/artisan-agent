@@ -171,7 +171,7 @@ test_hooks_json_wires_both_hooks_from_the_generator() {
   assert_contains "$(jq -r '.hooks.PreToolUse[].matcher' "$j")" "Edit|Write|MultiEdit|NotebookEdit"
   assert_contains "$(jq -r '.hooks.PreToolUse[].matcher' "$j")" "Skill"
   assert_contains "$(jq -r '.hooks.UserPromptExpansion[].matcher' "$j")" "implement-plan"
-  assert_contains "$(jq -r '.. | .command? // empty' "$j")" 'guard/protect.sh main-edit'
+  assert_contains "$(jq -r '.. | .command? // empty' "$j")" '"${CLAUDE_PLUGIN_ROOT}/guard/protect.sh" main-edit'
   [ -x "$PLUGIN_ROOT/guard/protect.sh" ] || fail "protect.sh is not executable"
 }
 
