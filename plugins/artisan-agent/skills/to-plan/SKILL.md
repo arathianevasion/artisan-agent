@@ -82,6 +82,8 @@ Open with the ADR and guardrail check for each plan, then the loop if the Artisa
 
 The Artisan's approval is the only thing that creates anything. Show the final render once more, with every ticket's acceptance criteria, and ask for approval of the plans as shown. Nothing is created from silence, or from a plan the Artisan has seen only in an earlier version.
 
+When the Artisan also approves a plan's run envelope here (waves, models, estimates, budget) and that plan will wait behind the run lock rather than start, record it once the plan issue exists: `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh approve-envelope --repo <owner/name> <plan issue>`. The chat that got the approval records it, so the Engineering chat doesn't ask again. Approving only the plans' tickets and grouping, as above, is not an envelope approval: don't call it then.
+
 ### 6. Create the plan issues
 
 ```bash

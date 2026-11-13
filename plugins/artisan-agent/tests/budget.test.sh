@@ -185,6 +185,7 @@ test_stop_at_the_overrun_gate_halts_the_run() {
 
 test_a_reading_older_than_ten_minutes_is_unknown_and_stops_dispatch() {
   setup_budget
+  seed_running_worker
   usage_reading 10 20 $((11 * 60))
   local out st=0
   out=$("$W" dispatch "$RUN_DIR" 1 2>&1) || st=$?
@@ -210,6 +211,94 @@ test_a_reading_older_than_ten_minutes_is_unknown_and_stops_dispatch() {
   assert_status 0 "$B" guard "$RUN_DIR"
   assert_eq null "$(state_get .usage_park)"
   assert_eq resume "$(state_get '.events[] | select(.event == "unparked") | .how')"
+}
+
+# seed_running_worker: ticket 2 is in flight on a live worker (nothing else).
+seed_running_worker() {
+  WORKER2=$(start_worker)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .tickets["2"] |= (.status = "in_flight" | .attempts = 1 | .pid = $pid | .dispatched_at = 1 | .deadline_at = 9999999999)' \
+    --argjson pid "$WORKER2"
+}
+
+# worker_reading ticket five-hour-% seven-day-% [age-seconds]: what a worker's
+# runner records (run-ticket.sh), each window stamped with its own time.
+worker_reading() {
+  local t d=$RUN_DIR/workers/$1.1
+  t=$(( $(date +%s) - ${4:-0} ))
+  mkdir -p "$d"
+  jq -nc --argjson t "$t" --argjson f "$2" --argjson s "$3" --arg k "$1" '{source: "worker", ticket: $k, attempt: 1,
+    received_at: $t, rate_limits: {five_hour: {used_percentage: $f, resets_at: ($t + 7200), at: $t},
+                                   seven_day: {used_percentage: $s, resets_at: ($t + 259200), at: $t}}}' >"$d/usage.json"
+}
+
+test_a_fake_workers_rate_limit_events_are_the_guards_reading_with_no_status_line() {
+  setup_budget
+  rm -f "$ARTISAN_USAGE_FILE"
+  printf 'Build.\n' >"$TEST_TMPDIR/prompt.md"
+  mkdir -p "$TEST_TMPDIR/wt"
+  local rpid i=0
+  rpid=$(PATH="$TESTS_DIR/fixtures/fake-claude:$PATH" FAKE_CLAUDE_MODE=stream FAKE_CLAUDE_SLEEP=20 \
+    "$SCRIPTS/run-ticket.sh" --run-dir "$RUN_DIR" --ticket 1 --prompt-file "$TEST_TMPDIR/prompt.md" \
+    --workdir "$TEST_TMPDIR/wt" --estimate-usd 0.5 --expected-minutes 5)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "in_flight" | .attempts = 1 | .pid = $pid | .dispatched_at = 1 | .deadline_at = 9999999999)' --argjson pid "$rpid"
+  while ! jq -e '.rate_limits.seven_day' "$RUN_DIR/workers/1.1/usage.json" >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -lt 100 ] || fail "the runner recorded no reading"; sleep 0.1
+  done
+  local out
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok 5h 0% 7d 29%"
+  assert_eq 0 "$(state_get '.usage_park != null | if . then 1 else 0 end')"
+  kill "$rpid" 2>/dev/null || true
+}
+
+test_the_freshest_reading_wins_whichever_source_it_comes_from() {
+  setup_budget
+  seed_running_worker
+  # Status line older than the worker's reading: the worker's 85% parks.
+  usage_reading 10 20 $((5 * 60))
+  worker_reading 2 85 20 60
+  local out st=0
+  out=$("$B" usage "$RUN_DIR") || st=$?
+  assert_eq 18 "$st"
+  assert_contains "$out" "park five-hour 85%"
+  # The other way round: the status line is newer, so its 10% carries on.
+  usage_reading 10 20 30
+  worker_reading 2 85 20 $((5 * 60))
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok 5h 10% 7d 20%"
+  # A stale reading from one source doesn't count while the other is fresh.
+  usage_reading 99 20 $((11 * 60))
+  worker_reading 2 30 40 60
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok 5h 30% 7d 40%"
+}
+
+test_workers_running_and_no_fresh_reading_parks_unknown_but_nothing_running_does_not() {
+  setup_budget
+  # Nothing running: a stale status line, a stale worker reading, or none at
+  # all, is not a reason to park.
+  usage_reading 10 20 $((30 * 60))
+  worker_reading 2 10 20 $((30 * 60))
+  local out
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok no fresh usage reading"
+  assert_status 0 "$B" guard "$RUN_DIR"
+  rm -f "$ARTISAN_USAGE_FILE"
+  assert_status 0 "$B" guard "$RUN_DIR"
+  assert_eq null "$(state_get .usage_park)"
+  # A worker running and every reading stale: unknown, parked.
+  seed_running_worker
+  out=$("$B" usage "$RUN_DIR" || true)
+  assert_contains "$out" "park unknown"
+  assert_contains "$out" "30 minutes old"
+  assert_status 18 "$B" guard "$RUN_DIR"
+  assert_eq unknown "$(state_get .usage_park.window)"
+  # A worker that ended no longer counts as running.
+  kill "$WORKER2"; wait "$WORKER2" 2>/dev/null || true
+  rm -f "$RUN_DIR"/workers/*/usage.json
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok no fresh usage reading"
 }
 
 test_a_nine_minute_old_reading_is_fresh() {
