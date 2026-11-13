@@ -315,7 +315,7 @@ sweep_closed_gates() {
   if [ "$CHAT" = engineering ]; then
     for run_dir in "$main"/.artisan-agent/runs/*/; do
       [ -f "$run_dir/state.json" ] || continue
-      jq -e '(.review_gates // []) | any(.status == "open")' "$run_dir/state.json" >/dev/null 2>&1 || continue
+      jq -e '(.review_gates // []) | any(.status == "open" or .status == "deferred")' "$run_dir/state.json" >/dev/null 2>&1 || continue
       "$SCRIPT_DIR/gate.sh" sync "${run_dir%/}" >/dev/null 2>&1 || true
     done
   fi

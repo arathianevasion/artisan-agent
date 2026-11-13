@@ -162,6 +162,33 @@ test_bypass_closes_the_gate_unreviewed_and_records_who() {
   assert_eq "2 3" "$(frontier)"
 }
 
+test_a_deferred_gate_closed_on_the_tracker_by_hand_is_approved_at_the_next_sync() {
+  setup_run
+  local num= cards=
+  num=$(open_slice_gate)
+  cards=$(state_get '.review_gates[0].cards | length')
+  "$A" defer "$RUN_DIR" "$num" --by Andrew --why "Busy today" >/dev/null
+  gh issue close "$num" -R local/sample
+  "$G" sync "$RUN_DIR" >/dev/null
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+  assert_eq "Artisan (closed on the tracker)" "$(state_get '.review_gates[0].decisions[-1].by')"
+  assert_eq "$cards" "$(state_get '.review_gates[0].carried | length')"
+  assert_eq "No gate is deferred." "$("$A" deferred "$RUN_DIR")"
+  # Nothing released or held: the dependents that already ran stay released.
+  assert_eq "[1]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")"
+}
+
+test_the_sweep_syncs_a_run_whose_only_review_gate_is_deferred() {
+  setup_run
+  local num= out=
+  num=$(open_slice_gate)
+  "$A" defer "$RUN_DIR" "$num" --by Andrew --why "Busy today" >/dev/null
+  gh issue close "$num" -R local/sample
+  out=$(ARTISAN_REPO=local/sample "$PLUGIN_ROOT/scripts/chats.sh" sweep --chat engineering --no-fetch --project "$PROJECT")
+  assert_contains "$out" "Gate #$num closed on GitHub: treated as approved"
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+}
+
 test_defer_releases_the_dependents_and_keeps_the_gate_for_the_end_gate() {
   setup_run
   local num= out= rw=
