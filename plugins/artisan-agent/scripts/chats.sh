@@ -134,7 +134,7 @@ cmd_send() {
   local nums=()
   for n in "${ARGS[@]}"; do
     n=${n#\#}
-    case "$n" in ''|*[!0-9]*) usage ;; esac
+    state_is_uint "$n" || usage
     j=$(issue_json "$n") || state_die 6 "chats.sh: #$n was not found on the tracker"
     is_in_run "$j" && state_die 6 "chats.sh: #$n is already in run $(run_id_of "$j"); it can't be sent again"
     state=$(lower "$(jq -r .state <<<"$j")")
@@ -258,7 +258,7 @@ mem_set() { # jq filter [args]: one-step rewrite
 sweep_minutes() {
   local v=
   v=$("$SCRIPT_DIR/config.sh" get sweep_minutes 2>/dev/null) || v=5
-  case "$v" in ''|*[!0-9]*) v=5 ;; esac
+  state_is_uint "$v" || v=5
   echo "$v"
 }
 

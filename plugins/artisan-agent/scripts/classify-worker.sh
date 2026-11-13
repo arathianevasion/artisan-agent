@@ -31,6 +31,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/state-lib.sh
+. "$SCRIPT_DIR/lib/state-lib.sh"
+
 COMPLETION_LINE="ARTISAN-WORKER: complete"
 
 usage() { # print this header (the leading comment block) and exit 2
@@ -66,11 +70,10 @@ if [ ! -f "$exit_record" ]; then
   fi
   # A pid we cannot read is an error, never a dead session.
   runner_pid=$(cat "$worker_dir/runner.pid" 2>/dev/null) || runner_pid=
-  case "$runner_pid" in
-    '' | *[!0-9]*)
-      echo "classify-worker.sh: cannot read the runner pid in $worker_dir/runner.pid" >&2
-      exit 3 ;;
-  esac
+  if ! state_is_uint "$runner_pid"; then
+    echo "classify-worker.sh: cannot read the runner pid in $worker_dir/runner.pid" >&2
+    exit 3
+  fi
   if ! runner_alive "$runner_pid" && [ ! -f "$exit_record" ]; then
     echo "failed vanished"
     exit 0

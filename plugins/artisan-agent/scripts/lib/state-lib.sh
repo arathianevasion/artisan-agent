@@ -43,7 +43,7 @@ state_writer_pid() {
 # counts as dead.
 state_pid_alive() {
   local pid="$1" stat=
-  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  state_is_uint "$pid" || return 1
   stat=$(ps -o stat= -p "$pid" 2>/dev/null) || return 1
   [ -n "$stat" ] || return 1
   case "$stat" in Z*) return 1 ;; esac

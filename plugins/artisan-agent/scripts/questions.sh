@@ -129,7 +129,7 @@ Answer by commenting \`Answer: <the decision>\` and closing this ticket. Deferri
   url=$(gh issue create ${rargs[@]+"${rargs[@]}"} --title "$title" --body "$body" --label needs-triage) \
     || die "could not file the question ticket"
   num=${url##*/}
-  case "$num" in ''|*[!0-9]*) die "gh gave no issue number: $url" ;; esac
+  state_is_uint "$num" || die "gh gave no issue number: $url"
   if [ -n "${ARTISAN_FINDINGS_FILE:-}" ]; then
     mkdir -p "$(dirname "$ARTISAN_FINDINGS_FILE")"
     jq -cn --arg t "$num" --arg by "$ticket" --arg c "$criterion" --arg q "$question" \

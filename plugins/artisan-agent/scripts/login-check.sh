@@ -90,7 +90,7 @@ cmd_check() {
     state_require_run_dir "$rd"
     span=$(span_of_run "$rd")
   fi
-  case "$span$margin" in *[!0-9]*) state_die 2 "login-check.sh: minutes must be whole numbers" ;; esac
+  state_is_uint "$span" && state_is_uint "$margin" || state_die 2 "login-check.sh: minutes must be whole numbers"
   src=$(login_source)
   login_at=$(jq -r '.login_at // empty' "$src")
   if [ -z "$login_at" ]; then
@@ -119,7 +119,7 @@ cmd_stamp() {
     esac
   done
   [ -n "$at" ] || at=$(state_now)
-  case "$at${days:-0}" in *[!0-9]*) state_die 2 "login-check.sh: --at and --lifetime-days must be whole numbers" ;; esac
+  state_is_uint "$at" && { [ -z "$days" ] || state_is_uint "$days"; } || state_die 2 "login-check.sh: --at and --lifetime-days must be whole numbers"
   mkdir -p "$HOME_DIR"
   [ -f "$LOGIN_FILE" ] || echo '{}' >"$LOGIN_FILE"
   tmp="$LOGIN_FILE.tmp.$$"
