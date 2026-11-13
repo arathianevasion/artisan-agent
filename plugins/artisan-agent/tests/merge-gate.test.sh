@@ -345,6 +345,37 @@ test_mg_a_local_gate_that_died_without_an_outcome_is_undone_and_retried() {
   assert_eq 2 "$(suite_runs)"
 }
 
+test_mg_a_merge_recorded_just_before_a_crash_is_finished_not_left_in_the_way() {
+  setup_slow_local
+  echo 1 >"$TEST_TMPDIR/slow"
+  verified_ticket
+  merge_1_wait 0
+  wait_for "$(gate_result)" 30
+  # Cut off after recording the merge, before clearing the gate's record.
+  "$SCRIPTS/state.sh" merge "$RUN_DIR" 1 "$(state_get '.merge_gate.sha')"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "finish: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq null "$(state_get '.merge_gate')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "merge")] | length')"
+}
+
+test_mg_a_red_gate_undone_before_a_crash_still_blocks_the_ticket() {
+  setup_slow_local
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = "sleep 1; exit 1"'
+  verified_ticket
+  local wt=
+  wt=$(state_get '.integration.worktree')
+  merge_1_wait 0
+  wait_for "$(gate_result)" 30
+  # Cut off after undoing the merge, before clearing the gate's record.
+  git_quiet -C "$wt" reset --hard "$(state_get '.merge_gate.pre')"
+  merge_1
+  assert_eq 7 "$MERGE_STATUS" "red: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq blocked "$(state_get '.tickets["1"].status')"
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)"
+  assert_eq null "$(state_get '.merge_gate')"
+}
+
 test_mg_cutting_off_a_ci_gate_waits_on_the_same_run_with_no_new_dispatch() {
   setup_ci
   verified_ticket

@@ -748,6 +748,12 @@ cmd_merge() {
     esac
   done
   local n= branch= wt= ib= suite= pre= title=
+  wt=$(integration_worktree)
+  # A gate already started: finish it, wait on it, resume it, or (dead, with
+  # nothing to wait on) undo it for a retry below. First of all: a gate whose
+  # merge was recorded just before a crash leaves its ticket merged, not
+  # returned, and only finishing it clears the record.
+  settle_gate "$t" "$wait" "$wt"
   [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] \
     || state_die 6 "wave.sh: #$t is urgent: it ships through its own end gate and PR to main (end-gate.sh urgent-open), never into the integration branch"
   check_returned wave.sh "$t" "not merged"
@@ -760,13 +766,9 @@ cmd_merge() {
     || state_die 13 "wave.sh: #$t not merged: no passing verdict for attempt $n at $TIP; run verify.sh start, then verify.sh judge"
   suite=$(get '.plan.suite_command // ""')
   [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after every merge"
-  wt=$(integration_worktree)
   ib=$(integration_branch)
   [ "$(get '.ci_park != null')" = false ] \
     || state_die 19 "wave.sh: #$t not merged: the run is parked on CI ($(get -r '.ci_park.why')); nothing merges until the park is cleared (wave.sh unpark-ci)"
-  # A gate already started: finish it, wait on it, resume it, or (dead, with
-  # nothing to wait on) undo it for a retry below.
-  settle_gate "$t" "$wait" "$wt"
   abandon_pending_resolution "$wt"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   pre=$(git -C "$wt" rev-parse HEAD)
@@ -877,7 +879,7 @@ gate_alive() {
   local pid=
   pid=$(gate_pid)
   state_pid_alive "$pid" || return 1
-  ps -o args= -p "$pid" 2>/dev/null | grep -q 'merge-gate.sh run'
+  ps -o args= -p "$pid" 2>/dev/null | grep -qF "merge-gate.sh run --result $(gate_result)"
 }
 
 gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(get '.merge_gate.result')"; }
@@ -892,7 +894,7 @@ gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(get '.merge_gate.result')"; }
 settle_gate() {
   local t="$1" wait="$2" wt="$3" gt= run=
   if [ "$(get '.ci_gate != null')" = true ]; then
-    apply '.merge_gate = (.merge_gate // (.ci_gate + {mode: "ci", deadline: (now | floor)})) | .ci_gate = null'
+    apply '.merge_gate = (.merge_gate // (.ci_gate + {mode: "ci", deadline: (.ci_gate.at + 1800)})) | .ci_gate = null'
   fi
   [ "$(get '.merge_gate != null')" = true ] || return 0
   gt=$(get '.merge_gate.ticket')
@@ -947,9 +949,11 @@ finish_gate() {
     printf '%s\n' "$sha"
     return 0
   fi
+  rc=$(jq -r '.exit_code // 1' "$result")
+  # Not green, and already undone by a call cut off before it cleared the record.
+  [ "$rc" -eq 0 ] || [ "$(git -C "$wt" rev-parse HEAD)" != "$pre" ] || git -C "$wt" reset -q --hard "$sha"
   [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ] \
     || die "the integration worktree $wt is at $(git -C "$wt" rev-parse --short HEAD), not the merge commit #$t's gate judged ($sha); left as it is for the Artisan"
-  rc=$(jq -r '.exit_code // 1' "$result")
   log="merges/$t.$n.suite.log"
   if [ "$mode" = local ]; then
     if [ "$rc" -ne 0 ]; then
@@ -1020,7 +1024,9 @@ ci_setting() { # key
 abandon_gate() {
   local wt="$1" pid= sha=
   pid=$(gate_pid)
-  ! state_is_uint "$pid" || kill -KILL "-$pid" 2>/dev/null || true
+  # What its runner left in its group: a pid can't be reused while its group
+  # lives, so a live pid that isn't the runner is someone else's (skip it).
+  if state_is_uint "$pid" && ! state_pid_alive "$pid"; then kill -KILL "-$pid" 2>/dev/null || true; fi
   sha=$(get '.merge_gate.sha')
   if [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ]; then git -C "$wt" reset -q --hard "$(get '.merge_gate.pre')"; fi
   apply '.merge_gate as $g
