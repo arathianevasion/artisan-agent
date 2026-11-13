@@ -63,7 +63,7 @@ export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
 # the printer never reads a half-written result. Always exits 0.
 run_one() {
   local resdir=$1 file=$2 name=$3 idx=$4
-  local tmp markdir marker output status
+  local tmp= markdir= marker= output= status=
   tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/artisan-test.XXXXXX")" && pwd -P)
   markdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-pass.XXXXXX")
   marker="$markdir/passed"

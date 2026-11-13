@@ -296,7 +296,7 @@ set +m
 # a fraction (0.29); the reading holds percent, as the status line does.
 usage_seen=0
 record_usage() {
-  local lines total now
+  local lines= total= now=
   total=$(grep -c '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" 2>/dev/null) || total=0
   [ "$total" -gt "$usage_seen" ] || return 0
   # Every event since the last look, in order, so two landing between polls

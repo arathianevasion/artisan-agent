@@ -74,7 +74,7 @@ setup_with_suite_check() {
 
 test_c_a_worker_skips_a_recorded_check_that_is_the_suite_and_says_so() {
   setup_with_suite_check
-  local out rc=0
+  local out= rc=0
   out=$(cd "$P" && "$CHECKS" run --worker) || rc=$?
   assert_eq 0 "$rc"
   assert_eq "[]" "$(printf '%s' "$out" | jq -c .results)"
@@ -83,7 +83,7 @@ test_c_a_worker_skips_a_recorded_check_that_is_the_suite_and_says_so() {
 
 test_c_the_verifier_and_the_gate_still_run_the_suite_check() {
   setup_with_suite_check
-  local out
+  local out=
   out=$(cd "$P" && "$CHECKS" run)
   assert_eq "./test.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
   assert_eq "[]" "$(printf '%s' "$out" | jq -c .not_run)"
@@ -92,7 +92,7 @@ test_c_the_verifier_and_the_gate_still_run_the_suite_check() {
 
 test_c_a_worker_skips_the_check_equal_to_the_plans_suite_command_and_runs_the_rest() {
   setup_with_checks
-  local out
+  local out=
   out=$(cd "$P" && "$CHECKS" run --worker --suite ./test.sh)
   assert_eq "./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
   assert_contains "$(printf '%s' "$out" | jq -r '.not_run[0]')" "./test.sh: left to the merge gate"
@@ -100,7 +100,7 @@ test_c_a_worker_skips_the_check_equal_to_the_plans_suite_command_and_runs_the_re
 
 test_c_a_worker_still_runs_every_check_when_none_is_the_suite() {
   setup_with_checks
-  local out
+  local out=
   out=$(cd "$P" && "$CHECKS" run --worker)
   assert_eq "./test.sh:true ./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
 }

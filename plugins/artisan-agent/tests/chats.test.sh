@@ -237,7 +237,7 @@ test_a_plan_started_at_once_records_no_envelope_approval() {
   # Nothing but approve-envelope writes the mark, and a started plan never calls it.
   setup_chats
   ticket 345
-  local plan out
+  local plan= out=
   plan=$("$C" send 345)
   assert_eq 0 "$(cat "$FAKE_GH_DIR"/comments-"$plan".md 2>/dev/null | grep -c "envelope-approved" || true)"
   out=$(sweep)
@@ -245,7 +245,7 @@ test_a_plan_started_at_once_records_no_envelope_approval() {
 }
 
 test_the_skills_name_each_call_inside_the_step_that_makes_it() {
-  local ip tp step3 step6 step5
+  local ip= tp= step3= step6= step5=
   ip="$PLUGIN_ROOT/skills/implement-plan/SKILL.md"
   tp="$PLUGIN_ROOT/skills/to-plan/SKILL.md"
   step3=$(awk '/^### 3\./{f=1;next} /^### 4\./{f=0} f' "$ip")

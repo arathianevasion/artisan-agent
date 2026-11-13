@@ -44,7 +44,7 @@ check_shape() { # file
 }
 
 cmd_fetch() {
-  local work=${1:-} prompt
+  local work=${1:-} prompt=
   [ -n "$work" ] || usage
   mkdir -p "$work"; work=$(cd "$work" && pwd)
   rm -f "$work/published.json"
@@ -61,7 +61,7 @@ Write your answer to: $work/published.json"
 }
 
 cmd_compare() {
-  local pub=${1:-} rows
+  local pub=${1:-} rows=
   [ -n "$pub" ] || usage
   check_shape "$FILE"; check_shape "$pub"
   rows=$(jq -r --slurpfile p "$pub" '
@@ -84,7 +84,7 @@ cmd_compare() {
 }
 
 cmd_apply() {
-  local pub=${1:-} today tmp
+  local pub=${1:-} today= tmp=
   [ -n "$pub" ] || usage
   check_shape "$FILE"; check_shape "$pub"
   today=${ARTISAN_TODAY:-$(date +%F)}

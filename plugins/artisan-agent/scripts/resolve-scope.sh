@@ -53,7 +53,7 @@ done
 # "Blocked by: #a, #b" line, or, when that line is a "## Blocked by" heading, the
 # refs listed below it up to the next heading. Prints the open ones as a JSON array.
 body_blockers() { # number what(ticket|plan)
-  local n=$1 what=$2 body b st out='[]'
+  local n=$1 what=$2 body= b= st= out='[]'
   body=$(gh issue view "$n" -R "$REPO" --json body --jq '.body // ""') || die "cannot read the blockers of $what #$n: cannot read its body"
   for b in $(printf '%s\n' "$body" | awk '
     !seen && tolower($0) ~ /^[[:space:]]*(#+[[:space:]]*)?blocked by:?/ { seen = 1; head = ($0 ~ /^[[:space:]]*#+[[:space:]]/); print; next }

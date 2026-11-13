@@ -25,7 +25,7 @@ S
 test_matching_prices_say_no_change_and_leave_the_file_alone() {
   setup_prices; stub_claude
   export PUBLISHED_JSON; PUBLISHED_JSON=$(jq -c '{models}' "$ARTISAN_PRICES_FILE")
-  local before out; before=$(cat "$ARTISAN_PRICES_FILE")
+  local before= out=; before=$(cat "$ARTISAN_PRICES_FILE")
   out=$(bash "$MP" run "$TEST_TMPDIR/w")
   assert_eq "no price change" "$out"
   assert_eq "$before" "$(cat "$ARTISAN_PRICES_FILE")" "file changed"
@@ -34,7 +34,7 @@ test_matching_prices_say_no_change_and_leave_the_file_alone() {
 test_a_changed_new_and_dropped_model_are_tabled_and_offered() {
   setup_prices; stub_claude
   export PUBLISHED_JSON='{"models":{"claude-opus-5-5":{"input_per_mtok":5,"output_per_mtok":25},"claude-sonnet-5-5":{"input_per_mtok":2,"output_per_mtok":10},"claude-haiku-5-5":{"input_per_mtok":0.1,"output_per_mtok":0.5},"claude-new-6":{"input_per_mtok":1,"output_per_mtok":3}}}'
-  local out rc=0
+  local out= rc=0
   out=$(bash "$MP" run "$TEST_TMPDIR/w") || rc=$?
   assert_eq 10 "$rc" "exit"
   assert_contains "$out" "| claude-opus-5-5 | \$4 / \$20 | \$5 / \$25 |"
@@ -60,13 +60,13 @@ test_apply_updates_rates_and_date_keeps_dropped_models() {
   assert_eq 3 "$(jq '.models["claude-new-6"].output_per_mtok' "$ARTISAN_PRICES_FILE")"
   assert_eq 40 "$(jq '.models["claude-fable-5-2"].output_per_mtok * 1' "$ARTISAN_PRICES_FILE")" "model absent from the answer was deleted"
   assert_contains "$(jq -r '._source' "$ARTISAN_PRICES_FILE")" "as of 2027-01-02"
-  local out; out=$(bash "$MP" compare "$TEST_TMPDIR/p.json" || true)
+  local out=; out=$(bash "$MP" compare "$TEST_TMPDIR/p.json" || true)
   case "$out" in *"claude-opus-5-5 |"*) fail "applied model still differs" ;; esac
 }
 
 test_an_agent_that_writes_nothing_or_nonsense_fails_and_changes_nothing() {
   setup_prices; stub_claude
-  local before; before=$(cat "$ARTISAN_PRICES_FILE")
+  local before=; before=$(cat "$ARTISAN_PRICES_FILE")
   unset PUBLISHED_JSON
   assert_status 1 bash "$MP" run "$TEST_TMPDIR/w"
   export PUBLISHED_JSON='{"models":{"claude-opus-5-5":{"input_per_mtok":"free","output_per_mtok":0}}}'

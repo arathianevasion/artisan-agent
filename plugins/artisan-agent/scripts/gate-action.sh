@@ -223,7 +223,7 @@ open_dependents() {
 # that depend on any of these, directly or through others, one per line, in
 # ticket order. The tracker's native edges say who depends on whom.
 downstream() {
-  local seen=" $* " d st b changed=1 found=
+  local seen=" $* " d= st= b= changed=1 found=
   while [ "$changed" -eq 1 ]; do
     changed=0
     for d in $(get '.plan.scope[]'); do
@@ -250,7 +250,7 @@ json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 # the rest of it: who goes with it, and whether each slice can still be
 # reviewed end to end.
 impact() {
-  local t="$1" ds
+  local t="$1" ds=
   shift
   ds=$(json_list "$@")
   get --arg t "$t" --argjson ds "$ds" "$STATE_JQ_DEFS"'
@@ -266,7 +266,7 @@ impact() {
 # stranded: JSON [{blocker, status, waiting: [tickets]}], one per dropped or
 # resliced ticket that still holds tickets in the run that can never start.
 stranded() {
-  local out='[]' b w
+  local out='[]' b= w=
   for b in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "dropped" or .tickets[$t].status == "resliced") | $t'); do
     w=$(json_list $(downstream "$b"))
     [ "$w" != "[]" ] || continue
@@ -279,7 +279,7 @@ stranded() {
 # send_back blocker how dependent...: each dependent leaves the run and goes
 # back to needs-triage with a comment, keeping its native blockers.
 send_back() {
-  local from="$1" how="$2" d
+  local from="$1" how="$2" d=
   shift 2
   for d in "$@"; do
     gh issue edit "$d" -R "$(repo)" --add-label needs-triage --remove-label in-run >/dev/null \
@@ -550,7 +550,7 @@ cmd_send_back() {
   open_run "$1"
   shift
   parse_opts "$@"
-  local st n b w d all=" " dl
+  local st= n= b= w= d= all=" " dl=
   st=$(stranded)
   if [ "$st" = "[]" ]; then echo "No ticket is stranded."; return 0; fi
   hold
@@ -578,7 +578,7 @@ cmd_send_back() {
 cmd_stranded() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local st
+  local st=
   st=$(stranded)
   [ "$st" != "[]" ] || return 1
   jq -r '.[] | "#\(.blocker) \(.status): \(.waiting | map("#" + .) | join(", ")) can'"'"'t start"' <<<"$st"

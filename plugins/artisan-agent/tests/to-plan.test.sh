@@ -530,7 +530,7 @@ test_resolve_scope_reads_a_blocked_by_heading_section_where_there_are_no_native_
   set_body 2 "## What\nx\n\n## Blocked by\n\n- #1\n- #44 (done)\n* #5\n#4\n\n## Acceptance criteria\n- [ ] sees #3 here"
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-44.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-44.json"
   fail_gh_on '*dependencies/blocked_by*' "gh: Not Found (HTTP 404)"
-  local out; out=$("$RS" --repo local/sample 1 2)
+  local out=; out=$("$RS" --repo local/sample 1 2)
   assert_eq "[]" "$(jq -c '.tickets[0].blocked_by' <<<"$out")"
   assert_eq "[1,5,4]" "$(jq -c '.tickets[1].blocked_by' <<<"$out")" "open refs under the heading only (a bare #4 line is a ref, not a heading); #44 closed, #3 is under another heading"
 }
@@ -541,7 +541,7 @@ test_resolve_scope_reads_a_plan_issues_body_blockers_where_there_are_no_native_d
   jq -n '{number: 71, id: 1071, title: "Old plan", state: "closed", labels: [{name: "plan"}], body: ""}' >"$FAKE_GH_DIR/issue-71.json"
   set_body "$P2" "Plan two\n\n## Blocked by\n\n- #70\n- #71\n- #$P1\n"
   fail_gh_on "*issues/$P2/dependencies/blocked_by*" "gh: Not Found (HTTP 404)"
-  local out; out=$("$RS" --repo local/sample "$P1" "$P2")
+  local out=; out=$("$RS" --repo local/sample "$P1" "$P2")
   assert_eq "[{\"plan\":$P2,\"blocker\":70}]" "$(jq -c '.outside_blockers' <<<"$out")" "open unnamed plan 70 listed; closed 71 and named $P1 not"
 }
 
@@ -550,7 +550,7 @@ test_resolve_scope_reads_a_plan_issues_blocked_by_line_where_there_are_no_native
   jq -n '{number: 70, id: 1070, title: "Other plan", state: "open", labels: [{name: "plan"}], body: ""}' >"$FAKE_GH_DIR/issue-70.json"
   set_body "$P2" "Blocked by: #70\n\nPlan two"
   fail_gh_on "*issues/$P2/dependencies/blocked_by*" "gh: Not Found (HTTP 404)"
-  local out; out=$("$RS" --repo local/sample "$P2")
+  local out=; out=$("$RS" --repo local/sample "$P2")
   assert_eq "[{\"plan\":$P2,\"blocker\":70}]" "$(jq -c '.outside_blockers' <<<"$out")"
 }
 

@@ -26,7 +26,7 @@ session_json() {
 
 test_capture_writes_usage_and_the_context_window_for_the_sessions_model() {
   setup_home
-  local before line
+  local before= line=
   before=$(date +%s)
   line=$(session_json "claude-opus-5-5[1m]" 1000000 23.5 41.2 | "$S")
   assert_contains "$line" "ctx 12% of 1000k · 5h 23% · 7d 41%"
@@ -60,7 +60,7 @@ test_input_without_rate_limits_keeps_the_last_reading_and_its_age() {
 
 test_capture_never_fails_the_status_line() {
   setup_home
-  local out
+  local out=
   out=$(printf 'not json' | "$S")
   assert_contains "$out" "artisan-agent"
   [ ! -e "$USAGE" ] || fail "nothing is written from bad input"
@@ -74,7 +74,7 @@ test_install_points_settings_at_the_capture_every_minute_and_chains_the_old_line
   setup_home
   mkdir -p "$CLAUDE_CONFIG_DIR"
   jq -n '{theme: "dark", statusLine: {type: "command", command: "echo gauge-line", padding: 1}}' >"$CLAUDE_CONFIG_DIR/settings.json"
-  local out
+  local out=
   out=$("$S" install)
   assert_contains "$out" "changed: statusLine runs"
   assert_eq dark "$(jq -r .theme "$CLAUDE_CONFIG_DIR/settings.json")" "other settings kept"
@@ -110,7 +110,7 @@ test_drain_reads_the_chats_window_from_the_capture() {
   init_run >/dev/null
   jq -nc '{type: "assistant", message: {model: "claude-sonnet-5-5", usage: {input_tokens: 100000, output_tokens: 0}}}' >"$tp"
   unset ARTISAN_CONTEXT_WINDOW
-  local out
+  local out=
   out=$("$PLUGIN_ROOT/scripts/drain.sh" chat "$RUN_DIR" --transcript "$tp")
   assert_contains "$out" "50%"
 }

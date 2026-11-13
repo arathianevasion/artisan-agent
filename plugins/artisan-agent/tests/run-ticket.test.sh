@@ -117,7 +117,7 @@ test_worker_usage_is_recorded_with_the_time_it_was_received() {
   setup_run
   export FAKE_CLAUDE_SLEEP=3
   launch stream
-  local u="$RUN/workers/46.1/usage.json" i=0 before after
+  local u="$RUN/workers/46.1/usage.json" i=0 before= after=
   while ! jq -e '.rate_limits.seven_day' "$u" >/dev/null 2>&1; do
     i=$((i + 1)); [ "$i" -lt 100 ] || fail "no usage.json while the worker ran"; sleep 0.1
   done

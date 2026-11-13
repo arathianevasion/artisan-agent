@@ -103,7 +103,7 @@ project() { get "$PROJECTION_JQ projection"; }
 # running_workers: how many in-flight tickets have a live worker (a runner
 # pid that is still there). Nothing running means nothing is spending.
 running_workers() {
-  local pid n=0
+  local pid= n=0
   for pid in $(get -r '[.tickets[] | select(.status == "in_flight") | .pid // empty] | .[]'); do
     kill -0 "$pid" 2>/dev/null && n=$((n + 1))
   done
@@ -113,7 +113,7 @@ running_workers() {
 # worker_readings: a JSON array of every worker's usage.json in this run
 # (run-ticket.sh writes it: the latest rate_limit_event, with its own time).
 worker_readings() {
-  local f
+  local f=
   for f in "$RUN_DIR"/workers/*/usage.json; do
     [ -s "$f" ] && jq -c 'if type == "object" then . else empty end' "$f" 2>/dev/null
   done | jq -sc '.'
@@ -125,7 +125,7 @@ worker_readings() {
 # from any source: unknown (park) while workers run, and no park while none
 # does (nothing is spending); ok then carries idle: true.
 verdict() {
-  local f reading reserve ceiling stale workers running
+  local f= reading= reserve= ceiling= stale= workers= running=
   f=$(usage_file)
   reserve=$(get '.plan.config.usage_reserve.five_hour_reserve_percent // 20')
   ceiling=$(get '.plan.config.usage_reserve.seven_day_ceiling_percent // 90')
@@ -191,7 +191,7 @@ verdict_line() { # verdict-json
 
 cmd_usage() {
   open_run "${1:-}"
-  local v
+  local v=
   v=$(verdict)
   verdict_line "$v"
   [ "$(jq -r .ok <<<"$v")" = true ] || exit 18
@@ -228,7 +228,7 @@ clear_park() {
 
 # usage_guard: 0 to carry on; otherwise prints the park and exits 18.
 usage_guard() {
-  local v
+  local v=
   v=$(verdict)
   if [ "$(get '.usage_park != null')" = true ]; then
     # Parked: only the Artisan's resume (or a raised ceiling) lets dispatch
@@ -290,7 +290,7 @@ packet() { # gate-json
 
 # open_overrun projection-json: record the gate once and open its issue.
 open_overrun() {
-  local p="$1" n id title
+  local p="$1" n= id= title=
   n=$(( $(get '(.overrun_gates // []) | length') + 1 ))
   id="overrun-$n"
   title="Exception gate: overrun (run $RUN_ID)"
@@ -313,7 +313,7 @@ open_overrun() {
 # ensure_issue: the open gate's review-gate issue, opened once (again after a
 # failed open). The packet is kept in gates/<id>.md.
 ensure_issue() {
-  local g id title dir body repo num url
+  local g= id= title= dir= body= repo= num= url=
   g=$(open_gate_json)
   [ -n "$g" ] || return 0
   [ "$(jq -r '.issue // empty' <<<"$g")" = "" ] || return 0
@@ -343,7 +343,7 @@ overrun_line() { # gate-json
 }
 
 budget_guard() {
-  local g p
+  local g= p=
   g=$(open_gate_json)
   if [ -n "$g" ]; then
     ensure_issue
@@ -385,7 +385,7 @@ is_usd() { printf '%s' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; }
 
 cmd_overrun() {
   open_run "${1:-}"
-  local opt="${2:-}" g id issue p new t status repo
+  local opt="${2:-}" g= id= issue= p= new= t= status= repo=
   [ -n "$opt" ] || usage
   shift 2
   parse_by "$@"
@@ -435,7 +435,7 @@ cmd_overrun() {
       ;;
     *) usage ;;
   esac
-  local choice card
+  local choice= card=
   case "$opt" in
     raise) choice="raise the budget to \$${ARGS[0]}" card=1 ;;
     cut) choice="cut $(printf '#%s ' "${ARGS[@]}" | sed 's/ $//')" card=2 ;;
@@ -461,7 +461,7 @@ cmd_overrun() {
 
 cmd_park() {
   open_run "${1:-}"
-  local opt="${2:-}" window pct v key value cur
+  local opt="${2:-}" window= pct= v= key= value= cur=
   [ -n "$opt" ] || usage
   shift 2
   parse_by "$@"

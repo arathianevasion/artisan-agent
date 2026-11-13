@@ -79,7 +79,7 @@ all_done() {
 }
 
 status_word() {
-  local st
+  local st=
   st=$(get '.end_gate.status // ""')
   case "$st" in ended|approved|open) echo "$st"; return ;; esac
   if ! all_done; then echo not-due
@@ -101,7 +101,7 @@ team_repo() {
 }
 
 guardrail_boundary() { # -> {value, level, source} or nothing
-  local v repo tf
+  local v= repo= tf=
   v=$(git -C "$MAIN" show HEAD:CODING_STANDARDS.md 2>/dev/null | boundary_in)
   if [ -n "$v" ]; then jq -nc --arg v "$v" '{value: $v, level: "product", source: "guardrail"}'; return; fi
   repo=$(team_repo)
@@ -117,7 +117,7 @@ guardrail_boundary() { # -> {value, level, source} or nothing
 }
 
 current_boundary() {
-  local b
+  local b=
   b=$(get -c '.end_gate.boundary // empty')
   [ -n "$b" ] || b=$(guardrail_boundary)
   [ -n "$b" ] || b='{"value":null,"proposed":"slice","source":"none"}'
@@ -172,7 +172,7 @@ cmd_prs() {
   [ $# -ge 1 ] || usage
   open_run "$1"
   need_prs_allowed
-  local plan
+  local plan=
   plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
   if [ "${2:-}" = --json ]; then printf '%s\n' "$plan"; return; fi
   echo "| PR | Branch | Into | Tickets | Cut |"
@@ -185,7 +185,7 @@ git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email
   || printf -- '-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost'; }
 
 build_branch() { # pr-json: points pr/<run>/<n> at the group's work
-  local pr="$1" branch base tmp c ident
+  local pr="$1" branch= base= tmp= c= ident=
   branch=$(jq -r .branch <<<"$pr")
   if [ "$(jq -r .consecutive <<<"$pr")" = true ]; then
     git -C "$MAIN" branch -f "$branch" "$(jq -r '.commits | last' <<<"$pr")" >/dev/null || die "could not create $branch"
@@ -212,7 +212,7 @@ build_branch() { # pr-json: points pr/<run>/<n> at the group's work
 cmd_cut() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local n="$2" body= title= plan pr url branch base repo
+  local n="$2" body= title= plan= pr= url= branch= base= repo=
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -251,7 +251,7 @@ cmd_cut() {
 # ------------------------------------------------------------------ packet
 
 packet() {
-  local def b gview title
+  local def= b= gview= title=
   def=$(end_def)
   title="End gate: run $RUN_ID"
   echo "# $title"
@@ -325,7 +325,7 @@ cmd_packet() { [ $# -eq 1 ] || usage; open_run "$1"; packet; }
 cmd_open() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local num repo title url dir
+  local num= repo= title= url= dir=
   num=$(get -r '.end_gate.issue // empty')
   if [ -n "$num" ]; then echo "$num"; return 0; fi
   case "$(status_word)" in
@@ -362,7 +362,7 @@ cmd_approve() {
   [ $# -ge 1 ] || usage
   open_run "$1"
   shift
-  local by=Artisan why= set= changed=false st b issue src
+  local by=Artisan why= set= changed=false st= b= issue= src=
   while [ $# -gt 0 ]; do
     case "$1" in
       --boundary) [ $# -ge 2 ] || usage; set=$2; shift 2 ;;
@@ -415,7 +415,7 @@ cmd_approve() {
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local want have repo t bad=0 done_list=
+  local want= have= repo= t= bad=0 done_list=
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
   want=$(pr_plan "$(get -r '.end_gate.boundary.value')" | jq length)
   have=$(get '(.end_gate.prs // []) | length')

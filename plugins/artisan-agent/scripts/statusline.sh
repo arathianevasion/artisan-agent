@@ -68,7 +68,7 @@ WINDOW_JQ='
       else 200000 end;'
 
 capture() {
-  local input t prev sid line
+  local input= t= prev= sid= line=
   input=$(cat)
   t=$(now)
   jq -e 'type == "object"' >/dev/null 2>&1 <<<"$input" || { echo "artisan-agent: no session data"; return 0; }
@@ -114,7 +114,7 @@ capture() {
 }
 
 cmd_install() {
-  local refresh=60 settings target cur
+  local refresh=60 settings= target= cur=
   while [ $# -gt 0 ]; do
     case "$1" in
       --refresh) [ $# -ge 2 ] || usage; refresh=$2; shift 2 ;;
@@ -149,7 +149,7 @@ cmd_install() {
 }
 
 cmd_window() {
-  local transcript= f
+  local transcript= f=
   while [ $# -gt 0 ]; do
     case "$1" in
       --transcript) [ $# -ge 2 ] || usage; transcript=$2; shift 2 ;;

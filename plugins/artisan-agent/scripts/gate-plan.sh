@@ -49,7 +49,7 @@ JQ_DEFS='
 '
 
 write() { # draft filter [jq args]: rewrite the draft in one step
-  local f="$1" filter="$2" tmp
+  local f="$1" filter="$2" tmp=
   shift 2
   tmp="$f.tmp.$$"
   jq "$JQ_DEFS $filter" "$@" "$f" >"$tmp" || { rm -f "$tmp"; die "could not rewrite $f"; }
@@ -83,7 +83,7 @@ cmd_render() {
 cmd_propose() {
   [ $# -eq 1 ] || usage
   need_draft "$1"
-  local bad
+  local bad=
   bad=$(jq -r --argjson ok "$TESTS" '[.tickets // {} | to_entries[] | .value.escalation // [] | .[] | select(. as $e | $ok | index($e) | not)] | unique | join(", ")' "$1")
   [ -z "$bad" ] || die "unknown escalation test: $bad (one of new-seam, tracer-bullet, vocabulary-adr, judgement-criteria)" 2
   case "$(jq -r '.route // "feature"' "$1")" in feature|small-change|bug) ;; *) die "route must be feature, small-change or bug" 2 ;; esac
@@ -104,7 +104,7 @@ cmd_propose() {
 }
 
 gate_index() { # draft id: the index in .gates, or exit 6
-  local i
+  local i=
   i=$(jq -r "$JQ_DEFS"' ids | index($id) // empty' --arg id "$2" "$1")
   [ -n "$i" ] || die "no gate $2 in the plan (gate-plan.sh render lists them)" 6
   printf '%s\n' "$i"
@@ -120,7 +120,7 @@ cmd_remove() {
   [ $# -eq 2 ] || usage
   need_draft "$1"
   refuse_exception "$2"
-  local i
+  local i=
   i=$(gate_index "$1" "$2")
   write "$1" '.gates |= (to_entries | map(select(.key != $i)) | map(.value))' --argjson i "$i"
   cmd_render "$1"
@@ -128,7 +128,7 @@ cmd_remove() {
 
 cmd_move() {
   [ $# -ge 4 ] || usage
-  local f="$1" id="$2" after= tickets= i kind t
+  local f="$1" id="$2" after= tickets= i= kind= t=
   shift 2
   need_draft "$f"
   refuse_exception "$id"

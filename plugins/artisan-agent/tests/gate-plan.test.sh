@@ -66,7 +66,7 @@ test_the_artisan_removes_slice_risk_and_end_gates() {
 test_an_exception_gate_can_never_be_removed() {
   draft feature
   "$GP" propose draft.json >/dev/null
-  local before err
+  local before= err=
   before=$(jq -c .gates draft.json)
   err=$("$GP" remove draft.json exception-4 2>&1 >/dev/null) && fail "removed an exception gate"
   assert_status 6 "$GP" remove draft.json exception-4
@@ -91,7 +91,7 @@ test_the_artisan_moves_a_slice_or_risk_gate() {
 test_the_end_gate_has_one_place_and_is_moved_by_removing_it() {
   draft feature
   "$GP" propose draft.json >/dev/null
-  local err
+  local err=
   err=$("$GP" move draft.json end --after 1 2>&1 >/dev/null) && fail "moved the end gate"
   assert_contains "$err" "the end gate has one place"
 }

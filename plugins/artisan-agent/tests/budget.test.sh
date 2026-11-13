@@ -18,7 +18,7 @@ setup_budget() {
   make_project
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
-  local n
+  local n=
   for n in 1 2 3; do
     jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "open", labels: [{name: "in-run"}], body: "x"}' \
       >"$FAKE_GH_DIR/issue-$n.json"
@@ -56,7 +56,7 @@ seed_overrun() {
 
 # usage_reading five-hour-% seven-day-% [age-seconds]: the capture's file.
 usage_reading() {
-  local t
+  local t=
   t=$(( $(date +%s) - ${3:-0} ))
   jq -nc --argjson t "$t" --argjson f "$1" --argjson s "$2" '{schema_version: 1, written_at: $t,
     rate_limits: {at: $t, five_hour: {used_percentage: $f, resets_at: ($t + 7200)},
@@ -66,7 +66,7 @@ usage_reading() {
 test_projection_crossing_stops_dispatch_lets_in_flight_finish_and_raises_the_overrun_gate() {
   setup_budget
   seed_overrun
-  local out st=0 p
+  local out= st=0 p=
   p=$("$B" project "$RUN_DIR")
   assert_eq 2.2 "$(jq -r '(.projected * 100 | round) / 100' <<<"$p")" "projection: spent plus still to come"
   assert_eq true "$(jq -r .over <<<"$p")"
@@ -104,7 +104,7 @@ test_projection_crossing_stops_dispatch_lets_in_flight_finish_and_raises_the_ove
 test_within_budget_the_guard_lets_dispatch_through() {
   setup_budget
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "merged" | .cost_usd = 0.6) | .costs.total_usd = 0.6'
-  local out
+  local out=
   out=$("$B" guard "$RUN_DIR")
   assert_contains "$out" "ok: spent \$0.6, projected \$1.6 of \$1.875 budget"
   assert_eq 0 "$(state_get '(.overrun_gates // []) | length')"
@@ -114,7 +114,7 @@ test_overrun_gate_is_defer_only_with_options_complexity_and_spend_per_ticket() {
   setup_budget
   seed_overrun
   assert_status 17 "$B" guard "$RUN_DIR"
-  local packet body
+  local packet= body=
   packet=$("$B" packet "$RUN_DIR")
   body=$(jq -r .body "$FAKE_GH_DIR/issue-4.json")
   assert_eq "$packet" "$body" "the issue body is the packet"
@@ -132,7 +132,7 @@ test_overrun_gate_is_defer_only_with_options_complexity_and_spend_per_ticket() {
   assert_contains "$packet" "**Defer** is the only action at this gate"
 
   # Only defer: approve, bypass and redirect are refused, and change nothing.
-  local a sum
+  local a= sum=
   sum=$(state_sum)
   for a in approve bypass redirect; do
     assert_status 6 "$B" overrun "$RUN_DIR" raise 3 --action "$a"
@@ -141,7 +141,7 @@ test_overrun_gate_is_defer_only_with_options_complexity_and_spend_per_ticket() {
   # A raise that doesn't cover the projection is refused.
   assert_status 6 "$B" overrun "$RUN_DIR" raise 2
 
-  local out
+  local out=
   out=$("$B" overrun "$RUN_DIR" raise 2.75 --by Andrew --why "the parser was harder than sliced")
   assert_contains "$out" "deferred #4 overrun-1: raise the budget to \$2.75"
   assert_eq 2.75 "$(state_get .plan.budget_usd)"
@@ -187,7 +187,7 @@ test_a_reading_older_than_ten_minutes_is_unknown_and_stops_dispatch() {
   setup_budget
   seed_running_worker
   usage_reading 10 20 $((11 * 60))
-  local out st=0
+  local out= st=0
   out=$("$W" dispatch "$RUN_DIR" 1 2>&1) || st=$?
   assert_eq 18 "$st" "a stale reading stops dispatch"
   assert_contains "$out" "parked unknown"
@@ -224,7 +224,7 @@ seed_running_worker() {
 # worker_reading ticket five-hour-% seven-day-% [age-seconds]: what a worker's
 # runner records (run-ticket.sh), each window stamped with its own time.
 worker_reading() {
-  local t d=$RUN_DIR/workers/$1.1
+  local t= d=$RUN_DIR/workers/$1.1
   t=$(( $(date +%s) - ${4:-0} ))
   mkdir -p "$d"
   jq -nc --argjson t "$t" --argjson f "$2" --argjson s "$3" --arg k "$1" '{source: "worker", ticket: $k, attempt: 1,
@@ -237,7 +237,7 @@ test_a_fake_workers_rate_limit_events_are_the_guards_reading_with_no_status_line
   rm -f "$ARTISAN_USAGE_FILE"
   printf 'Build.\n' >"$TEST_TMPDIR/prompt.md"
   mkdir -p "$TEST_TMPDIR/wt"
-  local rpid i=0
+  local rpid= i=0
   rpid=$(PATH="$TESTS_DIR/fixtures/fake-claude:$PATH" FAKE_CLAUDE_MODE=stream FAKE_CLAUDE_SLEEP=20 \
     "$SCRIPTS/run-ticket.sh" --run-dir "$RUN_DIR" --ticket 1 --prompt-file "$TEST_TMPDIR/prompt.md" \
     --workdir "$TEST_TMPDIR/wt" --estimate-usd 0.5 --expected-minutes 5)
@@ -245,7 +245,7 @@ test_a_fake_workers_rate_limit_events_are_the_guards_reading_with_no_status_line
   while ! jq -e '.rate_limits.seven_day' "$RUN_DIR/workers/1.1/usage.json" >/dev/null 2>&1; do
     i=$((i + 1)); [ "$i" -lt 100 ] || fail "the runner recorded no reading"; sleep 0.1
   done
-  local out
+  local out=
   out=$("$B" usage "$RUN_DIR")
   assert_contains "$out" "ok 5h 0% 7d 29%"
   assert_eq 0 "$(state_get '.usage_park != null | if . then 1 else 0 end')"
@@ -258,7 +258,7 @@ test_the_freshest_reading_wins_whichever_source_it_comes_from() {
   # Status line older than the worker's reading: the worker's 85% parks.
   usage_reading 10 20 $((5 * 60))
   worker_reading 2 85 20 60
-  local out st=0
+  local out= st=0
   out=$("$B" usage "$RUN_DIR") || st=$?
   assert_eq 18 "$st"
   assert_contains "$out" "park five-hour 85%"
@@ -280,7 +280,7 @@ test_workers_running_and_no_fresh_reading_parks_unknown_but_nothing_running_does
   # all, is not a reason to park.
   usage_reading 10 20 $((30 * 60))
   worker_reading 2 10 20 $((30 * 60))
-  local out
+  local out=
   out=$("$B" usage "$RUN_DIR")
   assert_contains "$out" "ok no fresh usage reading"
   assert_status 0 "$B" guard "$RUN_DIR"
@@ -312,7 +312,7 @@ test_five_hour_window_within_the_reserve_parks_with_resume_time_raise_and_stop()
   usage_reading 79.9 20
   assert_status 0 "$B" guard "$RUN_DIR"
   usage_reading 80 20
-  local out st=0 when
+  local out= st=0 when=
   out=$("$B" guard "$RUN_DIR") || st=$?
   assert_eq 18 "$st"
   when=$(jq -r '.rate_limits.five_hour.resets_at | strflocaltime("%a %d %b %H:%M %Z")' "$ARTISAN_USAGE_FILE")
@@ -341,7 +341,7 @@ test_seven_day_window_past_ninety_parks_and_stop_halts_the_run() {
   usage_reading 10 90
   assert_status 0 "$B" guard "$RUN_DIR"
   usage_reading 10 90.5
-  local out st=0 when
+  local out= st=0 when=
   out=$("$W" dispatch "$RUN_DIR" 1 2>&1) || st=$?
   assert_eq 18 "$st"
   when=$(jq -r '.rate_limits.seven_day.resets_at | strflocaltime("%a %d %b %H:%M %Z")' "$ARTISAN_USAGE_FILE")
@@ -366,7 +366,7 @@ test_seven_day_raise_ceiling_resumes() {
 
 test_a_window_past_its_reset_counts_as_empty() {
   setup_budget
-  local t
+  local t=
   t=$(date +%s)
   jq -nc --argjson t "$t" '{rate_limits: {at: $t, five_hour: {used_percentage: 99, resets_at: ($t - 5)}, seven_day: null}}' \
     >"$ARTISAN_USAGE_FILE"

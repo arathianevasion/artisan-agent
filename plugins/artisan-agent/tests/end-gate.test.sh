@@ -20,7 +20,7 @@ setup_end() { # gates-json
   make_project
   export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
   mkdir -p "$FAKE_GH_DIR"
-  local n wt
+  local n= wt=
   for n in 1 2 3; do
     jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "closed", labels: [{name: "in-run"}, {name: "ready-for-agent"}], body: "x"}' \
       >"$FAKE_GH_DIR/issue-$n.json"
@@ -81,7 +81,7 @@ team_boundary() {
 }
 
 cut_all() {
-  local n
+  local n=
   for n in $("$E" prs "$RUN_DIR" --json | jq -r '.[].n'); do
     printf 'Body of PR %s, written with upstream pr.\n' "$n" >"$TEST_TMPDIR/body-$n.md"
     "$E" cut "$RUN_DIR" "$n" --body-file "$TEST_TMPDIR/body-$n.md" >/dev/null
@@ -89,7 +89,7 @@ cut_all() {
 }
 
 prs() { # one line per PR: head base tickets-in-title
-  local f
+  local f=
   for f in "$FAKE_GH_DIR"/pr-*.json; do
     [ -f "$f" ] && jq -r '"\(.head) \(.base)"' "$f"
   done
@@ -110,7 +110,7 @@ test_the_end_gate_lists_deferred_gates_of_both_kinds_and_carried_cards() {
     | .exception_gates = [{id: "exception-5", kind: "exception", reason: "gave-up", ticket: "4",
        title: "Exception gate: run r1 gave up on #4 after 2 attempts", issue: 42, dependents: [],
        status: "deferred", deferral: {by: "Artisan", at: 1}}]'
-  local body
+  local body=
   body=$("$E" packet "$RUN_DIR")
   assert_contains "$body" "## Deferred gates"
   assert_contains "$body" "| Slice gate: export (run r1) | #40 | slice | Artisan | after the demo | #2 |"
@@ -119,7 +119,7 @@ test_the_end_gate_lists_deferred_gates_of_both_kinds_and_carried_cards() {
   assert_contains "$body" "| #41 (closed on GitHub) | 1 | #3 | Which currency? → EUR | worker 3 |"
   # Anything deferred is still waiting there: approval is refused until each is answered.
   product_boundary slice
-  local err
+  local err=
   err=$("$E" approve "$RUN_DIR" 2>&1) && fail "approved with deferred gates open"
   assert_status 6 "$E" approve "$RUN_DIR"
   assert_contains "$err" "#40"
@@ -149,7 +149,7 @@ test_a_one_ticket_bug_run_has_one_end_gate_leading_with_the_failing_test() {
   # No slice gate and no risk gate: the end gate is the only one.
   assert_eq "" "$("$SCRIPTS/gate.sh" due "$RUN_DIR")"
   assert_eq due "$("$E" status "$RUN_DIR")"
-  local num body first
+  local num= body= first=
   num=$("$E" open "$RUN_DIR")
   assert_eq "End gate: run r1" "$(jq -r .title "$FAKE_GH_DIR/issue-$num.json")"
   assert_eq review-gate "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$num.json")"
@@ -221,7 +221,7 @@ test_the_product_guardrail_beats_team_and_individual() {
 test_with_no_boundary_recorded_the_end_gate_proposes_one_as_an_approved_step() {
   setup_end
   assert_eq '{"value":null,"proposed":"slice","source":"none"}' "$("$E" boundary "$RUN_DIR")"
-  local num
+  local num=
   num=$("$E" open "$RUN_DIR")
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "No PR boundary is recorded: proposed **one PR per slice**"
   assert_status 6 "$E" approve "$RUN_DIR"
@@ -241,7 +241,7 @@ test_prs_wait_for_the_end_gate_and_cutting_again_opens_nothing_new() {
   assert_status 6 "$E" cut "$RUN_DIR" 1 --body-file /dev/null
   "$E" approve "$RUN_DIR" >/dev/null
   echo body >b.md
-  local url
+  local url=
   url=$("$E" cut "$RUN_DIR" 1 --body-file b.md)
   assert_eq "$url" "$("$E" cut "$RUN_DIR" 1 --body-file b.md)"
   assert_eq 1 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
@@ -267,7 +267,7 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
   "$E" approve "$RUN_DIR" >/dev/null
   assert_status 6 "$E" finish "$RUN_DIR"   # PRs not cut yet
   cut_all
-  local out n
+  local out= n=
   out=$("$E" finish "$RUN_DIR")
   for n in 1 2 3; do
     assert_eq "ready-for-agent" "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$n.json")"

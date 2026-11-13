@@ -434,7 +434,7 @@ chain_run() {
 
 test_a_drop_lists_what_leaves_with_it_before_it_applies() {
   chain_run
-  local choice out
+  local choice= out=
   for choice in drop reslice; do
     [ "$choice" = drop ] || { kill_workers; rm -rf "$TEST_TMPDIR/project" "$TEST_TMPDIR/tracker"; chain_run; }
     # The gate's table row says it too.
@@ -466,7 +466,7 @@ test_a_drop_with_no_dependents_says_so() {
   echo '[]' >"$FAKE_GH_DIR/blocked_by-4.json"
   gave_up_on_3
   "$A" sync "$RUN_DIR" >/dev/null
-  local out
+  local out=
   out=$("$A" drop "$RUN_DIR" "$(state_get '.exception_gates[0].issue')")
   assert_contains "$out" "Impact: Nothing else in the run depends on #3. Every slice can still be reviewed end to end."
 }
@@ -482,7 +482,7 @@ seed_stranded() {
 
 test_stranded_tickets_give_next_stranded_never_a_bare_blocked() {
   seed_stranded
-  local out
+  local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: stranded"
   assert_contains "$out" "#3 dropped: #2, #4 can't start"
@@ -492,7 +492,7 @@ test_stranded_tickets_give_next_stranded_never_a_bare_blocked() {
 
 test_send_back_clears_the_stranded_and_the_run_reaches_done() {
   seed_stranded
-  local out
+  local out=
   out=$("$A" send-back "$RUN_DIR" --by Andrew)
   assert_contains "$out" "sent back to needs-triage, out of the run: #2, #4 (stranded behind #3)"
   assert_eq "sent_back sent_back" "$(state_get '"\(.tickets["2"].status) \(.tickets["4"].status)"')"
