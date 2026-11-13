@@ -27,7 +27,9 @@ All paths are inside `.artisan-agent/runs/<run-id>/`. `<t>` is the ticket, `<n>`
 | `results/<t>.<n>.result.json` | the worker (path in `$ARTISAN_RESULT_FILE`) | the worker's result file; its shape belongs to the worker skill |
 | `results/findings/<t>.jsonl` | the worker (path in `$ARTISAN_FINDINGS_FILE`) | one finding per line, appended across attempts |
 | `workers/<t>.<n>/runner.pid` | runner | the runner's PID, for the sweep |
-| `workers/<t>.<n>/output.json` | `claude --output-format json` | the session's JSON output, including its result text |
+| `workers/<t>.<n>/output.json` | the runner | the stream's final `result` event (what `--output-format json` printed), including its result text |
+| `workers/<t>.<n>/stream.jsonl` | `claude --output-format stream-json --verbose` | the session's whole event stream |
+| `workers/<t>.<n>/usage.json` | the runner | the latest `rate_limit_event`, per window, with the time the runner received it (the usage guard reads it) |
 | `workers/<t>.<n>/prompt.md`, `stderr.log`, `runner.log` | runner | the full prompt as sent, and logs |
 | `results/verify-<t>.<v>.result.json`, `.exit.json` | the verifier, the runner | the verdict and the verifier's exit record |
 | `prompts/verify-<t>.<v>.md`, `.criteria.json` | `verify.sh start` | the verifier's prompt and the criteria it was given |

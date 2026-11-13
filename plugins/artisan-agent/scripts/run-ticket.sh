@@ -14,7 +14,7 @@
 # command) under nohup, so neither the launcher exiting, a hang-up, nor the
 # Bash tool's 2-hour background cap stops it. It runs, in --workdir:
 #
-#   claude -p <prompt> --output-format json
+#   claude -p <prompt> --output-format stream-json --verbose
 #          --max-budget-usd <2 x estimate> --max-turns <40 per estimated dollar, at least 20>
 #
 # with a wall-clock deadline of twice --expected-minutes. The worker runs in
@@ -22,12 +22,22 @@
 # (the sweep stopping it), that group is stopped (TERM, then KILL after 5s).
 # Anything the worker left running in its group is stopped when it exits.
 #
+# stream-json is what makes claude emit `rate_limit_event`s (plain json does
+# not). The runner keeps the stream in workers/<t>.<n>/stream.jsonl, records the
+# latest rate-limit reading, with the time it was received, in
+# workers/<t>.<n>/usage.json (budget.sh's usage guard reads it), and, when the
+# worker ends, writes output.json: the final `result` event of the stream, the
+# same JSON object `--output-format json` printed, so nothing that reads
+# output.json changes.
+#
 # Files, with <t>.<n> the ticket and attempt (see scripts/README.md):
 #   results/<t>.<n>.exit.json     exit record, written last and atomically
 #   results/<t>.<n>.result.json   the worker's result file (it writes this)
 #   results/findings/<t>.jsonl    the worker's findings file (it appends)
 #   workers/<t>.<n>/              runner.pid, prompt.md, output.json (claude's
-#                                 JSON output), stderr.log, runner.log
+#                                 final result event), stream.jsonl (its whole
+#                                 stream), usage.json (latest rate-limit
+#                                 reading), stderr.log, runner.log
 #
 # A ticket's attempt is refused if its worker folder already exists; pass
 # --attempt for a retry. The run folder must hold a state file (an approved
@@ -250,7 +260,7 @@ $COMPLETION_LINE
   If you could not finish, leave that line out and say why."
 printf '%s\n' "$prompt" >"$worker_dir/prompt.md"
 
-claude_args=(-p "$prompt" --output-format json --max-budget-usd "$max_budget" --max-turns "$max_turns")
+claude_args=(-p "$prompt" --output-format stream-json --verbose --max-budget-usd "$max_budget" --max-turns "$max_turns")
 [ -z "$model" ] || claude_args+=(--model "$model")
 # A worker is named, so the orchestrator can SendMessage a finding to it, and
 # accepts messages from other sessions, which a project-level setting can't
@@ -275,9 +285,44 @@ set -m
   ARTISAN_ROLE=$role ARTISAN_RUN_DIR=$run_dir \
   ARTISAN_RESULT_FILE=$result_file ARTISAN_FINDINGS_FILE=$findings_file \
     exec claude "${claude_args[@]}" ${extra[@]+"${extra[@]}"}
-) <"/dev/null" >"$worker_dir/output.json" 2>"$worker_dir/stderr.log" &
+) <"/dev/null" >"$worker_dir/stream.jsonl" 2>"$worker_dir/stderr.log" &
 child=$!
 set +m
+
+# record_usage: the latest rate_limit_event in the stream becomes usage.json,
+# stamped with the time the runner saw it (the event has none of its own, and
+# a resent old limit must not pass as fresh). Windows accumulate: an event
+# names one window, and each keeps the time it was last seen. Utilisation is
+# a fraction (0.29); the reading holds percent, as the status line does.
+last_usage_line=
+record_usage() {
+  local line now
+  line=$(grep '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" 2>/dev/null | tail -n 1) || true
+  [ -n "$line" ] && [ "$line" != "$last_usage_line" ] || return 0
+  last_usage_line=$line
+  now=$(date +%s)
+  jq -c --argjson now "$now" --arg t "$ticket" --argjson n "$attempt" \
+    --slurpfile prev <(cat "$worker_dir/usage.json" 2>/dev/null || echo null) '
+    ($prev[0].rate_limits // {}) as $old
+    | (.rate_limit_info // {}) as $i
+    | ([($i.unifiedWindows // {}) | to_entries[]
+        | select((.key == "five_hour" or .key == "seven_day") and (.value.utilization | type) == "number")
+        | {key, value: {used_percentage: ((.value.utilization * 10000 | round) / 100), resets_at: (.value.resetsAt // null), at: $now}}]
+       | from_entries) as $new
+    | select(($new | length) > 0)
+    | {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: ($old + $new)}' \
+    <<<"$line" >"$worker_dir/.usage.json.tmp" 2>/dev/null \
+    && [ -s "$worker_dir/.usage.json.tmp" ] && mv "$worker_dir/.usage.json.tmp" "$worker_dir/usage.json" \
+    || rm -f "$worker_dir/.usage.json.tmp"
+  return 0
+}
+
+# finish_output: output.json is the stream's final result event, as before.
+finish_output() {
+  record_usage
+  grep '^{"type":"result"' "$worker_dir/stream.jsonl" 2>/dev/null | tail -n 1 >"$worker_dir/output.json" || true
+  return 0
+}
 
 reason=exited
 deadline_at=$((SECONDS + deadline_seconds))
@@ -292,6 +337,7 @@ while kill -0 "$child" 2>/dev/null; do
     stop_group
     break
   fi
+  record_usage
   sleep 1
 done
 
@@ -301,4 +347,5 @@ wait "$child" 2>/dev/null || code=$?
 # Stop anything the worker left behind in its group.
 group_alive && stop_group
 
+finish_output
 write_exit_record
