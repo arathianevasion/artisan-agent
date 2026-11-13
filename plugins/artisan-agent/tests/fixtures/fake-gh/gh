@@ -31,7 +31,20 @@
 #   gh pr view <n|url> [-R repo] --json state,mergeCommit [-q filter]
 #                         from pr-<n>.json: state (OPEN unless the file says otherwise) and
 #                         mergeCommit {oid}; a test merges a PR by setting state and merge_oid
-# Anything else fails with exit 1. Needs jq.
+#   gh workflow run <file> [-R repo] --ref <branch>
+#                         starts a workflow_dispatch run (run-<id>.json, ids from 9001) on the
+#                         branch's tip in the git repo FAKE_GH_REMOTE (a path; the branch must exist
+#                         there). How it goes, from files the test writes in $FAKE_GH_DIR:
+#                           ci-outcome      success (default) | failure | never (stays in_progress)
+#                           ci-sha          a head SHA to report instead of the branch's tip
+#                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
+#                           ci-unavailable  present: the dispatch fails, as with GitHub down
+#   gh run list [-R repo] [--workflow F] [--branch B] [--event E] [--limit N] [--json fields] [-q filter]
+#                         the run-<id>.json files, newest first: databaseId, workflowName, headBranch,
+#                         headSha, event, status, conclusion, url, createdAt, updatedAt
+#   gh run view <id> [-R repo] [--json fields] [-q filter]
+#                         one run, with jobs [{name, status, conclusion}]
+# Anything else fails with exit 1. Needs jq (and git, for workflow run).
 
 set -euo pipefail
 : "${FAKE_GH_DIR:?set FAKE_GH_DIR to the fake tracker folder}"
@@ -266,6 +279,71 @@ case "${1:-} ${2:-}" in
     done
     [ -f "$FAKE_GH_DIR/pr-$n.json" ] || { echo "gh: no pull request #$n (HTTP 404)" >&2; exit 1; }
     out=$(jq -c '{state: (.state // "OPEN"), mergeCommit: (if .merge_oid then {oid: .merge_oid} else null end)}' "$FAKE_GH_DIR/pr-$n.json")
+    if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
+  "workflow run")
+    shift 2
+    wf= ref=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --ref|-r) ref=$2; shift 2 ;;
+        -*) echo "gh (fake): workflow run: unsupported: $1" >&2; exit 1 ;;
+        *) wf=$1; shift ;;
+      esac
+    done
+    [ -n "$wf" ] && [ -n "$ref" ] || { echo "gh: workflow run needs a workflow and --ref" >&2; exit 1; }
+    [ ! -e "$FAKE_GH_DIR/ci-unavailable" ] || { echo "gh: HTTP 503: Service Unavailable" >&2; exit 1; }
+    : "${FAKE_GH_REMOTE:?set FAKE_GH_REMOTE to the git repo CI runs from}"
+    sha=$(git -C "$FAKE_GH_REMOTE" rev-parse -q --verify "refs/heads/$ref^{commit}") \
+      || { echo "gh: could not find ref $ref (HTTP 422)" >&2; exit 1; }
+    [ ! -s "$FAKE_GH_DIR/ci-sha" ] || sha=$(cat "$FAKE_GH_DIR/ci-sha")
+    outcome=success
+    [ ! -s "$FAKE_GH_DIR/ci-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-outcome")
+    jobs='["bash 5.2", "bash 3.2"]'
+    [ ! -s "$FAKE_GH_DIR/ci-jobs" ] || jobs=$(cat "$FAKE_GH_DIR/ci-jobs")
+    id=9001
+    while [ -f "$FAKE_GH_DIR/run-$id.json" ]; do id=$((id + 1)); done
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
+      --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" '
+      (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
+      | {databaseId: $id, workflowName: $wf, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
+         url: "https://github.com/\($repo)/actions/runs/\($id)", createdAt: $now, updatedAt: $now}
+        + $s + {jobs: [$jobs[] | {name: ., status: $s.status, conclusion: $s.conclusion}]}' >"$FAKE_GH_DIR/run-$id.json" ;;
+  "run list")
+    shift 2
+    wf= br= ev= limit=20 filter=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --workflow|-w) wf=$2; shift 2 ;;
+        --branch|-b) br=$2; shift 2 ;;
+        --event|-e) ev=$2; shift 2 ;;
+        --limit|-L) limit=$2; shift 2 ;;
+        --json) shift 2 ;;
+        -q|--jq) filter=$2; shift 2 ;;
+        *) echo "gh (fake): run list: unsupported: $1" >&2; exit 1 ;;
+      esac
+    done
+    out=$(for f in "$FAKE_GH_DIR"/run-*.json; do [ -f "$f" ] || continue; cat "$f"; done \
+      | jq -sc --arg wf "$wf" --arg br "$br" --arg ev "$ev" --argjson l "$limit" '
+          map(select(($wf == "" or .workflowName == $wf) and ($br == "" or .headBranch == $br) and ($ev == "" or .event == $ev)) | del(.jobs))
+          | sort_by(.databaseId) | reverse | .[:$l]')
+    if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
+  "run view")
+    shift 2
+    id= filter=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --json) shift 2 ;;
+        -q|--jq) filter=$2; shift 2 ;;
+        -*) echo "gh (fake): run view: unsupported: $1" >&2; exit 1 ;;
+        *) id=$1; shift ;;
+      esac
+    done
+    [ -f "$FAKE_GH_DIR/run-$id.json" ] || { echo "gh: run $id not found (HTTP 404)" >&2; exit 1; }
+    out=$(jq -c . "$FAKE_GH_DIR/run-$id.json")
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;
 esac

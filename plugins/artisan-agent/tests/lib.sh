@@ -54,3 +54,8 @@ export ARTISAN_USAGE_FILE="$TEST_TMPDIR.usage.json"
 jq -nc --argjson t "$(date +%s)" '{schema_version: 1, written_at: $t,
   rate_limits: {at: $t, five_hour: {used_percentage: 10, resets_at: ($t + 3600)},
                 seven_day: {used_percentage: 20, resets_at: ($t + 86400)}}}' >"$ARTISAN_USAGE_FILE"
+
+# The merge gate runs locally in every test (merge-gate.sh), whatever the
+# machine: auto would mean CI on Linux. Tests of the CI gate set their own.
+# Never the machine's own host.json.
+export ARTISAN_MERGE_GATE=local

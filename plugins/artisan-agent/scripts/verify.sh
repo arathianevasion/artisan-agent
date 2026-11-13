@@ -184,7 +184,7 @@ cmd_start() {
   trap 'rm -rf "'"$claim"'"' EXIT
 
   local criteria= base= ib= wt= id= prompt= cfile= repo= title= path= expected= result= model= estimate= minutes= ref= suite=
-  local std= checks= cout=
+  local std= checks= cout= leave= gate=
   criteria=$(read_criteria "$t")
   [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
@@ -212,6 +212,11 @@ cmd_start() {
   std="$std/CODING_STANDARDS.md"
   checks=$("$SCRIPT_DIR/checks.sh" json --file "$std") || die "could not read the recorded checks in $std"
   cout="$RUN_DIR/verify/checks/$t.$v.json"
+  # On a machine whose merge gate runs on CI (merge-gate.sh), the verifier
+  # leaves a recorded check that is the run's suite command to that gate, as a
+  # worker does (checks.sh run --worker); it runs every other recorded check.
+  gate=$("$SCRIPT_DIR/merge-gate.sh" mode) || die "could not tell this machine's merge gate mode (merge-gate.sh show)"
+  if [ -n "$suite" ] && [ "$gate" = ci ]; then leave=$suite; fi
   result="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
   prompt="$RUN_DIR/prompts/$id.$v.md"
@@ -227,8 +232,10 @@ cmd_start() {
     printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
     if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then
       printf -- '- The recorded checks (%s, `## Checks`; each proven to fail at setup). Run exactly these, from your checkout, with this one command. It writes their results where the judge reads them; a verdict without them is an error:\n' "$std"
-      printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
-      printf '%s' "$checks" | jq -r '.checks[] | "    - `\(.command)`"'
+      printf '    $ %q run%s --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" \
+        "$([ -z "$leave" ] || printf ' --worker --suite %q' "$leave")" "$std" "$cout"
+      printf '%s' "$checks" | jq -r --arg l "$leave" '.checks[] | "    - `\(.command)`"
+        + (if .command == $l then ": left to the merge gate, which runs on CI from this machine; the command skips it" else "" end)'
       printf '  A red one makes every criterion it bears on unmet: cite it in that criterion'"'"'s evidence.checks. If you can'"'"'t tie it to any criterion, every criterion is unmet.\n'
     else
       printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found, one quoted argument each. It writes their results where the judge reads them and says you fell back:\n' \
@@ -247,10 +254,12 @@ cmd_start() {
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
       + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null,
-          checks: ($ck | {recorded, file, reason, commands: [.checks[].command], results: $co})}])
+          checks: ($ck | {recorded, file, reason, commands: [.checks[].command | select(. != $leave)], results: $co}
+                   + (if $leave != "" and ([.checks[].command] | index($leave)) != null
+                      then {left_to_merge_gate: [$leave]} else {} end))}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
-    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json"
+    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid=
   read_extra_args

@@ -97,3 +97,14 @@ minimum_estimates:
 
 # Whether runs live on an always-on host.
 host_configured: false
+
+# The merge gate on CI (#139). A machine whose merge_gate (host.json in the
+# individual home) resolves to ci runs no suite after a merge: it pushes the
+# merge commit to a throwaway ci/* branch and dispatches this workflow there.
+# workflow is its file name under .github/workflows (project setup records it
+# and refuses one without a workflow_dispatch trigger); none means a CI
+# machine can't merge for this project. With no conclusion after
+# timeout_minutes, the run parks (reason ci) until the Artisan clears it.
+ci_gate:
+  workflow:
+  timeout_minutes: 30
