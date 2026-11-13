@@ -268,8 +268,11 @@ state_usage() {
 #   failed_attempt(t; reason; at): attempt .attempts of ticket t failed; back to
 #     queued for a fresh worker, or blocked with an exception decision once it
 #     has used the run's attempts per ticket
-#   slice_gates: the plan's slice gates, each {id, slice, role, problem,
-#     solution, tickets} (references/review-gates.md)
+#   slice_gates: the review gates placed on tickets: the plan's slice and
+#     risk gates, and a risk gate per ticket whose evidence holds a new-seam
+#     card (criterion 3) no planned risk gate covers; each {id, kind, why,
+#     slice, role, problem, solution, tickets} (references/review-gates.md,
+#     references/end-gate.md)
 #   gate_due(g): every ticket of gate g merged (or closed) and the gate not
 #     yet answered (approved, bypassed, deferred or redirected: gate-action.sh)
 #   decide(id; d; at): waiting decision id decided, with the decision record d
@@ -311,18 +314,34 @@ STATE_JQ_DEFS='
   def merged($t; $sha):
     .tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
     | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}]);
+  def escalation_label:
+    {"new-seam": "new seam or module boundary", "tracer-bullet": "first tracer bullet through a new layer",
+     "vocabulary-adr": "change to vocabulary or an ADR", "judgement-criteria": "judgement-like acceptance criteria",
+     "seam-card": "new seam (decision card)"}[.] // .;
+  def seam_card: ((.criterion? // "") | tostring) == "3";
   def slice_gates:
     . as $s
-    | [($s.plan.gates // []) | to_entries[] | select((.value.kind? // "") == "slice")
+    | [($s.plan.gates // []) | to_entries[] | select((.value.kind? // "") == "slice" or (.value.kind? // "") == "risk")
        | .key as $k | .value as $g
-       | {id: "slice-\($k + 1)",
-          slice: ($g.slice // "slice \($k + 1)"),
+       | {id: "\($g.kind)-\($k + 1)", kind: $g.kind,
+          why: (if $g.kind == "risk" then (($g.tests // []) | map(escalation_label) | join(", ")) else null end),
+          slice: ($g.slice // (if $g.kind == "risk" and $g.after != null then "#\($g.after)" else "slice \($k + 1)" end)),
           role: ($g.role // "Engineering (QA)"),
           problem: ($g.problem // null), solution: ($g.solution // null),
           tickets: ([($g.tickets // (if $g.after != null then [$g.after] else null end)
                       // [$s.plan.tickets | to_entries[] | select($g.slice != null and .value.slice? == $g.slice) | .key])
                      | .. | scalars | tostring] | unique_by(tonumber? // .))}
-       | select(.tickets != [])];
+       | select(.tickets != [])]
+    | . as $planned
+    # A new-seam card (controversy criterion 3) in a ticket evidence raises a
+    # risk gate the plan did not place: one per ticket, none where a planned
+    # risk gate already covers it.
+    | $planned + [$s.tickets | to_entries[]
+        | select(any(.value.evidence.decisions[]?; seam_card))
+        | .key as $t
+        | select(all($planned[]; .kind != "risk" or (.tickets | index($t)) == null))
+        | {id: "risk-seam-\($t)", kind: "risk", why: ("seam-card" | escalation_label), slice: "#\($t)",
+           role: "Engineering (QA)", problem: null, solution: null, tickets: [$t]}];
   def gate_due($g):
     . as $s
     | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")
