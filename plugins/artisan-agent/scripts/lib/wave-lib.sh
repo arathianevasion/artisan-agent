@@ -21,6 +21,30 @@ open_run() { # run-dir
 }
 
 get() { jq -r "$@" "$FILE"; }
+
+# worktree_setup wt (#173): the project's worktree_setup command (config.yml),
+# run once in a new worktree, with ARTISAN_MAIN set to the main checkout, so a
+# worker, verifier, hands-on or end-gate worktree starts with its dependencies
+# (npm ci, a node_modules symlink). Unset runs nothing and returns 0. A failing
+# command returns 1 with SETUP_ERR = "setup: <command> exited N: <stderr tail>",
+# so the caller records a setup failure, not a red test. Not for $(...): it
+# sets SETUP_ERR.
+SETUP_ERR=
+worktree_setup() {
+  local wt="$1" cmd="" errf="" rc=0 tail_=""
+  SETUP_ERR=
+  cmd=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" get worktree_setup) 2>/dev/null | jq -r '. // empty' 2>/dev/null) || cmd=
+  [ -n "$cmd" ] || return 0
+  errf=$(mktemp "${TMPDIR:-/tmp}/worktree-setup.XXXXXX")
+  (cd "$wt" && ARTISAN_MAIN="$MAIN" bash -c "$cmd") >/dev/null 2>"$errf" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    tail_=$(tail -n 10 "$errf" | cut -c1-300)
+    SETUP_ERR="setup: \`$cmd\` exited $rc in $wt: ${tail_:-no stderr}"
+  fi
+  rm -f "$errf"
+  [ "$rc" -eq 0 ]
+}
+
 writer() { printf '%s\n' "${ARTISAN_WRITER_PID:-$$}"; }
 
 # apply filter [jq args]: one locked, one-step event write with the shared defs.

@@ -108,15 +108,19 @@ _Avoid_: notification, ping
 
 **Plan**:
 A chunk of tickets the Artisan has approved to run together.
-_Avoid_: batch, milestone, sprint
+_Avoid_: batch (bare), milestone, sprint
 
 **Run**:
 One execution of the pipeline's build stage over a defined set of work: one or more plans, individual tickets, or a mix.
 _Avoid_: session, job, execution
 
 **Wave**:
-A batch of tickets dispatched together within a run, none of which depends on another in the same wave.
+A set of tickets dispatched together within a run, none of which depends on another in the same wave.
 _Avoid_: round, phase
+
+**Merge batch**:
+The tickets ready to merge at once that the merge gate gates together with one CI run on their combined branch; on red, it is split in half until the culprit is found.
+_Avoid_: batch (bare), merge train, merge queue
 
 **Urgent ticket**:
 A ticket the Artisan marks to join the current run and start at once, ahead of the queue.

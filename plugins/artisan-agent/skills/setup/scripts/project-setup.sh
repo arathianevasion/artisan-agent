@@ -159,6 +159,17 @@ cmd_scan() {
   elif [ -s "$(motivation_file "$m")" ]; then echo "motivation	recorded"; else echo "motivation	none"; fi
   if git -C "$m" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null; then printf 'setup-branch\t%s\n' "$BRANCH"; fi
   found_checks "$m"
+  node_setup_default "$m"
+}
+
+# node_setup_default main: a worktree_setup default (#173) for a Node project,
+# by its lockfile: "node-setup<TAB><command>". A worktree is a bare checkout, so
+# without it node_modules is missing and the checks go red for the wrong reason.
+node_setup_default() {
+  if [ -e "$1/pnpm-lock.yaml" ]; then printf 'node-setup\tpnpm install --frozen-lockfile --prefer-offline\n'
+  elif [ -e "$1/yarn.lock" ]; then printf 'node-setup\tyarn install --frozen-lockfile\n'
+  elif [ -e "$1/package-lock.json" ]; then printf 'node-setup\tnpm ci --prefer-offline\n'
+  fi
 }
 
 open_pr() { # url of an open setup PR, if any
@@ -206,7 +217,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf=
+  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf= ws= cur_ws= q=
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -258,6 +269,23 @@ cmd_apply() {
         END { if (blk && !done) print "  workflow: " wf; if (!seen) printf "\nci_gate:\n  workflow: %s\n", wf }' "$f" >"$tmp/config.yml"
       cp "$tmp/config.yml" "$f"
       echo "changed: the gate workflow is $gate_wf (ci_gate.workflow)"
+    fi
+  fi
+  # worktree_setup (#173): the command every new worktree runs. Recorded when
+  # the config has none yet; a different one already there is kept.
+  ws=$(jq -r '.worktree_setup // ""' "$answers")
+  if [ -n "$ws" ]; then
+    cur_ws=$("$ROOT/scripts/config.sh" get worktree_setup --file "$f" 2>/dev/null | jq -r '. // empty' 2>/dev/null) || cur_ws=
+    if [ "$cur_ws" = "$ws" ]; then
+      echo "unchanged: worktree_setup is $ws"
+    elif [ -n "$cur_ws" ]; then
+      echo "kept: .artisan-agent/config.yml has worktree_setup: $cur_ws; change it by hand if you want $ws"
+    else
+      q=$(printf '%s' "$ws" | sed "s/'/''/g")
+      grep -v '^worktree_setup:[[:space:]]*$' "$f" >"$tmp/config.yml" || true
+      printf "worktree_setup: '%s'\n" "$q" >>"$tmp/config.yml"
+      cp "$tmp/config.yml" "$f"
+      echo "changed: worktree_setup is $ws"
     fi
   fi
   if ! grep -qsx '.artisan-agent/runs/' "$wt/.gitignore"; then
