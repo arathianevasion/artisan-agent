@@ -2,6 +2,15 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.6.1 (2026-11-14)
+
+Human checks follow-ups and a config fix.
+
+- `plan.sh build` reads a ticket's acceptance criteria from its issue when the draft has none, so Human check flags see every ticket; a draft's own list wins, and an issue that can't be read is named on stderr as unchecked (#160).
+- A Human check leaves the run with its dropped or resliced agent ticket: it goes back to needs-triage with a comment naming that ticket, the Impact line names it, the gates no longer list it, and `stranded`/`send-back` handle one left behind (#161).
+- `state.sh init` records a planned Human check from the plan graph, so it is one from the first moment of the run; an end-to-end test fails a Human check at the end gate, with and without `--not-bug` (#162).
+- `config.sh` outside a git repository, with no `--file`, exits 1 with nothing on stdout instead of printing `{}`; `plan.sh build` uses the defaults there (#159).
+
 ## 0.6.0 (2026-11-14)
 
 Human checks: an acceptance criterion only a person can confirm no longer fails an agent's attempts.
