@@ -119,7 +119,7 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
 | `parked` | Say why, as `status` prints it (one line per reason). A hands-on ticket the Artisan is building, and work behind it, is all that is left: say which ticket and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. "Waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`. "parked <window>" on plan usage: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
-| `done` | Every ticket in scope is merged or closed: give the run summary (step 8). |
+| `done` | Every ticket in scope is merged or closed: give the run summary (step 8). Open Human checks don't hold it (the `Human checks: N open` line); the end gate settles them. |
 
 If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline), launch again: the next orchestrator reconciles from the state file and carries the same wave on.
 
@@ -134,7 +134,7 @@ Under it, one line each for: cost so far against the budget (`.costs`, `.plan.bu
 
 **Budget and plan usage.** An `overrun` decision (the overrun gate, defer only) or a `parked …` line on plan usage: follow `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md` (`scripts/budget.sh`).
 
-**Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says.
+**Review gates.** A waiting `review-gate` decision is a slice gate: show `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh chat <run folder>` as printed, and act on the Artisan's answer as `${CLAUDE_PLUGIN_ROOT}/references/review-gates.md` says. Its Human checks are answered one by one (pass, fail or later), never by "keep all": `${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`, "In a run".
 
 **Gate actions, exception gates and parking.** Approve, redirect, bypass and defer at any gate, the exception gate for a ticket the run gave up on (show `gate-action.sh chat <run folder>`), and `next: parked` with "waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`.
 

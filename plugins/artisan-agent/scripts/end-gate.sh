@@ -10,7 +10,7 @@
 #
 # Usage, from the Engineering chat once wave.sh status says `done`:
 #   end-gate.sh status <run-dir>
-#       one word: not-due (tickets remain), due, open, removed (the Artisan
+#       one word: not-due (tickets remain; Human checks don't count), due, open, removed (the Artisan
 #       removed the end gate at the plan step), approved, ended.
 #   end-gate.sh packet <run-dir>
 #       the end gate's packet, as it would be opened now.
@@ -27,10 +27,15 @@
 #   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket] [--by NAME]
 #                       [--why W] [--changed]
 #       the Artisan approves the end gate: refused (6) while a deferred gate
-#       is still open, or with no boundary recorded and none given (job 17 is
+#       is still open, refused (22) while a Human check is open and not
+#       deferred, or (6) with no boundary recorded and none given (job 17 is
 #       approved until a guardrail covers it). Decides the end-gate decision
 #       (job 13, changed), and a pr-boundary decision (job 17) when the
 #       boundary was the Artisan's; closes the issue with the decisions.
+#   end-gate.sh defer-check <run-dir> <ticket> --why W [--by NAME] [--return CONDITION]
+#       a Human check deferred past the run (references/human-checks.md):
+#       it stays open, labelled deferred with a return condition, and no
+#       longer holds approval; event human-check-deferred.
 #   end-gate.sh prs <run-dir> [--json]
 #       the PRs to cut, stacked in merge order: number, branch, base, tickets.
 #   end-gate.sh cut <run-dir> <n> --body-file F [--title T]
@@ -66,7 +71,8 @@
 # Environment: ARTISAN_HOME, ARTISAN_TEAM_CACHE (as guardrails.sh);
 # ARTISAN_MAIN_BRANCH, the branch PRs go to (default the main checkout's).
 #
-# Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 6 refused.
+# Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 6 refused,
+# 22 a Human check is still open (approve).
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3 and gh.
 

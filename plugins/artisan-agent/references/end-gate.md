@@ -62,18 +62,20 @@ The first two are computed from the plan and the evidence alone (`slice_gates` i
 
 ## The end gate
 
-When `wave.sh status` says `done`, run `end-gate.sh status <run>`. It says `due` once every ticket in scope is merged, closed or out of the run at a gate.
+When `wave.sh status` says `done`, run `end-gate.sh status <run>`. It says `due` once every ticket in scope is merged, closed or out of the run at a gate; a Human check doesn't count (the end gate settles it, below).
 
 1. **Open it:** `end-gate.sh open <run>`: a `review-gate` issue, `End gate: run <id>`, holding the packet, and an `end-gate` decision. Show the Artisan `end-gate.sh packet <run>`.
 2. **The packet**, top to bottom:
    - for a bug, **the failing test**: each ticket's `failing_test`, `proven` when a met criterion's evidence names it, else **needs you**;
    - when it doubles as the slice gate, the slice packet over every merged ticket (decision cards, uncertainties, evidence by criterion); otherwise the tickets and their outcomes;
    - **the deferred gates** of both kinds, still waiting here (`gate-action.sh deferred`);
+   - **the Human checks**: every one still open, with the build to try, and every one deferred past the run with who deferred it and why;
    - **the cards carried from gates closed on GitHub** (`gate.sh carried`, #73);
    - **the PRs to `main`**: the boundary and where it came from;
    - the overall action.
 3. **Deferred gates first.** `end-gate.sh approve` is refused (6) while any gate is still deferred. Answer each where it is: a review gate with `gate.sh approve` or `gate.sh change` (a finding becomes a rework ticket), an exception gate with `gate-action.sh` (`references/gate-actions.md`).
-4. **Approve:** `end-gate.sh approve <run> [--boundary slice|plan|ticket] [--why W] [--changed]`. It closes the issue with the decision, decides the `end-gate` decision (job 13, `by`, `changed`) and records `end_gate.boundary`.
+4. **Human checks next.** `end-gate.sh approve` is refused (22) while a Human check is open and not deferred. Answer each with `gate.sh check <run> <n> pass|fail --why W`, or defer it past the run: `end-gate.sh defer-check <run> <n> --why W [--return CONDITION]` (the ticket stays open, labelled `deferred` with a return condition; event `human-check-deferred`). `references/human-checks.md`, "In a run".
+5. **Approve:** `end-gate.sh approve <run> [--boundary slice|plan|ticket] [--why W] [--changed]`. It closes the issue with the decision, decides the `end-gate` decision (job 13, `by`, `changed`) and records `end_gate.boundary`.
 
 ## PR boundaries
 

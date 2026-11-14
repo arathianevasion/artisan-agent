@@ -21,6 +21,9 @@
 #       crashed call opened), makes it a native blocker of each dependent
 #       still to merge, records the gate and queues a "review-gate"
 #       decision. Prints the issue number. Opening again prints it again.
+#       A slice gate's packet lists the open Human checks of its slice and
+#       those carried from an earlier gate; a Human check is never one of
+#       the gate's tickets or dependents.
 #
 # Usage, from the Engineering chat (or the Product chat: the Artisan can act
 # from either):
@@ -56,7 +59,19 @@
 #                   [--level team|product|individual --reach ticket|area|everywhere [--area A]]
 #       "keep all": every card not yet decided is kept, the decisions are
 #       posted on the issue, the issue closes and the dependents are free to
-#       dispatch in the next wave.
+#       dispatch in the next wave. It never passes a Human check: one left
+#       unanswered carries to the next gate.
+#   gate.sh check <run-dir> <ticket|all> pass|fail|later [--gate <issue|end>]
+#                 [--notes T] [--why W] [--not-bug] [--by NAME]
+#       a Human check (references/human-checks.md), on the open or deferred
+#       review gate that lists it, or on the end gate while it is open.
+#       pass: closes it with the result posted. fail (needs --why): a bug
+#       in its agent ticket: a rework ticket in this run (blocking the open
+#       gate's dependents and the check, as a redirect), bug-found unless
+#       --not-bug; prints the rework ticket's number; the check stays open.
+#       later: it carries to the next gate. "all pass --gate <issue>" passes
+#       every check on that gate. Events human-check-passed and
+#       human-check-failed. 6: not an open Human check, or on no open gate.
 #   gate.sh holds <run-dir> <ticket>
 #       prints "held" when the ticket is in a slice gate that is due and not
 #       yet approved (its dependents wait), else "free". A caller treats

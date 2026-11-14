@@ -21,7 +21,8 @@
 #       setup, then take (below), one line per thing done.
 #   human.sh setup <run-dir>
 #       for every queued ticket in scope that is labelled ready-for-human on
-#       the tracker or is the plan's hands-on ticket, whose blockers are all
+#       the tracker or is the plan's hands-on ticket, and is not a Human
+#       check (references/human-checks.md), whose blockers are all
 #       merged: a worktree on the ticket's branch from the integration
 #       branch's tip, recorded as the ticket's "human" record. The ticket is
 #       not dispatched, and its dependents wait (dispatch refuses them until

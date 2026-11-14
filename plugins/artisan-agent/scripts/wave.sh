@@ -27,7 +27,10 @@
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
 #       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
-#       ticket table. "parked" (with a line naming it) means the merge gate
+#       ticket table, after a "Human checks: N open (next slice gate|end
+#       gate)" line when any is open (references/human-checks.md: a Human
+#       check is never waited on, so the run can be done with it open).
+#       "parked" (with a line naming it) means the merge gate
 #       on CI got no verdict ("parked ci: ...", cleared with unpark-ci), or only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
@@ -47,7 +50,8 @@
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
-#       refuse unless the ticket is in scope (4), queued, every blocker is
+#       refuse a Human check (1: it is answered at a gate, never built), and
+#       ignore one as a blocker; refuse unless the ticket is in scope (4), queued, every blocker is
 #       merged into the integration branch or closed (5), a slot is free
 #       under Max Agents (9) and its expected files overlap no ticket in
 #       flight or in this wave (10, wave-width.sh check), and budget.sh
