@@ -421,6 +421,12 @@ STATE_JQ_DEFS='
   def gate_done($t):
     (.tickets[$t].status // "") as $st
     | $st == "merged" or $st == "closed" or (out_of_run | index($st)) != null;
+  # A failed Human check whose rework has not merged (#165, #178): its last
+  # answer is a fail with a rework not yet done. "<gate> <rework>", or null.
+  def check_rework($t):
+    . as $s | ((.tickets[$t].human_check.answers // []) | last
+    | select(. != null and .verdict == "fail" and (.rework // null) != null)
+    | .rework as $r | select($s | gate_done($r) | not) | "\(.gate) \($r)") // null;
   def gate_left($g):
     . as $s | [$g.tickets[] | select(($s.tickets[.].status // "") as $st | out_of_run | index($st))];
   def gate_left_run($g):

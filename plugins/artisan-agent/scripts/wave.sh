@@ -606,7 +606,7 @@ record_orchestrator_cost() { # id attempt
 # still to open will (its agent ticket is in that slice, or it is carried from
 # a gate that has closed); else at the end gate.
 human_checks_line() {
-  local n="" at_slice=""
+  local n="" at_slice="" waiting=""
   n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
   [ "$n" -gt 0 ] || return 0
   at_slice=$(get "$STATE_JQ_DEFS"' . as $s | ($s.review_gates // []) as $rg
@@ -616,6 +616,8 @@ human_checks_line() {
        | select(any($rg[]; .id == $hg and (.status == "open" or .status == "deferred"))
                 or any($unopened[]; .tickets | index($a))
                 or ($hg != null and ($unopened | length) > 0))] | length')
+  waiting=$(get -r "$STATE_JQ_DEFS"' . as $s | [open_human_checks[] as $c | ($s | check_rework($c)) as $o
+    | select($o != null) | "#\($c) waiting on rework #\($o | split(" ")[1])"] | join(", ")')
   if [ "$at_slice" -eq 0 ]; then
     echo "Human checks: $n open (end gate)"
   elif [ "$at_slice" -eq "$n" ]; then
@@ -623,6 +625,7 @@ human_checks_line() {
   else
     echo "Human checks: $n open ($at_slice at the next slice gate, $((n - at_slice)) at the end gate)"
   fi
+  [ -z "$waiting" ] || echo "Human checks waiting on a rework: $waiting"
 }
 
 cmd_status() {
@@ -845,6 +848,14 @@ cmd_dispatch() {
   else
     git -C "$MAIN" worktree add -q -b "$branch" "$wt" "$base" >/dev/null 2>&1 || die "could not add worktree $wt"
   fi
+  # The project's worktree_setup (#173) runs before the worker starts. If it
+  # fails the attempt fails with the reason "setup", not a red test; nothing
+  # ran in the worktree, so it goes, and the attempt is the one that counts.
+  if ! worktree_setup "$wt"; then
+    git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    apply '.tickets[$t].attempts += 1 | failed_attempt($t; $r; $now)' --arg t "$t" --arg r "$SETUP_ERR"
+    state_die 6 "wave.sh: #$t attempt $n: $SETUP_ERR; it is now $(get --arg t "$t" '.tickets[$t].status')"
+  fi
 
   repo=$(get '.repo')
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
@@ -868,6 +879,7 @@ You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR --ticket $t (an area-scoped guardrail is listed only if this ticket touches its area; plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
+- Dependencies (such as node_modules) are installed by the project's worktree_setup before you start. If a tool is "not found" or a module is missing, that is a setup failure, not a code failure: say so in your notes and don't change the code to work around it.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
   # The Artisan's answers to the questions an earlier worker filed (questions.sh).

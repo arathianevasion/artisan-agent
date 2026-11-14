@@ -175,20 +175,28 @@ build_view() { # id dependents-json
 # The Human checks a slice gate lists (references/human-checks.md): every one
 # still open whose agent ticket is in the slice, and every one carried from a
 # gate that is no longer open (answered "later", or left unanswered there).
-# A risk gate lists none. JSON for human_checks_view.
-checks_for_gate() { # def
-  jq -c --argjson g "$1" "$STATE_JQ_DEFS"'
+# A risk gate lists none. A check whose failed answer's rework is still open
+# (#178) can't be answered: checks_for_gate leaves it out, and
+# waiting_checks_for_gate names it ({ticket, for, waiting_on, failed_at}), so
+# the packet says "waiting on rework #<r>". JSON for human_checks_view.
+gate_checks() { # def waiting(true|false)
+  jq -c --argjson g "$1" --argjson w "$2" "$STATE_JQ_DEFS"'
     . as $s
     | if ($g.kind // "slice") != "slice" then []
       else [open_human_checks[] as $c
         | ($s | human_check_for($c)) as $a
         | ($s.tickets[$c].human_check.gate // null) as $hg
+        | ($s | check_rework($c)) as $open
+        | select(($open != null) == $w)
         | select($hg != $g.id)
         | select(($g.tickets | index($a)) != null
                  or ($hg != null and all(($s.review_gates // [])[]; .id != $hg or .status != "open")))
-        | {ticket: $c, for: $a} + (if $hg != null then {carried_from: $hg} else {} end)]
+        | {ticket: $c, for: $a} + (if $hg != null then {carried_from: $hg} else {} end)
+          + (if $open != null then {waiting_on: ($open | split(" ")[1]), failed_at: ($open | split(" ")[0])} else {} end)]
       end' "$FILE"
 }
+checks_for_gate() { gate_checks "$1" false; } # def
+waiting_checks_for_gate() { gate_checks "$1" true; } # def
 
 # The in-run tickets still to merge that a ticket of the gate blocks natively.
 dependents() { # def
@@ -247,7 +255,7 @@ cmd_open() {
   view="$dir/$id.view.json"
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
-    jq --argjson cards "$(PACKET cards <"$view.tmp")" --argjson hc "$(human_checks_view "$(checks_for_gate "$def")")" \
+    jq --argjson cards "$(PACKET cards <"$view.tmp")" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
       '.gate.cards = $cards | . + $hc' "$view.tmp" >"$view.tmp2"
     mv "$view.tmp2" "$view"
     rm -f "$view.tmp"
@@ -626,9 +634,7 @@ cmd_bug() {
 # nothing; once the rework merges (or leaves the run) the check is answered
 # again at the next gate that lists it.
 check_rework_open() { # ticket -> "<gate> <rework>"
-  jget '. as $s | (.tickets[$t].human_check.answers // []) | last
-    | select(. != null and .verdict == "fail" and (.rework // null) != null)
-    | .rework as $r | select($s | gate_done($r) | not) | "\(.gate) \($r)"' --arg t "$1"
+  jget 'check_rework($t) // empty' --arg t "$1"
 }
 
 # The gate a Human check is answered at: the open or deferred review gate
