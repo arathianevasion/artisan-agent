@@ -47,7 +47,7 @@
 #                                               every criterion met but g about
 #                                               CI, the merge gate or the PR
 #                                               (marked "gate", or read as one:
-#                                               lib/criteria.py gate_criterion):
+#                                               lib/criteria.py merge_gate_criterion):
 #                                               merge it; wave.sh merge's gate
 #                                               is what satisfies them (after
 #                                               any Human check part, when both)

@@ -51,7 +51,22 @@ test_g_a_criterion_that_reads_as_the_merge_gates_is_gate_whatever_the_verifier_s
 test_g_a_quoted_merge_gate_phrase_is_about_one_not_one_itself() {
   printf '%s\n' '- [ ] A ticket whose only unmet criterion is "CI is green on the PR" passes' \
     '- [ ] CI'"'"'s `check` job is green on the PR' '- [ ] hello.txt exists' >b.md
-  assert_eq '["CI'"'"'s `check` job is green on the PR"]' "$(python3 -I "$CRITERIA_PY" gate <b.md | jq -c .)"
+  assert_eq '["CI'"'"'s `check` job is green on the PR"]' "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq -c .)"
+}
+
+test_g_a_criterion_about_code_that_runs_ci_or_a_merge_gate_is_the_verifiers_to_judge() {
+  local c=
+  for c in "wave.sh merge blocks the ticket when CI is not green" "When CI passes, merge-gate.sh merges the PR" \
+    "the merge gate passes when the suite is green" "a CI run that succeeds marks the ticket merged" \
+    "gate.sh end writes the PR body; the PR shows the packet" "The PR has a description" \
+    "A red merge gate still fails the ticket, through the merge gate"; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "[]" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq -c .)" "$c"
+  done
+  for c in "CI is green on the PR" "the run's merge gate is green" "The PR lists the changed files" "CI is green."; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "1" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
+  done
 }
 
 test_g_a_ticket_whose_only_unmet_criterion_is_ci_on_the_pr_passes_and_the_merge_gate_satisfies_it() {
@@ -70,7 +85,7 @@ test_g_a_ticket_whose_only_unmet_criterion_is_ci_on_the_pr_passes_and_the_merge_
   "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null
   "$SCRIPTS/wave.sh" close "$RUN_DIR" 1 >/dev/null
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [x] CI is green on the PR"
-  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "| CI is green on the PR | checked by the merge gate: passed |"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "| CI is green on the PR | checked by the merge gate: green |"
   # The slice gate's packet names it with the merge gate's result.
   export ARTISAN_HOME="$TEST_TMPDIR/artisan-home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/team-cache"
   export CLAUDE_CONFIG_DIR="$TEST_TMPDIR/claude-config"
@@ -175,7 +190,7 @@ test_g_the_verifier_prompt_and_brief_say_what_is_gate_with_examples() {
 test_g_the_shipped_ticket_writing_guidance_suggests_no_pr_or_ci_criterion() {
   local f= hits=
   while IFS= read -r f; do
-    hits=$(python3 -I "$CRITERIA_PY" gate <"$f")
+    hits=$(python3 -I "$CRITERIA_PY" merge-gate <"$f")
     [ "$hits" = "[]" ] || fail "$f suggests a criterion only the merge gate can check: $hits"
   done < <(find "$PLUGIN_ROOT/skills" "$PLUGIN_ROOT/references" "$PLUGIN_ROOT/templates" -type f -name '*.md')
   # It says what to write instead.

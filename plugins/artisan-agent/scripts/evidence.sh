@@ -52,7 +52,7 @@ DEFS='
     + (if ($e.criteria_gate // 0) == 0 then "" else ", \($e.criteria_gate) to the merge gate" end);
   # A criterion only the merge gate can check (#174), with its result once merged.
   def gatecell($k): "checked by the merge gate: "
-    + (if $k.status == "merged" or $k.status == "closed" then "passed" elif $k.suite.passed == false then "**failed**" else "not run yet" end);
+    + (if $k.status == "merged" or $k.status == "closed" then "green" elif $k.suite.passed == false then "**red**" else "not run yet" end);
   def ev: if type == "object" then
       ([(.tests | arr)[] | tostring] + [(.checks | arr)[] | if type == "object" then "\(.command): \(.result)" else tostring end]
        + (if .diff then [.diff | tostring] else [] end) + (if .why then [.why | tostring] else [] end)) | join("; ")

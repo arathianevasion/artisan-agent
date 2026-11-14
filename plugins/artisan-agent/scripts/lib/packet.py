@@ -103,7 +103,7 @@ def proven(entry):
     return bool(entry.get("met")) and bool(ev.get("tests") or ev.get("checks"))
 
 
-def gate_status(state, t):
+def merge_gate_status(state, t):
     """A criterion only the merge gate can check (#174): the gate's result,
     from the ticket's suite record (wave.sh merge's local suite or CI run)."""
     k = state.get("tickets", {}).get(t) or {}
@@ -377,7 +377,7 @@ def body(view):
                 [str(x) for x in ev.get("tests") or []]
                 + ["%s: %s" % (c.get("command"), c.get("result")) for c in ev.get("checks") or [] if isinstance(c, dict)]
                 + ([ev["why"]] if ev.get("why") else []))
-            status = gate_status(state, t) if a.get("gate") else "proven" if proven(a) else "**needs you**"
+            status = merge_gate_status(state, t) if a.get("gate") else "proven" if proven(a) else "**needs you**"
             out.append("| #%s | %s | %s | %s |" % (t, cell(a.get("criterion")), status, cell(shown)))
     else:
         out += ["No criteria recorded."]
