@@ -267,6 +267,90 @@ test_a_ticket_failing_twice_raises_an_exception_gate_that_cannot_be_removed() {
   assert_contains "$out" "| take it myself |"
 }
 
+# A run like 1038 (#151): both attempts of #3 finished (exit 0, the
+# completion line, a complete result file), but the runner found no result
+# event in the stream (claude writes "type" after other keys), so output.json
+# is empty and each attempt was counted as crashed: two failed attempts, no
+# cost, an exception gate open.
+miscounted_3() {
+  local n= line=
+  for n in 1 2; do
+    mkdir -p "$RUN_DIR/workers/3.$n" "$RUN_DIR/results"
+    line=$(jq -nc --argjson c "1.$n" '{duration_api_ms: 900, stop_reason: "end_turn", session_id: "s1",
+      total_cost_usd: $c, is_error: false, num_turns: 30, subtype: "success",
+      result: "Built #3.\n\nARTISAN-WORKER: complete", type: "result", duration_ms: 1000}')
+    {
+      echo '{"session_id":"s1","type":"system","subtype":"init"}'
+      echo '{"session_id":"s1","type":"result","result":"cut off'
+      printf '%s\n' "$line"
+    } >"$RUN_DIR/workers/3.$n/stream.jsonl"
+    : >"$RUN_DIR/workers/3.$n/output.json"
+    echo 1 >"$RUN_DIR/workers/3.$n/runner.pid"
+    jq -n --argjson n "$n" '{ticket: "3", attempt: $n, exit_code: 0, reason: "exited"}' >"$RUN_DIR/results/3.$n.exit.json"
+    jq -n '{ticket: "3", status: "complete", commit: "abc1234", notes: "built"}' >"$RUN_DIR/results/3.$n.result.json"
+  done
+  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'
+    .tickets["3"].attempts = 1 | failed_attempt("3"; "attempt 1 did not complete (failed crashed)"; 100)
+    | .tickets["3"].attempts = 2 | failed_attempt("3"; "attempt 2 did not complete (failed crashed)"; 200)'
+}
+
+test_repair_returns_a_ticket_the_stream_miscount_failed_and_its_gate_closes_as_resolved() {
+  setup_run
+  miscounted_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  local num= out= before=
+  num=$(state_get '.exception_gates[0].issue')
+  assert_eq "failed crashed" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" 3 2)"
+  out=$("$SCRIPTS/sweep.sh" repair "$RUN_DIR")
+  assert_contains "$out" "rebuilt workers/3.1/output.json"
+  assert_contains "$out" "rebuilt workers/3.2/output.json"
+  assert_contains "$out" "gate-action.sh repaired $RUN_DIR $num"
+  assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" 3 2)"
+  assert_eq 1.2 "$(jq -r .total_cost_usd "$RUN_DIR/workers/3.2/output.json")" "the stream's last whole result event"
+  # Returned with its real cost; the miscounted failures taken back, kept for the record.
+  assert_eq returned "$(state_get '.tickets["3"].status')"
+  assert_eq "abc1234 results/3.2.result.json" "$(state_get '.tickets["3"].result | "\(.commit) \(.file)"')"
+  assert_eq 0 "$(state_get '.tickets["3"].failures | length')"
+  assert_eq "1 2" "$(state_get '[.tickets["3"].repaired[].attempt] | map(tostring) | join(" ")')"
+  assert_eq 2.3 "$(state_get '.tickets["3"].cost_usd')"
+  assert_eq 2.3 "$(state_get '.costs.workers_usd')"
+  # The gate is still open: the repair names the way to close it, never bypasses it.
+  assert_eq "open waiting" "$(state_get '"\(.exception_gates[0].status) \(.decisions[0].status)"')"
+  # Running it again changes nothing.
+  before=$(cat "$RUN_DIR/state.json")
+  "$SCRIPTS/sweep.sh" repair "$RUN_DIR" >/dev/null
+  assert_eq "$before" "$(cat "$RUN_DIR/state.json")"
+  # Closed as resolved by the repair: not a bypass, #3 stays in the run.
+  "$A" repaired "$RUN_DIR" "$num" >/dev/null
+  assert_eq "resolved closed" "$(state_get '.exception_gates[0].status') $(issue_state "$num")"
+  assert_eq "[3]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "only the gate stops blocking 4"
+  assert_eq "decided resolved by repair" "$(state_get '.decisions[0] | "\(.status) \(.choice)"')"
+  assert_eq returned "$(state_get '.tickets["3"].status')"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "gate-bypassed" or .event == "guardrail-bypassed")] | length')"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-$num.md")" "Resolved by the repair"
+}
+
+test_repaired_is_refused_on_a_gate_the_repair_did_not_resolve() {
+  setup_run
+  gave_up_on_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  local num=
+  num=$(state_get '.exception_gates[0].issue')
+  "$SCRIPTS/sweep.sh" repair "$RUN_DIR" >/dev/null
+  assert_eq blocked "$(state_get '.tickets["3"].status')" "a real failure is not taken back"
+  assert_status 6 "$A" repaired "$RUN_DIR" "$num"
+  assert_eq open "$(state_get '.exception_gates[0].status')"
+}
+
+test_repair_decides_an_exception_decision_no_gate_carries_yet() {
+  setup_run
+  miscounted_3
+  "$SCRIPTS/sweep.sh" repair "$RUN_DIR" >/dev/null
+  assert_eq returned "$(state_get '.tickets["3"].status')"
+  assert_eq "decided resolved by repair" "$(state_get '.decisions[0] | "\(.status) \(.choice)"')"
+  assert_eq "" "$("$A" sync "$RUN_DIR")" "no gate opens for it"
+}
+
 test_the_exception_choices_leave_the_ticket_and_dependents_as_stated() {
   local choice=
   for choice in take reslice drop bypass defer; do

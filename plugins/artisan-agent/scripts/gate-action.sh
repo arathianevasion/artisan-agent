@@ -45,6 +45,13 @@
 #       or through others, and whether each slice can still be reviewed end
 #       to end), then those dependents leave the run with it: back to
 #       needs-triage with a comment, native blockers kept (status sent_back).
+#   gate-action.sh repaired <run-dir> <issue> [--by NAME] [--why W]
+#       an exception gate opened only because of the stream-json miscount
+#       (#151): once sweep.sh repair has taken the ticket's failed attempts
+#       back and returned it, the gate closes as resolved by the repair (its
+#       status "resolved"), not bypassed: the ticket stays in the run and keeps
+#       its own edges; only the gate's issue stops blocking the dependents.
+#       Refused (6) unless the repair returned the ticket.
 #   gate-action.sh send-back <run-dir> [--by NAME] [--why W]
 #       without a gate: the tickets stranded behind a dropped or resliced one
 #       (what an older run left) go back to triage the same way.
@@ -584,6 +591,30 @@ cmd_drop() {
   leave_run "$issue" drop dropped "" "dropped from the run; the ticket stays open."
 }
 
+# repaired: the miscount (#151) opened this gate, and sweep.sh repair has
+# since returned the ticket. Close it as resolved, not as an Artisan bypass.
+cmd_repaired() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" t="" out='[]' d=""
+  shift 2
+  parse_opts "$@"
+  exception_only "$issue"
+  t=$(g .ticket)
+  [ "$(get --arg t "$t" '.tickets[$t].status == "returned" and ((.tickets[$t].repaired // []) | length) > 0')" = true ] \
+    || refuse "#$t was not returned by sweep.sh repair; answer gate #$issue with retry, reslice, take, drop, bypass or defer"
+  REDIRECT=
+  hold
+  # Only the gate's issue stops blocking: the ticket is back in the run.
+  for d in $(open_dependents); do
+    if remove_blocker "$d" "$issue"; then
+      out=$(jq -c --arg d "$d" --arg b "$issue" '. + [{dependent: $d, blocker: $b}]' <<<"$out")
+    fi
+  done
+  close_exception "$issue" "Resolved by the repair, recorded by $BY: #$t's attempts completed but were counted as failed because the runner could not read claude's stream-json result (#151). sweep.sh repair took the failed attempts back and recorded #$t as returned with its cost; this gate is closed as resolved, not bypassed.${WHY:+ Why: $WHY}"
+  record_answer resolved "resolved by repair" resolution '.' --arg t "$t" --argjson rec "{\"released\": $out}"
+  echo "resolved #$issue: #$t is returned and goes on to verify and merge"
+}
 
 # send-back: the stranded tickets (what an older run left behind when it
 # dropped or resliced a ticket) go back to triage, as a drop's dependents do.
@@ -845,6 +876,7 @@ case "$cmd" in
   reslice) cmd_reslice "$@" ;;
   take) cmd_take "$@" ;;
   drop) cmd_drop "$@" ;;
+  repaired) cmd_repaired "$@" ;;
   send-back) cmd_send_back "$@" ;;
   stranded) cmd_stranded "$@" ;;
   sync) cmd_sync "$@" ;;

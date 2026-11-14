@@ -3,6 +3,7 @@
 # Field meanings: ${CLAUDE_PLUGIN_ROOT}/references/state-file.md
 #
 # Usage: sweep.sh <run-dir> [--no-guard]
+#        sweep.sh repair <run-dir>
 #
 # For each ticket whose status is in_flight, in this order:
 #   1. a result file results/<ticket>.<attempt>.result.json -> the result is recorded
@@ -23,6 +24,23 @@
 # The reconciler and findings.sh pass --no-guard: wave.sh status reads only.
 # The guard's refusal (12, 17, 18) is not the sweep's: it prints it and goes on.
 #
+# repair (#151) mends a run hit by the stream-json miscount: the runner found
+# a session's result event by the start of its line, current claude writes
+# "type" after other keys, so output.json came out empty and every finished
+# worker was judged crashed (a failed attempt, no cost). For every ended
+# session (an exit record) whose output.json holds no result event, it
+# rebuilds output.json from the saved stream.jsonl. Then every failed attempt
+# that now classifies as completed, with a result file saying complete, is
+# taken back: the failure leaves tickets.<t>.failures (kept under
+# tickets.<t>.repaired), the attempt's cost is recorded, and when it was the
+# ticket's latest attempt and the ticket is queued or blocked by its failures,
+# it is returned with its result, as the sweep would have left it. An
+# exception decision the miscount queued and no gate carries yet is decided
+# "resolved by repair"; an exception gate already open for the ticket is named
+# with the command that closes it as resolved by the repair (gate-action.sh
+# repaired), never as an Artisan bypass. An ended orchestrator with no cost
+# gets its cost. Running it again changes nothing. It never runs the guard.
+#
 # Exit status: 0 ok, 1 error, 2 usage, 3 the lock is held by another live process.
 
 set -euo pipefail
@@ -30,10 +48,13 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/state-lib.sh
 . "$SCRIPT_DIR/lib/state-lib.sh"
+# shellcheck source=lib/stream-lib.sh
+. "$SCRIPT_DIR/lib/stream-lib.sh"
 state_require_jq
 
-GUARD=1 guard_rc=0 guard_out=
-if [ "${2:-}" = --no-guard ]; then GUARD=0; set -- "$1"; fi
+GUARD=1 guard_rc=0 guard_out= MODE=sweep
+if [ "${1:-}" = repair ]; then MODE=repair GUARD=0; shift; fi
+if [ "$MODE" = sweep ] && [ "${2:-}" = --no-guard ]; then GUARD=0; set -- "$1"; fi
 [ $# -eq 1 ] || state_usage "$0"
 RUN_DIR=$1
 state_require_run_dir "$RUN_DIR"
@@ -174,6 +195,96 @@ sweep() {
   state_commit "$RUN_DIR" "$tmp"
 }
 
+# A failed attempt taken back by the repair: its failure entries move to
+# tickets.<t>.repaired, its cost is recorded, and the latest attempt of a
+# ticket its failures queued or blocked is returned with its result.
+REPAIR_FILTER="$STATE_JQ_DEFS"'
+  ([.tickets[$t].failures[]? | select(.attempt == $n)]) as $taken
+  | .tickets[$t].failures |= map(select(.attempt != $n))
+  | attempt_cost($t; $n; $usd)
+  | .tickets[$t].repaired = ((.tickets[$t].repaired // []) + [{attempt: $n, cost_usd: $usd, failures: $taken, at: $now}])
+  | event({event: "repaired", ticket: $t, attempt: $n, cost_usd: $usd, failures_taken_back: ($taken | length)}; $now)
+  | .tickets[$t] as $tk
+  | if $n == $tk.attempts and ($tk.status == "queued" or ($tk.status == "blocked" and $tk.blocked_reason == null)) then
+      $rs[0] as $r
+      | .tickets[$t] |= (.status = "returned" | .pid = null
+          | .result = {status: "complete", commit: ($r.commit // null), notes: ($r.notes // null), file: $file})
+      | reduce ([.decisions[] | select(.kind == "exception" and .ticket == $t and .status == "waiting" and .issue == null) | .id][]) as $id
+          (.; decide($id; {job: 15, choice: "resolved by repair", by: "sweep.sh repair"}; $now))
+    else . end'
+
+repair() {
+  local file="" tmp="" now="" d="" key="" out="" pair="" t="" n="" cls="" usd="" result="" id="" a="" gates=""
+  local -a returned=()
+  file=$(state_file "$RUN_DIR")
+  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
+  tmp=$(state_tmp "$RUN_DIR")
+  cp "$file" "$tmp"
+  now=$(state_now)
+
+  step() { state_step "$tmp" "$@"; }
+
+  # 1. output.json from the saved stream, for every ended session left without one.
+  for d in "$RUN_DIR"/workers/*/; do
+    d=${d%/}
+    key=$(basename "$d")
+    [ -f "$d/stream.jsonl" ] && [ -f "$RESULTS/$key.exit.json" ] || continue
+    ! jq -e 'type == "object" and .type == "result"' "$d/output.json" >/dev/null 2>&1 || continue
+    out=$(stream_result "$d/stream.jsonl")
+    [ -n "$out" ] || continue
+    printf '%s\n' "$out" >"$d/output.json"
+    echo "rebuilt workers/$key/output.json"
+  done
+
+  # 2. Failed attempts that in fact completed are taken back.
+  for pair in $(jq -r '.tickets | to_entries[] | .key as $t | [.value.failures[]?.attempt] | unique[] | "\($t):\(.)"' "$tmp"); do
+    t=${pair%:*} n=${pair##*:}
+    cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$n" 2>/dev/null) || continue
+    [ "$cls" = "completed -" ] || continue
+    result="$RESULTS/$t.$n.result.json"
+    [ "$(jq -r '.status // "complete"' "$result" 2>/dev/null)" = complete ] || continue
+    usd=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$n/output.json" 2>/dev/null || echo null)
+    [ -n "$usd" ] || usd=null
+    step "$REPAIR_FILTER" --arg t "$t" --argjson n "$n" --argjson usd "$usd" --slurpfile rs "$result" \
+      --arg file "results/$t.$n.result.json" --argjson now "$now"
+    if [ "$(jq -r --arg t "$t" '.tickets[$t].status' "$tmp")" = returned ]; then
+      returned+=("$t")
+      echo "#$t attempt $n completed: its failed attempt is taken back, cost $usd recorded, #$t returned"
+    else
+      echo "#$t attempt $n completed: its failed attempt is taken back, cost $usd recorded"
+    fi
+  done
+
+  # 3. An ended orchestrator whose cost the empty output.json hid.
+  for pair in $(jq -r '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id):\(.attempt)"' "$tmp"); do
+    id=${pair%:*} a=${pair##*:}
+    [ -f "$RESULTS/$id.$a.exit.json" ] || continue
+    usd=$(jq -r '.total_cost_usd // empty' "$RUN_DIR/workers/$id.$a/output.json" 2>/dev/null || true)
+    [ -n "$usd" ] || continue
+    step '(.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+      | .orchestrators[$i].cost_usd = $usd | .costs.orchestrator_usd += $usd' \
+      --arg id "$id" --argjson a "$a" --argjson usd "$usd"
+    echo "orchestrator $id attempt $a: cost $usd recorded"
+  done
+
+  step '.costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
+        | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)'
+
+  # 4. The exception gates the miscount opened, with the way to close them.
+  for t in ${returned[@]+"${returned[@]}"}; do
+    gates=$(jq -r --arg t "$t" '(.exception_gates // [])[] | select(.ticket == $t and (.status == "open" or .status == "deferred")) | .issue' "$tmp")
+    for id in $gates; do
+      echo "exception gate #$id was opened by the miscount: close it as resolved by the repair with gate-action.sh repaired $RUN_DIR $id"
+    done
+  done
+
+  state_commit "$RUN_DIR" "$tmp"
+}
+
+if [ "$MODE" = repair ]; then
+  state_with_lock "$RUN_DIR" repair
+  exit 0
+fi
 state_with_lock "$RUN_DIR" sweep
 if [ "$GUARD" -eq 1 ]; then
   guard_rc=0
