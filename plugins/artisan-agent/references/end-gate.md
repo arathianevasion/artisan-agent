@@ -95,7 +95,7 @@ After approval:
 
 1. `end-gate.sh prs <run>`: the PRs as a table. Merged tickets are grouped by the boundary (a ticket; its `slice`, else its own; its `plan`, else the run), a rework ticket with what it reworks. Groups are ordered by their last merge and **stacked**: PR 1 into `main`, PR n into PR n-1's branch, `pr/<run-id>/<n>`.
 2. For each PR in order, write its body with upstream `pr` (`/mattpocock-skills:pr`) into a file, then `end-gate.sh cut <run> <n> --body-file F [--title T]`. When a group's merges are consecutive on the integration branch, its branch is the integration branch's own merge commit; otherwise the group's merges are cherry-picked onto the previous PR's branch, and a merge that won't apply on its own is refused (6) with the advice to choose another boundary. The branch is pushed when the repo has an `origin`. Cutting again prints the same URL.
-3. `end-gate.sh finish <run>`, once every PR is cut: removes `in-run` from every ticket in scope, records `run-ended`, and prints the retro offer. Then give the run summary and offer `/artisan-agent:retro`.
+3. `end-gate.sh finish <run>`, once every PR is cut: removes `in-run` from every ticket in scope, records `run-ended`, and prints what the merge gates cost (the table the retro's Signals show, `retro.py gate-costs`: gates run, minutes waiting on them, red gates by cause, gates not run and minutes gates waited on the Artisan; `skills/retro/SKILL.md` names the events each is computed from) and the retro offer. Then give the run summary, that table included, and offer `/artisan-agent:retro`.
 
 ## State
 

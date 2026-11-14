@@ -333,7 +333,8 @@ EOT
 
   # Question 4: the checks. apply proves each one itself, so only a check shown failing on its
   # break is recorded; any other outcome is reported and the check is not trusted.
-  set -- ; while IFS=$'\037' read -r check break_cmd break_desc prepare; do
+  # A check's runs_locally (#194: always, mac or never) ends its line when it isn't always.
+  set -- ; while IFS=$'\037' read -r check break_cmd break_desc prepare runs_locally; do
     [ -n "$check" ] || continue
     if [ -z "$break_cmd" ]; then printf 'no-break\t%s\t(no break_cmd given: not proven, not recorded)\n' "$check"; continue; fi
     if [ -n "$prepare" ]; then
@@ -342,11 +343,16 @@ EOT
       outcome=$(cd "$wt" && cmd_prove_check --break "$break_cmd" -- "$check" 2>/dev/null) && proven=1 || proven=0
     fi
     if [ "$proven" = 1 ]; then
-      set -- "$@" "- \`$check\`: proven to fail on $(date +%Y-%m-%d), breaking: $break_desc"
+      case "$runs_locally" in
+        always | '') runs_locally="" ;;
+        mac | never) runs_locally=" (runs_locally: $runs_locally)" ;;
+        *) die "runs_locally for $check must be always, mac or never, got: $runs_locally" ;;
+      esac
+      set -- "$@" "- \`$check\`: proven to fail on $(date +%Y-%m-%d), breaking: $break_desc$runs_locally"
     fi
     printf '%s\n' "${outcome%%$'\n'*}"
   done <<EOT
-$(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_cmd // ""), (.prepare // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$answers")
+$(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_cmd // ""), (.prepare // ""), (.runs_locally // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$answers")
 EOT
   if [ $# -gt 0 ]; then edit section "$wt/CODING_STANDARDS.md" "Checks" "$@"; fi
 

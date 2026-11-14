@@ -317,6 +317,10 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
     assert_eq "ready-for-agent" "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$n.json")"
   done
   assert_contains "$out" "/artisan-agent:retro"
+  # The run summary's merge gate costs (#199): none ran here; the end gate waited on the Artisan.
+  assert_contains "$out" "| Merge gates | This run |"
+  assert_contains "$out" "| Merge gates run | - |"
+  assert_contains "$out" "min over 1 decision (longest"
   assert_eq ended "$("$E" status "$RUN_DIR")"
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
 }
