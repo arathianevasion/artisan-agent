@@ -2,6 +2,14 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.5.1 (2026-11-14)
+
+Pilot fixes for a run in progress.
+
+- The run-start hook lets the chat that holds the run carry on with it, whatever it asks; another session's "continue", "carry on", "resume" or "pick up" the run passes as a resume, and a request naming the running run is never filed as a plan issue (#153).
+- `sweep.sh repair --dry-run` shows what the repair would change without taking the lock or writing anything, so it runs on a live run (#154).
+- A gate closed by hand on the tracker logs one keep decision, the same as "keep all"; tests now pin it (#155).
+
 ## 0.5.0 (2026-11-14)
 
 Wave 5: review gates, budgets and guardrail health, steering a running run, and a merge gate that can wait on CI.
