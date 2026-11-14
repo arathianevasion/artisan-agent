@@ -227,7 +227,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 **The lock passes with the work.** The chat holds the state lock between waves with its own session's pid. `wave.sh launch` records the orchestrator, then `run-ticket.sh --lock-from` makes the orchestrator's runner take the lock over before its session starts and export its pid to the session as `ARTISAN_WRITER_PID`. When the orchestrator exits, the lock is stale, and `wave.sh status` takes it back for the chat. A worker never gets a writer pid.
 
-**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir …`, the flags from `tests/helpers/live-hooks.sh` and `--no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`. `ARTISAN_HOOK_PROOF` (a file path) makes `compact-hook.sh` append one line per hook run, so a live harness can prove a plugin hook fired (#105).
+**Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir …`, the flags from `tests/helpers/live-hooks.sh` and `--no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`. `ARTISAN_HOOK_PROOF` (a file path) makes `compact-hook.sh` append one line per hook run, so a live harness can prove a plugin hook fired (#105). `ARTISAN_WAIT_INTERVAL` (seconds, default 5) is how often `wave.sh wait` looks at the orchestrator.
 
 ## Exit status
 
@@ -238,7 +238,7 @@ Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budg
 | 0 | done | all | carry on |
 | 1 | error (a missing file, a bad state, a tracker that can't be read) | all | read the one-line message |
 | 2 | bad usage | all | fix the call |
-| 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, any write | wait |
+| 3 | the state lock is held, or an orchestrator is still running | `launch`, `status`, `wait` (still running after its timeout), any write | wait (`wave.sh wait`: start it again) |
 | 4 | the ticket is outside the approved scope | `dispatch`, `block`, `verify.sh start` | nothing: it isn't this run's |
 | 5 | a blocker is not merged into the integration branch, or merged under a risk gate not yet cleared (`drain.sh gate`), or in a slice whose review gate is not yet approved (`gate.sh`) | `dispatch` | leave it for a later wave |
 | 6 | refused: blocked, or a failed attempt (`queued` again if it has attempts left); for `launch --handoff`, not the orchestrator that recorded a hand-off | `dispatch`, `merge`, `resolved`, `verify.sh start`, `verify.sh judge`, `launch --handoff` | if `queued`, dispatch the retry; if blocked, leave it for the Artisan; `launch --handoff` only through `drain.sh handoff` |
