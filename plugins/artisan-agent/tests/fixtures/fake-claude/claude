@@ -18,12 +18,20 @@
 #               the completion line
 #   stream      like complete, but as `--output-format stream-json --verbose`
 #               prints: a system event, a rate_limit_event (the shape seen live:
-#               one window, utilization a fraction, resetsAt), then FAKE_CLAUDE_SLEEP
+#               one window, utilization a fraction, resetsAt: in 2100, so the
+#               reading never goes stale), then FAKE_CLAUDE_SLEEP
 #               seconds later (default 2) a second one for the other window, then
 #               the result event
+#               A line that is not JSON sits between them, as a stream cut
+#               mid-write would leave one.
 #   sleep       leaves a stray background `sleep` (argv names the working
 #               folder: fake-claude-stray:<folder>) in its process group, sleeps
 #               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
+#
+# Like the real claude, it writes "type" after other keys in its result and
+# rate_limit_event lines ({"duration_api_ms":…,"session_id":…,"type":"result",…}),
+# so nothing may find an event by the start of its line. FAKE_CLAUDE_TYPE_FIRST=1
+# writes "type" first instead, the order older versions used.
 #
 # It records its arguments, one "[arg]" per line, to $FAKE_CLAUDE_ARGS, its
 # working directory and environment of interest to $FAKE_CLAUDE_ENV, and its
@@ -45,8 +53,24 @@ fi
 result() { # subtype is_error num_turns text
   local text=
   text=$(printf '%s' "$4" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR > 1 ? "\\n" : ""), $0}')
-  printf '{"type":"result","subtype":"%s","is_error":%s,"num_turns":%s,"total_cost_usd":0.01,"result":"%s"}\n' \
-    "$1" "$2" "$3" "$text"
+  if [ -n "${FAKE_CLAUDE_TYPE_FIRST:-}" ]; then
+    printf '{"type":"result","subtype":"%s","is_error":%s,"num_turns":%s,"total_cost_usd":0.01,"result":"%s"}\n' \
+      "$1" "$2" "$3" "$text"
+  else
+    printf '{"duration_api_ms":1200,"stop_reason":"end_turn","session_id":"s1","total_cost_usd":0.01,"is_error":%s,"num_turns":%s,"subtype":"%s","result":"%s","type":"result","duration_ms":1500}\n' \
+      "$2" "$3" "$1" "$text"
+  fi
+}
+
+rate_limit() { # window utilization resetsAt
+  local info=
+  info=$(printf '"rate_limit_info":{"status":"allowed","resetsAt":%s,"rateLimitType":"%s","unifiedWindows":{"%s":{"utilization":%s,"resetsAt":%s,"status":"allowed"}}}' \
+    "$3" "$1" "$1" "$2" "$3")
+  if [ -n "${FAKE_CLAUDE_TYPE_FIRST:-}" ]; then
+    printf '{"type":"rate_limit_event",%s,"session_id":"s1"}\n' "$info"
+  else
+    printf '{%s,"uuid":"u1","session_id":"s1","type":"rate_limit_event"}\n' "$info"
+  fi
 }
 
 write_result_file() { echo '{"criteria":[]}' >"$ARTISAN_RESULT_FILE"; }
@@ -100,9 +124,10 @@ ARTISAN-WORKER: complete"
     ;;
   stream)
     echo '{"type":"system","subtype":"init","session_id":"s1"}'
-    echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794610800,"rateLimitType":"seven_day","unifiedWindows":{"seven_day":{"utilization":0.29,"resetsAt":1794610800,"status":"allowed"}}},"session_id":"s1"}'
+    rate_limit seven_day 0.29 4102444800
     sleep "${FAKE_CLAUDE_SLEEP:-2}"
-    echo '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1794610000,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1794610000,"status":"allowed"}}},"session_id":"s1"}'
+    echo '{"session_id":"s1","type":"result","result":"cut off'
+    rate_limit five_hour 0.5 4102444000
     write_result_file
     result success false 4 "Built the ticket.
 
