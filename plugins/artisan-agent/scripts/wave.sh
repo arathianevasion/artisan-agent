@@ -483,9 +483,12 @@ $reviews"
       elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
       # A ticket the Artisan took out of the run at a gate (dropped, resliced,
       # bypassed, deferred) is finished for this run.
-      # A Human check is not work the run waits on: the gates settle it.
+      # A Human check is not work the run waits on: the gates settle it. One
+      # whose ticket left the run without it is stranded (#161), not done.
       elif [ "$(get "$STATE_JQ_DEFS"' . as $s | out_of_run as $o | [.plan.scope[] as $t
-               | select(($s | is_human_check($t)) or (.tickets[$t].status | . as $st
+               | select((($s | is_human_check($t)) and ($s.tickets[$t].status? != "queued"
+                          or ((["dropped", "resliced", "sent_back"] | index($s.tickets[$s | human_check_for($t)].status? // "")) == null)))
+                        or (.tickets[$t].status | . as $st
                         | $st == "merged" or $st == "closed" or ($o | index($st))))] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
       elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked

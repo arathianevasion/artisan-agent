@@ -280,32 +280,51 @@ downstream() {
 # json_list word...: the words as a JSON array of strings.
 json_list() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 
+# checks_of ticket...: the open Human checks in scope (references/human-checks.md)
+# whose agent ticket is one of these, as "<check> <agent ticket>", one per
+# line in check order: they leave the run with their ticket (#161).
+checks_of() {
+  get --argjson ts "$(json_list "$@")" "$STATE_JQ_DEFS"'
+    . as $s | [open_human_checks[] as $c | {c: $c, a: ($s | human_check_for($c))} | select(.a as $a | $ts | index($a) != null)]
+    | sort_by(.c | tonumber? // 0) | .[] | "\(.c) \(.a)"'
+}
+
+# checks_json check-pair...: checks_of's lines as JSON [{ticket, for}].
+checks_json() { printf '%s\n' "$@" | jq -Rc 'select(. != "") | split(" ") | {ticket: .[0], for: .[1]}' | jq -sc .; }
+
 # impact ticket dependents...: what taking the ticket out of the run does to
 # the rest of it: who goes with it, and whether each slice can still be
 # reviewed end to end.
 impact() {
-  local t="$1" ds=
+  local t="$1" ds= hc=
   shift
   ds=$(json_list "$@")
-  get --arg t "$t" --argjson ds "$ds" "$STATE_JQ_DEFS"'
+  hc=$(checks_json "$(checks_of "$t" "$@")")
+  get --arg t "$t" --argjson ds "$ds" --argjson hc "$hc" "$STATE_JQ_DEFS"'
     ([$t] + $ds) as $out
-    | (if $ds == [] then "Nothing else in the run depends on #\($t)."
-       else "\($ds | map("#" + .) | join(", ")) depend on #\($t), directly or through others, so they leave the run with it and go back to needs-triage." end) as $who
+    | ((if $ds == [] then "Nothing else in the run depends on #\($t)."
+        else "\($ds | map("#" + .) | join(", ")) depend on #\($t), directly or through others, so they leave the run with it and go back to needs-triage." end)
+       + ($hc | map(" Human check #\(.ticket) follows #\(.for), so it leaves the run with it and goes back to needs-triage.") | join(""))) as $who
     | ([slice_gates[] | select(.tickets | any(. as $x | $out | index($x)))
         | "slice \"\(.slice)\" loses \([.tickets[] | select(. as $x | $out | index($x))] | map("#" + .) | join(", "))"]) as $slices
     | $who + " " + (if $slices == [] then "Every slice can still be reviewed end to end."
         else "Not every slice survives (" + ($slices | join("; ")) + "), so it cannot be reviewed end to end as planned." end)'
 }
 
-# stranded: JSON [{blocker, status, waiting: [tickets]}], one per dropped or
-# resliced ticket that still holds tickets in the run that can never start.
+# stranded: JSON [{blocker, status, waiting: [tickets], checks: [{ticket, for}]}],
+# one per dropped or resliced ticket that still holds tickets in the run that
+# can never start, or open Human checks of it or of those tickets (#161).
 stranded() {
-  local out='[]' b= w=
+  local out='[]' b="" w="" ws="" hc="[]"
   for b in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "dropped" or .tickets[$t].status == "resliced") | $t'); do
-    w=$(json_list $(downstream "$b"))
-    [ "$w" != "[]" ] || continue
-    out=$(jq -c --arg b "$b" --arg s "$(get --arg b "$b" '.tickets[$b].status')" --argjson w "$w" \
-      '. + [{blocker: $b, status: $s, waiting: $w}]' <<<"$out")
+    ws=$(downstream "$b" | tr '\n' ' ')
+    # shellcheck disable=SC2086
+    w=$(json_list $ws)
+    # shellcheck disable=SC2086
+    hc=$(checks_json "$(checks_of "$b" $ws)")
+    [ "$w" != "[]" ] || [ "$hc" != "[]" ] || continue
+    out=$(jq -c --arg b "$b" --arg s "$(get --arg b "$b" '.tickets[$b].status')" --argjson w "$w" --argjson hc "$hc" \
+      '. + [{blocker: $b, status: $s, waiting: $w, checks: $hc}]' <<<"$out")
   done
   printf '%s\n' "$out"
 }
@@ -321,6 +340,27 @@ send_back() {
     comment "$d" "Taken out of run $RUN_ID: it depends on #$from, which $how. It goes back to needs-triage to be grilled again and keeps its blockers; it is not re-added to this run.${WHY:+ Why: $WHY}"
   done
 }
+
+# send_checks_back blocker how checks: each Human check (checks_of's lines)
+# leaves the run with the ticket it follows: back to needs-triage with a
+# comment naming that ticket. $how says what became of the blocker itself.
+send_checks_back() {
+  local from="$1" how="$2" c="" a="" what=""
+  while read -r c a; do
+    [ -n "$c" ] || continue
+    if [ "$a" = "$from" ]; then what="which $how"; else what="which depends on #$from, which $how, and went back to needs-triage"; fi
+    gh issue edit "$c" -R "$(repo)" --add-label needs-triage --remove-label in-run >/dev/null \
+      || die "could not relabel #$c"
+    comment "$c" "Taken out of run $RUN_ID: it is the Human check for #$a, $what. There is no work of #$a in this run to check, so it goes back to needs-triage with it; it is not re-added to this run.${WHY:+ Why: $WHY}"
+  done <<<"$3"
+}
+
+# The jq that marks checks_json's Human checks ($hc) sent back with the ticket they follow.
+CHECKS_SENT_BACK='reduce $hc[] as $h (.; .tickets[$h.ticket] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $h.for, at: $now})
+  | event({event: "sent-back", ticket: $h.ticket, from: $h.for, human_check_for: $h.for}; $now))'
+
+# checks_named checks-json: "Human check #a" or "Human checks #a, #b".
+checks_named() { jq -r '"Human check\(if length > 1 then "s" else "" end) \(map("#" + .ticket) | join(", "))"' <<<"$1"; }
 
 # hashes word...: "#a, #b" for the words.
 hashes() { printf '%s\n' "$@" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g'; }
@@ -542,9 +582,12 @@ cmd_take() {
 }
 
 leave_run() { # choice status label-to-add tracker-note
-  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t= ds= dl= say= d=
+  local issue="$1" choice="$2" status="$3" label="$4" note="$5" t= ds= dl= say= d= hcs="" hc="[]"
   t=$(g .ticket)
   ds=$(downstream "$t" | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  hcs=$(checks_of "$t" $ds)
+  hc=$(checks_json "$hcs")
   # The impact first, before anything changes.
   # shellcheck disable=SC2086
   echo "Impact: $(impact "$t" $ds)"
@@ -558,6 +601,7 @@ leave_run() { # choice status label-to-add tracker-note
   comment "$t" "Taken out of run $RUN_ID at exception gate #$issue by $BY: $note${WHY:+ Why: $WHY}"
   # shellcheck disable=SC2086
   send_back "$t" "was $status" $ds
+  send_checks_back "$t" "was $status" "$hcs"
   close_exception "$issue" "$choice, by $BY: #$t leaves the run. $note"
   # The gate is closed, so it no longer holds the dependents sent back with the ticket.
   for d in $ds; do remove_blocker "$d" "$issue" || true; done
@@ -565,11 +609,14 @@ leave_run() { # choice status label-to-add tracker-note
   dl=$(json_list $ds)
   record_answer decided "$choice" outcome '.tickets[$t] |= (.status = $st | .pid = null)
     | reduce $ds[] as $d (.; .tickets[$d] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $t, at: $now})
-        | event({event: "sent-back", ticket: $d, from: $t}; $now))' \
-    --arg t "$t" --arg st "$status" --argjson ds "$dl" --argjson rec "{\"sent_back\": $dl}"
+        | event({event: "sent-back", ticket: $d, from: $t}; $now))
+    | '"$CHECKS_SENT_BACK" \
+    --arg t "$t" --arg st "$status" --argjson ds "$dl" --argjson hc "$hc" \
+    --argjson rec "$(jq -c --argjson ds "$dl" '{sent_back: $ds} + (if . == [] then {} else {human_checks_sent_back: map(.ticket)} end)' <<<"$hc")"
   say="#$t $status: it leaves the run"
   # shellcheck disable=SC2086
   [ -z "${ds// /}" ] || say="$say; $(hashes $ds) go back to needs-triage with it"
+  [ "$hc" = "[]" ] || say="$say; $(checks_named "$hc") $(jq -r 'if length > 1 then "go" else "goes" end' <<<"$hc") back to needs-triage with it"
   echo "$say"
 }
 
@@ -625,7 +672,7 @@ cmd_send_back() {
   open_run "$1"
   shift
   parse_opts "$@"
-  local st= n= b= w= d= all=" " dl=
+  local st= n= b= w= d= all=" " dl= hcs="" c="" a="" hc="[]" what=""
   st=$(stranded)
   if [ "$st" = "[]" ]; then echo "No ticket is stranded."; return 0; fi
   hold
@@ -635,16 +682,26 @@ cmd_send_back() {
     for d in $(jq -r ".[$n].waiting[]" <<<"$st"); do
       case "$all" in *" $d "*) ;; *) w="$w $d"; all="$all$d " ;; esac
     done
-    [ -n "$w" ] || continue
+    hcs=
+    while read -r c a; do
+      [ -n "$c" ] || continue
+      case "$all" in *" $c "*) ;; *) hcs="$hcs$c $a"$'\n'; all="$all$c " ;; esac
+    done <<<"$(jq -r ".[$n].checks[]? | \"\(.ticket) \(.for)\"" <<<"$st")"
+    [ -n "$w" ] || [ -n "$hcs" ] || continue
     # shellcheck disable=SC2086
-    send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" $w
+    [ -z "$w" ] || send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" $w
+    send_checks_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" "$hcs"
     # shellcheck disable=SC2086
     dl=$(json_list $w)
+    hc=$(checks_json "$hcs")
     apply 'reduce $ds[] as $d (.; .tickets[$d] |= (.status = "sent_back" | .pid = null | .sent_back = {from: $b, at: $now})
-        | event({event: "sent-back", ticket: $d, from: $b, by: $by}; $now))' \
-      --arg b "$b" --argjson ds "$dl" --arg by "$BY"
+        | event({event: "sent-back", ticket: $d, from: $b, by: $by}; $now))
+      | '"$CHECKS_SENT_BACK" \
+      --arg b "$b" --argjson ds "$dl" --arg by "$BY" --argjson hc "$hc"
     # shellcheck disable=SC2086
-    echo "sent back to needs-triage, out of the run: $(hashes $w) (stranded behind #$b)"
+    what=$([ -z "$w" ] || hashes $w)
+    [ "$hc" = "[]" ] || what="${what:+$what and }$(checks_named "$hc")"
+    echo "sent back to needs-triage, out of the run: $what (stranded behind #$b)"
   done
 }
 
@@ -656,7 +713,9 @@ cmd_stranded() {
   local st=
   st=$(stranded)
   [ "$st" != "[]" ] || return 1
-  jq -r '.[] | "#\(.blocker) \(.status): \(.waiting | map("#" + .) | join(", ")) can'"'"'t start"' <<<"$st"
+  jq -r '.[] | "#\(.blocker) \(.status): "
+    + ([(if .waiting == [] then empty else "\(.waiting | map("#" + .) | join(", ")) can'"'"'t start" end),
+        ((.checks // [])[] | "Human check #\(.ticket) has no work of #\(.for) to check")] | join("; "))' <<<"$st"
   echo "send them back to triage: gate-action.sh send-back $RUN_DIR"
 }
 

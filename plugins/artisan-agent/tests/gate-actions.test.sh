@@ -724,3 +724,91 @@ test_an_exception_gate_no_guardrail_opened_logs_no_guardrail_event_and_retry_can
     "$(state_get '.events[] | select(.event == "bug-found") | {ticket, areas, where, gate}' | jq -c .)"
   assert_status 2 "$A" defer "$RUN_DIR" "$num" --bug
 }
+
+# ------------------------------- Human checks leave with their ticket (#161)
+
+# chain_run, plus Human check 11 for #3 (the ticket the gate is on), Human
+# check 12 for #2 (a dependent that leaves with it) and Human check 13 for #1,
+# which stays.
+human_check_issue() { # check agent
+  jq -n --argjson n "$1" --argjson a "$2" '{number: $n, title: "Human check \($n) (#\($a))", state: "open",
+    labels: [{name: "in-run"}, {name: "ready-for-human"}],
+    body: "<!-- artisan-agent:human-check-for #\($a) -->\n\n## Acceptance criteria\n\n- [ ] it reads well\n"}' \
+    >"$FAKE_GH_DIR/issue-$1.json"
+  echo "[$2]" >"$FAKE_GH_DIR/blocked_by-$1.json"
+}
+checks_run() {
+  chain_run
+  human_check_issue 11 3
+  human_check_issue 12 2
+  human_check_issue 13 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'.plan.scope += ["11", "12", "13"]
+    | .plan.tickets["11"] = {title: "Human check 11 (#3)", human_check_for: "3"}
+    | .plan.tickets["12"] = {title: "Human check 12 (#2)", human_check_for: "2", slice: "greeting"}
+    | .plan.tickets["13"] = {title: "Human check 13 (#1)", human_check_for: "1", slice: "greeting"}
+    | .tickets["11"] = new_ticket("11") | .tickets["12"] = new_ticket("12") | .tickets["13"] = new_ticket("13")'
+}
+
+test_a_drop_or_reslice_takes_the_human_checks_of_what_leaves_with_it() {
+  local choice= out=
+  for choice in drop reslice; do
+    [ "$choice" = drop ] || { kill_workers; rm -rf "$TEST_TMPDIR/project" "$TEST_TMPDIR/tracker" "$RUN_DIR"; }
+    checks_run
+    out=$("$A" "$choice" "$RUN_DIR" "$GATE_NO" --by Andrew)
+    # The impact names them, before anything changes.
+    assert_contains "$(printf '%s\n' "$out" | sed -n 1p)" "Human check #11 follows #3, so it leaves the run with it and goes back to needs-triage." "$choice"
+    assert_contains "$(printf '%s\n' "$out" | sed -n 1p)" "Human check #12 follows #2" "$choice"
+    assert_not_contains "$(printf '%s\n' "$out" | sed -n 1p)" "#13" "$choice"
+    # The summary too.
+    assert_contains "$(printf '%s\n' "$out" | sed -n 2p)" "; Human checks #11, #12 go back to needs-triage with it" "$choice"
+    assert_eq "sent_back sent_back queued" \
+      "$(state_get '"\(.tickets["11"].status) \(.tickets["12"].status) \(.tickets["13"].status)"')" "$choice"
+    assert_eq "3 2" "$(state_get '"\(.tickets["11"].sent_back.from) \(.tickets["12"].sent_back.from)"')" "$choice"
+    assert_eq "needs-triage,ready-for-human" "$(labels 11)" "$choice: 11 loses in-run, goes to triage"
+    assert_eq "needs-triage,ready-for-human" "$(labels 12)" "$choice"
+    assert_eq "in-run,ready-for-human" "$(labels 13)" "$choice: 13 stays"
+    assert_eq "open open" "$(issue_state 11) $(issue_state 12)" "$choice: never closed"
+    assert_contains "$(cat "$FAKE_GH_DIR/comments-11.md")" "Taken out of run r1: it is the Human check for #3, which was"
+    assert_contains "$(cat "$FAKE_GH_DIR/comments-12.md")" "it is the Human check for #2, which depends on #3"
+    assert_eq "11 12" "$(state_get '[.events[] | select(.event == "sent-back" and .human_check_for != null) | .ticket] | join(" ")')" "$choice"
+    assert_eq "11 12" "$(state_get '.exception_gates[0].outcome.human_checks_sent_back | join(" ")')" "$choice"
+    assert_eq "13" "$(state_get "$STATE_JQ_DEFS"' open_human_checks | join(" ")')" "$choice"
+  done
+  # The next slice gate lists only the check that stayed; the end gate neither.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "merged" | .merge_commit = "abcdef1234567" | .attempts = 1)'
+  "$G" open "$RUN_DIR" slice-1 >/dev/null
+  assert_eq "13" "$(state_get '.review_gates[0].human_checks | join(" ")')"
+  out=$("$SCRIPTS/end-gate.sh" packet "$RUN_DIR")
+  assert_not_contains "$out" "#11"
+  assert_not_contains "$out" "#12 "
+}
+
+test_a_drop_with_no_dependents_still_takes_its_human_check() {
+  checks_run
+  echo '[]' >"$FAKE_GH_DIR/blocked_by-4.json"
+  echo '[1]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  local out=
+  out=$("$A" drop "$RUN_DIR" "$GATE_NO")
+  assert_contains "$out" "Impact: Nothing else in the run depends on #3. Human check #11 follows #3"
+  assert_contains "$out" "#3 dropped: it leaves the run; Human check #11 goes back to needs-triage with it"
+  assert_eq "sent_back queued" "$(state_get '"\(.tickets["11"].status) \(.tickets["12"].status)"')"
+}
+
+# The old way: #3 dropped and its Human check left queued in the run.
+test_a_stranded_human_check_is_reported_and_sent_back() {
+  seed_stranded
+  human_check_issue 11 3
+  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'.plan.scope += ["11"]
+    | .plan.tickets["11"] = {title: "Human check 11 (#3)", human_check_for: "3"} | .tickets["11"] = new_ticket("11")
+    | .tickets["2"].status = "sent_back" | .tickets["4"].status = "sent_back"'
+  local out=
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: stranded"
+  assert_contains "$out" "#3 dropped: Human check #11 has no work of #3 to check"
+  out=$("$A" send-back "$RUN_DIR" --by Andrew)
+  assert_contains "$out" "sent back to needs-triage, out of the run: Human check #11 (stranded behind #3)"
+  assert_eq "sent_back 3" "$(state_get '"\(.tickets["11"].status) \(.tickets["11"].sent_back.from)"')"
+  assert_eq "needs-triage,ready-for-human" "$(labels 11)"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-11.md")" "it is the Human check for #3, which was dropped"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: done"
+}
