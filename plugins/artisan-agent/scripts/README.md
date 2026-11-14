@@ -129,6 +129,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | hands-on nudge | `hands_on_nudge_runs` | 5 |
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
+| worktree setup command (run once in every new worker, verifier, hands-on and end-gate worktree; `ARTISAN_MAIN` is the main checkout; a failure is reason `setup`) | `worktree_setup` | none |
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |

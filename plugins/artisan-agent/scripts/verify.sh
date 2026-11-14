@@ -249,6 +249,7 @@ cmd_start() {
     printf -- '- Guardrails that apply to this ticket (an area-scoped one only if the ticket touches its area): run %s resolve --run-dir %s --ticket %s\n' \
       "$SCRIPT_DIR/guardrails.sh" "$RUN_DIR" "$t"
     printf -- '- Expected output (from the plan): %s\n' "$expected"
+    printf -- '- Dependencies (such as node_modules) are installed by the project'"'"'s worktree_setup before you start. "Not found" or a missing module is a setup failure, not a code failure: say so in notes and never mark a criterion unmet for it.\n'
     [ -z "$suite" ] || printf -- '- The full suite: %s\n' "$suite"
     printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
     if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then

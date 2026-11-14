@@ -674,6 +674,7 @@ You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR --ticket $t (an area-scoped guardrail is listed only if this ticket touches its area; plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
+- Dependencies (such as node_modules) are installed by the project's worktree_setup before you start. If a tool is "not found" or a module is missing, that is a setup failure, not a code failure: say so in your notes and don't change the code to work around it.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
   # The Artisan's answers to the questions an earlier worker filed (questions.sh).

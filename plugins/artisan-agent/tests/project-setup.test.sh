@@ -421,3 +421,20 @@ test_setup_adds_the_gate_workflow_to_a_config_that_predates_it() {
   assert_eq "\"ci.yml\"" "$("$PLUGIN_ROOT/scripts/config.sh" get ci_gate.workflow --file "$wt/.artisan-agent/config.yml")"
   assert_eq 3 "$("$PLUGIN_ROOT/scripts/config.sh" get max_agents --file "$wt/.artisan-agent/config.yml")"
 }
+
+test_setup_offers_a_worktree_setup_default_for_a_node_project_and_records_it() {
+  seed
+  assert_not_contains "$("$PS" scan "$P")" "node-setup"
+  printf '{}\n' >"$P/package-lock.json"
+  git -C "$P" add -A && git -C "$P" commit -q -m lock && git -C "$P" push -q origin main
+  assert_contains "$("$PS" scan "$P")" "node-setup	npm ci --prefer-offline"
+  local wt=
+  wt=$("$PS" begin "$P")
+  assert_not_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "worktree_setup"
+  answers '{"worktree_setup":"npm ci --prefer-offline"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "changed: worktree_setup is npm ci --prefer-offline"
+  assert_eq '"npm ci --prefer-offline"' "$("$PLUGIN_ROOT/scripts/config.sh" get worktree_setup --file "$wt/.artisan-agent/config.yml")"
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "unchanged: worktree_setup is npm ci --prefer-offline"
+  answers '{"worktree_setup":"pnpm i"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "kept: .artisan-agent/config.yml has worktree_setup: npm ci --prefer-offline"
+}
