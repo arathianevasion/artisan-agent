@@ -87,7 +87,7 @@ run_one() {
     # Clear every ARTISAN_* variable the caller has, by prefix, so a suite
     # run inside a real worker never reaches that worker'"'"'s run (#121).
     for v in $(compgen -v ARTISAN_); do unset "$v"; done
-    unset TESTS_TIMES
+    unset TESTS_TIMES GITHUB_STEP_SUMMARY
     source "$TESTS_DIR/lib.sh"
     source "$1"
     "$2"
@@ -121,11 +121,14 @@ if [ "${1:-}" = "--run-one" ]; then
 fi
 
 usage() {
-  echo "usage: run.sh [-j N] [--shard i/n] [dir]" >&2
+  echo "usage: run.sh [-j N] [--shard i/n] [--rerun-failed] [dir]" >&2
+  echo "       run.sh --check-quarantine [dir]" >&2
   exit 2
 }
 
 jobs=1
+rerun_failed=
+check_quarantine=
 shard_i=1
 shard_n=1
 suite_dir=
@@ -135,6 +138,8 @@ while [ $# -gt 0 ]; do
     -j*) jobs=${1#-j}; shift ;;
     --shard) [ $# -ge 2 ] || usage; shard=$2; shift 2 ;;
     --shard=*) shard=${1#--shard=}; shift ;;
+    --rerun-failed) rerun_failed=1; shift ;;
+    --check-quarantine) check_quarantine=1; shift ;;
     -*) echo "run.sh: unknown option: $1" >&2; usage ;;
     *) [ -z "$suite_dir" ] || usage; suite_dir=$1; shift ;;
   esac
@@ -162,6 +167,13 @@ if [ ! -d "$suite_dir" ]; then
   exit 2
 fi
 suite_dir=$(cd "$suite_dir" && pwd)
+
+# print_output file: a test's output, indented under its result line.
+print_output() {
+  local output=""
+  output=$(cat "$1")
+  [ -z "$output" ] || printf '%s\n' "$output" | sed 's/^/     /'
+}
 
 resdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-results.XXXXXX")
 xpid=
@@ -191,6 +203,7 @@ for file in "$suite_dir"/*.test.sh; do
       echo 1 >"$resdir/$n_run.status"
     else
       echo "$(basename "$file" .test.sh): $name" >"$resdir/$n_run.label"
+      printf '%s\n%s\n' "$file" "$name" >"$resdir/$n_run.test"
       printf '%s\0%s\0%s\0' "$file" "$name" "$n_run" >>"$resdir/jobs"
     fi
   done
@@ -223,19 +236,42 @@ while [ "$i" -lt "$n_run" ]; do
   if [ "$(cat "$resdir/$i.status")" = 0 ]; then
     echo "ok   $label"
     passed=$((passed + 1))
+  elif [ -n "$rerun_failed" ]; then
+    echo "$i" >>"$resdir/rerun"   # judged after the pool is done
   else
     echo "FAIL $label"
-    output=$(cat "$resdir/$i.out")
-    [ -n "$output" ] && printf '%s\n' "$output" | sed 's/^/     /'
+    print_output "$resdir/$i.out"
     failed=$((failed + 1))
   fi
 done
 [ -z "$xpid" ] || wait "$xpid" 2>/dev/null
 xpid=
 
-total=$((passed + failed))
+# --rerun-failed: each failed test runs once more, on its own, after every
+# other test has finished. A pass makes it FLAKY (printed with its first
+# run's output); a second failure makes it a FAIL as without the flag.
+flaky=0
+if [ -s "$resdir/rerun" ]; then
+  while read -r i; do
+    { read -r file; read -r name; } <"$resdir/$i.test"
+    "$BASH" "$0" --run-one "$resdir" "$file" "$name" "r$i"
+    label=$(cat "$resdir/$i.label")
+    if [ "$(cat "$resdir/r$i.status")" = 0 ]; then
+      echo "FLAKY $label"
+      print_output "$resdir/$i.out"
+      echo "$label" >>"$resdir/flaky"
+      flaky=$((flaky + 1))
+    else
+      echo "FAIL $label"
+      print_output "$resdir/r$i.out"
+      failed=$((failed + 1))
+    fi
+  done <"$resdir/rerun"
+fi
+
+total=$((passed + failed + flaky))
 echo
-echo "$passed passed, $failed failed"
+echo "$passed passed, $failed failed${rerun_failed:+, $flaky flaky}"
 if [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
   echo "Seconds per test, slowest first:"
   i=0

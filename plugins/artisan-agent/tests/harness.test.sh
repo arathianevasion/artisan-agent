@@ -248,3 +248,46 @@ test_without_tests_times_no_durations_are_printed_and_tests_never_see_it() {
   out=$(TESTS_TIMES=1 "$TESTS_DIR/run.sh" "$TEST_TMPDIR/probe" 2>&1) || status=$?
   assert_eq 0 "$status" "$out"
 }
+
+# --- --rerun-failed and the quarantine (#198) ---
+
+test_rerun_failed_reports_a_test_that_passes_on_its_rerun_as_flaky() {
+  local out= status=0
+  mkdir "$TEST_TMPDIR/once"
+  printf 'test_once() {\n  [ -e "$FLAKY_STATE" ] || { : >"$FLAKY_STATE"; fail "first run fails"; }\n}\n' \
+    >"$TEST_TMPDIR/once/sample.test.sh"
+  out=$(FLAKY_STATE="$TEST_TMPDIR.flaky" "$TESTS_DIR/run.sh" --rerun-failed "$TEST_TMPDIR/once" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 0 "$status" "exit status: $out"
+  assert_contains "$out" "FLAKY sample: test_once"
+  assert_not_contains "$out" "FAIL "
+  assert_contains "$out" "0 passed, 0 failed, 1 flaky"
+}
+
+test_rerun_failed_still_fails_a_test_that_fails_twice() {
+  local out= status=0
+  out=$(FLAKY_STATE="$TEST_TMPDIR.flaky" "$TESTS_DIR/run.sh" --rerun-failed "$FIXTURES/flaky" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 1 "$status" "exit status: $out"
+  assert_contains "$out" "ok   sample: test_a_passes"
+  assert_contains "$out" "FLAKY sample: test_b_fails_once"
+  assert_contains "$out" "FAIL sample: test_c_always_fails"
+  assert_contains "$out" "fails every time"
+  assert_not_contains "$out" "FAIL sample: test_b_fails_once"
+  assert_contains "$out" "1 passed, 1 failed, 1 flaky"
+}
+
+test_rerun_failed_works_with_j_and_shard() {
+  local out= status=0
+  out=$(FLAKY_STATE="$TEST_TMPDIR.flaky" "$TESTS_DIR/run.sh" -j 3 --rerun-failed "$FIXTURES/flaky" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 1 "$status" "-j 3 exit status: $out"
+  assert_contains "$out" "FLAKY sample: test_b_fails_once"
+  assert_contains "$out" "1 passed, 1 failed, 1 flaky"
+  # Shard 2/3 holds only test_b_fails_once.
+  status=0
+  out=$(FLAKY_STATE="$TEST_TMPDIR.flaky" "$TESTS_DIR/run.sh" -j 2 --shard 2/3 --rerun-failed "$FIXTURES/flaky" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 0 "$status" "--shard 2/3 exit status: $out"
+  assert_eq "FLAKY sample: test_b_fails_once" "$(printf '%s\n' "$out" | grep -E '^(ok|FAIL|FLAKY) ')"
+}
