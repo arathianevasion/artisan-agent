@@ -881,16 +881,27 @@ test_a_slice_gate_whose_tickets_all_left_the_run_closes_with_nothing_to_review()
   issues=$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')
   assert_eq "" "$("$G" due "$RUN_DIR")" "nothing merged: nothing to open"
   out=$("$G" sync "$RUN_DIR")
-  assert_eq "closed slice-1: every ticket of it left the run (#3 dropped, #4 sent back): nothing to review" "$out"
+  assert_eq "closed slice-1: none of its tickets merged (#3 dropped, #4 sent back): nothing to review" "$out"
   assert_eq "$issues" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "no review-gate issue"
   assert_eq "empty null run" "$(state_get '.review_gates[0] | "\(.status) \(.issue) \(.empty.by)"')"
   assert_eq '["3","4"]' "$(state_get '.review_gates[0].left_run | map(.number) | tojson')"
-  assert_eq "gate-empty slice-1 nothing to review" \
-    "$(state_get '[.events[] | select(.event == "gate-empty")] | .[0] | "\(.event) \(.gate) \(.choice)"')"
+  assert_eq 'gate-empty slice-1 nothing to review ["3","4"]' \
+    "$(state_get '[.events[] | select(.event == "gate-empty")] | .[0] | "\(.event) \(.gate) \(.choice) \(.left_run | map(.number) | tojson)"')"
   # Once only, and it holds nothing.
   assert_eq "" "$("$G" sync "$RUN_DIR")"
   assert_eq 1 "$(state_get '[.events[] | select(.event == "gate-empty")] | length')"
   assert_eq free "$("$G" holds "$RUN_DIR" 3)"
   assert_eq 2 "$(frontier)" "the rest of the run carries on"
   assert_contains "$("$A" list "$RUN_DIR")" "| Slice gate: greeting (run r1) | - | slice | - | empty | - |"
+}
+
+test_a_gate_with_nothing_merged_names_each_tickets_fate_and_a_risk_gate_keeps_its_title() {
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "slice", slice: "greeting", tickets: ["3", "4"]},
+      {kind: "risk", after: "3", tests: ["new-seam"]}]
+    | .tickets["3"].status = "dropped" | .tickets["4"].status = "closed"'
+  assert_eq "closed slice-1: none of its tickets merged (#3 dropped, #4 closed): nothing to review
+closed risk-2: none of its tickets merged (#3 dropped): nothing to review" "$("$G" sync "$RUN_DIR")"
+  assert_eq '["3"]' "$(state_get '.review_gates[0].left_run | map(.number) | tojson')" "a closed ticket did not leave the run"
+  assert_eq "Risk gate: #3 (Ticket 3), new seam or module boundary (run r1)" "$(state_get '.review_gates[1].title')"
 }

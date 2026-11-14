@@ -305,6 +305,7 @@ state_usage() {
 #   gate_due(g): every ticket of gate g done (gate_done), at least one merged,
 #     and the gate not yet answered (approved, bypassed, deferred or
 #     redirected: gate-action.sh)
+#   gate_title(g; run): the review-gate issue's title for gate g of run run
 #   gate_empty(g): every ticket of gate g done, none merged, and the gate not
 #     recorded: nothing to review, so gate.sh sync closes it as "empty"
 #   decide(id; d; at): waiting decision id decided, with the decision record d
@@ -415,6 +416,11 @@ STATE_JQ_DEFS='
   def gate_left_run($g):
     . as $s | [gate_left($g)[] | {number: ., status: ($s.tickets[.].status | sub("_"; " ")),
                                   title: ($s.plan.tickets[.].title // null)}];
+  def gate_title($g; $run):
+    . as $s
+    | if $g.kind == "risk"
+      then "Risk gate: \($g.tickets | map(. as $t | "#\($t)" + ($s.plan.tickets[$t].title // null | if . then " (\(.))" else "" end)) | join(", ")), \($g.why) (run \($run))"
+      else "Slice gate: \($g.slice) (run \($run))" end;
   def gate_due($g):
     . as $s
     | all($g.tickets[]; . as $t | $s | gate_done($t))

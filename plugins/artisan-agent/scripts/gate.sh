@@ -161,11 +161,8 @@ build_view() { # id dependents-json
     prov=$(printf '%s\n' "$prov" | grep -v "^| #$t |" || true)
   done
   jq -n --argjson g "$def" --argjson deps "$deps" --slurpfile s "$FILE" \
-    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" '
-    {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps,
-                  title: (if $g.kind == "risk"
-                          then "Risk gate: \($g.tickets | map(. as $t | "#\($t)" + ($s[0].plan.tickets[$t].title // null | if . then " (\(.))" else "" end)) | join(", ")), \($g.why) (run \($run))"
-                          else "Slice gate: \($g.slice) (run \($run))" end)}),
+    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
+    {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps, title: ($s[0] | gate_title($g; $run))}),
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
 
@@ -790,7 +787,8 @@ cmd_sync() {
   close_empty
 }
 
-# A gate whose tickets all left the run (#164) has nothing to review: it is
+# A gate none of whose tickets merged (they all left the run or were closed,
+# #164) has nothing to review: it is
 # recorded as answered ("empty", with the reason and a gate-empty event),
 # never opened on the tracker, and holds nothing. One line per gate closed.
 close_empty() {
@@ -800,16 +798,16 @@ close_empty() {
   apply '. as $s
     | reduce (slice_gates[] | select(. as $g | $s | gate_empty($g))) as $g (.;
         ($s | gate_left_run($g)) as $left
-        | ($left | map("#\(.number) \(.status)") | join(", ")) as $who
-        | {by: "run", at: $now, why: ("every ticket of it left the run (" + $who + "): nothing to review")} as $r
+        | ([$g.tickets[] | "#\(.) \($s.tickets[.].status | sub("_"; " "))"] | join(", ")) as $who
+        | {by: "run", at: $now, why: ("none of its tickets merged (" + $who + "): nothing to review")} as $r
         | .review_gates = ((.review_gates // []) + [{
             id: $g.id, kind: $g.kind, slice: $g.slice,
-            title: (if $g.kind == "risk" then "Risk gate: \($g.slice) (run \($run))" else "Slice gate: \($g.slice) (run \($run))" end),
+            title: ($s | gate_title($g; $run)),
             role: $g.role, issue: null, tickets: [], left_run: $left, dependents: [], cards: [],
             human_checks: [], status: "empty", opened_at: null, decisions: [], reworks: [],
             empty: $r, answered: [$r + {action: "nothing to review"}]}])
         | event({event: "gate-empty", gate: $g.id, issue: null, kind: $g.kind, choice: "nothing to review",
-                 by: "run", left_run: $g.tickets, why: $r.why}; $now))' --arg run "$RUN_ID"
+                 by: "run", left_run: $left, why: $r.why}; $now))' --arg run "$RUN_ID"
   jget '(.review_gates // [])[] | select(.status == "empty" and (.id as $id | $ids | index($id)))
     | "closed \(.id): \(.empty.why)"' --argjson ids "$(printf '%s\n' "$ids" | jq -R . | jq -sc .)"
 }
