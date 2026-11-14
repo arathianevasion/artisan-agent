@@ -143,6 +143,14 @@ ci_gate:
   timeout_minutes: 30
   worker_inputs: {}
 
+# The merge gate's time limit, in minutes (#200): how long one merge gate
+# may take. The plan step says so in one line when the expected CI minutes
+# per merge are over it, and the retro when the run's median gate was; it
+# proposes a ticket to bring the gate back under. Nothing refuses, blocks or
+# fails over it. Source: the Artisan's ruling, 2026-11-14 (#185 was deferred
+# until "CI wall time back above 6 minutes").
+merge_gate_minutes_limit: 6
+
 # The release skip (#168). On the merge gate on CI, a merge whose changes since
 # the newest green run of the gate workflow (on a commit the merge descends
 # from) are all in this list is recorded green without dispatching CI; the

@@ -56,6 +56,11 @@
 #       sends them back to triage (gate-action.sh send-back); "blocked" is
 #       any other cause. A waiting risk gate (drain.sh gate) holds only its
 #       ticket's dependents: next is still launch while the frontier has work.
+#       An urgent ticket still to dispatch (lever.sh urgent) is work too, though
+#       never on the frontier (#205): next is launch, with an "urgent: #<t>
+#       pending dispatch on the extra slot" line, or "urgent: #<t> waits
+#       for the extra slot (held by #<u>)" while another urgent ticket holds
+#       the one slot above Max Agents.
 #       Status never writes the usage guard's state and never touches the
 #       tracker for it: the guard runs in the orchestrator's sweep and in
 #       launch, and a "usage guard: <verdict>, since <time>" line says
@@ -663,9 +668,26 @@ human_checks_line() {
   [ -z "$waiting" ] || echo "Human checks waiting on a rework: $waiting"
 }
 
+# Urgent tickets (lever.sh urgent) still to dispatch, one per line: never on
+# the frontier, so status and the orchestrator's dispatch step (wave-width.sh
+# pick) look for them themselves (#205).
+urgent_pending() {
+  get -r '.tickets | to_entries[] | select(.value.urgent == true and .value.status == "queued") | .key'
+}
+
+# One line per pending urgent ticket: the first is dispatched on the one extra
+# slot above Max Agents while it is free, the rest wait for it.
+urgent_lines() {
+  get -r '(first(.tickets | to_entries[] | select(.value.urgent == true and .value.status == "in_flight") | .key) // null) as $h
+    | [.tickets | to_entries[] | select(.value.urgent == true and .value.status == "queued") | .key] as $u
+    | ($u | to_entries[])
+    | if $h == null and .key == 0 then "urgent: #\(.value) pending dispatch on the extra slot"
+      else "urgent: #\(.value) waits for the extra slot (held by #\($h // $u[0]))" end'
+}
+
 cmd_status() {
   open_run "${1:-}"
-  local last= id= attempt= wave= pid= cls= next= reconciled=1 waiting= o= parked= usage_park= reviews= stranded=
+  local last= id= attempt= wave= pid= cls= next= reconciled=1 waiting= o= parked= usage_park= reviews= stranded= urgent=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -718,7 +740,10 @@ cmd_status() {
       # An exception gate (an exception decision with its issue) holds only
       # its ticket's dependents too.
       waiting=$(get "$STATE_JQ_DEFS"'waiting_non_gate_decisions | length')
-      [ "$(get '.frontier | length')" -gt 0 ] \
+      # A pending urgent ticket is work an orchestrator dispatches, as the
+      # frontier is (#205): it is never on the frontier itself.
+      urgent=$(urgent_pending)
+      [ "$(get '.frontier | length')" -gt 0 ] || [ -n "$urgent" ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
       # An orchestrator that exited without finishing its wave: never launch.
@@ -738,6 +763,8 @@ $reviews"
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
+      # An urgent ticket to dispatch, or waiting for the extra slot (#205).
+      elif [ -n "$urgent" ]; then next=launch
       # A hands-on ticket the Artisan finished waits for its verifier and merge.
       elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
       # A ticket the Artisan took out of the run at a gate (dropped, resliced,
@@ -763,6 +790,7 @@ $reviews"
   [ "$next" = parked ] || [ "$(get '.base_park != null')" != true ] \
     || echo "parked base: $(base_red_line); merging waits, other work carries on; clear it with wave.sh unpark-base once the base is fixed"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
+  urgent_lines
   human_checks_line
   [ "$next" != stranded ] || echo "$stranded"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
@@ -945,6 +973,13 @@ EOF
     { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"
   fi
 
+  # The ticket's wave, worktree and base are written before its worker
+  # starts. A stop between the launch and its record (the orchestrator
+  # stopped at its deadline) then leaves a ticket the sweep takes the
+  # launched attempt into, so the orchestrator's exit still names it (#190).
+  apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
+    --arg t "$t" --arg wt "$wt" --arg base "$base"
+
   read_extra_args
   local caps=()
   [ -z "$turns" ] || caps+=(--max-turns "$turns")
@@ -962,8 +997,6 @@ EOF
     "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" \
       "$(awk -v now="$(state_now)" -v m="$minutes" 'BEGIN { printf "%d", now + m * 120 }')"
   fi
-  apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
-    --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
 }
 

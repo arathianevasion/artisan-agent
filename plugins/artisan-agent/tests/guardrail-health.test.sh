@@ -355,3 +355,21 @@ test_a_run_with_the_emitted_events_shows_fired_bypassed_and_never_fired() {
   assert_eq "one extra column" "$(jq -r '.guardrails[] | select(.id == "floor-1") | .bypassed[0].reason' <<<"$out")"
   assert_eq 1 "$(jq '.guardrails[] | select(.id == "quiet") | .loosen.count' <<<"$out")"
 }
+
+# #203: a run's state grows with the run; past 128 KiB (Linux, one argument)
+# or 1 MiB (macOS, all of them) jq never starts if it is passed as an
+# argument. Every report reads the states, misses and bugs as files.
+test_every_report_reads_a_run_state_over_1_mib() {
+  setup "$(g bill kb 1 '{"area":"billing"}')"
+  closing_run
+  jq '.events += [range(12000) | {event: "padding", n: ., note: ("x" * 100)}]' "$(R r1)/state.json" >"$TEST_TMPDIR/big.json"
+  mv "$TEST_TMPDIR/big.json" "$(R r1)/state.json"
+  [ "$(wc -c <"$(R r1)/state.json" | tr -d ' ')" -gt 1048576 ] || fail "the state should be over 1 MiB"
+  echo '[]' >"$TEST_TMPDIR/prs.json"; echo '[]' >"$TEST_TMPDIR/closed.json"
+  export ARTISAN_HEALTH_DIR="$TEST_TMPDIR/health"
+  assert_eq 1 "$(jq '.runs' <<<"$("$H" health --runs "$(R r1)" --record)")"
+  assert_eq 1 "$(jq '.runs' "$ARTISAN_HEALTH_DIR/latest.json")"
+  assert_eq "[]" "$(jq -c '.misses' <<<"$("$H" audit --runs "$(R r1)")")"
+  assert_eq "[]" "$(jq -c '.tickets_closed_outside_run' <<<"$("$H" backstop --runs "$(R r1)" --repo-dir "$PROJECT" --main main --prs "$TEST_TMPDIR/prs.json" --closed "$TEST_TMPDIR/closed.json")")"
+  assert_eq "90 91" "$(jq -r '[.candidates[].issue] | join(" ")' <<<"$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json")")"
+}

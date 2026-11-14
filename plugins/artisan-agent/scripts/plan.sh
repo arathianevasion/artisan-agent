@@ -380,6 +380,11 @@ cmd_render() {
               then "Expected CI time per merge: unknown (\(.note // "no completed runs of `\(.workflow)` to measure"))."
               else "Expected CI time: about \(.minutes_per_merge) minutes per merge (mean of its last \(.from_runs) completed runs), about \(.minutes_per_merge * ($p.scope | length) | ceil) minutes for this run'"'"'s \($p.scope | length) merges." end)
          end),
+        # The merge gate time limit (#200): a line, never a refusal.
+        ($p.config.merge_gate_minutes_limit as $l
+         | if .minutes_per_merge != null and $l != null and .minutes_per_merge > $l then
+             "**Over the merge gate'"'"'s time limit:** about \(.minutes_per_merge) minutes per merge against a limit of \($l) (`merge_gate_minutes_limit`)."
+           else empty end),
         "" end ),
       "### Every number this run uses",
       "| Setting | Value |",

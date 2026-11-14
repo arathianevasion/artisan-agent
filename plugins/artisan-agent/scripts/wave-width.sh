@@ -8,7 +8,11 @@
 #   wave-width.sh pick <run-dir>
 #       the tickets to dispatch now, one per line, from the frontier the
 #       reconciler last stored, in its order. Each ticket held back gets one
-#       line on stderr: "held #<t>: <why>".
+#       line on stderr: "held #<t>: <why>". A pending urgent ticket
+#       (lever.sh urgent) comes first while the one extra slot above Max
+#       Agents is free: it is never on the frontier and takes no Max Agents
+#       slot (references/run-levers.md, #205). Another waiting for that slot
+#       is held: "held #<t>: the urgent slot is taken by #<u>".
 #   wave-width.sh check <run-dir> <ticket>
 #       0 when the ticket may join the current wave; 10, with the reason on
 #       stderr, when its expected files overlap a ticket in flight or one
@@ -50,6 +54,12 @@ WIDTH_JQ="$STATE_JQ_DEFS$PATHS_JQ"'
     | [.tickets | to_entries[] | select(.key != $t)
        | select(.value.status == "in_flight" or (.value.wave != null and .value.wave == $w))
        | .key];
+  # Urgent tickets (lever.sh urgent) still to dispatch, and the one holding
+  # the extra slot above Max Agents (null while it is free).
+  def urgent_pending: [.tickets | to_entries[]
+    | select(.value.urgent == true and .value.status == "queued") | .key];
+  def urgent_holder: first(.tickets | to_entries[]
+    | select(.value.urgent == true and .value.status == "in_flight") | .key) // null;
   def in_the_way($t; $others):
     . as $s
     | first($others[] as $o | overlap($s | files($t); $s | files($o)) as $hit
@@ -81,7 +91,11 @@ cmd_pick() {
           | if $hit == null then .picked += [$t]
             else .held += ["held #\($t): overlaps #\($hit.ticket): \($hit.why)"] end
         end)
-    | (.picked[] | "pick " + .), (.held[] | "held " + .)' "$file" \
+    | ($s | urgent_holder) as $holder
+    | ($s | urgent_pending) as $urgent
+    | (if $holder == null then $urgent[0:1] else [] end) as $go
+    | ($urgent[($go | length):] | map("held #\(.): the urgent slot is taken by #\($holder // $go[0])")) as $wait
+    | (($go + .picked)[] | "pick " + .), (($wait + .held)[] | "held " + .)' "$file" \
   | while IFS= read -r line; do
       case "$line" in
         "pick "*) printf '%s\n' "${line#pick }" ;;

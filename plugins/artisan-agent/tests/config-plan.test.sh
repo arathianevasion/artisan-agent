@@ -57,6 +57,7 @@ test_defaults_hold_every_setting_from_the_ticket_table() {
   assert_eq 20 "$(jq .usage_reserve.five_hour_reserve_percent <<<"$d")" "5-hour reserve"
   assert_eq 90 "$(jq .usage_reserve.seven_day_ceiling_percent <<<"$d")" "7-day limit"
   assert_eq 10 "$(jq .stale_usage_minutes <<<"$d")" "stale usage reading"
+  assert_eq 6 "$(jq .merge_gate_minutes_limit <<<"$d")" "merge gate time limit"
   assert_eq 2 "$(jq .attempts_per_ticket <<<"$d")" "attempts per ticket"
   assert_eq 30 "$(jq .deferral_review_days <<<"$d")" "deferral review"
   assert_eq 3 "$(jq .evidence_threshold <<<"$d")" "evidence threshold"
@@ -261,7 +262,7 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \
     team_guardrails_repo estimate_multipliers minimum_estimates.claude-sonnet-5-5 \
     minimum_estimates.all host_configured orchestrator_turns.base orchestrator_turns.per_ticket \
-    orchestrator_turns.per_ci_gate; do
+    orchestrator_turns.per_ci_gate merge_gate_minutes_limit; do
     assert_contains "$out" "| $key |" "setting $key in the approval"
   done
 }

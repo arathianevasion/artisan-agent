@@ -20,6 +20,7 @@
 # with a wall-clock deadline of twice --expected-minutes. The worker runs in
 # its own process group; at the deadline, or when the runner gets TERM or INT
 # (the sweep stopping it), that group is stopped (TERM, then KILL after 5s).
+# ALRM brings the deadline forward to now: the stop is recorded as a deadline.
 # Anything the worker left running in its group is stopped when it exits.
 #
 # stream-json is what makes claude emit `rate_limit_event`s (plain json does
@@ -192,7 +193,7 @@ if [ -z "$deadline_seconds" ]; then
   deadline_seconds=$(awk -v m="$expected_minutes" 'BEGIN { s = m * 2 * 60; if (s > int(s)) s = int(s) + 1; print s }')
 fi
 
-child= code= reason= recorded= stop_requested=
+child= code= reason= recorded= stop_requested= deadline_now=
 
 write_exit_record() {
   [ -z "$recorded" ] || return 0
@@ -220,6 +221,7 @@ stop_group() { # TERM the worker's process group, then KILL what is left
 # Whatever happens to the runner short of SIGKILL, leave an exit record.
 trap 'write_exit_record' EXIT
 trap 'stop_requested=1' TERM INT
+trap 'deadline_now=1' ALRM
 
 mkdir -p "$worker_dir" "$run_dir/results/findings"
 if [ -n "$lock_from" ]; then
@@ -330,14 +332,16 @@ finish_output() {
 }
 
 reason=exited
-deadline_at=$((SECONDS + deadline_seconds))
+# SECONDS counts whole seconds, so it can tick within an instant of this
+# line: the extra second keeps the deadline from coming up to a second early.
+deadline_at=$((SECONDS + deadline_seconds + 1))
 while kill -0 "$child" 2>/dev/null; do
   if [ -n "$stop_requested" ]; then
     reason=stopped
     stop_group
     break
   fi
-  if [ "$SECONDS" -ge "$deadline_at" ]; then
+  if [ -n "$deadline_now" ] || [ "$SECONDS" -ge "$deadline_at" ]; then
     reason=deadline
     stop_group
     break
