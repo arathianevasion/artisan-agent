@@ -130,7 +130,7 @@ test_mb_a_conflict_while_building_leaves_its_ticket_out_for_the_conflict_path() 
   assert_eq 1 "$(gates)" "1 and 3 gated together"
   assert_eq '["1","3"]' "$(state_get '[.events[] | select(.event == "merge-gate")][0].tickets | tojson')"
   assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#2 left out: conflict in a.txt"
-  assert_eq '["2"]' "$(state_get '[.events[] | select(.event == "merge-batch")][0].left_out | tojson')"
+  assert_eq '["2"]' "$(state_get '[.events[] | select(.event == "merge-batch-ended")][0].left_out | tojson')"
   # Merged alone, it takes the existing conflict path: its one resolve try.
   merge_batch 2
   assert_eq 11 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
@@ -226,4 +226,27 @@ test_mb_ci_giving_a_batch_no_verdict_parks_the_run_and_unpark_lets_the_batch_mer
   merge_batch 1 2
   assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
   assert_eq "merged merged" "$(state_get '[.tickets["1","2"].status] | join(" ")')"
+}
+
+test_mb_a_ticket_named_beside_a_batch_in_progress_is_reported_not_dropped() {
+  setup_batch
+  export ARTISAN_MERGE_GATE=local
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = ("{ [ ! -e " + $d + "/slow ] || sleep $(cat " + $d + "/slow); } && sh check.sh")' \
+    --arg d "$TEST_TMPDIR"
+  ready 1 a.txt
+  ready 2 b.txt
+  ready 3 c.txt
+  echo 1 >"$TEST_TMPDIR/slow"
+  MERGE_STATUS=0
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 2 --wait 0 >/dev/null 2>&1 || MERGE_STATUS=$?
+  assert_eq 20 "$MERGE_STATUS"
+  local i=0
+  MERGE_STATUS=20
+  while [ "$MERGE_STATUS" -eq 20 ]; do
+    i=$((i + 1)); [ "$i" -le 30 ] || fail "the batch never settled"
+    merge_batch 2 3
+  done
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged merged returned" "$(state_get '[.tickets["1","2","3"].status] | join(" ")')"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#3 not merged: not in merge batch 1; merge it next"
 }

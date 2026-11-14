@@ -848,6 +848,9 @@ cmd_merge() {
   if [ "$(get '.merge_batch != null')" = true ]; then
     [ "$(get --argjson l "$list" '[.merge_batch.tickets[] | select(. as $t | $l | index($t))] | length > 0')" = true ] \
       || state_die 20 "wave.sh: not merged yet: merge batch $(get '.merge_batch.id') ($(get -r '.merge_batch.tickets | map("#" + .) | join(", ")')) is in progress; finish it first (wave.sh merge $RUN_DIR $(get -r '.merge_batch.tickets | join(" ")'))"
+    # Tickets named beside it are not in it: its report names them, to merge next.
+    BATCH_EXTRA=$(get -c --argjson l "$list" '[$l[] | select(. as $t | $b.tickets | index($t) | not)]' \
+      --argjson b "$(get -c '.merge_batch')")
     batch_run "$wait"
     return 0
   fi
@@ -1174,13 +1177,15 @@ batch_start() {
   abandon_pending_resolution "$wt"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   pre=$(git -C "$wt" rev-parse HEAD)
-  batch_build "$pre" "$list"
   id=$(( $(get '[.events[] | select(.event == "merge-batch")] | length') + 1 ))
-  apply '.merge_batch = ({id: $id, tickets: $l, attempts: $a, pre: $pre, red: null, red_record: null,
-          rebuild: false, merged: [], red_tickets: [], gates: 0, at: $now} + $b)
+  # Recorded before anything is merged, to be built (rebuild) by batch_run:
+  # a crash mid-build leaves a batch whose next call builds it again on pre,
+  # never merge commits nothing records.
+  apply '.merge_batch = {id: $id, tickets: $l, attempts: $a, pre: $pre, order: $l, commits: [],
+          red: null, red_record: null, rebuild: true, merged: [], red_tickets: [], left_out: [], gates: 0, at: $now}
     | reduce $l[] as $t (.; .tickets[$t].ci_retry = null)
-    | event({event: "merge-batch", batch: $id, tickets: $l, left_out: [$b.left_out[].ticket]}; $now)' \
-    --argjson id "$id" --argjson l "$list" --argjson a "$attempts" --arg pre "$pre" --argjson b "$BUILT"
+    | event({event: "merge-batch", batch: $id, tickets: $l}; $now)' \
+    --argjson id "$id" --argjson l "$list" --argjson a "$attempts" --arg pre "$pre"
   batch_run "$wait"
 }
 
@@ -1216,7 +1221,11 @@ batch_run() {
   local end=$((SECONDS + $1)) red= n= p=
   while :; do
     if [ "$(get '.merge_gate != null')" = true ]; then
-      if batch_await "$end"; then batch_outcome; fi
+      if batch_await "$end"; then
+        batch_outcome
+      elif [ "$SECONDS" -ge "$end" ]; then
+        state_die 20 "wave.sh: merge batch $(get '.merge_batch.id')'s gate ended without an outcome and was undone; run wave.sh merge $RUN_DIR $(get -r '.merge_batch.tickets | join(" ")') again to gate it again"
+      fi
       continue
     fi
     if [ "$(get '.merge_batch.rebuild')" = true ]; then
@@ -1342,9 +1351,9 @@ batch_merge_prefix() {
     t=$(get --argjson i "$i" '.merge_batch.order[$i]')
     c=$(get --argjson i "$i" '.merge_batch.commits[$i]')
     i=$((i + 1))
-    # Recorded already by a call cut off before it moved the batch on.
-    [ "$(get --arg t "$t" '.tickets[$t].status')" != merged ] || continue
-    "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$c"
+    # Merged already by a call cut off before it moved the batch on: the
+    # rest (cost, suite record, worktree) is done again, harmlessly.
+    [ "$(get --arg t "$t" '.tickets[$t].status')" = merged ] || "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$c"
     record_session_cost "$t" "$(get --arg t "$t" '.merge_batch.attempts[$t]')"
     apply '.tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
     worker_wt=$(get --arg t "$t" '.tickets[$t].worktree // ""')
@@ -1367,16 +1376,19 @@ batch_red_ticket() {
   local t= record= why= url=
   t=$(get '.merge_batch.order[0]')
   record=$(get -c '.merge_batch.red_record')
-  apply '.merge_batch |= (.red_tickets += [.order[0]] | .order = .order[1:] | .commits = []
-      | .rebuild = (.order | length > 0) | .red = null | .red_record = null)
-    | .tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
-  if [ "$(jq -r .mode <<<"$record")" = local ]; then
-    why="the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
-  else
-    url=$(jq -r '.url // "no run"' <<<"$record")
-    why="CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone"
+  # Blocked first, once: a call cut off after it only moves the batch on.
+  if [ "$(get --arg t "$t" '.tickets[$t].status')" != blocked ]; then
+    if [ "$(jq -r .mode <<<"$record")" = local ]; then
+      why="the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
+    else
+      url=$(jq -r '.url // "no run"' <<<"$record")
+      why="CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone"
+    fi
+    apply '.tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
+    gate_failed "$t" "$why"
   fi
-  gate_failed "$t" "$why"
+  apply '.merge_batch |= (.red_tickets += [.order[0]] | .order = .order[1:] | .commits = []
+      | .rebuild = (.order | length > 0) | .red = null | .red_record = null)'
 }
 
 # batch_park: CI gave the batch's gate no verdict. The tickets not yet merged
@@ -1415,13 +1427,16 @@ batch_end() {
 
 # batch_report: what became of each ticket, in the batch's order:
 #   #<t> merged <commit> | #<t> red | #<t> left out: conflict in <paths>; merge it alone
+# then each ticket named beside the batch (BATCH_EXTRA): #<t> not merged: ...
+BATCH_EXTRA='[]'
 batch_report() {
   get -r --arg rd "$RUN_DIR" '.merge_batch as $b | $b.tickets[] as $t
     | if ([$b.merged[] | select(.ticket == $t)] | length) > 0 then "#\($t) merged \([$b.merged[] | select(.ticket == $t)][0].commit)"
       elif ($b.red_tickets | index($t)) then "#\($t) red"
       elif ([$b.left_out[] | select(.ticket == $t)] | length) > 0
         then "#\($t) left out: conflict in \([$b.left_out[] | select(.ticket == $t)][0].paths | join(" ")); merge it alone (wave.sh merge \($rd) \($t))"
-      else "#\($t) not merged" end'
+      else "#\($t) not merged" end,
+    ($x[] | "#\(.) not merged: not in merge batch \($b.id); merge it next")' --argjson x "$BATCH_EXTRA"
 }
 
 # batch_close: log the batch's end and clear it.
