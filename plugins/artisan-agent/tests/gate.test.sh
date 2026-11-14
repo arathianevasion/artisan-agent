@@ -432,6 +432,17 @@ test_keep_all_logs_one_gate_decision_for_the_gate_with_the_union_of_the_kept_car
   assert_eq "gate-decision gate-approved" "$(state_get '[.events[].event | select(. == "gate-decision" or . == "gate-approved")] | join(" ")')"
 }
 
+test_the_keep_event_areas_are_the_union_over_the_tickets_of_the_kept_cards() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"] | .plan.tickets["4"].areas = ["auth", "billing"]'
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.review_gates[0].cards[0].ticket = "4"'
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  assert_eq '["auth","billing"]' "$(state_get '.events[] | select(.event == "gate-decision") | .areas' | jq -c .)"
+}
+
 test_keep_all_after_one_change_logs_the_changes_own_event_plus_one_keep_event_for_the_rest() {
   setup_gate
   merged_with_evidence 1
