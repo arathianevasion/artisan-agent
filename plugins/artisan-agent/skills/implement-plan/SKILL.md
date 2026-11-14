@@ -99,11 +99,11 @@ The approved scope is the run's scope, exactly: `state.sh dispatch` and `run-tic
 
 `ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh launch <run folder>` launches the next wave's orchestrator, detached, in the integration worktree, with `references/orchestrator.md` as its brief. It hands the state lock to the orchestrator for the wave and prints `orchestrator-w<wave> <attempt> <pid>`. Launching also reads the guardrail levels afresh and records their commits for the wave; the rules are in `${CLAUDE_PLUGIN_ROOT}/references/guardrails.md`, and the packet's guardrails table comes from `scripts/guardrails.sh table --run-dir <run folder>`.
 
-Then tell the Artisan in two or three lines what is running and that you'll report when the wave ends, and **end your turn**. Don't poll, sleep, wait on the orchestrator or start a monitor: the wave runs without you, and a chat that waits spends its context on nothing.
+Then start `ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh wait <run folder>` as a **background** Bash task (`run_in_background`), so the orchestrator's exit wakes you: it returns as soon as the orchestrator has ended, however it ended (exit 3 after about 110 minutes with it still running: start it again). The orchestrator itself stays detached; only this wait is a background task. Tell the Artisan in two or three lines what is running and that you'll report when the wave ends, and **end your turn**. Don't poll, sleep or start a monitor beside that wait: the wave runs without you, and a chat that waits spends its context on nothing.
 
 ### 6. When you're woken: check, report, carry on
 
-You learn what happened from files alone. Whenever you are woken (the Artisan writes, a task notification or `notify_when_idle` notice arrives, or the session resumes), run:
+You learn what happened from files alone. Whenever you are woken (the Artisan writes, the `wave.sh wait` task ends, a task notification or `notify_when_idle` notice arrives, or the session resumes), run:
 
 ```bash
 ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh status <run folder>
@@ -116,12 +116,12 @@ The first line is the orchestrator's state from its exit record (`running`, `com
 | `wait` | The wave is still running. Say so in one line, with the table if asked, and end your turn. |
 | `launch` | Show the wave digest (below), then launch the next wave (step 5) without asking: the Artisan approved the plan. |
 | `halted` | A whole wave failed and the run stopped (`references/parallel-waves.md`). Report it with the decisions waiting, each with your recommendation, and wait for the Artisan; `wave.sh launch --resume` only on their say-so. |
-| `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. |
+| `decide` | Report the wave with the decisions waiting (the table `status` prints), each with your recommendation, and wait for the Artisan. An `orchestrator-exit:` line under `next:` means the orchestrator exited without finishing its wave (below): push the notification first. |
 | `parked` | Say why, as `status` prints it (one line per reason). A hands-on ticket the Artisan is building, and work behind it, is all that is left: say which ticket and that the run waits for them; follow `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/hands-on.md`. "Waiting on N reviews": `${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`. "parked <window>" on plan usage: `${CLAUDE_PLUGIN_ROOT}/references/cost-and-usage.md`. |
 | `blocked` | Nothing is dispatchable but tickets remain (a blocker outside the run, a `ready-for-human` ticket, or the tracker was unreadable). Report it and recommend what unblocks it. |
 | `done` | Every ticket in scope is merged or closed: give the run summary (step 8). Open Human checks don't hold it (the `Human checks: N open` line); the end gate settles them. |
 
-If the orchestrator ended `failed` or `not-completed` (crash, budget, deadline), launch again: the next orchestrator reconciles from the state file and carries the same wave on.
+**The orchestrator never fails silently.** Once it has ended, `status` judges its exit once. A clean end leaves every ticket the wave dispatched merged, blocked with a decision, parked or requeued with a reason. Anything else queues an `orchestrator-exit` decision, its cause one of `nonzero-exit`, `error_max_turns`, `budget`, `deadline`, `not-completed`, `no-verdict` (a ticket returned or in flight with no verdict) or `unmerged` (verified, not merged), and status says `next: decide` with an `orchestrator-exit: <cause> in wave <n> (<tickets>): …` line. Then, at once, before you report: run `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh sweep` and send its `notify:` line as a push notification (it names the cause and the tickets; an orchestrator's exit is notified idle or not). The Artisan answers `resume` (`wave.sh launch --resume`, or `state.sh decide <run folder> <id> resume`: the next orchestrator reconciles and carries the wave on), `retry` (`state.sh decide … retry`: the decision's returned tickets go back to `queued` for fresh workers, no attempt used) or `halt` (`state.sh decide … halt`: the run halts, as above). Until they answer, `wave.sh launch` refuses with 23; never answer it for them.
 
 **The wave digest** is the status table below and the evidence table after it, never a list:
 

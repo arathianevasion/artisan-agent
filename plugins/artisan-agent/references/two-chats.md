@@ -41,7 +41,7 @@ It prints, in order:
 | Plans waiting for Engineering | Engineering | `plan` issues not yet in a run, oldest first |
 | Decisions waiting | Engineering | the waiting decisions in a run's state file |
 
-Then `ACTION` lines for the chat to act on (`gates`, `announce-changes`, `start-plan <issue> approve-envelope|envelope-approved`), and, with `--idle`, a `notify: <text>` line when a decision waits that no earlier sweep notified (a gate, a plan needing its envelope approved, a run's decision). Send the text with the PushNotification tool. The sweep remembers what it has notified in `.artisan-agent/runs/.chat/<chat>.json` (git-ignored, each chat's own) and forgets it once the decision is answered.
+Then `ACTION` lines for the chat to act on (`gates`, `announce-changes`, `start-plan <issue> approve-envelope|envelope-approved`), and, with `--idle`, a `notify: <text>` line when a decision waits that no earlier sweep notified (a gate, a plan needing its envelope approved, a run's decision). An orchestrator that exited without finishing its wave (an `orchestrator-exit` decision, #171) is notified at once, `--idle` or not, the text naming its cause and tickets. Send the text with the PushNotification tool. The sweep remembers what it has notified in `.artisan-agent/runs/.chat/<chat>.json` (git-ignored, each chat's own) and forgets it once the decision is answered.
 
 ## Plans queued behind the run lock
 
