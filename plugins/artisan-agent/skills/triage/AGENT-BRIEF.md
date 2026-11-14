@@ -44,6 +44,13 @@ A `ready-for-agent` brief's criteria hold only what an agent can show: a test, a
 
 The phrases that make a criterion read as needing a person, and the rest of the rule: `${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`.
 
+### Nothing about the PR or CI
+
+A run's workers never open PRs, and its merge gate runs the suite (or CI) on every merge, so a criterion about the PR or CI is one no worker can meet and no verifier can judge. Write what the work leaves behind in the repo instead, and leave CI out:
+
+- **Good:** "review notes committed at docs/review/<n>/"
+- **Bad:** "the PR shows the review notes"; "CI is green on the PR"
+
 ### Explicit scope boundaries
 
 State what is out of scope. This prevents the agent from gold-plating or making assumptions about adjacent features.
