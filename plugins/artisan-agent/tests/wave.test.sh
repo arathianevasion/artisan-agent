@@ -56,6 +56,8 @@ write_worker_script() {
   export FAKE_CLAUDE_SCRIPT_WORKER="$TEST_TMPDIR/worker.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_WORKER" <<'EOF'
 set -e
+# WORKER_SEES names a file for what the state says of #1 as the worker starts.
+[ -z "${WORKER_SEES:-}" ] || jq -c '.tickets["1"] | {wave, worktree}' "$ARTISAN_RUN_DIR/state.json" >"$WORKER_SEES"
 sleep "${WORKER_SLEEP:-0}"
 echo "${WORKER_TEXT:-hi}" >"${WORKER_FILE:-hello.txt}"
 git add -A && git commit -q --allow-empty -m "worker"
@@ -492,6 +494,48 @@ test_a_deadline_queues_the_decision_with_that_cause() {
   exit_wave
   assert_contains "$STATUS_OUT" "orchestrator: failed deadline"
   assert_exit_decision deadline '["1"]' "#1 returned, no verdict"
+}
+
+# #190: an orchestrator stopped at its deadline while `wave.sh dispatch` was
+# between launching a worker and recording the launch left that worker
+# running unrecorded: the ticket stayed queued, so the exit decision named no
+# ticket. Here the stop lands at exactly that point: the dispatch's first
+# write (the ticket's wave, worktree and base) is made and the worker
+# launched, and the orchestrator is gone before the launch is recorded.
+test_a_worker_launched_by_an_orchestrator_stopped_mid_dispatch_is_still_named() {
+  setup_wave
+  export ORCH_STOP=fail
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  local wt="$TEST_TMPDIR/project-wt/r1-1.1" base=""
+  base=$(git -C "$PROJECT" rev-parse run/r1)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.worktree = $wt | .base = $b | .wave = 1)' \
+    --arg wt "$wt" --arg b "$base" >/dev/null
+  git_quiet -C "$PROJECT" worktree add -b agent/1 "$wt" "$base"
+  printf 'Add hello.\n' >"$TEST_TMPDIR/prompt-1.md"
+  "$SCRIPTS/run-ticket.sh" --run-dir "$RUN_DIR" --ticket 1 --attempt 1 --prompt-file "$TEST_TMPDIR/prompt-1.md" \
+    --workdir "$wt" --estimate-usd 0.25 --expected-minutes 5 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 60
+  assert_eq queued "$(state_get '.tickets["1"].status')" "the launch was never recorded"
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_eq returned "$(state_get '.tickets["1"].status')" "the sweep took the launched attempt in"
+  assert_eq 1 "$(state_get '.tickets["1"].attempts')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "dispatch" and .ticket == "1")] | length')"
+  assert_exit_decision not-completed '["1"]' "#1 returned, no verdict"
+  # Judged once: another status queues nothing more.
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
+  assert_eq 1 "$(state_get '.decisions | length')"
+}
+
+# The dispatch's first write names the ticket's wave and worktree before its
+# worker starts, so a stop between the launch and its record leaves a ticket
+# the sweep can take in (#190).
+test_a_worker_starts_with_its_wave_and_worktree_already_recorded() {
+  setup_wave
+  export WORKER_SEES="$TEST_TMPDIR/worker-sees.json"
+  exit_wave
+  assert_eq "{\"wave\":1,\"worktree\":\"$TEST_TMPDIR/project-wt/r1-1.1\"}" "$(cat "$WORKER_SEES")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
 }
 
 test_a_clean_wave_end_queues_nothing() {
