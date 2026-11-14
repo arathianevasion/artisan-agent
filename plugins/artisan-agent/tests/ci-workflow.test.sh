@@ -56,3 +56,33 @@ test_merge_gate_judges_the_run_by_its_overall_conclusion_only() {
   printf '%s\n' "$branch" | grep -qF 'return 7' || fail "a failed run must be red (exit 7)"
   return 0
 }
+
+# --- flaky tests and the quarantine (#198) ---
+
+linux_job() {
+  awk '/^  script-tests:/ {on=1; print; next} on && /^  [^ ]/ {on=0} on {print}' "$WORKFLOW"
+}
+
+test_every_test_job_reruns_failed_tests() {
+  linux_job | grep -q 'tests/run.sh .*--rerun-failed' || fail "the Linux job must pass --rerun-failed to run.sh"
+  macos_job | grep -q 'tests/run.sh .*--rerun-failed' || fail "the macOS job must pass --rerun-failed to run.sh"
+}
+
+test_the_quarantine_is_checked_once_outside_the_matrix() {
+  local n=
+  n=$(grep -c 'tests/run.sh --check-quarantine' "$WORKFLOW" || true)
+  assert_eq 1 "$n" "run.sh --check-quarantine in the workflow"
+  assert_not_contains "$(macos_job)" "--check-quarantine" "the quarantine check must not run in the macOS matrix"
+  assert_not_contains "$(linux_job)" "--check-quarantine" "the quarantine check runs on its own, with gh, not in the container job"
+  grep -q 'issues: read' "$WORKFLOW" || fail "the quarantine check needs issues: read to see an issue's state"
+}
+
+test_the_linux_job_writes_its_step_summary_from_outside_the_tester_user() {
+  local job=
+  job=$(linux_job)
+  # The tester user can't write the runner's summary file: run.sh writes a
+  # file it can, and a later step (even after a red run) appends it.
+  printf '%s\n' "$job" | grep -q 'GITHUB_STEP_SUMMARY=/tmp/' || fail "the Linux job must point run.sh's GITHUB_STEP_SUMMARY at a file the tester can write"
+  printf '%s\n' "$job" | grep -q 'if: always()' || fail "the summary step must run after a red run too"
+  printf '%s\n' "$job" | grep -q '>> *"\$GITHUB_STEP_SUMMARY"' || fail "the summary step must append to the real step summary"
+}

@@ -13,7 +13,9 @@
 #
 # Otherwise prints the digest, Markdown:
 #   where the run is   wave, the orchestrator's state, tickets merged, cost
-#                      against the budget, halted or not; then the ticket table
+#                      against the budget, halted or not, the minutes merges
+#                      waited on CI (per merge and in total, #195); then the
+#                      ticket table
 #   what's waiting     the decisions waiting for the Artisan, as a table
 #   what changed       the events since the chat last saw the digest, as a table
 # and marks those events seen (.digest-seen in the run folder) unless --peek.
@@ -103,6 +105,10 @@ echo
 echo "Where it is: $orch; $summary. Run folder: \`$run_dir\`."
 [ "$(get '.halted != null')" != true ] \
   || get '"**Halted:** \(.halted.reason). Nothing launches until the Artisan decides."'
+ci_wait=$(jq -r "$STATE_JQ_DEFS"'ci_wait | select(.merges != [])
+  | "CI wait: \(.total_minutes) min in total; "
+    + ([.merges[] | "\(if .batch then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end) \(.minutes) min"] | join(", "))' "$FILE")
+[ -z "$ci_wait" ] || echo "$ci_wait"
 echo
 get '
   . as $s
