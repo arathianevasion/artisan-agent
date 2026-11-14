@@ -139,7 +139,10 @@ test_v_a_classifier_error_does_not_record_an_error_verdict_or_start_a_second_ver
   assert_contains "$(cat "$TEST_TMPDIR/judge.err")" "could not classify"
   assert_eq 1 "$(state_get '.tickets["1"].verifications | length')" "no second verifier"
   assert_eq "null" "$(state_get '.tickets["1"].verifications[0].verdict')" "no error verdict"
-  if "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1; then fail "start launched another verifier over an unclassifiable one"; fi
+  # Its pid never comes: start waits ARTISAN_VERIFIER_UP_SECONDS for it, then gives up (#169).
+  local began=$SECONDS
+  if ARTISAN_VERIFIER_UP_SECONDS=1 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1; then fail "start launched another verifier over an unclassifiable one"; fi
+  [ $((SECONDS - began)) -lt 5 ] || fail "start waited $((SECONDS - began))s for a pid, not the 1s set"
   assert_eq 1 "$(state_get '.tickets["1"].verifications | length')"
 }
 
@@ -508,4 +511,13 @@ test_v_align_keeps_a_guardrail_only_on_an_unmet_criterion() {
   echo '["A thing", "B thing"]' >c.json
   echo '{"acceptance": [{"criterion": "A thing", "met": true, "guardrail": "g1"}, {"criterion": "B thing", "met": false, "guardrail": "g2"}]}' >v.json
   assert_eq '[null,"g2"]' "$(python3 -I "$py" align c.json v.json missing.json | jq -c 'map(.guardrail)')"
+}
+
+test_v_a_bad_verifier_up_wait_is_a_usage_error() {
+  setup_wave
+  returned_ticket
+  local status=0 out=
+  out=$(ARTISAN_VERIFIER_UP_SECONDS=soon "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>&1) || status=$?
+  assert_eq 2 "$status" "a bad ARTISAN_VERIFIER_UP_SECONDS: $out"
+  assert_contains "$out" "ARTISAN_VERIFIER_UP_SECONDS"
 }

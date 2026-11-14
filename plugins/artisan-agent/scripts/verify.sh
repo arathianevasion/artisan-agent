@@ -67,6 +67,9 @@
 # Plan settings (state file, all optional): plan.verifier.model (default
 # claude-sonnet-5-5), plan.verifier.estimate_usd (0.5), plan.verifier.minutes
 # (15). ARTISAN_CLAUDE_ARGS and ARTISAN_MAX_BUDGET_USD apply as in wave.sh.
+# ARTISAN_VERIFIER_UP_SECONDS: how long start waits for a verifier's runner to
+# record its pid before giving up with 8 (whole seconds, default 10; tests set
+# it shorter where a pid is meant never to come).
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the state lock is held, 4 outside the scope, 6 not verified
 # (a failed attempt, or blocked), 8 still running, 14 the verifier failed and
@@ -93,6 +96,10 @@ VERIFIER_FAILURES_ALLOWED=2
 
 usage() { state_usage "$0"; }
 die() { state_die 1 "verify.sh: $*"; }
+
+VERIFIER_UP_SECONDS=${ARTISAN_VERIFIER_UP_SECONDS:-10}
+printf '%s' "$VERIFIER_UP_SECONDS" | grep -Eq '^[0-9]+$' \
+  || state_die 2 "verify.sh: ARTISAN_VERIFIER_UP_SECONDS must be whole seconds, got: $VERIFIER_UP_SECONDS"
 
 # A classifier error is never a dead session: it stops the command, and the
 # caller runs it again. Callers assign the result first (cls=$(classify ...)),
@@ -133,8 +140,8 @@ remove_worktree() { # path: a throwaway detached checkout of a committed sha
 
 # ------------------------------------------------------------------- start
 
-# The runner pid of verifier v, once it is up (up to 10s, as run-ticket.sh
-# waits). 8 when it will not come up: its launch failed, or the start that
+# The runner pid of verifier v, once it is up (up to VERIFIER_UP_SECONDS,
+# default 10s, as run-ticket.sh waits). 8 when it will not come up: its launch failed, or the start that
 # claimed it ended before recording it (its claim is then cleared). Call again.
 started_pid() { # ticket v
   local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" claim="$RUN_DIR/verify/claims/$1.$2" i=0 rec= owner=
@@ -149,7 +156,7 @@ started_pid() { # ticket v
       fi
     fi
     i=$((i + 1))
-    [ "$i" -le 100 ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet; start again, or judge it"
+    [ "$i" -le $((VERIFIER_UP_SECONDS * 10)) ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet; start again, or judge it"
     sleep 0.1
   done
   cat "$f"
