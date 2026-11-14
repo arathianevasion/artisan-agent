@@ -190,6 +190,142 @@ halt_if_wave_failed() {
       end'
 }
 
+# ------------------------------------------------- the orchestrator's exit
+
+# The orchestrator never fails silently (#171). Once it has ended, its exit is
+# judged once: a clean end to its wave leaves every ticket the wave dispatched
+# with a final status (merged, blocked with a decision, parked, or requeued
+# with a reason); anything else queues an `orchestrator-exit` decision for the
+# Artisan (resume, retry the tickets, or halt) and logs the event.
+
+# exit_cause: classify-worker.sh's line for an ended orchestrator -> the cause
+# of an unclean exit, or nothing when the session itself ended cleanly.
+exit_cause() { # classification
+  case "$1" in
+    completed*) ;;
+    "failed turns") echo error_max_turns ;;
+    "failed budget") echo budget ;;
+    "failed deadline") echo deadline ;;
+    not-completed*) echo not-completed ;;
+    *) echo nonzero-exit ;;   # error, crashed, vanished, stopped
+  esac
+}
+
+# check_orchestrator_exit: judge the ended orchestrator's exit, once (it marks
+# the orchestrator's `exit`). A handed-off one is not judged: its wave carries
+# on in the next attempt. Unfinished: a ticket of its wave still in flight,
+# returned with no passing verdict ("no-verdict"), or verified but not merged
+# ("unmerged"; not while the run is parked on CI, whose own decision holds it).
+check_orchestrator_exit() { # id attempt wave classification
+  local code="" cause=""
+  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
+        | last | . != null and .exit == null and .handoff == null')" = true ] || return 0
+  code=$(jq -r '.exit_code // "none"' "$RUN_DIR/results/$1.$2.exit.json" 2>/dev/null || echo none)
+  cause=$(exit_cause "$4")
+  apply '
+    [.tickets | to_entries[] | select(.value.wave == $w) | .key as $t | .value as $k
+     | ($k.evidence != null and $k.evidence.verdict == "pass" and $k.evidence.attempt == $k.attempts) as $passed
+     | if $k.status == "in_flight" then {ticket: $t, why: "in flight, no verdict", cause: "no-verdict"}
+       elif $k.status != "returned" then empty
+       elif ($passed | not) then {ticket: $t, why: "returned, no verdict", cause: "no-verdict"}
+       elif .ci_park == null then {ticket: $t, why: "verified, not merged", cause: "unmerged"}
+       else empty end] as $u
+    | (if $cause != "" then $cause
+       elif any($u[]; .cause == "no-verdict") then "no-verdict"
+       elif ($u | length) > 0 then "unmerged"
+       else "" end) as $c
+    | (.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+    | if $c == "" then .orchestrators[$i].exit = {clean: true, at: $now}
+      else
+        ((.decisions | length) + 1) as $d
+        | ($u | map(.ticket)) as $ts
+        | ("\($id) attempt \($a) ended \($cls) (exit code \($code))"
+           + (if ($u | length) > 0 then "; " + ($u | map("#\(.ticket) \(.why)") | join(", ")) else "" end)) as $detail
+        | .orchestrators[$i].exit = {clean: false, cause: $c, decision: $d, at: $now}
+        | .decisions += [{id: $d, kind: "orchestrator-exit", cause: $c, wave: $w, tickets: $ts,
+            detail: $detail, orchestrator: $id, attempt: $a, options: ["resume", "retry", "halt"],
+            question: "The orchestrator for wave \($w) exited without finishing its wave (\($c)): \($detail). Recommended: resume (the next orchestrator reconciles and carries the wave on); or retry \(if ($ts | length) > 0 then ($ts | map("#" + .) | join(", ")) else "its tickets" end) with fresh workers, or halt the run?",
+            status: "waiting", at: $now}]
+        | event({event: "orchestrator-exit", id: $id, attempt: $a, wave: $w, cause: $c, tickets: $ts, detail: $detail}; $now)
+      end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+}
+
+# The waiting orchestrator-exit decision's id, or nothing.
+exit_decision_waiting() {
+  get '[.decisions[] | select(.kind == "orchestrator-exit" and .status == "waiting")] | last | .id // empty'
+}
+
+# "orchestrator-exit: <cause> in wave <w> (<tickets>): <detail>; decision <id>",
+# one line per waiting decision, for status.
+exit_decision_lines() {
+  get '.decisions[] | select(.kind == "orchestrator-exit" and .status == "waiting")
+       | "orchestrator-exit: \(.cause) in wave \(.wave)\(if (.tickets | length) > 0 then " (" + (.tickets | map("#" + .) | join(", ")) + ")" else "" end): \(.detail); decision \(.id) waits (resume, retry or halt)"'
+}
+
+# apply_exit_answers: carry out the Artisan's answers to orchestrator-exit
+# decisions (state.sh decide <run-dir> <id> resume|retry|halt), once each:
+# resume carries the wave on; retry sends the decision's tickets still
+# returned back to queued for fresh workers, like steering (no attempt used);
+# halt halts the run, so launch refuses (12) until --resume.
+apply_exit_answers() {
+  apply '
+    . as $s0
+    | reduce (.decisions[] | select(.kind == "orchestrator-exit" and .status == "decided" and .applied != true)) as $d (.;
+      (if $d.choice == "retry" then
+         reduce ($d.tickets[] | select(. as $t | $s0.tickets[$t].status == "returned")) as $t (.;
+           steered($t; "retry after the orchestrator for wave \($d.wave) exited (\($d.cause))"; $now))
+       elif $d.choice == "halt" and .halted == null then
+         .halted = {wave: $d.wave, tickets: $d.tickets, at: $now,
+                    reason: "the Artisan halted the run after the orchestrator for wave \($d.wave) exited (\($d.cause))"}
+         | event({event: "halted", wave: $d.wave, tickets: $d.tickets, reason: "orchestrator-exit"}; $now)
+       else . end)
+      | .decisions |= map(if .id == $d.id then .applied = true else . end))'
+}
+
+# settle_orchestrator_exit: launch's step. Judge the last orchestrator's exit;
+# a waiting decision refuses the launch (23) unless --resume answers it
+# "resume"; then carry out any answers.
+settle_orchestrator_exit() { # id attempt wave classification resume
+  local d=""
+  [ -z "$1" ] || check_orchestrator_exit "$1" "$2" "$3" "$4"
+  d=$(exit_decision_waiting)
+  if [ -n "$d" ]; then
+    [ "$5" -eq 1 ] || state_die 23 "wave.sh: $(exit_decision_lines | tail -1); nothing launches until the Artisan answers: state.sh decide $RUN_DIR $d resume|retry|halt (or wave.sh launch --resume)"
+    apply 'decide($d; {choice: "resume", by: "Artisan"}; $now)
+      | event({event: "decided", decision: $d, kind: "orchestrator-exit", choice: "resume", by: "Artisan"}; $now)' \
+      --argjson d "$d"
+  fi
+  apply_exit_answers
+}
+
+# wave.sh wait: block until the last orchestrator has ended, for the chat to
+# run as a background task so the exit wakes it.
+cmd_wait() {
+  open_run "${1:-}"
+  shift
+  local timeout=6600 last="" cls="" waited=0 interval="${ARTISAN_WAIT_INTERVAL:-5}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --timeout) [ $# -ge 2 ] && state_is_uint "$2" || usage; timeout=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  last=$(last_orchestrator)
+  [ -n "$last" ] || { echo "orchestrator: none"; return 0; }
+  set -- $last
+  while :; do
+    cls=$(orchestrator_state "$1" "$2")
+    case "$cls" in
+      running*) ;;
+      *) echo "orchestrator: $cls (wave $3, attempt $2); run wave.sh status"; return 0 ;;
+    esac
+    [ "$waited" -lt "$timeout" ] \
+      || state_die 3 "wave.sh: the orchestrator for wave $3 is still running after ${waited}s; wait again"
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
+}
+
 # ------------------------------------------------------------------- start
 
 cmd_start() {
@@ -260,12 +396,14 @@ cmd_launch() {
     esac
   done
   local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner=
+  local -a ended=("" "" "")
   wave=1 attempt=1
   last=$(last_orchestrator)
   if [ -n "$last" ]; then
     set -- $last
     id=$1 attempt=$2 wave=$3 pid=$4
     cls=$(orchestrator_state "$id" "$attempt")
+    ended=("$id" "$attempt" "$wave")
     # A hand-off (drain.sh handoff): the running orchestrator, which recorded
     # why, launches the next one for the same wave before it exits.
     if [ "$handoff" -eq 1 ]; then
@@ -295,6 +433,12 @@ cmd_launch() {
   me=$(writer)
   state_lock "$RUN_DIR" "$me" || exit 3
   export ARTISAN_WRITER_PID=$me
+
+  # The last orchestrator's exit is judged, and the Artisan's answer carried
+  # out, before anything launches: an unclean exit never passes silently (#171).
+  if [ "$handoff" -eq 0 ]; then
+    settle_orchestrator_exit "${ended[0]}" "${ended[1]}" "${ended[2]}" "${cls:-}" "$resume"
+  fi
 
   local was_halted=0
   [ "$(get '.halted != null')" = false ] || was_halted=1
@@ -455,6 +599,9 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # The Artisan's answers to an orchestrator's unclean exit (#171), before
+      # the reconciler, so a retried ticket is back on the frontier.
+      apply_exit_answers
       # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
       "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
         || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
@@ -470,6 +617,8 @@ cmd_status() {
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
+      # The ended orchestrator's exit, judged once (#171).
+      [ -z "${id:-}" ] || check_orchestrator_exit "$id" "$attempt" "$wave" "$cls"
       # A usage park, as the guard last left it (budget.sh parked reads only).
       # The guard itself runs from the orchestrator's sweep and from launch,
       # never from here: status writes no guard state and opens no gate (#120).
@@ -484,6 +633,8 @@ cmd_status() {
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
+      # An orchestrator that exited without finishing its wave: never launch.
+      elif [ -n "$(exit_decision_waiting)" ]; then next=decide
       elif [ "$(get '.ci_park != null')" = true ]; then next=parked
         parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
       elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
@@ -516,6 +667,7 @@ $reviews"
       ;;
   esac
   echo "next: $next"
+  [ "$next" != decide ] || exit_decision_lines
   [ "$next" != parked ] || echo "$parked"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
   human_checks_line
@@ -1709,6 +1861,7 @@ case "$cmd" in
   start) cmd_start "$@" ;;
   launch) cmd_launch "$@" ;;
   status) cmd_status "$@" ;;
+  wait) cmd_wait "$@" ;;
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
   resolved) cmd_resolved "$@" ;;
