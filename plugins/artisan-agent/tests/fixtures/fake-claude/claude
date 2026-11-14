@@ -19,7 +19,12 @@
 #               orchestrator, once its script has run, end another way
 #               instead: turns (error_max_turns, exit 1), budget
 #               (error_max_budget_usd, exit 1), nonzero (exit 3) or hang
-#               (sleeps until its runner stops it at its deadline)
+#               (sleeps until its runner stops it at its deadline).
+#               Turns: the script gets FAKE_CLAUDE_TURNS, a file to add one
+#               line to per turn it takes, and FAKE_CLAUDE_MAX_TURNS, the
+#               --max-turns it was given (empty without one). A script that
+#               fails having taken more turns than that ends as the real one
+#               would: error_max_turns, exit 1. num_turns is the count taken.
 #   stream      like complete, but as `--output-format stream-json --verbose`
 #               prints: a system event, a rate_limit_event (the shape seen live:
 #               one window, utilization a fraction, resetsAt: in 2100, so the
@@ -77,6 +82,14 @@ rate_limit() { # window utilization resetsAt
   fi
 }
 
+# The --max-turns this session was given, or empty.
+max_turns=
+prev=
+for a in "$@"; do
+  [ "$prev" != --max-turns ] || max_turns=$a
+  prev=$a
+done
+
 write_result_file() { echo '{"criteria":[]}' >"$ARTISAN_RESULT_FILE"; }
 
 case "${FAKE_CLAUDE_MODE:-complete}" in
@@ -118,7 +131,19 @@ ARTISAN-WORKER: complete"
       verifier) script=${FAKE_CLAUDE_SCRIPT_VERIFIER:-} ;;
       *) script=${FAKE_CLAUDE_SCRIPT_WORKER:-} ;;
     esac
-    if [ -n "$script" ] && bash "$script" >>"${FAKE_CLAUDE_LOG:-/dev/null}" 2>&1; then
+    FAKE_CLAUDE_TURNS=$(mktemp "${TMPDIR:-/tmp}/fake-claude-turns.XXXXXX")
+    FAKE_CLAUDE_MAX_TURNS=$max_turns
+    export FAKE_CLAUDE_TURNS FAKE_CLAUDE_MAX_TURNS
+    ok=0
+    if [ -n "$script" ] && bash "$script" >>"${FAKE_CLAUDE_LOG:-/dev/null}" 2>&1; then ok=1; fi
+    taken=$(wc -l <"$FAKE_CLAUDE_TURNS" | tr -d ' ')
+    rm -f "$FAKE_CLAUDE_TURNS"
+    [ "$taken" -gt 0 ] || taken=6
+    if [ "$ok" -eq 0 ] && [ -n "$max_turns" ] && [ "$taken" -gt "$max_turns" ]; then
+      result error_max_turns true "$taken" ""
+      exit 1
+    fi
+    if [ "$ok" -eq 1 ]; then
       if [ "${ARTISAN_ROLE:-}" = orchestrator ]; then
         case "${FAKE_CLAUDE_ORCHESTRATOR_END:-}" in
           turns) result error_max_turns true 41 ""; exit 1 ;;
@@ -127,11 +152,11 @@ ARTISAN-WORKER: complete"
           hang) sh -c 'sleep 300; :' "fake-claude-stray:$PWD"; exit 0 ;;
         esac
       fi
-      result success false 6 "Ran the script.
+      result success false "$taken" "Ran the script.
 
 ARTISAN-WORKER: complete"
     else
-      result success false 6 "The script failed."
+      result success false "$taken" "The script failed."
     fi
     ;;
   stream)
