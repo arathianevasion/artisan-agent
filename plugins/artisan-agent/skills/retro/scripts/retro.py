@@ -5,6 +5,9 @@ kept lesson makes. retro.sh calls it; nothing here touches git or the tracker.
 Usage (python3 -I retro.py <command> ...):
   facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>]
       the run's facts and signals as JSON (below)
+  gate-costs <state.json>
+      what the merge gates cost and how long gates waited on the Artisan,
+      as the Markdown table the retro's Signals show (the run summary's)
   check <lessons.json> <threshold>
       the preparer's lessons, checked and normalised: each gets its home,
       and judgement calls become questions. Exit 1 with one line per problem
@@ -396,7 +399,8 @@ def gate_costs_table(g, w):
         red = "%s: own failure %s · red base %s · flaky %s · no verdict %s" % (
             r["total"], r["own"], r["base"], r["flaky"], r["no_verdict"])
         not_run = "skipped %s · reused %s" % (g["not_run"]["skipped"], g["not_run"]["reused"])
-    artisan = ("%s min over %d decisions (longest %s min)" % (w["minutes"], w["decisions"], w["longest_minutes"])
+    artisan = ("%s min over %d decision%s (longest %s min)" % (
+        w["minutes"], w["decisions"], "" if w["decisions"] == 1 else "s", w["longest_minutes"])
                if w["minutes"] is not None else "-")
     rows = [("Merge gates run", run), ("Waiting on merge gates", wait), ("Red gates by cause", red),
             ("Gates not run", not_run), ("Waiting on the Artisan", artisan)]
@@ -651,6 +655,11 @@ def main(argv):
     cmd, args = argv[1], argv[2:]
     if cmd == "facts" and 2 <= len(args) <= 4:
         print(json.dumps(facts(*(args + [None] * (4 - len(args)))), indent=2))
+        return 0
+    if cmd == "gate-costs" and len(args) == 1:
+        s = load(args[0])
+        merged = len([t for t in (s.get("tickets") or {}).values() if t.get("status") == "merged"])
+        print(gate_costs_table(merge_gate_costs(s, merged), artisan_wait(s)))
         return 0
     if cmd == "check" and len(args) == 2:
         return check(args[0], int(args[1]))
