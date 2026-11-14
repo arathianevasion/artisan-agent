@@ -445,3 +445,21 @@ Q
 test_check_quarantine_without_a_quarantine_file_passes() {
   assert_status 0 "$TESTS_DIR/run.sh" --check-quarantine "$FIXTURES/passing"
 }
+
+test_a_rerun_test_that_reads_stdin_cannot_swallow_the_other_reruns() {
+  local out= status=0
+  mkdir "$TEST_TMPDIR/stdin"
+  cat >"$TEST_TMPDIR/stdin/sample.test.sh" <<'T'
+test_a_reads_stdin_fails_once() {
+  cat >/dev/null
+  [ -e "$FLAKY_STATE" ] || { : >"$FLAKY_STATE"; fail "first run fails"; }
+}
+test_b_always_fails() { fail "fails every time"; }
+T
+  out=$(FLAKY_STATE="$TEST_TMPDIR.flaky" "$TESTS_DIR/run.sh" --rerun-failed "$TEST_TMPDIR/stdin" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 1 "$status" "exit status: $out"
+  assert_contains "$out" "FLAKY sample: test_a_reads_stdin_fails_once"
+  assert_contains "$out" "FAIL sample: test_b_always_fails"
+  assert_contains "$out" "0 passed, 1 failed, 1 flaky"
+}

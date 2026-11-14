@@ -349,7 +349,9 @@ flaky=0
 if [ -s "$resdir/rerun" ]; then
   while read -r i; do
     { read -r file; read -r name; } <"$resdir/$i.test"
-    "$BASH" "$0" --run-one "$resdir" "$file" "$name" "r$i"
+    # Stdin from /dev/null, as under xargs: a test that reads stdin must not
+    # eat the rest of the rerun list.
+    "$BASH" "$0" --run-one "$resdir" "$file" "$name" "r$i" </dev/null
     label=$(cat "$resdir/$i.label")
     if [ "$(cat "$resdir/r$i.status")" = 0 ]; then
       echo "FLAKY $label"
