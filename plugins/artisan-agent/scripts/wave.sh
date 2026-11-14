@@ -749,6 +749,16 @@ failure_evidence() {
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
+  # A red CI merge gate (#176): the tests it failed, read from the CI log.
+  get --arg t "$t" --argjson p "$p" '.tickets[$t].failures[] | select(.attempt == $p and .kind == "ci") | .ci
+    | (.failing_tests // {tests: [], total: 0}) as $f
+    | "- The merge gate ran the full suite on CI with your work merged, and it went red (\(.conclusion // "red") on \(.url // "no run")). The failing tests\(if $f.truncated then " (the first \($f.tests | length) of \($f.total))" else "" end), as job: place name: message:",
+      ($f.tests[] | "    - \(.job): \([.where, .name] | map(select(. != null)) | join(" "))\(if .message then ": \(.message)" else "" end)"),
+      (if $f.tests == [] then
+         (if ($f.excerpt // []) != [] then "    No test could be named from the log; its last error lines:", ($f.excerpt[] | "    - \(.)")
+          else "    No failing test could be read from the log\(if $f.why then " (\($f.why))" else "" end); open the run to see what failed." end)
+       else empty end),
+      "- Your covering tests passed, so the break is elsewhere in the suite: run these failing tests (or the specs they are in) yourself before you finish, as well as your own."'
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   base=$(get --arg t "$t" '.tickets[$t].base // ""')
   if [ -n "$base" ] && log=$(git -C "$MAIN" log --oneline -n 10 "$base..refs/heads/$branch" 2>/dev/null) && [ -n "$log" ]; then
@@ -793,6 +803,30 @@ join_paths() { # JSON array -> "a b c" for messages
 # branch after its PR merged (end-gate.sh urgent-finish), never the ticket's
 # own branch (#143). Its failures queue a decision instead of blocking it.
 is_urgent_sync() { [ "$(get --arg t "$1" '.tickets[$t].urgent // false')" = true ]; }
+
+# ci_red ticket why gate-record: a red CI merge gate (failure or timed_out,
+# #176) is a failed attempt of kind ci, the merge already undone: the ticket
+# is queued for a fresh worker, whose notes list the failing tests the
+# gate's record read from the CI log (failure_evidence), or, once it has
+# used its attempts, blocked with an exception decision whose gate lists
+# them (gate-action.sh). The reason names the first few.
+ci_red() {
+  local t="$1" why="$2" g="$3" names=""
+  names=$(jq -r '(.failing_tests.tests // []) as $ts | (.failing_tests.total // ($ts | length)) as $n
+    | if $ts == [] then ""
+      else "; failing: " + ([$ts[:3][] | [.where, .name] | map(select(. != null)) | join(" ")] | join(", "))
+        + (if $n > 3 then ", and \($n - 3) more" else "" end) end' <<<"$g")
+  apply 'failed_attempt($t; $r; $now)
+    | .tickets[$t].failures[-1] += {kind: "ci", ci: ($g | {run_id, url, conclusion, failing_tests})}
+    | .events[-1] += {kind: "ci"}' --arg t "$t" --arg r "$why$names" --argjson g "$g"
+}
+
+# ci_red_next ticket: what became of a ticket after ci_red, for a message.
+ci_red_next() {
+  get -r --arg t "$1" '.tickets[$t] | if .status == "queued"
+    then "a failed attempt: queued for attempt \(.attempts + 1) with the failing tests in its notes"
+    else "a failed attempt, its last: blocked, with an exception decision" end'
+}
 
 # gate_failed ticket reason: the merge was undone. A ticket is blocked; an
 # urgent ticket's main sync queues a decision (its PR is merged already).
@@ -1105,8 +1139,13 @@ finish_gate() {
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
-        gate_failed "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
-        state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
+        why="CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
+        if is_urgent_sync "$t"; then
+          gate_failed "$t" "$why"
+          state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
+        fi
+        ci_red "$t" "$why" "$GATE_JSON"
+        state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url); $(ci_red_next "$t")"
       fi
       why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
       minutes=$(ci_setting timeout_minutes)
@@ -1333,7 +1372,8 @@ batch_outcome() {
       || GATE_JSON=$(get -c '.merge_gate | {mode: "ci", workflow, branch, sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
     record=$(jq -c --arg c "$suite" --argjson p "$([ "$rc" -eq 0 ] && echo true || echo false)" '{command: $c, passed: $p}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
-      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
+      + (if .skipped then {skipped, relied_on, why} else {} end)
+      + (if .failing_tests then {failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   record=$(jq -c --argjson b "$(get '.merge_batch.id')" --argjson ts "$(get -c '.merge_gate.tickets')" \
     '. + {batch: $b, batch_tickets: $ts}' <<<"$record")
@@ -1386,16 +1426,15 @@ batch_red_ticket() {
   local t= record= why= url=
   t=$(get '.merge_batch.order[0]')
   record=$(get -c '.merge_batch.red_record')
-  # Blocked first, once: a call cut off after it only moves the batch on.
-  if [ "$(get --arg t "$t" '.tickets[$t].status')" != blocked ]; then
+  # Handled first, once: a call cut off after it only moves the batch on.
+  if [ "$(get --arg t "$t" '.tickets[$t].status')" = returned ]; then
+    apply '.tickets[$t].suite = ($r | del(.failing_tests))' --arg t "$t" --argjson r "$record"
     if [ "$(jq -r .mode <<<"$record")" = local ]; then
-      why="the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
+      gate_failed "$t" "the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
     else
       url=$(jq -r '.url // "no run"' <<<"$record")
-      why="CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone"
+      ci_red "$t" "CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone" "$record"
     fi
-    apply '.tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
-    gate_failed "$t" "$why"
   fi
   apply '.merge_batch |= (.red_tickets += [.order[0]] | .order = .order[1:] | .commits = []
       | .rebuild = (.order | length > 0) | .red = null | .red_record = null)'
@@ -1431,7 +1470,9 @@ batch_end() {
   red=$(get '.merge_batch.red_tickets | length')
   batch_report
   batch_close
-  [ "$red" -eq 0 ] || state_die 7 "wave.sh: not merged: $(get -r '[.events[] | select(.event == "merge-batch-ended")] | last | .red | map("#" + .) | join(", ")') went red in its merge batch; blocked, with a decision queued"
+  [ "$red" -eq 0 ] || state_die 7 "wave.sh: not merged: $(get -r '. as $s | [.events[] | select(.event == "merge-batch-ended")] | last | .red
+      | map("#\(.) (\(if $s.tickets[.].status == "queued" then "a failed attempt: queued for attempt \($s.tickets[.].attempts + 1)" else "blocked, with a decision queued" end))")
+      | join(", ")') went red in its merge batch"
   exit 0
 }
 

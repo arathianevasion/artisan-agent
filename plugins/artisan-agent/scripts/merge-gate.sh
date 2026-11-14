@@ -347,7 +347,7 @@ function noline(w) { sub(/:[0-9]+$/, "", w); return w }
   # Playwright: "  1) [project] › file:line:col › title ───"
   if (t ~ /^[0-9]+\) /) {
     r = substr(t, index(t, ") ") + 2)
-    if (r ~ /^\[[^]]*\] /) r = substr(r, index(r, "] ") + 2)
+    if (substr(r, 1, 1) == "[" && (i = index(r, "] ")) > 0) r = substr(r, i + 2)
     if (index(r, "› ") == 1) r = substr(r, length("› ") + 1)
     if ((i = index(r, " › ")) > 0) {
       w = substr(r, 1, i - 1); nm = substr(r, i + length(" › "))

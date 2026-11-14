@@ -71,23 +71,30 @@ test_mb_three_green_tickets_ready_together_are_gated_by_one_ci_run_and_all_merge
   [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran on this machine"
 }
 
-test_mb_one_red_ticket_in_a_batch_of_four_is_found_in_three_more_gates_and_only_it_is_blocked() {
+test_mb_one_red_ticket_in_a_batch_of_four_is_found_in_three_more_gates_and_only_it_is_charged_a_failed_attempt() {
   setup_batch
   echo BROKEN >"$FAKE_GH_DIR/ci-red-if-file"
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
   ready 1 a.txt
   ready 2 b.txt
   ready 3 BROKEN
   ready 4 d.txt
   merge_batch 1 2 3 4
   assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
-  assert_eq "merged merged blocked merged" "$(state_get '[.tickets["1","2","3","4"].status] | join(" ")')"
+  assert_eq "merged merged queued merged" "$(state_get '[.tickets["1","2","3","4"].status] | join(" ")')"
   # The whole batch, then [1,2] green, [3] red, and 4 merged afresh without 3.
   assert_eq 4 "$(gates)" "found in at most 3 more gates"
   assert_eq '[["1","2","3","4"],["1","2"],["3"],["4"]]' \
     "$(state_get '[.events[] | select(.event == "merge-gate") | .tickets] | tojson')"
-  # Only the red ticket gets the red handling: blocked, with a decision, naming the run.
-  assert_eq '["3"]' "$(state_get '[.decisions[] | select(.kind == "exception") | .ticket] | tojson')"
-  assert_contains "$(state_get '.tickets["3"].blocked_reason')" "CI went red after merging (failure on https://github.com/local/sample/actions/runs/"
+  # Only the red ticket gets the red handling (#176): a failed attempt of
+  # kind ci, with attempts left, so queued with the failing tests; no decision.
+  assert_eq '[]' "$(state_get '[.decisions[] | select(.kind == "exception") | .ticket] | tojson')"
+  assert_eq "0 0 1 0" "$(state_get '[.tickets["1","2","3","4"].failures | length] | join(" ")')" "only the culprit is charged"
+  assert_eq ci "$(state_get '.tickets["3"].failures[0].kind')"
+  assert_contains "$(state_get '.tickets["3"].failures[0].reason')" "CI went red after merging (failure on https://github.com/local/sample/actions/runs/"
+  assert_contains "$(state_get '.tickets["3"].failures[0].reason')" "merge batch 1"
+  assert_eq "tests/save.spec.ts:48" "$(state_get '.tickets["3"].failures[0].ci.failing_tests.tests[0].where')"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "#3 (a failed attempt: queued for attempt 2) went red in its merge batch"
   assert_eq "ci false failure" "$(state_get '.tickets["3"].suite | "\(.mode) \(.passed) \(.conclusion)"')"
   assert_eq "1 1 1 1" "$(state_get '[.tickets["1","2","3","4"].attempts] | join(" ")')" "a batch run counts against no attempt"
   # The integration branch holds 1, 2 and 4, never 3.
