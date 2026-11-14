@@ -236,6 +236,51 @@ test_a_second_urgent_ticket_waits_for_the_slot() {
   assert_eq in_flight "$(state_get '.tickets["4"].status')"
 }
 
+# #205: the orchestrator's dispatch step, not only its wait step, dispatches a
+# pending urgent ticket, so a wave with nothing else to do still sends it out.
+# Ticket 1 is blocked: the frontier is empty and nothing is in flight.
+setup_urgent_alone() {
+  setup_levers
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] += {status: "blocked", blocked_reason: "held"}'
+  "$L" urgent "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 >/dev/null
+}
+
+test_the_dispatch_step_names_a_pending_urgent_ticket_with_an_empty_frontier_and_nothing_in_flight() {
+  setup_urgent_alone
+  assert_eq "" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR")" "the frontier still leaves urgent tickets out"
+  assert_eq 3 "$("$SCRIPTS/wave-width.sh" pick "$RUN_DIR" 2>/dev/null)"
+}
+
+test_status_lists_a_pending_urgent_ticket_and_its_next_is_launch() {
+  setup_urgent_alone
+  local out=""
+  out=$("$W" status "$RUN_DIR" 2>/dev/null)
+  assert_contains "$out" "next: launch"
+  assert_contains "$out" "urgent: #3 pending dispatch on the extra slot"
+}
+
+test_a_second_urgent_ticket_waits_for_the_slot_in_status_and_in_the_dispatch_step() {
+  setup_urgent_alone
+  export WORKER_SLEEP=30
+  "$L" urgent "$RUN_DIR" 4 --model claude-sonnet-5-5 --estimate-usd 0.25 >/dev/null
+  "$W" dispatch "$RUN_DIR" 3 >/dev/null
+  local out=""
+  out=$("$W" status "$RUN_DIR" 2>/dev/null)
+  assert_not_contains "$out" "next: done"
+  assert_contains "$out" "urgent: #4 waits for the extra slot (held by #3)"
+  assert_not_contains "$out" "#3 pending"
+  assert_eq "" "$("$SCRIPTS/wave-width.sh" pick "$RUN_DIR" 2>"$TEST_TMPDIR/err")" "the slot is taken: nothing to dispatch"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "held #4: the urgent slot is taken by #3"
+}
+
+test_once_dispatched_an_urgent_ticket_is_listed_by_neither_command() {
+  setup_urgent_alone
+  export WORKER_SLEEP=30
+  "$W" dispatch "$RUN_DIR" 3 >/dev/null
+  assert_eq "" "$("$SCRIPTS/wave-width.sh" pick "$RUN_DIR" 2>/dev/null)"
+  assert_not_contains "$("$W" status "$RUN_DIR" 2>/dev/null)" "urgent: #3"
+}
+
 test_an_urgent_ticket_is_never_on_the_frontier_and_never_merges_into_the_integration_branch() {
   setup_levers
   "$L" urgent "$RUN_DIR" 3 --model claude-sonnet-5-5 --estimate-usd 0.25 >/dev/null
@@ -332,6 +377,15 @@ test_the_skills_urgent_step_tells_the_chat_to_pass_escalation() {
   step=$(grep -- '^- \*\*Urgent:\*\*' "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
   assert_contains "$step" "--escalation"
   assert_contains "$step" "references/run-levers.md"
+}
+
+test_the_orchestrator_dispatches_urgent_tickets_in_its_dispatch_step_and_after_each_sweep() {
+  local ref="$PLUGIN_ROOT/skills/implement-plan/references/orchestrator.md" dispatch="" wait=""
+  dispatch=$(grep -- '^2\. \*\*Dispatch\*\*' "$ref")
+  assert_contains "$dispatch" "wave-width.sh pick"
+  assert_contains "$dispatch" "urgent ticket"
+  wait=$(grep -- 'After every sweep, `$S/lever.sh pending' "$ref")
+  assert_contains "$wait" "wave.sh dispatch"
 }
 
 test_escalation_is_for_urgent_tickets_only() {

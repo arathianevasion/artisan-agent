@@ -111,3 +111,55 @@ test_only_the_stub_gh_is_called() {
   assert_eq "$GH_STUB/bin/gh" "$(command -v gh)"
   assert_contains "$(cat "$GH_STUB/calls")" "api repos/owner/repo/issues/11/dependencies/blocked_by"
 }
+
+# #206: main brought into the integration branch (--no-ff, as wave.sh does),
+# then ticket 16 dispatched urgent: its branch and base are main's tip, which
+# the integration branch reaches off its first-parent line.
+setup_urgent() {
+  setup_run
+  trap kill_workers EXIT
+  printf 'main moved\n' >"$PROJECT/main.txt"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "main moves on"
+  git_quiet -C "$PROJECT" checkout run/r1
+  git_quiet -C "$PROJECT" merge --no-ff -m "Bring main into the run branch" main
+  git_quiet -C "$PROJECT" checkout main
+  MAIN_TIP=$(git -C "$PROJECT" rev-parse main)
+  stub_issue 16 open
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.scope += ["16"] | .plan.tickets["16"].caps.deadline_seconds = 3600'
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  git_quiet -C "$PROJECT" branch agent/16 main
+  "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 16 "$(start_worker)"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["16"].urgent = true | .tickets["16"].base = $b' --arg b "$MAIN_TIP"
+}
+
+merge_events_for() { jq --arg t "$1" '[.events[]? | select(.event == "merge" and .ticket == $t)] | length' "$RUN_DIR/state.json"; }
+
+test_an_urgent_ticket_just_dispatched_from_main_is_not_merged() {
+  setup_urgent
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["16"].status')"
+  assert_eq 0 "$(merge_events_for 16)" "merge events for 16"
+}
+
+test_an_urgent_ticket_with_work_on_its_branch_is_not_merged() {
+  setup_urgent
+  git_quiet -C "$PROJECT" checkout agent/16
+  printf 'urgent\n' >"$PROJECT/t16.txt"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "ticket 16"
+  git_quiet -C "$PROJECT" checkout main
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["16"].status')"
+  assert_eq 0 "$(merge_events_for 16)" "merge events for 16"
+}
+
+test_a_ticket_whose_branch_is_still_its_base_is_never_merged() {
+  setup_urgent
+  # Not urgent, but dispatched from a commit the integration branch reaches
+  # off its first-parent line: nothing on the branch is the ticket's work.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["16"].urgent = false'
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["16"].status')"
+  assert_eq 0 "$(merge_events_for 16)" "merge events for 16"
+}

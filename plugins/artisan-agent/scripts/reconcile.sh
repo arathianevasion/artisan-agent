@@ -9,7 +9,9 @@
 #   1. marks merged every ticket in scope whose branch was merged into the
 #      integration branch (with --no-ff, so the merge commit is on its
 #      first-parent line), recording that merge commit; git is the fact, the
-#      state file only a claim;
+#      state file only a claim. Never an urgent ticket (end-gate.sh
+#      urgent-finish records it merged), nor one whose branch is still at its
+#      base (#206);
 #   2. runs the sweep (sweep.sh) over in-flight tickets and findings;
 #   3. reads each ticket in scope from the tracker (gh api): open or closed,
 #      labels, and its native blocked-by list;
@@ -78,8 +80,14 @@ reconcile() {
     first_parent=$(git -C "$REPO_DIR" rev-list --first-parent "$integration")
     for t in $(jq -r '.plan.scope[]' "$tmp"); do
       [ "$(jq -r --arg t "$t" '.tickets[$t].status' "$tmp")" = "merged" ] && continue
+      # An urgent ticket branches from main and ships on its own PR to main;
+      # end-gate.sh urgent-finish records it merged, never this check (#206).
+      [ "$(jq -r --arg t "$t" '.tickets[$t].urgent // false' "$tmp")" = "true" ] && continue
       branch=$(jq -r --arg t "$t" '.tickets[$t].branch' "$tmp")
       tip=$(git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null) || continue
+      # A branch still at the commit it was dispatched from holds no work of
+      # the ticket's, wherever the integration branch reaches that commit.
+      [ "$tip" = "$(jq -r --arg t "$t" '.tickets[$t].base // ""' "$tmp")" ] && continue
       # A branch still sitting on the integration line (dispatched, nothing
       # merged yet) is not merged work; a merged ticket comes in through a
       # --no-ff merge commit, so its tip is off the first-parent line.
