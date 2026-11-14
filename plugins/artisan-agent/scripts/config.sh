@@ -26,11 +26,14 @@ die() { printf 'config.sh: %s\n' "$*" >&2; exit 1; }
 
 command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
-project_path() {
-  local common=
+# resolve_project_path: sets PROJECT_PATH. Never call it inside $(...): die
+# would only exit that subshell and the caller would carry on with an empty path.
+PROJECT_PATH=
+resolve_project_path() {
+  local common=""
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
     || die "not inside a git repository; pass --file"
-  printf '%s/.artisan-agent/config.yml\n' "$(dirname "$common")"
+  PROJECT_PATH="$(dirname "$common")/.artisan-agent/config.yml"
 }
 
 defaults_json() {
@@ -69,11 +72,13 @@ done
 case "$cmd" in
   show)
     [ -z "$key" ] || usage
-    effective_json "${file:-$(project_path)}"
+    [ -n "$file" ] || { resolve_project_path; file=$PROJECT_PATH; }
+    effective_json "$file"
     ;;
   get)
     [ -n "$key" ] || usage
-    effective_json "${file:-$(project_path)}" \
+    [ -n "$file" ] || { resolve_project_path; file=$PROJECT_PATH; }
+    effective_json "$file" \
       | jq -e --arg k "$key" '($k | split(".")) as $p | if [paths] | index([$p]) then getpath($p) else error("no setting \($k)") end' 2>/dev/null \
       || die "no setting $key"
     ;;
@@ -83,7 +88,8 @@ case "$cmd" in
     ;;
   path)
     [ -z "$key" ] && [ -z "$file" ] || usage
-    project_path
+    resolve_project_path
+    printf '%s\n' "$PROJECT_PATH"
     ;;
   *) usage ;;
 esac

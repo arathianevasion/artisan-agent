@@ -124,7 +124,14 @@ init_write() {
         halted: null,
         events: []
       }
-    | reduce .plan.scope[] as $t (.; .tickets[$t] = new_ticket($t))' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }
+    | reduce .plan.scope[] as $t (.; .tickets[$t] = new_ticket($t))
+    # A Human check is known from the plan graph (human_check_for), in the
+    # shape reconcile.sh writes from its body marker, so it is one from the
+    # first moment of the run (references/human-checks.md). The agent ticket
+    # is read as to-plan.py reads it: "#1" is 1, "" is none.
+    | reduce (.plan.scope[] as $t | .plan.tickets[$t].human_check_for? // empty
+              | tostring | ltrimstr("#") | select(. != "") | {t: $t, for: .}) as $h (.;
+        .tickets[$h.t].human_check = {state: "open", for: $h.for})' "$plan" >"$tmp" || { rm -f "$tmp"; return 1; }
   state_commit "$run_dir" "$tmp"
 }
 
