@@ -176,6 +176,8 @@ blockers_merged() { # ticket
     || die "could not read the blockers of #$t from the tracker"
   for b in $(printf '%s' "$blockers" | jq -r '.[] | "\(.number)=\(.state | ascii_downcase)"'); do
     state=${b#*=} b=${b%%=*}
+    # A Human check in the run never holds anything up (references/human-checks.md).
+    [ "$(get --arg b "$b" "$STATE_JQ_DEFS"' is_human_check($b)')" = false ] || continue
     status=$(get --arg b "$b" '.tickets[$b].status // ""')
     if [ -n "$status" ]; then
       sha=$(get --arg b "$b" '.tickets[$b].merge_commit // ""')

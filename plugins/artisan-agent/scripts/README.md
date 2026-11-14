@@ -228,7 +228,7 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 ## Exit status
 
-Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budget.sh`'s 17 and 18, `merge-gate.sh`'s 7 and 19), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
+Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budget.sh`'s 17 and 18, `merge-gate.sh`'s 7 and 19, `end-gate.sh`'s 22), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
 
 | Code | Means | From | Do |
 | :- | :- | :- | :- |
@@ -311,7 +311,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | `gate.sh change <run-dir> <issue> <card> <choice> [--bug]` | Engineering chat | a rework ticket in the run; prints its number. `--bug` logs `bug-found` for the card's ticket | 0, 1, 2, 6 |
 | `gate.sh bug <run-dir> <ticket> --gate <id>` | either chat | logs `bug-found`: a bug the Artisan found at a gate with no card to change (the end gate, an urgent end gate) | 0, 1, 2, 4 |
 | `gate.sh guardrail <run-dir> <issue> <card> <level> <reach>` | Engineering chat | keeps the card as a guardrail to make, noted for the retro | 0, 1, 2, 6 |
-| `gate.sh check <run-dir> <n\|all> pass\|fail\|later [--gate <issue>] [--notes T] [--why W] [--not-bug]` | either chat | a Human check on its gate (a slice gate's packet lists it; the end gate while open): `pass` closes it with the result; `fail --why` opens a rework ticket on its agent ticket and logs `bug-found` (not with `--not-bug`), printing the rework's number; `later` carries it to the next gate; `all pass --gate <issue>` passes every one on that gate (`references/human-checks.md`). Tested in `tests/human-checks.test.sh` | 0, 1, 2, 6 not an open Human check, or on no open gate |
+| `gate.sh check <run-dir> <n\|all> pass\|fail\|later [--gate <issue\|end>] [--notes T] [--why W] [--not-bug] [--by NAME]` | either chat | a Human check on its gate (a slice gate's packet lists it; the end gate while open): `pass` closes it with the result; `fail --why` opens a rework ticket on its agent ticket and logs `bug-found` (not with `--not-bug`), printing the rework's number; `later` carries it to the next gate; `all pass --gate <issue>` passes every one on that gate (`references/human-checks.md`). Tested in `tests/human-checks.test.sh` | 0, 1, 2, 6 not an open Human check, or on no open gate |
 
 ## Gate actions, exception gates and parking
 

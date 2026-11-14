@@ -10,7 +10,8 @@
 #
 # Usage, from the Engineering chat once wave.sh status says `done`:
 #   end-gate.sh status <run-dir>
-#       one word: not-due (tickets remain; Human checks don't count), due, open, removed (the Artisan
+#       one word: not-due (tickets remain; Human checks don't count),
+#       due, open, removed (the Artisan
 #       removed the end gate at the plan step), approved, ended.
 #   end-gate.sh packet <run-dir>
 #       the end gate's packet, as it would be opened now.
@@ -35,7 +36,8 @@
 #   end-gate.sh defer-check <run-dir> <ticket> --why W [--by NAME] [--return CONDITION]
 #       a Human check deferred past the run (references/human-checks.md):
 #       it stays open, labelled deferred with a return condition, and no
-#       longer holds approval; event human-check-deferred.
+#       longer holds approval; event human-check-deferred. Refused (6)
+#       before the end gate is due.
 #   end-gate.sh prs <run-dir> [--json]
 #       the PRs to cut, stacked in merge order: number, branch, base, tickets.
 #   end-gate.sh cut <run-dir> <n> --body-file F [--title T]
@@ -408,6 +410,10 @@ cmd_defer_check() {
   done
   [ -n "$why" ] || usage
   [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = true ] || refuse "#$t is not a Human check of this run"
+  case "$(status_word)" in
+    due|open|removed) ;;
+    *) refuse "a Human check is deferred past the run at the end gate; it is not due yet (answer #$t at its slice gate with gate.sh check)" ;;
+  esac
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
     || refuse "Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
   agent=$(get --arg t "$t" "$STATE_JQ_DEFS"' human_check_for($t)')

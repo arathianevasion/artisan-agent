@@ -273,3 +273,51 @@ test_a_check_deferred_with_a_reason_lets_the_end_gate_approve() {
   # The PRs carry only merged work, never the check.
   assert_not_contains "$("$E" prs "$RUN_DIR" --json | jq -c '[.[].tickets[]]')" '"5"'
 }
+
+# ------------------------------------------------------- review fixes (#157)
+
+test_a_check_answered_while_a_wave_holds_the_lock_is_answered_once() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local other=
+  "$G" open "$RUN_DIR" slice-1 >/dev/null
+  other=$(start_worker)
+  "$SCRIPTS/state.sh" lock "$RUN_DIR" "$other"
+  ARTISAN_WRITER_PID=$CHAT "$G" check "$RUN_DIR" 5 pass >/dev/null 2>&1
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-5.json")"
+  # The pending answer counts already: a second one is refused.
+  assert_status 6 env ARTISAN_WRITER_PID=$CHAT "$G" check "$RUN_DIR" 5 fail --why again
+  ARTISAN_WRITER_PID=$other "$G" sync "$RUN_DIR" >/dev/null
+  assert_eq 1 "$(events human-check-passed | jq length)"
+  assert_eq 0 "$(events human-check-failed | jq length)"
+}
+
+test_a_hands_on_ticket_never_waits_on_a_human_check() {
+  setup_checks
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  # #6 lists the Human check #5 as its only blocker; made the hands-on pick.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.hands_on = {ticket: "6", focus: "x"}'
+  assert_contains "$("$SCRIPTS/human.sh" setup "$RUN_DIR")" "#6 "
+}
+
+test_status_names_the_end_gate_for_a_check_no_slice_gate_will_list() {
+  setup_checks
+  # #5 now checks #3, which is in no slice: only the end gate lists it,
+  # though the farewell slice gate is still to open.
+  jq '.body |= sub("human-check-for #1"; "human-check-for #3")' "$FAKE_GH_DIR/issue-5.json" >"$FAKE_GH_DIR/x" \
+    && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-5.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["5"].slice = null | .plan.gates[0].tickets = ["1"]'
+  merged 1
+  merged 3
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "Human checks: 1 open (end gate)"
+}
+
+test_a_check_is_deferred_only_at_the_end_gate() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  assert_status 6 "$E" defer-check "$RUN_DIR" 5 --why "too early"
+  assert_eq 0 "$(events human-check-deferred | jq length)"
+}

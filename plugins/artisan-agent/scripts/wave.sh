@@ -27,8 +27,8 @@
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
 #       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
-#       ticket table, after a "Human checks: N open (next slice gate|end
-#       gate)" line when any is open (references/human-checks.md: a Human
+#       ticket table, after a "Human checks: N open (next slice gate, end
+#       gate, or how many at each)" line when any is open (references/human-checks.md: a Human
 #       check is never waited on, so the run can be done with it open).
 #       "parked" (with a line naming it) means the merge gate
 #       on CI got no verdict ("parked ci: ...", cleared with unpark-ci), or only a hands-on
@@ -391,18 +391,26 @@ record_orchestrator_cost() { # id attempt
 }
 
 # "Human checks: N open (<where they are answered>)", when any is open
-# (references/human-checks.md): the next slice gate, or the end gate once the
-# run is done or no slice gate is left to open.
-human_checks_line() { # next
-  local n= left=
+# (references/human-checks.md): at a slice gate when one lists it now, or one
+# still to open will (its agent ticket is in that slice, or it is carried from
+# a gate that has closed); else at the end gate.
+human_checks_line() {
+  local n="" at_slice=""
   n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
   [ "$n" -gt 0 ] || return 0
-  left=$(get "$STATE_JQ_DEFS"' . as $s | [slice_gates[] | select(.kind == "slice")
-           | select(.id as $id | ($s.review_gates // []) | all(.id != $id or .status == "open"))] | length')
-  if [ "$1" = done ] || [ "$left" -eq 0 ]; then
+  at_slice=$(get "$STATE_JQ_DEFS"' . as $s | ($s.review_gates // []) as $rg
+    | [slice_gates[] | select(.kind == "slice") | select(.id as $id | $rg | all(.id != $id))] as $unopened
+    | [open_human_checks[] as $c | ($s | human_check_for($c)) as $a
+       | ($s.tickets[$c].human_check.gate // null) as $hg
+       | select(any($rg[]; .id == $hg and (.status == "open" or .status == "deferred"))
+                or any($unopened[]; .tickets | index($a))
+                or ($hg != null and ($unopened | length) > 0))] | length')
+  if [ "$at_slice" -eq 0 ]; then
     echo "Human checks: $n open (end gate)"
-  else
+  elif [ "$at_slice" -eq "$n" ]; then
     echo "Human checks: $n open (next slice gate)"
+  else
+    echo "Human checks: $n open ($at_slice at the next slice gate, $((n - at_slice)) at the end gate)"
   fi
 }
 
@@ -490,7 +498,7 @@ $reviews"
   echo "next: $next"
   [ "$next" != parked ] || echo "$parked"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
-  human_checks_line "$next"
+  human_checks_line
   [ "$next" != stranded ] || echo "$stranded"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'

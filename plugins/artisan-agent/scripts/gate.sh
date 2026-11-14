@@ -62,13 +62,15 @@
 #       dispatch in the next wave. It never passes a Human check: one left
 #       unanswered carries to the next gate.
 #   gate.sh check <run-dir> <ticket|all> pass|fail|later [--gate <issue|end>]
-#                 [--notes T] [--why W] [--not-bug] [--by NAME]
+#                 [--notes T] [--why W] [--not-bug|--bug] [--by NAME]
 #       a Human check (references/human-checks.md), on the open or deferred
 #       review gate that lists it, or on the end gate while it is open.
 #       pass: closes it with the result posted. fail (needs --why): a bug
 #       in its agent ticket: a rework ticket in this run (blocking the open
 #       gate's dependents and the check, as a redirect), bug-found unless
-#       --not-bug; prints the rework ticket's number; the check stays open.
+#       --not-bug (--bug, the default, says so); prints the rework ticket's
+#       number; the check stays open. An answer kept in gates/pending/
+#       while the lock is held counts: a second answer is refused (6).
 #       later: it carries to the next gate. "all pass --gate <issue>" passes
 #       every check on that gate. Events human-check-passed and
 #       human-check-failed. 6: not an open Human check, or on no open gate.
@@ -610,10 +612,16 @@ cmd_bug() {
 # that lists it, else the end gate while it is open. Prints its id; 6 when
 # the check is on no gate the Artisan can answer now.
 check_gate() { # ticket
-  local t="$1" hg=""
+  local t="$1" hg="" f=""
   [ "$(jget 'is_human_check($t)' --arg t "$t")" = true ] || state_die 6 "gate.sh: #$t is not a Human check of this run"
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
     || state_die 6 "gate.sh: Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
+  # An answer given while the lock was held counts already (gates/pending/).
+  for f in "$RUN_DIR"/gates/pending/*.json; do
+    [ -f "$f" ] || continue
+    ! jq -e --arg t "$t" '.type == "check" and .ticket == $t and .verdict != "later"' "$f" >/dev/null \
+      || state_die 6 "gate.sh: Human check #$t is already answered ($(jq -r .verdict "$f")); the answer is folded in at the next sync"
+  done
   hg=$(get --arg t "$t" '.tickets[$t].human_check.gate // ""')
   if [ -n "$hg" ] && [ "$(get --arg g "$hg" 'any((.review_gates // [])[]; .id == $g and (.status == "open" or .status == "deferred"))')" = true ]; then
     printf '%s\n' "$hg"
