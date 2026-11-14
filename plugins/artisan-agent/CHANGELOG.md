@@ -2,6 +2,15 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.4.1 (2026-11-14)
+
+Pilot fix: workers were all counted as crashed, because stream-json events were found by line prefix.
+
+- `run-ticket.sh` finds stream-json events by parsed type, not by the start of the line, so a result event with `type` after other keys is read (#151).
+- `sweep.sh repair` and `gate-action.sh repaired` (#151): the repair rebuilds `output.json` from the saved stream and takes back the attempts the miscount failed; `repaired` closes the exception gate the miscount opened as resolved.
+- The fake `claude`'s rate-limit reset dates move to 2100, so the usage guard no longer reads the window as already reset.
+- This release also carries the work merged to main since 0.4.0 (#116 to #150); its full notes come with 0.5.0.
+
 ## 0.4.0 (2026-11-11)
 
 Wave 4: parallel waves, independent verification, worker questions and the context drain.
