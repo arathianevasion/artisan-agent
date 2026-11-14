@@ -321,3 +321,64 @@ test_a_check_is_deferred_only_at_the_end_gate() {
   assert_status 6 "$E" defer-check "$RUN_DIR" 5 --why "too early"
   assert_eq 0 "$(events human-check-deferred | jq length)"
 }
+
+# ------------------------------------------- a failed check's open rework (#165)
+
+test_a_check_with_an_open_rework_refuses_a_second_answer_and_counts_once() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local r= out= rc=0 v=
+  "$G" open "$RUN_DIR" slice-1 >/dev/null
+  r=$("$G" check "$RUN_DIR" 5 fail --why "The greeting wraps onto two lines")
+  out=$("$G" check "$RUN_DIR" 5 fail --why "Still wraps" 2>&1) || rc=$?
+  assert_eq 6 "$rc" "a second fail while the rework is open"
+  assert_contains "$out" "Human check #5 already failed at slice-1; rework #$r is open"
+  for v in pass later; do
+    rc=0
+    out=$("$G" check "$RUN_DIR" 5 "$v" 2>&1) || rc=$?
+    assert_eq 6 "$rc" "$v while the rework is open"
+    assert_contains "$out" "rework #$r is open"
+  done
+  assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-5.json")" "a refused pass never closes the check"
+  assert_eq 1 "$(state_get '.tickets["5"].human_check.answers | length')"
+  assert_eq 1 "$(events human-check-failed | jq length)"
+  assert_eq 1 "$(events rework | jq length)"
+  assert_eq 1 "$(events bug-found | jq length)"
+  assert_eq 0 "$(events human-check-passed | jq length)"
+  assert_eq 0 "$(find "$RUN_DIR/gates/pending" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
+}
+
+test_check_all_skips_a_check_whose_rework_is_open_and_names_it() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local num= r= out= rc=0
+  num=$("$G" open "$RUN_DIR" slice-1)
+  r=$("$G" check "$RUN_DIR" 5 fail --why "The greeting wraps onto two lines")
+  out=$("$G" check "$RUN_DIR" all pass --gate "$num" 2>&1) || rc=$?
+  assert_eq 6 "$rc" "nothing left to answer"
+  assert_contains "$out" "skipped Human check #5: it already failed at slice-1; rework #$r is open"
+  assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-5.json")"
+  assert_eq 0 "$(events human-check-passed | jq length)"
+  assert_eq 1 "$(state_get '.tickets["5"].human_check.answers | length')"
+}
+
+test_after_the_rework_merges_the_check_is_answered_at_the_next_gate() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local num= r= num2=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  r=$("$G" check "$RUN_DIR" 5 fail --why "The greeting wraps onto two lines")
+  merged "$r"
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  merged 4
+  num2=$("$G" open "$RUN_DIR" slice-2)
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num2.json")" "#5 (Human check"
+  "$G" check "$RUN_DIR" 5 pass >/dev/null
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-5.json")"
+  assert_eq slice-2 "$(events human-check-passed | jq -r '.[0].gate')"
+  assert_eq 2 "$(state_get '.tickets["5"].human_check.answers | length')"
+  assert_eq 1 "$(events human-check-failed | jq length)"
+}

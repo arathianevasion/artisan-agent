@@ -71,9 +71,12 @@
 #       --not-bug (--bug, the default, says so); prints the rework ticket's
 #       number; the check stays open. An answer kept in gates/pending/
 #       while the lock is held counts: a second answer is refused (6).
+#       A failed check whose rework hasn't merged refuses every answer (6);
+#       it is answered again at the next gate once the rework merges.
 #       later: it carries to the next gate. "all pass --gate <issue>" passes
-#       every check on that gate. Events human-check-passed and
-#       human-check-failed. 6: not an open Human check, or on no open gate.
+#       every check on that gate, skipping (and naming) one whose rework is
+#       open. Events human-check-passed and human-check-failed. 6: not an
+#       open Human check, its rework is open, or on no open gate.
 #   gate.sh holds <run-dir> <ticket>
 #       prints "held" when the ticket is in a slice gate that is due and not
 #       yet approved (its dependents wait), else "free". A caller treats
@@ -615,14 +618,26 @@ cmd_bug() {
 
 # ------------------------------------------------------------ Human checks
 
+# A Human check failed and waiting on its rework (#165): its last answer is a
+# fail whose rework ticket hasn't merged. Prints "<gate> <rework>", or
+# nothing; once the rework merges (or leaves the run) the check is answered
+# again at the next gate that lists it.
+check_rework_open() { # ticket -> "<gate> <rework>"
+  jget '. as $s | (.tickets[$t].human_check.answers // []) | last
+    | select(. != null and .verdict == "fail" and (.rework // null) != null)
+    | .rework as $r | select($s | gate_done($r) | not) | "\(.gate) \($r)"' --arg t "$1"
+}
+
 # The gate a Human check is answered at: the open or deferred review gate
 # that lists it, else the end gate while it is open. Prints its id; 6 when
 # the check is on no gate the Artisan can answer now.
 check_gate() { # ticket
-  local t="$1" hg="" f=""
+  local t="$1" hg="" f="" open=""
   [ "$(jget 'is_human_check($t)' --arg t "$t")" = true ] || state_die 6 "gate.sh: #$t is not a Human check of this run"
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
     || state_die 6 "gate.sh: Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
+  open=$(check_rework_open "$t") || exit $?
+  [ -z "$open" ] || state_die 6 "gate.sh: Human check #$t already failed at ${open% *}; rework #${open#* } is open"
   # An answer given while the lock was held counts already (gates/pending/).
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
@@ -706,7 +721,7 @@ $BY checked the build of #$agent by hand and it failed:
 cmd_check() {
   [ $# -ge 3 ] || usage
   open_run "$1"
-  local which="$2" verdict="$3" want="" notes="" not_bug=0 t="" list="" g=""
+  local which="$2" verdict="$3" want="" notes="" not_bug=0 t="" list="" g="" open=""
   shift 3
   local -a rest=()
   while [ $# -gt 0 ]; do
@@ -732,6 +747,13 @@ cmd_check() {
   fi
   if [ "$which" = all ]; then
     for t in $(jget 'open_human_checks[]'); do
+      open=$(check_rework_open "$t") || exit $?
+      if [ -n "$open" ]; then
+        # Named, not answered: the failed answer stands until the rework merges.
+        [ -z "$want" ] || [ "${open% *}" = "$want" ] || continue
+        echo "gate.sh: skipped Human check #$t: it already failed at ${open% *}; rework #${open#* } is open"
+        continue
+      fi
       g=$( (check_gate "$t") 2>/dev/null) || continue
       [ -z "$want" ] || [ "$g" = "$want" ] || continue
       list="$list $t"
