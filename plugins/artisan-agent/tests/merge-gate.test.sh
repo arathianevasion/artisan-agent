@@ -580,6 +580,29 @@ test_mg_skip_the_last_matching_pattern_decides_and_bang_denies() {
   assert_eq "0 true" "$SK_RC $(jq -r .skipped <<<"$SK_OUT")" "without the ! a plugins doc is allowed"
 }
 
+# The repo's own list, read through config.sh, against a release like v0.6.1
+# (plugin.json and the plugin's CHANGELOG.md) and against a script change.
+test_mg_skip_this_repos_allowlist_lets_a_release_like_v0_6_1_go_and_a_script_change_dispatch() {
+  local cfg="$PLUGIN_ROOT/../../.artisan-agent/config.yml" args=() p=""
+  [ -f "$cfg" ] || fail "no repo config at $cfg"
+  while IFS= read -r p; do args+=(--skip-path "$p"); done \
+    < <("$PLUGIN_ROOT/scripts/config.sh" get merge_gate_skip_paths --file "$cfg" | jq -r '.[]')
+  [ "${#args[@]}" -gt 0 ] || fail "the repo config has no merge_gate_skip_paths"
+  local pj=plugins/artisan-agent/.claude-plugin/plugin.json cl=plugins/artisan-agent/CHANGELOG.md
+  setup_skip
+  skip_commit "$pj" "$cl"
+  skip_gate "${args[@]}"
+  assert_eq "0 true" "$SK_RC $(jq -r .skipped <<<"$SK_OUT")" "a v0.6.1-style release skips: $SK_OUT"
+  if dispatched; then fail "CI was dispatched for a release"; fi
+  rm -rf "$TEST_TMPDIR/tracker" "$TEST_TMPDIR/skip" "$TEST_TMPDIR/skip-origin.git"
+  setup_skip
+  skip_commit "$pj" "$cl" plugins/artisan-agent/scripts/merge-gate.sh
+  skip_gate "${args[@]}"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "a scripts change was not dispatched"
+  assert_eq null "$(jq '.skipped // null' <<<"$SK_OUT")"
+}
+
 test_mg_skip_a_merge_that_only_changed_release_files_is_merged_with_the_green_run_named() {
   setup_ci
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.merge_gate_skip_paths = ["hello.txt"]'

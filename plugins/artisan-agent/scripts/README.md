@@ -133,7 +133,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
 | extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
-| release skip on the CI merge gate | `merge_gate_skip_paths` (a list of globs, `*` crossing `/`; the last match wins, a leading `!` means never skip) | none (every merge runs CI); this repo lists its version files, the changelog and `*.md` outside `plugins/` |
+| release skip on the CI merge gate | `merge_gate_skip_paths` (a list of globs, `*` crossing `/`; the last match wins, a leading `!` means never skip) | none (every merge runs CI); this repo lists its version files, the plugin's changelog and `*.md` outside `plugins/` (the plugin's own files come after `!plugins/*`, which would otherwise deny them) |
 
 ## Overrides are for this run only
 

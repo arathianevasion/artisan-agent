@@ -124,10 +124,12 @@ ci_gate:
 # last pattern to match a path decides, and a leading ! means "never skip on
 # this". Empty by default: every merge runs CI. Never skips an ordinary
 # ticket in practice, because a ticket changes scripts, tests or skills.
-# Example (a plugin's release: version files and the changelog):
+# Example (a plugin's release: version files and the changelog). Put the
+# plugin's own files after "!plugins/*", or that pattern denies them:
 #   merge_gate_skip_paths:
 #     - "*.md"
 #     - "!plugins/*"
+#     - plugins/my-plugin/CHANGELOG.md
 #     - plugins/my-plugin/.claude-plugin/plugin.json
 #     - .claude-plugin/marketplace.json
 merge_gate_skip_paths: []
