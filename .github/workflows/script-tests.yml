@@ -3,6 +3,12 @@ name: Script tests
 # CI runs on pull requests and on demand only, never on a plain push. A session on
 # the Mac gates locally until it opens a PR; a session on the VM dispatches this
 # workflow against a throwaway branch to gate a merge.
+#
+# Linux is one job. macOS is three: a matrix over shard 1, 2 and 3 of 3, each running
+# tests/run.sh --shard <i>/3 on its own macos-latest runner, so together they run every
+# test exactly once and the macOS job no longer sets the wait. fail-fast is off so every
+# failing shard reports. A run's overall conclusion is red if any shard is red, and that
+# is all scripts/merge-gate.sh reads.
 on:
   pull_request:
     # Documentation outside the plugin isn't read by any test.
@@ -51,11 +57,15 @@ jobs:
           sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"'
 
   script-tests-macos:
-    name: Script tests (macOS, Apple bash 3.2)
+    name: Script tests (macOS, Apple bash 3.2, ${{ matrix.shard }}/3)
     # Apple's own /bin/bash 3.2: the only build that reproduces the EXIT-trap masking
     # #126 guards against (a bash 3.2 built from source on Linux doesn't).
     runs-on: macos-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - name: Show bash
@@ -66,4 +76,4 @@ jobs:
           git config --global user.name CI
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
-          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"
+          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --shard ${{ matrix.shard }}/3
