@@ -38,6 +38,34 @@ existing_dir() {
   printf '%s' "$d"
 }
 
+# True when pid is one of this hook's ancestors. `ps -o ppid= -p` reads the
+# same on BSD (macOS) and Linux ps.
+is_ancestor() { # pid
+  local p=$PPID depth=0
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$depth" -lt 64 ]; do
+    [ "$p" = "$1" ] && return 0
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# True when the lock holder is this hook's own session. The chat holds the
+# lock with its Claude process's pid between waves (implement-plan, "Hold the
+# run"), and that process runs the hook, so the pid is an ancestor. While a
+# wave runs, the orchestrator's runner holds it instead: it is detached, but
+# its command line names the chat it took the lock from
+# (`run-ticket.sh ... --lock-from <chat pid>`, wave.sh launch).
+holding_session() { # lock pid
+  local args="" from=""
+  is_ancestor "$1" && return 0
+  args=$(ps -ww -o args= -p "$1" 2>/dev/null) || return 1
+  case "$args" in *run-ticket.sh*--lock-from\ *) ;; *) return 1 ;; esac
+  from=${args#*--lock-from }; from=${from%% *}
+  case "$from" in "" | *[!0-9]*) return 1 ;; esac
+  is_ancestor "$from"
+}
+
 case "$mode" in
   main-edit)
     file=$(field '.tool_input.file_path'); [ -n "$file" ] || file=$(field '.tool_input.notebook_path')
@@ -62,6 +90,9 @@ case "$mode" in
     holder=$("$SCRIPTS/run-lock.sh" check "$cwd" 2>/dev/null) && exit 0
     [ -n "$holder" ] || exit 0          # not a repo, or the check itself failed: do not block
     run_id=${holder% *}; pid=${holder#* }
+    # The session that holds the run is continuing or adding to its own run,
+    # whatever the wording (#153).
+    holding_session "$pid" && exit 0
     # Resuming the open run is not a second run: a bare call, "resume" or the
     # run's id opens with its digest (skills/implement-plan/references/context-drain.md).
     # (With no arguments the request is the prompt itself: drop the command.)

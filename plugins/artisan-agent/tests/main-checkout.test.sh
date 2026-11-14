@@ -347,3 +347,68 @@ test_resuming_the_open_run_passes_the_run_lock() {
     '{hook_event_name:"UserPromptExpansion",command_name:"implement-plan",command_args:"resume r2",cwd:$c}' \
     | "$PROTECT" run-start)" '"decision":"block"'
 }
+
+# #153: the session that holds the run is never refused. Its Claude process
+# holds the lock (implement-plan, "Hold the run") and runs the hook, so the
+# lock's pid is an ancestor of the hook's process. hold_lock_as_ancestor
+# writes a script that takes the lock with its own pid and runs the hook from
+# inside it: directly (the holder is the hook's parent) or through `sh -c`
+# (its grandparent, as a host that runs hooks through a shell would).
+hold_lock_as_ancestor() { # shape: direct|shell
+  mkdir -p "$REPO/.artisan-agent/runs/r1"
+  local s="$TEST_TMPDIR/holder.sh"
+  if [ "$1" = shell ]; then
+    printf '#!/bin/bash\nln -s "$$" "%s"\nsh -c '"'"'"$1" run-start'"'"' sh "%s"\nrc=$?\nrm -f "%s"\nexit $rc\n' \
+      "$REPO/.artisan-agent/runs/r1/state.lock" "$PROTECT" "$REPO/.artisan-agent/runs/r1/state.lock" >"$s"
+  else
+    printf '#!/bin/bash\nln -s "$$" "%s"\n"%s" run-start\nrc=$?\nrm -f "%s"\nexit $rc\n' \
+      "$REPO/.artisan-agent/runs/r1/state.lock" "$PROTECT" "$REPO/.artisan-agent/runs/r1/state.lock" >"$s"
+  fi
+  chmod +x "$s"
+  HOLDER_SCRIPT=$s
+}
+
+test_the_holding_session_passes_whatever_it_asks_in_both_process_tree_shapes() {
+  make_repo; stub_gh
+  local shape="" a=""
+  for shape in direct shell; do
+    hold_lock_as_ancestor "$shape"
+    for a in "Carry on run r1 after the #151 repair" "plan the login page" "build the retry plan"; do
+      assert_eq "" "$(run_start_args "$a" | "$HOLDER_SCRIPT")" "$shape, typed: $a"
+      assert_eq "" "$(run_start_args "$a" tool | "$HOLDER_SCRIPT")" "$shape, called: $a"
+    done
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+}
+
+# While a wave runs, the orchestrator's detached runner holds the lock, taken
+# over from the chat (`run-ticket.sh --lock-from <chat pid>`): the chat that
+# launched it still counts as the holding session; another session does not.
+fake_runner() { # lock-from pid: start a process whose command line is a runner's; sets RUNNER_PID
+  mkdir -p "$TEST_TMPDIR/runner"
+  printf '#!/bin/bash\ntrap "kill \\$c 2>/dev/null; exit 0" TERM\nsleep 60 & c=$!\nwait $c\n' >"$TEST_TMPDIR/runner/run-ticket.sh"
+  chmod +x "$TEST_TMPDIR/runner/run-ticket.sh"
+  "$TEST_TMPDIR/runner/run-ticket.sh" --role orchestrator --lock-from "$1" --run-dir x --ticket orchestrator-w1 >/dev/null 2>&1 &
+  RUNNER_PID=$!
+}
+
+test_the_holding_session_passes_while_its_wave_runner_holds_the_lock() {
+  make_repo; stub_gh
+  mkdir -p "$REPO/.artisan-agent/runs/r1"
+  local lock="$REPO/.artisan-agent/runs/r1/state.lock" out=""
+  # The chat (this test's shell, an ancestor of the hook) handed the lock on.
+  fake_runner "$$"
+  trap 'kill $RUNNER_PID 2>/dev/null || true' EXIT
+  ln -s "$RUNNER_PID" "$lock"
+  assert_eq "" "$(run_start_args "plan the login page" | "$PROTECT" run-start)" "the launching chat"
+  # A runner launched by another session.
+  kill "$RUNNER_PID"; wait "$RUNNER_PID" 2>/dev/null || true; rm -f "$lock"
+  sleep 60 >/dev/null 2>&1 &
+  OTHER_PID=$!
+  fake_runner "$OTHER_PID"
+  trap 'kill $RUNNER_PID $OTHER_PID 2>/dev/null || true' EXIT
+  ln -s "$RUNNER_PID" "$lock"
+  out=$(run_start_args "plan the login page" | "$PROTECT" run-start)
+  assert_contains "$out" '"decision":"block"'
+  assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: plan the login page"
+}
