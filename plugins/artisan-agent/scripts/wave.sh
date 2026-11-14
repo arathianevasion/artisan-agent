@@ -2090,7 +2090,7 @@ cmd_unpark_ci() {
             + (if $p.batch then {tickets: $p.tickets, batch: $p.batch} else {} end); $now)
     | .ci_park = null' --arg by "$by"
   get -r '[.events[] | select(.event == "unparked" and .reason == "ci")] | last
-    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their batch is merged and gated afresh)"
+    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their merge batch is merged and gated afresh)"
       else "unparked: #\(.ticket) merges next with the gate retried" end'
 }
 
