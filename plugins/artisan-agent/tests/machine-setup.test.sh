@@ -185,3 +185,55 @@ test_init_still_sets_up_but_exits_non_zero_when_a_tool_is_missing() {
   [ "$rc" != 0 ] || fail "init must exit non-zero when jq is missing"
   [ -f "$CLAUDE_CONFIG_DIR/artisan-agent/CODING_STANDARDS.md" ] || fail "init must still create the individual home"
 }
+
+# ---- merge-batch (#180): host.json's merge_batch, as merge-gate writes merge_gate
+
+test_merge_batch_on_and_off_write_host_json_and_a_second_call_changes_nothing() {
+  seed_machine
+  local f="$CLAUDE_CONFIG_DIR/artisan-agent/host.json" out=""
+  unset ARTISAN_MERGE_BATCH
+  out=$("$SCRIPT" merge-batch off)
+  assert_contains "$out" "changed: merge_batch is off"
+  assert_eq off "$(jq -r .merge_batch "$f")"
+  cksum "$f" >"$TEST_TMPDIR/before"
+  out=$("$SCRIPT" merge-batch off)
+  assert_contains "$out" "unchanged: merge_batch is off"
+  cksum "$f" >"$TEST_TMPDIR/after"
+  assert_eq "$(cat "$TEST_TMPDIR/before")" "$(cat "$TEST_TMPDIR/after")"
+  "$SCRIPT" merge-batch on >/dev/null
+  assert_eq on "$(jq -r .merge_batch "$f")"
+}
+
+test_merge_batch_keeps_the_other_host_json_keys() {
+  seed_machine
+  local f="$CLAUDE_CONFIG_DIR/artisan-agent/host.json"
+  mkdir -p "$(dirname "$f")"
+  echo '{"merge_gate": "local", "x": 1}' >"$f"
+  unset ARTISAN_MERGE_BATCH
+  "$SCRIPT" merge-batch off >/dev/null
+  assert_eq "local 1 off" "$(jq -r '"\(.merge_gate) \(.x) \(.merge_batch)"' "$f")"
+}
+
+test_merge_batch_with_an_invalid_value_exits_2_with_usage_and_writes_nothing() {
+  seed_machine
+  local rc=0 out=""
+  out=$("$SCRIPT" merge-batch maybe 2>&1) || rc=$?
+  assert_eq 2 "$rc"
+  assert_contains "$out" "usage: machine-setup.sh merge-batch [on|off]"
+  [ ! -e "$CLAUDE_CONFIG_DIR/artisan-agent/host.json" ] || fail "an invalid value must not write host.json"
+  rc=0; "$SCRIPT" merge-batch on off >/dev/null 2>&1 || rc=$?
+  assert_eq 2 "$rc"
+}
+
+test_merge_batch_with_no_value_prints_the_setting_and_its_source() {
+  seed_machine
+  local f="$CLAUDE_CONFIG_DIR/artisan-agent/host.json" out=""
+  unset ARTISAN_MERGE_BATCH
+  out=$("$SCRIPT" merge-batch)
+  assert_eq "on default" "$(jq -r '"\(.batch) \(.source)"' <<<"$out")"
+  "$SCRIPT" merge-batch off >/dev/null
+  out=$("$SCRIPT" merge-batch)
+  assert_eq "off $f" "$(jq -r '"\(.batch) \(.source)"' <<<"$out")"
+  out=$(ARTISAN_MERGE_BATCH=on "$SCRIPT" merge-batch)
+  assert_eq "on ARTISAN_MERGE_BATCH" "$(jq -r '"\(.batch) \(.source)"' <<<"$out")"
+}
