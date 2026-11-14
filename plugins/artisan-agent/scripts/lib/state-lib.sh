@@ -315,7 +315,17 @@ state_usage() {
 #     resliced blocker) included; with merged and closed, it is done
 #   waiting_non_gate_decisions: the decisions waiting for the Artisan that no
 #     gate carries: not a risk or review gate, nor an exception with its gate open
-#   gate_holds(t): t is in a slice gate that is due: its dependents wait
+#   gate_answered(g): gate g is recorded and no longer open: approved,
+#     bypassed, deferred, redirected or closed as empty
+#   gate_pending(g): gate g still holds: not answered, and not a gate with
+#     every ticket done and none merged (gate_empty: nothing to review). From
+#     plan approval, not only once it is due (#170)
+#   gate_holds(t; d): ticket d, which depends on t, waits for a gate: t is in
+#     a slice or risk gate that is pending and d is not in it (a ticket is
+#     never held by its own gate). d null: any dependent outside the gate
+#   gate_holds(t): gate_holds(t; null)
+#   gate_waits(d; bs): the pending gates that hold d through its blockers bs
+#     (ticket numbers as strings), each {id, kind, slice}
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
     if $usd == null then .
@@ -477,6 +487,22 @@ STATE_JQ_DEFS='
   def waiting_non_gate_decisions:
     [.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
                            and (.kind != "exception" or .issue == null))];
-  def gate_holds($t):
-    . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
+  def gate_answered($g):
+    any((.review_gates // [])[]; .id == $g.id and .status != "open");
+  def gate_pending($g):
+    . as $s
+    | (gate_answered($g) | not)
+      and ((all($g.tickets[]; . as $t | $s | gate_done($t))
+            and all($g.tickets[]; $s.tickets[.].status? != "merged")) | not);
+  def gate_waits($d; $bs):
+    . as $s
+    | [slice_gates[] | select((.tickets | index($d)) == null)
+       | select(.tickets as $gt | any($bs[]; . as $b | $gt | index($b) != null))
+       | select(. as $g | $s | gate_pending($g)) | {id, kind, slice}];
+  def gate_holds($t; $d):
+    . as $s
+    | any(slice_gates[]; (.tickets | index($t)) != null
+          and ($d == null or (.tickets | index($d)) == null)
+          and (. as $g | $s | gate_pending($g)));
+  def gate_holds($t): gate_holds($t; null);
 '

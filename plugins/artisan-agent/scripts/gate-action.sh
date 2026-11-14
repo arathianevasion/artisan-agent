@@ -867,7 +867,7 @@ cmd_parked() {
     | (reduce range(0; ($left | length) + 1) as $_ ($held0;
         . as $h | ($h + [$left[] | select(. as $t | $s.tickets[$t].status == "queued" and $tr[$t] != null
             and any($tr[$t][]; . as $b | ($gi | index($b)) or ($h | index($b)) or ($risk | index($b))
-                                         or ($s | gate_holds($b)))) ]) | unique)) as $held
+                                         or ($s | gate_holds($b; $t)))) ]) | unique)) as $held
     | if $tr | any(.[]; . == null) then empty
       elif ($left | length) == 0 or any($left[]; . as $t | $held | index($t) | not) then empty
       else

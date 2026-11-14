@@ -74,10 +74,13 @@
 #       later: it carries to the next gate. "all pass --gate <issue>" passes
 #       every check on that gate. Events human-check-passed and
 #       human-check-failed. 6: not an open Human check, or on no open gate.
-#   gate.sh holds <run-dir> <ticket>
-#       prints "held" when the ticket is in a slice gate that is due and not
-#       yet approved (its dependents wait), else "free". A caller treats
-#       anything else (an error) as held.
+#   gate.sh holds <run-dir> <ticket> [<dependent>]
+#       prints "held" when the dependent, which depends on the ticket, waits
+#       for a gate: the ticket is in a slice or risk gate not yet answered
+#       (from plan approval, not only once it is due: #170) and the dependent
+#       is not in that gate; else "free". With no dependent: one outside the
+#       gate. A gate none of whose tickets merged holds nothing. A caller
+#       treats anything else (an error) as held.
 #
 # Every decision recorded carries its job and who made it (--by, default
 # Artisan); the card's own job for a card, job 13 for the gate.
@@ -137,9 +140,9 @@ cmd_due() {
 }
 
 cmd_holds() {
-  [ $# -eq 2 ] || usage
+  [ $# -eq 2 ] || [ $# -eq 3 ] || usage
   open_run "$1"
-  case "$(jget 'gate_holds($t)' --arg t "$2")" in
+  case "$(jget 'gate_holds($t; $d)' --arg t "$2" --argjson d "$(jq -n --arg d "${3:-}" 'if $d == "" then null else $d end')")" in
     true) echo held ;;
     false) echo free ;;
     *) die "could not read the gates of #$2" ;;

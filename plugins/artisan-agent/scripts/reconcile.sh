@@ -134,7 +134,7 @@ reconcile() {
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"
                  and ($s.tickets[.number].risk_gate.status? // "") != "waiting"
-                 and ((.number | tostring) as $b | $s | gate_holds($b) | not)
+                 and ((.number | tostring) as $b | $s | gate_holds($b; $t) | not)
             else .state == "closed" end))
         | $t
       ] | .frontier |= sort_by([-($s.plan.tickets[.].priority // 0), (tonumber? // .)])' --argjson tr "$tracker"

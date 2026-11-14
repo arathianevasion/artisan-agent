@@ -167,6 +167,54 @@ test_a_due_gate_not_yet_opened_still_holds_the_dependents() {
   assert_eq 3 "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
 }
 
+# #170: from plan approval, a ticket outside a slice that depends on a ticket
+# in it waits for the slice gate's answer; a ticket inside the slice is never
+# held by its own gate. Slice {1, 2}; 2 depends on 1, and 3 (outside) on 1.
+slice_of_two() {
+  setup_gate
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates[0].tickets = ["1", "2"]'
+  echo '[1]' >"$FAKE_GH_DIR/blocked_by-3.json"
+}
+
+test_a_slice_gate_holds_an_outside_dependent_before_the_slice_has_merged() {
+  slice_of_two
+  merged_with_evidence 1
+  assert_eq "" "$("$G" due "$RUN_DIR")" "2 is still queued: the gate is not due"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1 3)"
+  assert_eq free "$("$G" holds "$RUN_DIR" 1 2)" "2 is in the slice: its own gate never holds it"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1)" "with no dependent named: one outside the slice"
+  # 2 runs as soon as 1 merges; 3 stays off the frontier.
+  assert_eq "2 4" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
+}
+
+test_an_outside_dependent_is_freed_once_the_slice_gate_is_answered() {
+  slice_of_two
+  merged_with_evidence 1
+  merged_with_evidence 2
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  assert_eq "[1,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-3.json")" "open still adds the native blocker"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1 3)"
+  "$G" approve "$RUN_DIR" "$num" --by Andrew >/dev/null
+  assert_eq free "$("$G" holds "$RUN_DIR" 1 3)"
+  assert_eq "3 4" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
+}
+
+test_with_2_dropped_the_slice_comes_due_and_3_waits_for_its_answer() {
+  slice_of_two
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"].status = "dropped"'
+  assert_eq slice-1 "$("$G" due "$RUN_DIR")"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1 3)"
+  assert_eq 4 "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
+}
+
+test_a_slice_with_nothing_merged_holds_nothing() {
+  slice_of_two
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].status = "closed" | .tickets["2"].status = "dropped"'
+  assert_eq free "$("$G" holds "$RUN_DIR" 1 3)"
+}
+
 test_a_gate_is_not_due_until_every_ticket_of_its_slice_has_merged() {
   setup_gate
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates[0].tickets = ["1", "4"]'
