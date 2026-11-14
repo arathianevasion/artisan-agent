@@ -7,16 +7,22 @@ Graph file:  {"tickets": {"<n>": {"title", "blocked_by": ["<n>"...],
               "acceptance": ["..."], "slice": "<name>", "estimate_usd": 1.5,
               or "model" + "expected": {"input_tokens", "output_tokens"},
               "external_blockers": ["<n>"...]}}}
+              A Human check ticket also has "human_check_for": "<agent ticket>"
+              and needs no estimate.
 Plans file:  {"schema_version": 1, "budget_usd": 10,
-              "plans": [{"slice": "...", "tickets": ["<n>"...], "issue": 7?}]}
+              "plans": [{"slice": "...", "tickets": ["<n>"...], "issue": 7?}],
+              "human_check_overrides": [{"ticket", "criterion", "why"}]?}
 A plan's number is its position (1-based); the order is the order they run in.
 """
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRICES = os.path.join(HERE, "..", "..", "references", "model-prices.json")
+HUMAN_CHECKS = os.path.join(HERE, "..", "..", "references", "human-checks.md")
+MARKER = "<!-- artisan-agent:human-check-for #%s -->"
 
 
 class Refusal(Exception):
@@ -63,8 +69,16 @@ def blockers(tickets, n):
     return [str(b).lstrip("#") for b in tickets[n].get("blocked_by") or []]
 
 
+def human_check_for(tickets, n):
+    """The agent ticket a Human check ticket verifies, or None."""
+    a = tickets[n].get("human_check_for")
+    return str(a).lstrip("#") if a not in (None, "") else None
+
+
 def estimate(tickets, n):
     t = tickets[n]
+    if human_check_for(tickets, n):
+        return 0.0   # a person's check, not agent work
     if t.get("estimate_usd") is not None:
         return float(t["estimate_usd"])
     model, exp = t.get("model"), t.get("expected") or {}
@@ -134,6 +148,9 @@ def sccs(nodes, edges):
 
 
 def slice_of(tickets, n):
+    agent = human_check_for(tickets, n)
+    if agent in tickets and agent != n:
+        return slice_of(tickets, agent)   # a Human check goes where its agent ticket goes
     return str(tickets[n].get("slice") or "").strip() or "#" + n
 
 
@@ -235,6 +252,11 @@ def validate(plans, graph):
             if where[b] > where[n]:
                 raise Refusal("#%s (plan %d) would run before its blocker #%s (plan %d)"
                               % (n, where[n] + 1, b, where[b] + 1))
+    for n in sorted(tickets, key=key):
+        agent = human_check_for(tickets, n)
+        if agent in where and where[agent] != where[n]:
+            raise Refusal("Human check #%s (plan %d) belongs in plan %d, with its agent ticket #%s"
+                          % (n, where[n] + 1, where[agent] + 1, agent))
 
 
 def plan_deps(plans, graph):
@@ -326,6 +348,180 @@ def edit(plans, graph, op, args):
     return plans
 
 
+# ---- Human checks (references/human-checks.md) ------------------------------
+
+def phrases():
+    """The phrases that make a criterion read as needing a person: the list in
+    references/human-checks.md, plus a project's own (TO_PLAN_EXTRA_PHRASES, a
+    JSON list, from config human_check_phrases)."""
+    out, inside = [], False
+    try:
+        with open(HUMAN_CHECKS, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("## "):
+                    inside = line.strip() == "## Phrases"
+                    continue
+                m = re.match(r"^- `([^`]+)`\s*$", line)
+                if inside and m:
+                    out.append(m.group(1))
+    except OSError as e:
+        raise Refusal("cannot read the phrase list %s: %s" % (HUMAN_CHECKS, e))
+    if not out:
+        raise Refusal("no phrases under \"## Phrases\" in %s" % HUMAN_CHECKS)
+    extra = os.environ.get("TO_PLAN_EXTRA_PHRASES") or "[]"
+    try:
+        extra = json.loads(extra)
+    except ValueError:
+        raise Refusal("human_check_phrases must be a list of phrases, got %s" % extra)
+    if not isinstance(extra, list):
+        raise Refusal("human_check_phrases must be a list of phrases")
+    return out + [str(x) for x in extra if str(x).strip()]
+
+
+def needs_person(text, words):
+    """The first phrase in `words` that `text` contains as whole words, or None."""
+    low = str(text).lower()
+    for w in words:
+        if re.search(r"(?<![a-z0-9])" + re.escape(w.strip().lower()) + r"(?![a-z0-9])", low):
+            return w
+    return None
+
+
+def overridden(overrides, n, criterion):
+    return any(str(o.get("ticket", "")).lstrip("#") == n and o.get("criterion") == criterion
+               for o in overrides or [])
+
+
+def human_check_flags(tickets, overrides, words=None):
+    """Each agent criterion that reads as needing a person and is not overridden:
+    [{"ticket", "criterion", "phrase"}]. A Human check's own criteria are its job."""
+    words = phrases() if words is None else words
+    out = []
+    for n in sorted(tickets, key=key):
+        if human_check_for(tickets, n):
+            continue
+        for c in tickets[n].get("acceptance") or []:
+            w = needs_person(c, words)
+            if w and not overridden(overrides, n, c):
+                out.append({"ticket": n, "criterion": c, "phrase": w})
+    return out
+
+
+def add_overrides(plans, tickets, new):
+    """Record the Artisan's overrides on the plan: each must name a criterion of
+    the ticket and carry a reason. A repeat replaces the reason."""
+    have = plans.setdefault("human_check_overrides", [])
+    for o in new:
+        n, c, why = str(o.get("ticket", "")).lstrip("#"), o.get("criterion", ""), str(o.get("why") or "").strip()
+        if not why:
+            raise Refusal("an override of #%s needs --why: the reason the criterion stays" % n)
+        if n not in tickets:
+            raise Refusal("#%s is not in the graph" % n)
+        c = match_criterion(tickets[n].get("acceptance") or [], c, n)
+        have[:] = [h for h in have if not (str(h.get("ticket")) == n and h.get("criterion") == c)]
+        have.append({"ticket": n, "criterion": c, "why": why})
+    return plans
+
+
+def match_criterion(criteria, text, n):
+    """The criterion `text` names: exactly, else the one criterion containing it."""
+    text = str(text).strip()
+    if text in criteria:
+        return text
+    hits = [c for c in criteria if text and text.lower() in c.lower()]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        raise Refusal("%r matches %d criteria of #%s; give one exactly" % (text, len(hits), n))
+    raise Refusal("#%s has no criterion %r" % (n, text))
+
+
+CHECKBOX = re.compile(r"^(\s*[-*]\s+\[[ xX]\]\s+)(.*?)\s*$")
+
+
+def ac_lines(body):
+    """(index, criterion) for each checkbox under ## Acceptance criteria."""
+    out, inside = [], False
+    for i, line in enumerate(body.split("\n")):
+        if re.match(r"^##\s", line):
+            inside = bool(re.match(r"^##\s+[Aa]cceptance [Cc]riteria", line))
+            continue
+        m = CHECKBOX.match(line)
+        if inside and m:
+            out.append((i, m.group(2)))
+    return out
+
+
+def split_human_check(req):
+    """The text half of split-human-check. In: {agent, agent_title, agent_body,
+    criterion, hc_body (or null), what (or null)}. Out: {criterion, title,
+    agent_body, hc_body}, where a body is null when it needs no change. Moving
+    a criterion that has already moved changes nothing."""
+    agent, abody = str(req["agent"]), req.get("agent_body") or ""
+    hbody = req.get("hc_body")
+    on_agent = [c for _, c in ac_lines(abody)]
+    on_hc = [c for _, c in ac_lines(hbody)] if hbody else []
+    try:
+        crit = match_criterion(on_agent, req["criterion"], agent)
+    except Refusal:
+        if not on_hc:
+            raise
+        crit = match_criterion(on_hc, req["criterion"], "%s's Human check" % agent)
+    what = (req.get("what") or req.get("agent_title") or "#" + agent).strip()
+    out = {"criterion": crit, "title": "Human check: %s (#%s)" % (what, agent),
+           "agent_body": None, "hc_body": None}
+    if hbody is None:
+        out["hc_body"] = "\n".join([
+            MARKER % agent,
+            "## What to check", "",
+            "By hand, on the result of #%s (%s): the criteria below, which only a person can verify."
+            % (agent, req.get("agent_title") or what), "",
+            "## Acceptance criteria", "",
+            "- [ ] " + crit, "",
+            "## Blocked by", "",
+            "- #" + agent, ""])
+    elif crit not in on_hc:
+        lines = hbody.split("\n")
+        found = ac_lines(hbody)
+        if found:
+            lines.insert(found[-1][0] + 1, "- [ ] " + crit)
+        else:
+            lines += ["", "## Acceptance criteria", "", "- [ ] " + crit]
+        out["hc_body"] = "\n".join(lines)
+    gone = [i for i, c in ac_lines(abody) if c == crit]
+    if gone:
+        lines = abody.split("\n")
+        del lines[gone[0]]
+        out["agent_body"] = "\n".join(lines)
+    return out
+
+
+def split_into_files(graph_path, plans_path, agent, hc, criterion, title):
+    """After split-human-check: the graph and plans files follow the tracker."""
+    graph = load(graph_path)
+    tickets = graph.get("tickets") or {}
+    if agent in tickets:
+        t = tickets[agent]
+        t["acceptance"] = [c for c in t.get("acceptance") or [] if c != criterion]
+    h = tickets.setdefault(hc, {"title": title, "acceptance": []})
+    h["title"] = title
+    h["human_check_for"] = agent
+    if criterion not in h.setdefault("acceptance", []):
+        h["acceptance"].append(criterion)
+    h["blocked_by"] = sorted(set([str(b) for b in h.get("blocked_by") or []] + ([agent] if agent in tickets else [])), key=key)
+    graph["tickets"] = tickets
+    save(graph_path, graph)
+    if plans_path:
+        plans = load(plans_path)
+        if not any(hc in p["tickets"] for p in plans["plans"]):
+            for p in plans["plans"]:
+                if agent in p["tickets"]:
+                    if "issue" in p:
+                        raise Refusal("plan %s is published; add #%s to it on the tracker" % (p["issue"], hc))
+                    p["tickets"] = ordered(graph_tickets(graph), p["tickets"] + [hc])
+        save(plans_path, plans)
+
+
 def money(x):
     return "$%.2f" % x
 
@@ -362,7 +558,29 @@ def warnings(plans, graph):
         ext = [str(x).lstrip("#") for x in tickets[n].get("external_blockers") or []]
         if ext:
             out.append((describe(tickets, n), "waits on #%s, which is outside these tickets and still open." % ", #".join(ext)))
+    out += human_check_warnings(plans, tickets)
     return out
+
+
+def human_check_warnings(plans, tickets):
+    return [(describe(tickets, f["ticket"]),
+             "criterion \"%s\" reads as needing a person (\"%s\"): an agent can't show it. "
+             "Split it into a Human check (`to-plan.sh split-human-check %s \"<criterion>\"`), "
+             "or override it with a reason (`--override-human-check %s \"<criterion>\" --why ...`). "
+             "The plan can't be approved while this stands." % (f["criterion"], f["phrase"], f["ticket"], f["ticket"]))
+            for f in human_check_flags(tickets, plans.get("human_check_overrides"))]
+
+
+def check(plans, graph):
+    """validate, then refuse approval while an agent criterion needs a person;
+    the flags go to stdout under "Needs your attention"."""
+    validate(plans, graph)
+    warn = human_check_warnings(plans, graph_tickets(graph))
+    if warn:
+        print("\n".join(["## Needs your attention", "", "| About | Problem |", "|---|---|"]
+                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in warn]))
+        raise Refusal("not ready to approve: %d agent criteria read as needing a person; "
+                      "split each into a Human check or override it with --why" % len(warn))
 
 
 def render(plans, graph):
@@ -388,8 +606,14 @@ def render(plans, graph):
             t = tickets[n]
             crit = "<br>".join("☐ " + cell(c) for c in t.get("acceptance") or []) or "none listed"
             blocked = ", ".join("#" + b for b in blockers(tickets, n)) or "none"
-            lines.append("| %s | %s | %s | %s |" % (describe(tickets, n), blocked, money(estimate(tickets, n)), crit))
+            cost = ("not estimated (Human check for #%s)" % human_check_for(tickets, n)
+                    if human_check_for(tickets, n) else money(estimate(tickets, n)))
+            lines.append("| %s | %s | %s | %s |" % (describe(tickets, n), blocked, cost, crit))
         lines.append("")
+    overrides = plans.get("human_check_overrides") or []
+    if overrides:
+        lines += ["## Human-check overrides", "", "| Ticket | Criterion kept on the agent ticket | Why |", "|---|---|---|"]
+        lines += ["| #%s | %s | %s |" % (cell(o["ticket"]), cell(o["criterion"]), cell(o["why"])) for o in overrides] + [""]
     warn = warnings(plans, graph)
     if warn:
         lines += ["## Needs your attention", "", "| About | Problem |", "|---|---|"]
@@ -399,13 +623,33 @@ def render(plans, graph):
 
 def main(argv):
     if len(argv) < 2:
-        raise Refusal("usage: to-plan.py propose|edit|check|render|deps ...")
+        raise Refusal("usage: to-plan.py propose|edit|check|render|deps|override|flags|overrides|split-text|split-files ...")
     cmd, rest = argv[1], argv[2:]
     if cmd == "propose":
         graph, budget = load(rest[0]), float(rest[1])
         print(json.dumps(propose(graph, budget), indent=2))
     elif cmd == "check":
-        validate(load(rest[0]), load(rest[1]))
+        check(load(rest[0]), load(rest[1]))
+    elif cmd == "override":
+        # override <plans> <graph> <overrides.json>: record them on the plan.
+        path, graph = rest[0], load(rest[1])
+        plans = add_overrides(load(path), graph_tickets(graph), json.loads(rest[2]))
+        save(path, plans)
+    elif cmd == "flags":
+        # stdin {"tickets", "human_check_overrides"?}: the open flags (plan.sh build).
+        data = json.load(sys.stdin)
+        tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
+        print(json.dumps(human_check_flags(tickets, data.get("human_check_overrides"))))
+    elif cmd == "overrides":
+        # stdin {"tickets"}, argv overrides.json: checked overrides (plan.sh build).
+        data = json.load(sys.stdin)
+        tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
+        print(json.dumps(add_overrides({}, tickets, json.loads(rest[0]))["human_check_overrides"]))
+    elif cmd == "split-text":
+        print(json.dumps(split_human_check(json.load(sys.stdin))))
+    elif cmd == "split-files":
+        graph_path, plans_path, agent, hc, criterion, title = rest[:6]
+        split_into_files(graph_path, plans_path, agent, hc, criterion, title)
     elif cmd == "render":
         print(render(load(rest[0]), load(rest[1])))
     elif cmd == "edit":

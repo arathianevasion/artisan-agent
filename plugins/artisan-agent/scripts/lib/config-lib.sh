@@ -84,10 +84,11 @@ CONFIG_JQ_DEFS='
       else . end;
   def settings_list:
     . as $c
-    | [leaves | select(.[0] != "areas" and .[0] != "estimate_multipliers")
+    | [leaves | select(.[0] != "areas" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases")
        | {key: join("."), value: (. as $p | $c | getpath($p))}]
     + (if ($c.areas | length) == 0 then [{key: "areas", value: "none"}]
        else [$c.areas | to_entries[] | {key: "areas.\(.key)", value: (.value | tojson)}] end)
     + (if ($c.estimate_multipliers | length) == 0 then [{key: "estimate_multipliers", value: "none"}]
-       else [$c.estimate_multipliers | to_entries[] | {key: "estimate_multipliers.\(.key)", value: .value}] end);
+       else [$c.estimate_multipliers | to_entries[] | {key: "estimate_multipliers.\(.key)", value: .value}] end)
+    + [{key: "human_check_phrases", value: (($c.human_check_phrases // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}];
 '

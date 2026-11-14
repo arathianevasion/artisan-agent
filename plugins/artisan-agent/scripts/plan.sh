@@ -5,6 +5,7 @@
 # Usage:
 #   plan.sh build --draft FILE [--config FILE] [--history DIR] [--prices FILE]
 #                 [--standards FILE] [--set key=value]...
+#                 [--override-human-check <ticket> "<criterion>" --why TEXT]...
 #                                 print the plan (JSON) for state.sh init
 #   plan.sh render <plan.json>    print the approval: waves, models, estimates,
 #                                 Max Agents and every config number
@@ -22,6 +23,14 @@
 #                  path): the ticket, its focus, whether it is on the critical path
 #                  and the delay it costs the run (human.sh annotate)
 #   estimate_usd   the total; budget_usd = total + overrun allowance
+#   human_check_flags  each criterion in a ticket's optional `acceptance` list
+#                  that reads as needing a person (references/human-checks.md,
+#                  plus config human_check_phrases): [{ticket, criterion, phrase}].
+#                  While one stands the plan is not approvable: render says so
+#                  and state.sh init refuses it. Split it into a Human check
+#                  (to-plan.sh split-human-check) or override it:
+#   human_check_overrides  [{ticket, criterion, why}], one per
+#                  --override-human-check, the Artisan's reason recorded
 #   recorded_checks the recorded checks (checks.sh json over --standards,
 #                  default CODING_STANDARDS.md at the checkout's top):
 #                  {recorded, file, commands, suite} or {recorded: false, reason}
@@ -95,7 +104,7 @@ history_json() {
 
 cmd_build() {
   local draft= config= history= prices="$PLUGIN_DIR/references/model-prices.json" standards=
-  local sets=() cfg= hist= out= checks= suite=
+  local sets=() cfg= hist= out= checks= suite= overrides='[]' ov= flags=
   history=$(runs_dir)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -108,6 +117,15 @@ cmd_build() {
         [ $# -ge 2 ] || usage
         case "$2" in *=*) ;; *) die "--set needs key=value, got $2" ;; esac
         sets+=("$2"); shift 2 ;;
+      --override-human-check)
+        [ $# -ge 3 ] || usage
+        overrides=$(jq -c --arg t "$2" --arg c "$3" '. + [{ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$overrides")
+        shift 3 ;;
+      --why)
+        [ $# -ge 2 ] || usage
+        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check it gives the reason for"
+        overrides=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$overrides")
+        shift 2 ;;
       *) usage ;;
     esac
   done
@@ -214,6 +232,17 @@ cmd_build() {
       workflow: (if $wf == "" then null else $wf end), timeout_minutes: .config.ci_gate.timeout_minutes,
       minutes_per_merge: $m.minutes, from_runs: $m.runs} + (if $m.note then {note: $m.note} else {} end))')
   fi
+  # Agent criteria that need a person (references/human-checks.md), less the
+  # Artisan's overrides.
+  ov='[]'
+  if [ "$(jq length <<<"$overrides")" -gt 0 ]; then
+    ov=$(printf '%s' "$out" | python3 -I "$SCRIPT_DIR/lib/to-plan.py" overrides "$overrides" 2>&1) \
+      || die "$(printf '%s' "$ov" | sed 's/^to-plan: //')"
+  fi
+  out=$(printf '%s' "$out" | jq --argjson ov "$ov" '.human_check_overrides = $ov')
+  flags=$(printf '%s' "$out" | TO_PLAN_EXTRA_PHRASES=$(printf '%s' "$out" | jq -c '.config.human_check_phrases // []') \
+    python3 -I "$SCRIPT_DIR/lib/to-plan.py" flags 2>&1) || die "$(printf '%s' "$flags" | sed 's/^to-plan: //')"
+  out=$(printf '%s' "$out" | jq --argjson f "$flags" '.human_check_flags = $f')
   # The draft's one hands-on ticket, if it names one (human.sh annotate).
   if [ "$(jq -r '.hands_on != null' "$draft")" = true ]; then
     out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
@@ -265,6 +294,20 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
+      ( ($p.human_check_flags // []) | if length == 0 then empty else
+        "### Needs your attention",
+        "| Ticket | Criterion | Reads as needing a person |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
+        "",
+        "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
+        "" end ),
+      ( ($p.human_check_overrides // []) | if length == 0 then empty else
+        "### Human-check overrides",
+        "| Ticket | Criterion kept on the agent ticket | Why |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) | \(.criterion) | \(.why) |" ),
+        "" end ),
       "Total estimate: \($p.estimate_usd | money). Budget (estimate + \($p.config.overrun_allowance_percent)% overrun allowance): \($p.budget_usd | money).",
       "Max Agents: \($p.max_agents). Gates: \(if ($p.gates // []) == [] then "none" else ($p.gates | map(tojson) | join(", ")) end).",
       "",
@@ -297,7 +340,8 @@ cmd_render() {
       ( $p.config | settings_list[] | .key as $k
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
-      "Approve as shown, or name any number to change for this run only."
+      (if ($p.human_check_flags // []) == [] then "Approve as shown, or name any number to change for this run only."
+       else "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)." end)
   ' "$plan"
 }
 

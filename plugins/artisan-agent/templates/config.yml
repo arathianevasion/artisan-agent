@@ -95,6 +95,14 @@ minimum_estimates:
   claude-haiku-5-5: 0.10
   all: 0.50
 
+# Extra phrases that make an agent ticket's criterion read as needing a person,
+# on top of the list in references/human-checks.md (such as "in game"). The
+# plan step flags such a criterion and won't approve the plan until it is
+# split into a Human check or overridden. None by default.
+# Example:
+#   human_check_phrases: [in the editor, on the console]
+human_check_phrases: []
+
 # Whether runs live on an always-on host.
 host_configured: false
 

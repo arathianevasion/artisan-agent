@@ -20,16 +20,32 @@
 #                                  each edit rewrites the file, renumbering the plans, and is
 #                                  refused (file untouched) if it would put a blocker in a
 #                                  later plan than the ticket it blocks
-#   to-plan.sh check   <plans.json> --graph FILE      verify every ticket is in one plan and no blocker
-#                                  comes after its dependent
+#   to-plan.sh check   <plans.json> --graph FILE [--override-human-check <ticket> "<criterion>" --why TEXT]...
+#                                  verify every ticket is in one plan, no blocker comes after its
+#                                  dependent and a Human check is in its agent ticket's plan; then
+#                                  refuse approval (exit 1, the flags printed under "Needs your
+#                                  attention") while an agent criterion reads as needing a person.
+#                                  Each override is recorded on the plan (human_check_overrides).
 #   to-plan.sh render  <plans.json> --graph FILE      the approval view (Markdown): a table of plans,
 #                                  then each plan's tickets with their acceptance criteria
+#   to-plan.sh split-human-check --graph FILE --repo owner/name [--plans FILE] [--what TEXT] <ticket> "<criterion>"
+#                                  move the criterion off the agent ticket into its Human check
+#                                  ticket (references/human-checks.md): title "Human check: <what>
+#                                  (#<ticket>)" (what defaults to the ticket's title), the marker,
+#                                  ready-for-human, blocked by the ticket. Creates it, or adds to the
+#                                  open one for that ticket; a repeat changes nothing. The graph (and
+#                                  --plans, the agent ticket's plan) follow.
 #   to-plan.sh publish <plans.json> --graph FILE --repo owner/name --approved [--replace-parent]
+#                      [--override-human-check <ticket> "<criterion>" --why TEXT]...
 #                                  create one `plan` issue per plan, each ticket a sub-issue of
 #                                  its plan, and a later plan blocked by the earlier plans it
 #                                  depends on. Needs --approved: the Artisan's approval. The
 #                                  issue numbers are written back into plans.json, so a repeat
 #                                  run carries on where a failed one stopped.
+#
+# A criterion "reads as needing a person" when it holds a phrase from
+# references/human-checks.md or the project's human_check_phrases (config.sh;
+# --config FILE to name the config file).
 #
 # The budget (USD) is the amount the Artisan would approve in one go; there is
 # no default. Exit status: 0 ok, 1 refused (the reason is on stderr), 2 bad usage.
@@ -47,11 +63,23 @@ need jq; need python3
 py() { python3 -I "$PY" "$@"; }
 
 # Common options, parsed from anywhere after the subcommand.
-GRAPH= REPO= BUDGET= APPROVED= REPLACE_PARENT= POS=
+GRAPH= REPO= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= WHAT= CONFIG= OVERRIDES='[]'
 parse() {
   POS=()
   while [ $# -gt 0 ]; do
     case "$1" in
+      --override-human-check)
+        [ $# -ge 3 ] || usage
+        OVERRIDES=$(jq -c --arg t "$2" --arg c "$3" '. + [{ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$OVERRIDES")
+        shift 3 ;;
+      --why)
+        [ $# -ge 2 ] || usage
+        [ "$(jq length <<<"$OVERRIDES")" -gt 0 ] || die "--why follows the --override-human-check it gives the reason for"
+        OVERRIDES=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$OVERRIDES")
+        shift 2 ;;
+      --plans) [ $# -ge 2 ] || usage; PLANS=$2; shift 2 ;;
+      --what) [ $# -ge 2 ] || usage; WHAT=$2; shift 2 ;;
+      --config) [ $# -ge 2 ] || usage; CONFIG=$2; shift 2 ;;
       --graph) [ $# -ge 2 ] || usage; GRAPH=$2; shift 2 ;;
       --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
       --budget) [ $# -ge 2 ] || usage; BUDGET=$2; shift 2 ;;
@@ -66,6 +94,26 @@ need_repo() {
   printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "--repo must be owner/name, got \"$REPO\""
 }
 need_graph() { [ -n "$GRAPH" ] && [ -f "$GRAPH" ] || die "--graph FILE is required (and must exist)"; }
+# The project's own phrases (config human_check_phrases) for to-plan.py.
+# Outside a git repository with no --config, only the reference's list.
+phrases() {
+  local p=
+  if [ -n "$CONFIG" ]; then
+    p=$("$SCRIPT_DIR/config.sh" show --file "$CONFIG") || exit 1
+  elif git rev-parse --git-common-dir >/dev/null 2>&1; then
+    p=$("$SCRIPT_DIR/config.sh" show) || exit 1
+  else
+    p='{}'
+  fi
+  TO_PLAN_EXTRA_PHRASES=$(jq -c '.human_check_phrases // []' <<<"$p")
+  export TO_PLAN_EXTRA_PHRASES
+}
+# Record any --override-human-check on the plans file, then check it.
+check_plans() {
+  phrases
+  if [ "$(jq length <<<"$OVERRIDES")" -gt 0 ]; then py override "$1" "$GRAPH" "$OVERRIDES"; fi
+  py check "$1" "$GRAPH"
+}
 
 cmd=${1:-}
 [ -n "$cmd" ] || usage
@@ -113,19 +161,65 @@ case "$cmd" in
   check)
     parse "$@"; need_graph
     [ "${#POS[@]}" -eq 1 ] || usage
-    py check "${POS[0]}" "$GRAPH" ;;
+    check_plans "${POS[0]}" ;;
 
   render)
     parse "$@"; need_graph
     [ "${#POS[@]}" -eq 1 ] || usage
+    phrases
     py render "${POS[0]}" "$GRAPH" ;;
+
+  split-human-check)
+    parse "$@"; need gh; need_repo; need_graph
+    [ "${#POS[@]}" -eq 2 ] || usage
+    agent=${POS[0]#\#}
+    printf '%s' "$agent" | grep -Eq '^[0-9]+$' || die "the agent ticket must be a number, got \"${POS[0]}\""
+    [ -z "$PLANS" ] || [ -f "$PLANS" ] || die "no such plans file: $PLANS"
+    issue=$(gh issue view "$agent" -R "$REPO" --json number,title,body) || die "cannot read #$agent"
+    marker="<!-- artisan-agent:human-check-for #$agent -->"
+    open=$(gh issue list -R "$REPO" --state open --limit 1000 --json number,title,body) \
+      || die "cannot list the open issues to find #$agent's Human check"
+    hc=$(jq -r --arg m "$marker" '[.[] | select((.body // "") | contains($m))] | sort_by(.number) | .[0].number // empty' <<<"$open")
+    hc_body=null
+    [ -z "$hc" ] || hc_body=$(jq --argjson n "$hc" '.[] | select(.number == $n) | .body // ""' <<<"$open")
+    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" --arg w "$WHAT" \
+      '{agent: ($i.number | tostring), agent_title: $i.title, agent_body: ($i.body // ""),
+        criterion: $c, hc_body: $hb, what: (if $w == "" then null else $w end)}')
+    plan=$(py split-text <<<"$req") || exit 1
+    crit=$(jq -r .criterion <<<"$plan")
+    title=$(jq -r .title <<<"$plan")
+    # The Human check first, then the edge, then the agent ticket: a run that
+    # stops part way leaves the criterion in both places, and a repeat finishes it.
+    if [ -z "$hc" ]; then
+      url=$(gh issue create -R "$REPO" --title "$title" --body "$(jq -r .hc_body <<<"$plan")" --label ready-for-human) \
+        || die "could not create the Human check for #$agent (does the ready-for-human label exist on $REPO?)"
+      hc=${url##*/}
+      printf '%s' "$hc" | grep -Eq '^[0-9]+$' || die "could not read the new issue number from: $url"
+    elif [ "$(jq -r '.hc_body != null' <<<"$plan")" = true ]; then
+      gh issue edit "$hc" -R "$REPO" --body "$(jq -r .hc_body <<<"$plan")" >/dev/null \
+        || die "could not add the criterion to Human check #$hc"
+    fi
+    aid=$(gh api "repos/$REPO/issues/$agent" | jq -r '.id // empty') && [ -n "$aid" ] \
+      || die "cannot look up the id of #$agent; run split-human-check again"
+    if ! err=$(gh api --method POST "repos/$REPO/issues/$hc/dependencies/blocked_by" -F "issue_id=$aid" 2>&1 >/dev/null); then
+      case "$err" in
+        *[Aa]lready*) ;;
+        *) die "could not block Human check #$hc by #$agent: $err (run split-human-check again)" ;;
+      esac
+    fi
+    if [ "$(jq -r '.agent_body != null' <<<"$plan")" = true ]; then
+      gh issue edit "$agent" -R "$REPO" --body "$(jq -r .agent_body <<<"$plan")" >/dev/null \
+        || die "could not take the criterion off #$agent (Human check #$hc has it); run split-human-check again"
+    fi
+    py split-files "$GRAPH" "$PLANS" "$agent" "$hc" "$crit" "$title"
+    printf 'Human check #%s for #%s: %s\n' "$hc" "$agent" "$crit" ;;
 
   publish)
     parse "$@"; need gh; need_graph; need_repo
     [ "${#POS[@]}" -eq 1 ] || usage
     file=${POS[0]}
     [ -n "$APPROVED" ] || die "publish needs --approved: plans are created only once the Artisan has approved them"
-    py check "$file" "$GRAPH"
+    check_plans "$file"
     deps=$(py deps "$file" "$GRAPH")
     count=$(jq '.plans | length' "$file")
     save() { jq "$@" "$file" >"$file.tmp" && mv "$file.tmp" "$file"; }
@@ -146,7 +240,10 @@ case "$cmd" in
         body=$(jq -r --argjson i "$i" --slurpfile g "$GRAPH" '
           .plans[$i] as $p
           | ($p.tickets | map(. as $t | "- [ ] #\($t) (\($g[0].tickets[$t].title))") | join("\n")) as $list
-          | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
+          | ([(.human_check_overrides // [])[] | select(.ticket as $t | $p.tickets | index($t))
+              | "- #\(.ticket): \"\(.criterion)\" stays on the agent ticket. Why: \(.why)"] | join("\n")) as $ov
+          | (if $ov == "" then "" else "\n\n## Human-check overrides\n\($ov)" end) as $ov
+          | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\($ov)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
         url=$(gh issue create -R "$REPO" --title "$title" --body "$body" --label plan) \
           || die "could not create the plan issue (does the \`plan\` label exist on $REPO?)"
         num=${url##*/}
