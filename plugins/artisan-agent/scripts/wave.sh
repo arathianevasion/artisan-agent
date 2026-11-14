@@ -970,12 +970,15 @@ finish_merge() {
 # (merge-gate.sh start). Its command line names the run folder, so a test's
 # cleanup finds it.
 launch_gate() {
-  local g= mode= args=()
+  local g= mode= p= args=()
   g=$(get -c '.merge_gate')
   mode=$(jq -r .mode <<<"$g")
   if [ "$mode" = ci ]; then
     args=(ci --repo "$(get '.repo')" --workflow "$(jq -r .workflow <<<"$g")" --branch "$(jq -r .branch <<<"$g")"
           --sha "$(jq -r .sha <<<"$g")" --dir "$(integration_worktree)" --deadline "$(jq -r .deadline <<<"$g")")
+    # The release allowlist (#168): a merge that only changes these paths over
+    # a green commit is recorded green without a dispatch.
+    while IFS= read -r p; do args+=(--skip-path "$p"); done < <(skip_paths)
     [ "${1:-}" != --resume ] || args+=(--resume)
   else
     args=(local --dir "$(integration_worktree)" --command "$(get '.plan.suite_command')"
@@ -1118,7 +1121,8 @@ finish_gate() {
       state_die 19 "wave.sh: #$t not merged: $why; the run is parked on CI (wave.sh unpark-ci retries the gate)"
     fi
     record=$(jq -c --arg c "$suite" '{command: $c, passed: true}
-      + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}' <<<"$GATE_JSON")
+      + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
+      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
     apply '.merge_gate = null'
@@ -1129,6 +1133,7 @@ finish_gate() {
   "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$sha"
   record_session_cost "$t" "$n"
   apply '.tickets[$t].suite = $r | .merge_gate = null' --arg t "$t" --argjson r "$record"
+  note_skipped_gate "$record" "$(jq -nc --arg t "$t" '{ticket: $t}')"
   worker_wt=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   if [ -n "$worker_wt" ] && [ -d "$worker_wt" ]; then
     git -C "$MAIN" worktree remove "$worker_wt" 2>/dev/null \
@@ -1327,12 +1332,14 @@ batch_outcome() {
     jq -e 'type == "object"' <<<"$GATE_JSON" >/dev/null 2>&1 \
       || GATE_JSON=$(get -c '.merge_gate | {mode: "ci", workflow, branch, sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
     record=$(jq -c --arg c "$suite" --argjson p "$([ "$rc" -eq 0 ] && echo true || echo false)" '{command: $c, passed: $p}
-      + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}' <<<"$GATE_JSON")
+      + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
+      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
   fi
   record=$(jq -c --argjson b "$(get '.merge_batch.id')" --argjson ts "$(get -c '.merge_gate.tickets')" \
     '. + {batch: $b, batch_tickets: $ts}' <<<"$record")
   case "$rc" in
-    0) batch_merge_prefix "$p" "$record" ;;
+    0) batch_merge_prefix "$p" "$record"
+       note_skipped_gate "$record" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')" ;;
     7)
       git -C "$wt" reset -q --hard "$pre"
       apply '.merge_batch |= (.red = $p | .red_record = $r) | .merge_gate = null' --argjson p "$p" --argjson r "$record" ;;
@@ -1452,6 +1459,24 @@ batch_close() {
 # ------------------------------------------------------------ CI merge gate
 
 NO_GATE_WORKFLOW="this machine gates merges on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set this machine's merge_gate to local (machine-setup.sh merge-gate local)"
+
+# skip_paths: the release allowlist (merge_gate_skip_paths), one pattern per
+# line: the plan's snapshot of the config, else the project's.
+skip_paths() {
+  local v=
+  v=$(get -c '.plan.config.merge_gate_skip_paths // empty')
+  [ -n "$v" ] || v=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" get merge_gate_skip_paths) 2>/dev/null) || v='[]'
+  jq -r '.[]?' <<<"$v"
+}
+
+# note_skipped_gate record who-json: a gate that CI never ran, because only
+# release paths changed over a green commit, leaves an event naming the green
+# run it relied on (#168). Any other record leaves nothing.
+note_skipped_gate() {
+  [ "$(jq -r '.skipped // false' <<<"$1")" = true ] || return 0
+  apply 'event({event: "merge-gate-skipped", sha: $g.sha, run_id: $g.relied_on.run_id, url: $g.relied_on.url,
+      relied_on_sha: $g.relied_on.sha, why: $g.why} + $who; $now)' --argjson g "$1" --argjson who "$2"
+}
 
 # gate_ci_json label: the CI part of a merge gate's record, on a unique
 # ci/<run>-<label>-<ts> branch: {workflow, branch, minutes, deadline}. 1 when

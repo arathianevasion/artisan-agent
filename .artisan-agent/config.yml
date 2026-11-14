@@ -85,3 +85,13 @@ minimum_estimates:
 
 # Whether runs live on an always-on host.
 host_configured: false
+
+# The release skip (#168): a merge over a green run whose only changes are
+# these paths (the version files, the changelog, docs outside plugins/) is
+# recorded green without dispatching CI. Last match wins; ! means never skip.
+merge_gate_skip_paths:
+  - "*.md"
+  - "!plugins/*"
+  - CHANGELOG.md
+  - plugins/artisan-agent/.claude-plugin/plugin.json
+  - .claude-plugin/marketplace.json
