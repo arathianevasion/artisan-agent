@@ -147,6 +147,25 @@ start_and_launch() {
   ORCH_EXIT="$RUN_DIR/results/orchestrator-w1.1.exit.json"
 }
 
+test_launch_stops_with_its_own_exit_when_the_runs_base_is_not_in_main() {
+  setup_wave
+  local wt=
+  wt=$("$SCRIPTS/wave.sh" start "$RUN_DIR")
+  echo only-here >"$wt/only-here.txt"
+  git_quiet -C "$wt" add -A
+  git_quiet -C "$wt" commit -m "only in the run"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.integration.base = $b' --arg b "$(git -C "$wt" rev-parse HEAD)" >/dev/null
+  mkdir -p "$PROJECT/.artisan-agent"
+  echo '{"id":"p","key":"k","value":"v","strict":1}' >"$PROJECT/.artisan-agent/guardrails.jsonl"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "main changes a guardrail"
+  assert_status 21 "$SCRIPTS/wave.sh" launch "$RUN_DIR"
+  assert_eq "guardrail-base waiting" "$(jq -r '.decisions[0] | "\(.reason) \(.status)"' "$RUN_DIR/state.json")"
+  assert_eq 0 "$(jq '.orchestrators // [] | length' "$RUN_DIR/state.json")"
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" 1 halt >/dev/null
+  assert_status 12 "$SCRIPTS/wave.sh" launch "$RUN_DIR"
+}
+
 test_a_one_ticket_run_ends_merged_green_and_closed() {
   setup_wave
   start_and_launch

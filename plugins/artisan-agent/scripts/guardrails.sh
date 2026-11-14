@@ -200,7 +200,7 @@ guardrail_fingerprint() {
   git -C "$wt" ls-tree -r "$c" | grep -E "$tab${PRODUCT_PATHS#^}" | cksum | cut -d' ' -f1,2 || true
 }
 
-# queue_diverged run ref pc base fingerprint files: the run's base is not in
+# queue_diverged run ref pc base fingerprint files worktree: the run's base is not in
 # the product's ref, so main is not brought in; the Artisan chooses.
 queue_diverged() {
   local run=$1 ref=$2 pc=$3 base=$4 fp=$5 files=$6 wt=$7 counts= only_ref= only_base= d=
@@ -214,7 +214,7 @@ queue_diverged() {
     base: $b, ref: $r, product: $pc, fingerprint: $fp,
     base_only: $ob, ref_only: $orf, files: ($f | split("\n") | map(select(. != ""))),
     options: ["merge", "keep-base", "halt"], status: "waiting"}' >"$d"
-  "$SCRIPT_DIR/state.sh" decision "$run" "$d" >/dev/null || true
+  "$SCRIPT_DIR/state.sh" decision "$run" "$d" >/dev/null || { rm -f "$d"; die "could not queue the guardrail-base decision"; }
   rm -f "$d"
 }
 

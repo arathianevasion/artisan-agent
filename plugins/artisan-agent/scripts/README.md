@@ -247,6 +247,7 @@ Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budg
 | 18 | parked on plan usage: a window near its limit, or the reading unknown | `dispatch`, `budget.sh guard`, `budget.sh usage` | dispatch nothing new; finish what is in flight; the Artisan resumes, raises the ceiling or stops |
 | 19 | parked on CI: the merge gate on CI got no verdict (CI unreachable, none in `ci_gate.timeout_minutes`, or a run concluded neither green nor red, such as `cancelled`); the merge was undone, the ticket is not blocked | `merge`, `resolved`, `dispatch`, `merge-gate.sh ci` | merge and dispatch nothing new; finish what is in flight; the Artisan clears the park (`wave.sh unpark-ci`), and that ticket's next merge retries the gate |
 | 20 | the merge gate is still running (or another ticket's gate is in progress, named); nothing undone | `merge`, `resolved` | `wait-any.sh`, then `wave.sh merge` again: it finishes, waits on or resumes the same gate |
+| 21 | main changed a product guardrail but the run's base is not in it; a `guardrail-base` decision is waiting, nothing launched (`guardrails.sh wave-start` exit 9) | `launch` | the Artisan answers `state.sh decide <run-dir> <id> merge\|keep-base\|halt`; `halt` makes the next `launch` exit 12 (`guardrails.sh` exit 10) |
 
 `dispatch` (through `budget.sh guard`) also refuses with 12 while the run is halted.
 
@@ -281,7 +282,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 
 | Command | Does | Returns |
 |---|---|---|
-| `guardrails.sh wave-start <run-dir> <wave>` | called by `wave.sh launch`: fetches the team, product and individual sources, brings `main` into the integration branch if a product guardrail changed, records the plugin version and each source's commit in the state file | one JSON line; 6 on a conflict (decision queued, wave not recorded) |
+| `guardrails.sh wave-start <run-dir> <wave>` | called by `wave.sh launch`: fetches the team, product and individual sources, brings `main` into the integration branch if a product guardrail changed, records the plugin version and each source's commit in the state file | one JSON line; 6 on a conflict (decision queued, wave not recorded); 9 the run's base is not in `main`, so nothing is merged and a decision (merge, keep the base's guardrails, halt) is queued or still waiting; 10 the Artisan answered halt |
 | `guardrails.sh resolve [--run-dir D] [--role R] [--ticket T,T] [--areas A,A]` | the guardrails in force by the stated precedence, read at the commits the latest wave recorded | JSON: `applied`, `own_reviews`, `overridden`, `conflicts` |
 | `guardrails.sh table [--run-dir D] [--ticket T,T] [--areas A,A]` | the packet's "Guardrails applied" section | a markdown table |
 | `guardrails.sh tighten --level L --who NAME --reason TEXT ...` | writes or tightens a guardrail with its origin or move: individual by commit, product and team as a branch (`--pr` opens the PR) | 5 on a loosening, 2 on a `--who` that names an agent |
