@@ -90,7 +90,8 @@
 #       total, truncated} with at most N tests (default 20). where is
 #       file:line, or null where the log gives none; message is the first
 #       assertion or error line. Reads Playwright's failure headers, the
-#       FAIL lines of this plugin's tests/run.sh, pytest's FAILED lines, Go's
+#       FAIL lines of this plugin's tests/run.sh (never its FLAKY or
+#       QUARANTINED ones), pytest's FAILED lines, Go's
 #       --- FAIL and TAP's not ok. With no test it can name, excerpt holds
 #       the log's last error lines instead; with no log to read, tests is
 #       empty and why says so. Never fails a gate: exit 0 whether or not
@@ -474,6 +475,8 @@ function noline(w) { sub(/:[0-9]+$/, "", w); return w }
   }
   # This plugin'"'"'s tests/run.sh: "FAIL <file>: <test>", its output indented below.
   if (t ~ /^FAIL [^ ]/ && line ~ /^FAIL /) { add("", substr(t, 6)); kind = "first"; next }
+  # Its FLAKY and QUARANTINED lines (#198) never fail a run: nor does their output.
+  if (line ~ /^(FLAKY|QUARANTINED) [^ ]/) { cur = 0; next }
   # pytest: "FAILED path::test - message"
   if (t ~ /^FAILED [^ ]+::/) {
     r = substr(t, 8); w = r; nm = r; m = ""
