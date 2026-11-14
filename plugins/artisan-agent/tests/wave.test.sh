@@ -487,11 +487,16 @@ test_a_nonzero_exit_queues_the_decision_with_that_cause() {
   assert_exit_decision nonzero-exit '[]' "exit code 3"
 }
 
+# The deadline comes once the orchestrator has reported and hangs: ALRM brings
+# its runner's deadline forward, so no clock races the dispatch (#190).
 test_a_deadline_queues_the_decision_with_that_cause() {
   setup_wave
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.orchestrator.deadline_seconds = 3'
   export FAKE_CLAUDE_ORCHESTRATOR_END=hang ORCH_STOP=returned
-  exit_wave
+  start_and_launch
+  wait_for "$RUN_DIR/results/orchestrator-w1.1.result.json" 60
+  kill -ALRM "$(cat "$RUN_DIR/workers/orchestrator-w1.1/runner.pid")"
+  wait_for "$ORCH_EXIT" 60
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$STATUS_OUT" "orchestrator: failed deadline"
   assert_exit_decision deadline '["1"]' "#1 returned, no verdict"
 }
