@@ -945,6 +945,13 @@ EOF
     { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"
   fi
 
+  # The ticket's wave, worktree and base are written before its worker
+  # starts. A stop between the launch and its record (the orchestrator
+  # stopped at its deadline) then leaves a ticket the sweep takes the
+  # launched attempt into, so the orchestrator's exit still names it (#190).
+  apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
+    --arg t "$t" --arg wt "$wt" --arg base "$base"
+
   read_extra_args
   local caps=()
   [ -z "$turns" ] || caps+=(--max-turns "$turns")
@@ -962,8 +969,6 @@ EOF
     "$SCRIPT_DIR/state.sh" dispatch "$RUN_DIR" "$t" "$pid" \
       "$(awk -v now="$(state_now)" -v m="$minutes" 'BEGIN { printf "%d", now + m * 120 }')"
   fi
-  apply 'current_wave as $w | .tickets[$t] |= (.worktree = $wt | .base = $base | .wave = $w)' \
-    --arg t "$t" --arg wt "$wt" --arg base "$base"
   printf '%s\n' "$pid"
 }
 

@@ -235,6 +235,20 @@ test_worker_is_told_its_files_and_not_to_leave_background_commands() {
   assert_contains "$env" "ARTISAN_FINDINGS_FILE=$RUN/results/findings/46.jsonl"
 }
 
+test_alrm_brings_the_deadline_forward() {
+  setup_run
+  launch sleep
+  wait_for_file "$FAKE_CLAUDE_PID"
+  local worker=""
+  worker=$(cat "$FAKE_CLAUDE_PID")
+  kill -ALRM "$(cat "$RUN/workers/46.1/runner.pid")"
+  wait_for_file "$EXIT_RECORD" 15
+  assert_eq deadline "$(field "$EXIT_RECORD" reason)"
+  assert_eq 3600 "$(field "$EXIT_RECORD" deadline_seconds)" "the deadline itself is unchanged"
+  sleep 0.5
+  ! alive "$worker" || fail "worker still running after ALRM"
+}
+
 test_worker_past_its_deadline_is_stopped_and_recorded() {
   setup_run
   launch sleep --deadline-seconds 2

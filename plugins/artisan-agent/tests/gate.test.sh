@@ -605,3 +605,63 @@ test_a_gate_closed_by_hand_after_a_change_keeps_the_changes_event_and_logs_one_k
   assert_eq "[{\"card\":1,\"outcome\":\"change\",\"cards\":null},{\"card\":null,\"outcome\":\"keep\",\"cards\":$((cards - 1))}]" \
     "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, cards}]' | jq -c .)"
 }
+
+# ------------------------------------------- a run state past the argv limits
+
+# #203: the gate's view holds the whole state. Linux refuses one argument over
+# 128 KiB and macOS all of them together over 1 MiB, so a view passed to jq
+# as an argument never reached it: the gate opened on the tracker but was
+# never recorded. A long event log takes the state past both.
+big_state() {
+  "$SCRIPTS/state.sh" update "$RUN_DIR" \
+    '.events += [range(12000) | {event: "padding", n: ., note: ("x" * 100)}]'
+  [ "$(wc -c <"$RUN_DIR/state.json" | tr -d ' ')" -gt 1048576 ] || fail "the state should be over 1 MiB"
+}
+
+test_a_gate_opens_and_is_recorded_when_the_state_is_over_1_mib() {
+  setup_gate
+  merged_with_evidence 1
+  big_state
+  local out= num=
+  out=$("$G" sync "$RUN_DIR")
+  num=$(state_get '.review_gates[0].issue')
+  assert_eq "opened #$num slice-1" "$out"
+  assert_eq open "$(state_get '.review_gates[0].status')"
+  assert_eq "slice-1 $num" "$(state_get '[.events[] | select(.event == "gate-opened") | "\(.gate) \(.issue)"] | join(" ")')"
+  assert_eq "[1,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")"
+}
+
+# The riley run (#203): the issue and its blocking edge are on the tracker,
+# the gate is missing from the state. The next sync records it against that
+# issue: no second issue, no second edge.
+gate_open_but_unrecorded() { # sets NUM
+  setup_gate
+  merged_with_evidence 1
+  big_state
+  NUM=$("$G" open "$RUN_DIR" slice-1)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .review_gates = [] | .decisions |= map(select(.kind != "review-gate"))
+    | .events |= map(select(.event != "gate-opened" and .event != "provisional-shown"))
+    | del(.provisional_shown)'
+}
+
+test_a_gate_open_on_the_tracker_but_missing_from_the_state_is_recorded_against_its_issue() {
+  gate_open_but_unrecorded
+  local issues=
+  issues=$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')
+  assert_eq "opened #$NUM slice-1" "$("$G" sync "$RUN_DIR")"
+  assert_eq "$issues" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "no second issue"
+  assert_eq "[1,$NUM]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")" "no second blocking edge"
+  assert_eq "$NUM open" "$(state_get '.review_gates[0] | "\(.issue) \(.status)"')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "gate-opened")] | length')"
+  assert_eq "" "$("$G" sync "$RUN_DIR")" "recorded once"
+}
+
+test_a_gate_recorded_against_its_open_issue_is_approved() {
+  gate_open_but_unrecorded
+  "$G" sync "$RUN_DIR" >/dev/null
+  "$G" approve "$RUN_DIR" "$NUM" --by Andrew >/dev/null
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-$NUM.json")"
+  assert_eq free "$("$G" holds "$RUN_DIR" 1 2)"
+}
