@@ -256,7 +256,7 @@ test_status_lists_a_pending_urgent_ticket_and_its_next_is_launch() {
   local out=""
   out=$("$W" status "$RUN_DIR" 2>/dev/null)
   assert_contains "$out" "next: launch"
-  assert_contains "$out" "urgent: #3 pending: an orchestrator dispatches it on the extra slot"
+  assert_contains "$out" "urgent: #3 pending dispatch on the extra slot"
 }
 
 test_a_second_urgent_ticket_waits_for_the_slot_in_status_and_in_the_dispatch_step() {

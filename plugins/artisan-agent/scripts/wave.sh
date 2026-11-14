@@ -58,8 +58,9 @@
 #       ticket's dependents: next is still launch while the frontier has work.
 #       An urgent ticket still to dispatch (lever.sh urgent) is work too, though
 #       never on the frontier (#205): next is launch, with an "urgent: #<t>
-#       pending: ..." line, or "urgent: #<t> waits for the extra slot (held by
-#       #<u>)" while another urgent ticket holds the one slot above Max Agents.
+#       pending dispatch on the extra slot" line, or "urgent: #<t> waits
+#       for the extra slot (held by #<u>)" while another urgent ticket holds
+#       the one slot above Max Agents.
 #       Status never writes the usage guard's state and never touches the
 #       tracker for it: the guard runs in the orchestrator's sweep and in
 #       launch, and a "usage guard: <verdict>, since <time>" line says
@@ -680,7 +681,7 @@ urgent_lines() {
   get -r '(first(.tickets | to_entries[] | select(.value.urgent == true and .value.status == "in_flight") | .key) // null) as $h
     | [.tickets | to_entries[] | select(.value.urgent == true and .value.status == "queued") | .key] as $u
     | ($u | to_entries[])
-    | if $h == null and .key == 0 then "urgent: #\(.value) pending: an orchestrator dispatches it on the extra slot"
+    | if $h == null and .key == 0 then "urgent: #\(.value) pending dispatch on the extra slot"
       else "urgent: #\(.value) waits for the extra slot (held by #\($h // $u[0]))" end'
 }
 
