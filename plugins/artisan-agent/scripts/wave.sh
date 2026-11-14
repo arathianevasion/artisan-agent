@@ -210,22 +210,30 @@ orchestrator_max_turns() {
 }
 
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
-# returned or waiting to retry, and every ticket dispatched in it (two or
-# more) failed, the run halts: a decision for the Artisan, and no wave
-# launches until they resume it. A ticket failed when it is blocked for any
-# reason but its worker's own design question (result status "blocked"); a
-# one-ticket wave failing is that ticket's own exception decision. Idempotent.
+# returned or waiting to retry, every ticket dispatched in it (two or more)
+# failed, and none of them passed verification, the run halts: a decision for
+# the Artisan, and no wave launches until they resume it. A ticket failed when
+# it is blocked for any reason but its worker's own design question (result
+# status "blocked"). One verifier's pass for a ticket's current attempt
+# (a pass from an earlier attempt or wave doesn't count), merged or not (a red suite or CI gate
+# can block a verified ticket at its merge), means the wave did not fail
+# whole: something downstream of the workers works, and each failed ticket
+# keeps its own handling (retry, exception gate). A one-ticket wave failing
+# is that ticket's own exception decision. The decision lists each failed
+# ticket with its reason. Idempotent.
 halt_if_wave_failed() {
   apply '
     current_wave as $w
     | [.tickets | to_entries[] | select(.value.wave != null and .value.wave == $w)] as $d
     | if $w == 0 or .halted != null or ($d | length) < 2
-         or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0 then .
+         or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0
+         or any($d[]; .value | verified_pass) then .
       else ([$d[].key]) as $ts
+        | ($d | map("#\(.key): \(.value.blocked_reason // ((.value.failures // []) | last | .reason?) // "see its decision")") | join("; ")) as $why
         | .halted = {wave: $w, tickets: $ts, at: $now,
                      reason: "every ticket dispatched in wave \($w) failed"}
         | .decisions += [{id: ((.decisions | length) + 1), kind: "halt",
-            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))): something upstream is likely wrong. Recommended: look at the blocked tickets for a shared cause (a broken base, a missing setup step, a bad spec) and fix it before resuming; resume as is, reslice or end the run?",
+            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))), and none of its tickets passed verification: \($why). Something upstream is likely wrong. Recommended: look at the blocked tickets for a shared cause (a broken base, a missing setup step, a bad spec) and fix it before resuming; resume as is, reslice or end the run?",
             status: "waiting", at: $now}]
         | event({event: "halted", wave: $w, tickets: $ts}; $now)
       end'
@@ -266,7 +274,7 @@ check_orchestrator_exit() { # id attempt wave classification
   cause=$(exit_cause "$4")
   apply '
     [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
-     | ($k.evidence != null and $k.evidence.verdict == "pass" and $k.evidence.attempt == $k.attempts) as $passed
+     | ($k | verified_pass) as $passed
      | if $k.status == "in_flight" then {ticket: $t, why: "in flight, no verdict", cause: "no-verdict"}
        elif $k.status != "returned" then empty
        elif ($passed | not) then {ticket: $t, why: "returned, no verdict", cause: "no-verdict"}

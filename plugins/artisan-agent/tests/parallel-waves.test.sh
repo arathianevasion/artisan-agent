@@ -578,6 +578,11 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   assert_contains "$out" "next: halted"
   assert_contains "$out" "halted: every ticket dispatched in wave 1 failed (#1, #2); nothing more launches until the Artisan decides"
   assert_contains "$out" "(halt) | - | Wave 1 failed whole (#1, #2)"
+  # Each failed ticket with its reason, read from the real run.
+  local q=""
+  q=$(state_get '.decisions[] | select(.kind == "halt") | .question')
+  assert_contains "$q" "none of its tickets passed verification: #1: "
+  assert_contains "$q" "; #2: "
   # Halted once; each blocked ticket also has its exception gate (#70).
   assert_eq 1 "$(state_get '[.events[] | select(.event == "halted")] | length')"
   # Nothing launches until the Artisan decides to carry on.
@@ -590,4 +595,47 @@ test_a_wave_in_which_every_ticket_fails_halts_the_run_and_says_so() {
   assert_eq merged "$(status_of 3)"
   assert_eq null "$(state_get '.halted')"
   assert_eq decided "$(state_get '.decisions[] | select(.kind == "halt") | .status')"
+}
+
+test_the_halt_decision_lists_each_failed_ticket_with_its_reason() {
+  setup_waves 3 1 2
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.orchestrators = [{id: "orchestrator-w1", wave: 1, attempt: 1}]
+    | .tickets["1"] |= (.status = "blocked" | .wave = 1 | .blocked_reason = "the suite failed after merging")
+    | .tickets["2"] |= (.status = "blocked" | .wave = 1 | .failures = [{reason: "worker reported failed"}])'
+  "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  local q=""
+  q=$(state_get '.decisions[] | select(.kind == "halt") | .question')
+  assert_contains "$q" "Wave 1 failed whole (#1, #2)"
+  assert_contains "$q" "#1: the suite failed after merging"
+  assert_contains "$q" "#2: worker reported failed"
+}
+
+test_a_pass_from_an_earlier_attempt_does_not_stop_the_halt() {
+  setup_waves 3 1 2
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.orchestrators = [{id: "orchestrator-w1", wave: 1, attempt: 1}]
+    | .tickets["1"] |= (.status = "blocked" | .wave = 1 | .attempts = 2
+        | .evidence = {verdict: "pass", attempt: 1} | .verifications = [{verdict: "pass"}, {verdict: "fail"}])
+    | .tickets["2"] |= (.status = "blocked" | .wave = 1 | .attempts = 2)'
+  "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  assert_eq 1 "$(state_get '.halted.wave')" "only a pass for the current attempt counts"
+}
+
+# #177: one ticket failed on its own, another passed
+# verification and was then blocked by a red suite at its merge. A verified
+# pass, merged or not, means the wave did not fail whole.
+test_a_wave_in_which_one_ticket_passed_verification_does_not_halt() {
+  setup_waves 3 1 2 3
+  printf 'FAIL="1 2"\n' >"$WAVES/ticket-1"
+  printf 'FILE=BROKEN\n' >"$WAVES/ticket-2"
+  EXPECT_2=
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.max_agents = 2 | .plan.tickets["2"].expected_files = ["BROKEN"]'
+  run_wave 1
+  assert_eq "blocked blocked queued" "$(status_of 1) $(status_of 2) $(status_of 3)"
+  assert_eq pass "$(state_get '.tickets["2"].evidence.verdict')" "#2 passed verification"
+  assert_eq null "$(jq -r '.halted' "$RUN_DIR/results/orchestrator-w1.1.result.json")" "the wave report did not halt"
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
+  assert_eq null "$(state_get '.halted')" "a verified pass means the wave did not fail whole"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "halt")] | length')"
+  # Each failed ticket still has its own handling: an exception gate.
+  assert_eq "1 2" "$(state_get '[.decisions[] | select(.status == "waiting") | .ticket] | join(" ")')"
 }

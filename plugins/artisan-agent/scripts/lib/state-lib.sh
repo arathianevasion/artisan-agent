@@ -348,6 +348,8 @@ STATE_JQ_DEFS='
     merge_commit: null, cost_usd: 0, failures: []
   };
   def current_wave: ((.orchestrators // []) | last | .wave) // 0;
+  # On a ticket: a verifier pass for its current attempt (verify.sh judge).
+  def verified_pass: .evidence != null and .evidence.verdict == "pass" and .evidence.attempt == .attempts;
   def failed_attempt($t; $reason; $at):
     (.plan.attempts_per_ticket + (.tickets[$t].extra_attempts // 0)) as $max
     | .tickets[$t] as $tk
