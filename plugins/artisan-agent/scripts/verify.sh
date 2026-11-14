@@ -43,6 +43,14 @@
 #                                               the same, for a ticket with a
 #                                               ticket_path: its contract's
 #                                               unsure says to move them by hand
+#         pass <met>/<total>, <g> to the merge gate
+#                                               every criterion met but g about
+#                                               CI, the merge gate or the PR
+#                                               (marked "gate", or read as one:
+#                                               lib/criteria.py gate_criterion):
+#                                               merge it; wave.sh merge's gate
+#                                               is what satisfies them (after
+#                                               any Human check part, when both)
 #         fail <met>/<total> retry: <first unmet>   a failed attempt: queued
 #                                               for a fresh worker given the
 #                                               verifier's findings
@@ -60,6 +68,9 @@
 #       recorded (logging human-check-split), so judging again, or after a
 #       crash, makes no second Human check. A ticket with a ticket_path has
 #       no tracker ticket to split: its contract says to move them by hand.
+#       A "gate" criterion is neither met nor unmet either: the verdict's
+#       "verified" event lists them (gate), and a red merge gate still fails
+#       the ticket, in wave.sh merge.
 #       Exit 0 pass, 6 fail
 #       or a second verifier failure (blocked), 8 the verifier is still
 #       running, 14 the verifier failed once: start it again.
@@ -270,6 +281,7 @@ cmd_start() {
       printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
     fi
     printf -- '- A criterion only a person can verify (play, eyes, a real device, outside access; never one merely hard to test): mark it "met": "human" with evidence.why saying what only a person can do. It moves to a Human check and does not fail the ticket.\n'
+    printf -- '- A criterion about CI, the merge gate or the PR ("CI green", "the PR shows / lists …", "merge gate green"): mark it "met": "gate" and don'"'"'t judge it. Workers never open PRs and the merge gate runs after you, so nothing in this checkout can show it; wave.sh merge'"'"'s gate is what satisfies it. Never for a criterion about code that runs CI or the merge gate: judge that one.\n'
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
   } >"$prompt"
@@ -336,15 +348,17 @@ CONTRACT_FILTER='
   . as $s | $s.tickets[$t] as $k
   | ([$acc[] | select(.met)] | length) as $met
   | ([$acc[] | select(.human == true)] | length) as $human
+  | ([$acc[] | select(.gate == true)] | length) as $gate
   | { ticket: $t,
       title: ($s.plan.tickets[$t].title // null),
       attempt: $n,
       commit: $commit,
       base: $base,
-      verdict: (if $met + $human == ($acc | length) then "pass" else "fail" end),
+      verdict: (if $met + $human + $gate == ($acc | length) then "pass" else "fail" end),
       checks: $checks,
       criteria_met: $met,
       criteria_human: $human,
+      criteria_gate: $gate,
       criteria_total: ($acc | length),
       acceptance: $acc,
       tests: ($record.tests // null),
@@ -358,10 +372,12 @@ CONTRACT_FILTER='
       verifier: { attempt: $v, model: $model,
                   unsure: ($verdict.unsure // []), notes: ($verdict.notes // null) },
       verified_at: $now }
-  | if $human == 0 then .
-    elif $met == 0 and .verdict == "pass"
+  | if $met > 0 or .verdict != "pass" or ($human + $gate) == 0 then .
+    elif $gate == 0
     then .note = "Every criterion needs a human check: the verifier could show none of them, so this work passed on the Human check alone"
-    else . end'
+    elif $human == 0
+    then .note = "Every criterion is checked by the merge gate: the verifier could show none of them, so this work passes on the merge gate alone"
+    else .note = "Every criterion needs a human check or is checked by the merge gate: the verifier could show none of them" end'
 
 # The line judge prints for a judged verifier, and its exit status.
 say_again() { # ticket
@@ -370,10 +386,11 @@ say_again() { # ticket
     | if $x.verdict == "error" then "error \($x.reason)"
       else $k.evidence as $e
         | "\($e.verdict) \($e.criteria_met)/\($e.criteria_total)"
-          + (if $e.verdict != "pass" then " \($x.next // "blocked"): \([$e.acceptance[] | select((.met | not) and .human != true) | .criterion] | first)"
-             elif ($e.criteria_human // 0) == 0 then ""
-             elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
-             else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
+          + (if $e.verdict != "pass" then " \($x.next // "blocked"): \([$e.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"
+             else (if ($e.criteria_human // 0) == 0 then ""
+               elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
+               else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
+               + (if ($e.criteria_gate // 0) == 0 then "" else ", \($e.criteria_gate) to the merge gate" end) end)
       end')
   echo "$line"
   case "$line" in
@@ -467,7 +484,8 @@ cmd_judge() {
     || die "could not line the verdict up with #$t's criteria"
   # A red recorded check: every criterion marked met that cites it is unmet;
   # one no criterion cites leaves no criterion shown met, nor any left to a
-  # Human check (a broken build is not passed on to the Artisan to try).
+  # Human check or the merge gate (a broken build is not passed on to the
+  # Artisan to try, nor merged to find out).
   acc=$(printf '%s' "$acc" | jq -c --argjson res "$cres" '
     def cited: [(.evidence | objects | .checks // []) | if type == "array" then .[] else . end | objects | .command];
     if ($res.recorded | not) then . else
@@ -475,8 +493,8 @@ cmd_judge() {
       | if ($red | length) == 0 then . else
           ([.[] | cited[]]) as $all
           | [$red[] | select(.command as $c | $all | index($c))] as $named
-          | map(if .human == true and ($named | length) == 0
-              then del(.human) | .evidence = ((.evidence | objects // {})
+          | map(if (.human == true or .gate == true) and ($named | length) == 0
+              then del(.human) | del(.gate) | .evidence = ((.evidence | objects // {})
                 + {why: ($red | map("recorded check `\(.command)` is red: \(.result)") | join("; "))})
             elif .met | not then . else
               cited as $mine
@@ -532,7 +550,8 @@ cmd_judge() {
   apply '.tickets[$t].evidence = $ev[0]
     | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
-             met: $ev[0].criteria_met, total: $ev[0].criteria_total}; $now)
+             met: $ev[0].criteria_met, total: $ev[0].criteria_total}
+             + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end); $now)
     | reduce ($ev[0].acceptance[] | select((.met | not) and (.guardrail // "") != "")) as $c (.;
         event({event: "guardrail-fired", guardrail: $c.guardrail, ticket: $t, attempt: $n,
                criterion: $c.criterion, by: "verifier"}; $now))
@@ -558,13 +577,13 @@ cmd_judge() {
       # A hands-on ticket is the Artisan's: no fresh worker, no attempt used.
       # It goes back to them with what the verifier found (human.sh verdict).
       apply '.tickets[$t] |= (.status = "queued" | .human.done_at = null
-          | .human.feedback += [{round: $n, unmet: [$e[0].acceptance[] | select((.met | not) and .human != true) | .criterion]}])
+          | .human.feedback += [{round: $n, unmet: [$e[0].acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion]}])
         | .tickets[$t].verifications[-1].next = "human"
         | event({event: "human-feedback", ticket: $t, attempt: $n}; $now)' \
         --arg t "$t" --argjson n "$n" --slurpfile e "$contract"
     else
     apply 'failed_attempt($t; $r; $now)
-      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true) | .criterion] | first)"' "$contract")"
+      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0) - (.criteria_gate // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"' "$contract")"
     fi
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"

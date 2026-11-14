@@ -103,6 +103,22 @@ def proven(entry):
     return bool(entry.get("met")) and bool(ev.get("tests") or ev.get("checks"))
 
 
+def gate_status(state, t):
+    """A criterion only the merge gate can check (#174): the gate's result,
+    from the ticket's suite record (wave.sh merge's local suite or CI run)."""
+    k = state.get("tickets", {}).get(t) or {}
+    suite = k.get("suite") or {}
+    if suite.get("passed") is True or k.get("status") == "merged":
+        result = "green"
+        if suite.get("mode") == "ci" and suite.get("run_id"):
+            result += ", CI run %s" % suite["run_id"] + (" (%s)" % suite["url"] if suite.get("url") else "")
+    elif suite.get("passed") is False:
+        result = "**red**"
+    else:
+        result = "not run yet"
+    return "checked by the merge gate (run %s): %s" % (state.get("run_id") or "-", result)
+
+
 def criteria(view):
     gate, state = view["gate"], view["state"]
     rows = []
@@ -361,8 +377,8 @@ def body(view):
                 [str(x) for x in ev.get("tests") or []]
                 + ["%s: %s" % (c.get("command"), c.get("result")) for c in ev.get("checks") or [] if isinstance(c, dict)]
                 + ([ev["why"]] if ev.get("why") else []))
-            out.append("| #%s | %s | %s | %s |" % (
-                t, cell(a.get("criterion")), "proven" if proven(a) else "**needs you**", cell(shown)))
+            status = gate_status(state, t) if a.get("gate") else "proven" if proven(a) else "**needs you**"
+            out.append("| #%s | %s | %s | %s |" % (t, cell(a.get("criterion")), status, cell(shown)))
     else:
         out += ["No criteria recorded."]
     plan_tickets = state.get("plan", {}).get("tickets") or {}

@@ -344,7 +344,7 @@ cmd_verdict() {
       "",
       "| Criterion | Met | Evidence |",
       "|---|---|---|",
-      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(
+      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .gate == true then "checked by the merge gate" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(
          if .met then ([(.evidence.checks // [])[] | "\(.command): \(.result)"] + (.evidence.tests // []) | join("; "))
          else (.evidence.why // "not shown") end) |"),
       "",

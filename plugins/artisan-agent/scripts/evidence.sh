@@ -48,7 +48,11 @@ DEFS='
   def arr: if type == "array" then . elif . == null then [] else [.] end;
   # The criteria only a person can verify, and where they went (#158).
   def hc($e): if ($e.criteria_human // 0) == 0 then ""
-    else ", \($e.criteria_human) to a Human check" + (if $e.human_check then " (#\($e.human_check))" else "" end) end;
+    else ", \($e.criteria_human) to a Human check" + (if $e.human_check then " (#\($e.human_check))" else "" end) end
+    + (if ($e.criteria_gate // 0) == 0 then "" else ", \($e.criteria_gate) to the merge gate" end);
+  # A criterion only the merge gate can check (#174), with its result once merged.
+  def gatecell($k): "checked by the merge gate: "
+    + (if $k.status == "merged" or $k.status == "closed" then "passed" elif $k.suite.passed == false then "**failed**" else "not run yet" end);
   def ev: if type == "object" then
       ([(.tests | arr)[] | tostring] + [(.checks | arr)[] | if type == "object" then "\(.command): \(.result)" else tostring end]
        + (if .diff then [.diff | tostring] else [] end) + (if .why then [.why | tostring] else [] end)) | join("; ")
@@ -68,7 +72,7 @@ cmd_comment() {
          "Merged into `\($s.integration.branch)` as \($k.merge_commit[0:7]); the full suite passed after the merge." else empty end),
       "",
       "| Criterion | Met | Evidence |", "|---|---|---|",
-      ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(.evidence | ev | cell) |"),
+      ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" elif .gate == true then gatecell($k) elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(.evidence | ev | cell) |"),
       "",
       "- **Tests the worker ran:** \(if $e.tests then ((if ($e.tests.files // []) | length > 0 then "\($e.tests.files | map("`\(.)`") | join(", ")): " else "" end) + "`\($e.tests.command // "-")` → \($e.tests.summary // "-" | cell) (the full suite runs at the merge gate)") else "not reported" end)",
       "- **Checks:** " + (if $e.checks == null then "not reported"
