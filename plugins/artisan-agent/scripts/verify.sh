@@ -108,15 +108,17 @@ classify() {
 
 # The ticket's acceptance criteria, verbatim, as a JSON array.
 read_criteria() { # ticket
-  local path= body=
+  local path= body= issue=
   path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
   if [ -n "$path" ]; then
     case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
     [ -f "$path" ] || die "no ticket file $path for #$1"
     body=$(cat "$path")
   else
-    body=$(gh issue view "$1" -R "$(get .repo)" --json body -q .body) \
+    issue=$(gh issue view "$1" -R "$(get .repo)" --json body,comments) \
       || die "could not read #$1 from the tracker; not verifying blind"
+    printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket | jq -c .criteria
+    return
   fi
   printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract
 }
