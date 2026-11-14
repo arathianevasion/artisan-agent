@@ -1,6 +1,6 @@
 # Review gates: the slice gate and its packet
 
-A **gate** is a point where the Artisan reviews work before what depends on it continues (GLOSSARY.md). This page covers the **slice gate**, the first of the four kinds (slice, risk, exception, end), built in #65. A gate is never triggered by context size, time or ticket count: a slice gate opens when, and only when, every ticket of a slice in the approved plan has merged. `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh` does the work; `scripts/lib/packet.py` renders the packet. Tested in `tests/gate.test.sh`.
+A **gate** is a point where the Artisan reviews work before what depends on it continues (GLOSSARY.md). This page covers the **slice gate**, the first of the four kinds (slice, risk, exception, end), built in #65. A gate is never triggered by context size, time or ticket count: a slice gate opens when, and only when, every ticket of a slice in the approved plan has merged (a ticket that left the run counts as done, and a slice none of whose tickets merged closes with nothing to review: `references/gate-actions.md`, #164). `${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh` does the work; `scripts/lib/packet.py` renders the packet. Tested in `tests/gate.test.sh`.
 
 Skills cite this file rather than copying it.
 
@@ -85,4 +85,4 @@ A card is decided once: a second answer on it is refused (6). Redirect, bypass a
 
 ## State
 
-`review_gates`: `[{id, kind, slice, title, role, issue, tickets, dependents: [{number, title}], cards, human_checks: [ticket], status: open|approved|redirected|bypassed|deferred, opened_at, approved_at?, decisions, reworks: [{card, ticket, human_check?}], guardrails?: [{guardrail, area?}]}]` (the last three statuses, and the records they carry: `references/gate-actions.md`). A `review-gate` entry in `decisions` (`gate`, `issue`). `plan.checks`. `lessons` entries of kind `guardrail`. Events `gate-opened`, `gate-decision`, `rework`, `gate-approved`, and `guardrail-fired` and `bug-found`. Details in `references/state-file.md`.
+`review_gates`: `[{id, kind, slice, title, role, issue, tickets, dependents: [{number, title}], cards, human_checks: [ticket], status: open|approved|redirected|bypassed|deferred|empty, left_run?: [{number, status, title}], opened_at, approved_at?, decisions, reworks: [{card, ticket, human_check?}], guardrails?: [{guardrail, area?}]}]` (the last three statuses, and the records they carry: `references/gate-actions.md`). A `review-gate` entry in `decisions` (`gate`, `issue`). `plan.checks`. `lessons` entries of kind `guardrail`. Events `gate-opened`, `gate-decision`, `rework`, `gate-approved`, and `guardrail-fired` and `bug-found`. Details in `references/state-file.md`.
