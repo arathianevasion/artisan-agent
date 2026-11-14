@@ -66,7 +66,22 @@
 #       overlap checks and branches from main; keeps the guard and its cost cap.
 #       A ticket the Artisan stopped and steered (lever.sh steer) is dispatched
 #       again like a retry, with their notes in its prompt.
-#   wave.sh merge <run-dir> <ticket> [--wait SECONDS]
+#   wave.sh merge <run-dir> <ticket>... [--wait SECONDS]
+#       several tickets, ready together, are a merge batch (#167; merge_batch
+#       in host.json, merge-gate.sh batch, default on): each is checked as
+#       below, they are merged --no-ff in order and the tip is gated once.
+#       Green merges them all; red is split (the first half's tip is gated,
+#       a green half merges, a red one is halved again) until the ticket
+#       whose merge turns a green tip red is found: it alone is undone and
+#       blocked, and the tickets after it are merged afresh without it and
+#       gated again. A ticket that conflicts while building is left out, to
+#       be merged alone (the conflict path below). Prints one line per
+#       ticket: "#<t> merged <commit>", "#<t> red" or "#<t> left out:
+#       conflict in <paths>; merge it alone (...)". 0 none red, 7 one red,
+#       19 parked on CI (the tickets not merged stay returned; merge them
+#       again after unpark-ci), 20 a gate still running: merge again naming
+#       any of the batch's tickets. With merge_batch off, only the first
+#       ticket merges, alone. One ticket is a batch of one:
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the merge gate (the plan's
 #       suite command there, or on a machine whose merge gate runs on CI,
