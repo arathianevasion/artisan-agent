@@ -1652,7 +1652,7 @@ batch_outcome() {
     0) who=$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')
        batch_merge_prefix "$p" "$record"
        note_skipped_gate "$record" "$who"
-       note_flaky "$record" "$(jq -r '.[0]' <<<"$(jq -c .tickets <<<"$who")")" \
+       note_flaky "$record" "$(jq -r '.tickets[0]' <<<"$who")" \
          "merge batch $(jq -r .batch <<<"$who") ($(jq -r '.tickets | map("#" + .) | join(", ")' <<<"$who"))" ;;
     7)
       git -C "$wt" reset -q --hard "$pre"

@@ -168,3 +168,38 @@ test_bc_each_merge_logs_its_ci_wait_and_the_reports_show_it_per_merge_and_in_tot
   assert_contains "$digest" "CI wait: "
   assert_contains "$digest" "#1 "
 }
+
+# A gate runner that died mid base check is resumed (--resume) on its same
+# run, whose failed jobs were already rerun (attempt 2): no second rerun, and
+# a rerun that passed is still flaky.
+resumed_gate() { # conclusion of attempt 2
+  local sha=
+  sha=$(git -C "$PROJECT" rev-parse HEAD)
+  git_quiet -C "$PROJECT" push -q origin "$sha:refs/heads/ci/r1-x"
+  jq -n --arg sha "$sha" --arg c "$1" '{databaseId: 9001, attempt: 2, workflowName: "ci.yml", headBranch: "ci/r1-x",
+      headSha: $sha, event: "workflow_dispatch", status: "completed", conclusion: $c,
+      url: "https://github.com/local/sample/actions/runs/9001", createdAt: "2026-11-14T10:00:00Z",
+      updatedAt: "2026-11-14T10:05:00Z", jobs: [{name: "bash 5.2", status: "completed", conclusion: $c}]}' \
+    >"$FAKE_GH_DIR/run-9001.json"
+  RESUMED_STATUS=0
+  RESUMED=$("$MG" ci --repo local/sample --workflow ci.yml --branch ci/r1-x --sha "$sha" --dir "$PROJECT" \
+    --timeout-minutes 1 --resume --base "$sha" 2>/dev/null) || RESUMED_STATUS=$?
+}
+
+test_bc_a_resumed_gate_whose_rerun_passed_is_flaky_and_reruns_nothing() {
+  setup_ci
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
+  resumed_gate success
+  assert_eq 0 "$RESUMED_STATUS" "$RESUMED"
+  assert_eq "flaky 2" "$(jq -r '"\(.base_check.verdict) \(.base_check.rerun.attempt)"' <<<"$RESUMED")"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "run rerun"
+}
+
+test_bc_a_resumed_gate_whose_rerun_failed_checks_the_base_without_a_second_rerun() {
+  setup_ci
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
+  resumed_gate failure
+  assert_eq 7 "$RESUMED_STATUS" "$RESUMED"
+  assert_eq "new success" "$(jq -r '"\(.base_check.verdict) \(.base_check.base.conclusion)"' <<<"$RESUMED")"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "run rerun"
+}
