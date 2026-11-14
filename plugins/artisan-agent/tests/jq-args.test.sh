@@ -1,8 +1,8 @@
 # Static check (#203): no script hands jq a whole file as the value of
 # --arg or --argjson: $(cat …) or $(< …). Run files grow with the run (the
 # state, a gate view); Linux refuses one argument over 128 KiB and macOS all
-# of them together over 1 MiB, and jq then never starts. Read a file with --slurpfile or --rawfile,
-# or on stdin, instead. Bash 3.2-safe: grep and find only.
+# of them together over 1 MiB, and jq then never starts. Read a file with
+# --slurpfile or --rawfile, or on stdin, instead. Bash 3.2-safe: grep and find only.
 
 PATTERN='--arg(json)?[[:space:]]+[A-Za-z_][A-Za-z_0-9]*[[:space:]]+"?\$\([[:space:]]*(cat[[:space:]]|<)'
 
