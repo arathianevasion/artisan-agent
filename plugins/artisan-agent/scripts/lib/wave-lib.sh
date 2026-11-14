@@ -29,19 +29,60 @@ get() { jq -r "$@" "$FILE"; }
 # command returns 1 with SETUP_ERR = "setup: <command> exited N: <stderr tail>",
 # so the caller records a setup failure, not a red test. Not for $(...): it
 # sets SETUP_ERR.
+#
+# The command runs for at most worktree_setup_timeout seconds (#181; default
+# 900). It runs in its own session (detach-lib's detach, so no `timeout`
+# binary is needed on macOS); past the limit its whole process group gets
+# TERM, then KILL two seconds later, and it returns 1 with SETUP_ERR =
+# "setup: setup timeout after <n>s: <command> ...: <stderr tail>".
 SETUP_ERR=
 worktree_setup() {
-  local wt="$1" cmd="" errf="" rc=0 tail_=""
+  local wt="$1" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out=""
   SETUP_ERR=
-  cmd=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" get worktree_setup) 2>/dev/null | jq -r '. // empty' 2>/dev/null) || cmd=
+  conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
+  cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
   [ -n "$cmd" ] || return 0
-  errf=$(mktemp "${TMPDIR:-/tmp}/worktree-setup.XXXXXX")
-  (cd "$wt" && ARTISAN_MAIN="$MAIN" bash -c "$cmd") >/dev/null 2>"$errf" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    tail_=$(tail -n 10 "$errf" | cut -c1-300)
-    SETUP_ERR="setup: \`$cmd\` exited $rc in $wt: ${tail_:-no stderr}"
+  limit=$(jq -r '.worktree_setup_timeout // empty' <<<"$conf" 2>/dev/null) || limit=
+  if ! state_is_uint "$limit" || [ "$limit" -eq 0 ]; then limit=900; fi
+  declare -F detach >/dev/null || . "$SCRIPT_DIR/lib/detach-lib.sh"
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/worktree-setup.XXXXXX")
+  # The session leader records its pid (the process group to kill), runs the
+  # command and records its exit status.
+  (cd "$wt" && ARTISAN_MAIN="$MAIN" detach bash -c \
+    'echo $$ >"$1/pid.tmp" && mv "$1/pid.tmp" "$1/pid"; bash -c "$2"; echo $? >"$1/rc"' _ "$dir" "$cmd") \
+    </dev/null >/dev/null 2>"$dir/err" &
+  bg=$!
+  # SECONDS counts whole seconds: the extra one keeps the limit from coming
+  # up to a second early.
+  deadline=$((SECONDS + limit + 1))
+  while [ ! -s "$dir/rc" ]; do
+    if [ "$SECONDS" -ge "$deadline" ]; then timed_out=1; break; fi
+    # A leader gone without an exit status was killed from outside.
+    if [ -s "$dir/pid" ] && ! kill -0 "$(cat "$dir/pid")" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  if [ -n "$timed_out" ]; then
+    pgid=$(cat "$dir/pid" 2>/dev/null) || pgid=
+    if state_is_uint "$pgid"; then
+      kill -TERM "-$pgid" 2>/dev/null || true
+      while kill -0 "-$pgid" 2>/dev/null && [ "$i" -lt 20 ]; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      kill -KILL "-$pgid" 2>/dev/null || true
+    fi
   fi
-  rm -f "$errf"
+  wait "$bg" 2>/dev/null || true
+  tail_=$(tail -n 10 "$dir/err" | cut -c1-300)
+  if [ -n "$timed_out" ]; then
+    SETUP_ERR="setup: setup timeout after ${limit}s: \`$cmd\` in $wt was killed: ${tail_:-no stderr}"
+    rc=124
+  else
+    rc=$(cat "$dir/rc" 2>/dev/null) || rc=
+    state_is_uint "$rc" || rc=1
+    [ "$rc" -eq 0 ] || SETUP_ERR="setup: \`$cmd\` exited $rc in $wt: ${tail_:-no stderr}"
+  fi
+  rm -rf "$dir"
   [ "$rc" -eq 0 ]
 }
 

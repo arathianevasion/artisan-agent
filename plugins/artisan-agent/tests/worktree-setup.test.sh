@@ -103,3 +103,53 @@ test_ws_a_verifier_worktree_runs_the_setup_once_before_the_verifier_starts() {
   assert_eq 1 "$(wc -l <"$SETUP_LOG" | tr -d ' ')" "ran once"
   assert_contains "$(cat "$SETUP_LOG")" "project-wt/r1-verify-1.1 "
 }
+
+# worktree_setup_timeout (#181): the setup command runs for at most this many
+# seconds; then its whole process group is killed and the attempt fails with
+# reason setup, "setup timeout after <n>s" and the last lines of its output.
+set_setup_timeout() { # seconds
+  printf 'worktree_setup_timeout: %s\n' "$1" >>"$PROJECT/.artisan-agent/config.yml"
+}
+
+test_ws_a_setup_that_outlives_the_timeout_is_killed_and_fails_the_attempt() {
+  setup_wave
+  export PIDS="$TEST_TMPDIR/setup.pids"
+  set_setup 'echo "installing deps" >&2; echo $$ >>"$PIDS"; sleep 30 & echo $! >>"$PIDS"; wait'
+  set_setup_timeout 1
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  export FAKE_CLAUDE_MODE=complete
+  local status=0 started=$SECONDS p="" i=0
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 6 "$status"
+  [ $((SECONDS - started)) -lt 15 ] || fail "dispatch waited for the hung setup"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "setup:"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "setup timeout after 1s"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "installing deps"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "setup timeout after 1s"
+  assert_eq queued "$(state_get '.tickets["1"].status')" "a retry is allowed"
+  assert_eq 2 "$(wc -l <"$PIDS" | tr -d ' ')" "the setup started"
+  # A killed process can take a moment to be reaped by init.
+  while read -r p; do
+    i=0
+    while kill -0 "$p" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+    ! kill -0 "$p" 2>/dev/null || fail "setup process $p was left running"
+  done <"$PIDS"
+  [ ! -d "$TEST_TMPDIR/project-wt/r1-1.1" ] || fail "the worktree was left behind"
+  [ ! -e "$RUN_DIR/workers/1.1" ] || fail "a worker was launched"
+}
+
+test_ws_a_setup_that_finishes_within_the_timeout_dispatches_as_before() {
+  setup_wave
+  set_setup 'sleep 1; touch deps-installed'
+  set_setup_timeout 20
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  export FAKE_CLAUDE_MODE=complete
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["1"].status')"
+  assert_eq 0 "$(state_get '.tickets["1"].failures | length')"
+  [ -e "$TEST_TMPDIR/project-wt/r1-1.1/deps-installed" ] || fail "setup did not run"
+}
+
+test_ws_the_setup_timeout_defaults_to_900_seconds() {
+  assert_eq 900 "$("$PLUGIN_ROOT/scripts/config.sh" get worktree_setup_timeout --file /nonexistent/config.yml)"
+}
