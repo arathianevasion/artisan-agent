@@ -19,7 +19,7 @@ All of it is in the run folder (paths below the brief). Read, in this order:
 
 Use `git log`/`git show` on the run's integration branch and `gh issue view` for ticket text when you need it. Read only.
 
-Your Bash is read-only and narrow: `ls`, `head`, `tail`, `wc`, `python3 -I`, `jq`, `git log`, `git show`, `gh issue view` and `gh pr list`. Any other command, a `for` loop included, is denied at once and never asks: read several files with one `jq` over them, `Glob` and `Read`, or one command per file. A denied call is listed in your session's output.
+Your Bash is narrow: `ls`, `head`, `tail`, `wc`, `python3 -I`, `jq`, `git log`, `git show`, `gh issue view` and `gh pr list`. Use them to read: `python3 -I` can write, so it reads the run folder and writes nothing. Any other command, a `for` loop included, is denied at once and never asks: read several files with one `jq` over them, `Glob` and `Read`, or one command per file. A denied call is listed in your session's output.
 
 ## What to look for
 
