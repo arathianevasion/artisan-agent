@@ -226,6 +226,8 @@ The orchestrator's files sit beside its workers' in the run folder, named `orche
 
 **Environment for trials.** `ARTISAN_CLAUDE_ARGS` (split on whitespace) is added to every orchestrator and worker session, for example `--plugin-dir …`, the flags from `tests/helpers/live-hooks.sh` and `--no-session-persistence`. `ARTISAN_MAX_BUDGET_USD` caps any one session's `--max-budget-usd`. `ARTISAN_HOOK_PROOF` (a file path) makes `compact-hook.sh` append one line per hook run, so a live harness can prove a plugin hook fired (#105).
 
+**Poll intervals.** How often the scripts look while they wait, each documented in its script's header: `ARTISAN_RUNNER_POLL_SECONDS` (`run-ticket.sh`'s runner watching its session, default 1), `ARTISAN_WAIT_ANY_POLL_SECONDS` (`wait-any.sh`'s default `--interval`, 1), `ARTISAN_MERGE_POLL_SECONDS` (`wave.sh merge` and `resolved` waiting on the merge gate, 0.5), `ARTISAN_VERIFIER_UP_SECONDS` (how long `verify.sh start` waits for a verifier's pid, whole seconds, 10) and `ARTISAN_CI_POLL_SECONDS` (`merge-gate.sh` reading CI, 20). A value that is not a number is a usage error (2). `tests/lib.sh` sets the first three to 0.1 for every test; production never needs to set them (#169). `TESTS_TIMES=1 tests/run.sh` prints each test's seconds after the summary, slowest first.
+
 ## Exit status
 
 Every exit code `wave.sh` and `verify.sh` use (and `checks.sh`'s 7 and 16, `budget.sh`'s 17 and 18, `merge-gate.sh`'s 7 and 19, `end-gate.sh`'s 22), in one table: a number means the same thing in both, so an orchestrator can act on it without knowing which script it came from. Codes 0 to 12 are as they were before the verifier; 13 and 14 are the verifier's (#57).
