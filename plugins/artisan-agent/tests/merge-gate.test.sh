@@ -830,6 +830,7 @@ test_mg_worker_ci_the_verifier_passes_a_green_branch_run_and_the_merge_gate_reus
   assert_contains "$(cat "$RUN_DIR/prompts/verify-1.1.md")" '- `sh e2e.sh`: runs on CI'
   [ ! -e "$TEST_TMPDIR/e2e-ran-here" ] || fail "the e2e check ran on this machine"
   assert_eq 1 "$(dispatches)" "only the worker's run"
+  assert_eq 1 "$(state_get '.tickets["1"].evidence.checks.ci_cost.runs')" "the branch run's cost is on the evidence"
   merge_1
   assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
   assert_eq merged "$(state_get '.tickets["1"].status')"
@@ -867,4 +868,21 @@ test_mg_worker_ci_with_worker_inputs_the_run_passes_them_and_the_merge_gate_runs
   assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
   assert_eq "null 9002" "$(state_get '.tickets["1"].suite | "\(.reused // null) \(.run_id)"')"
   assert_eq 2 "$(dispatches)" "the merge gate ran CI in full"
+}
+
+test_mg_worker_ci_a_later_red_run_for_the_same_commit_fails_the_verifier() {
+  setup_worker_ci
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  local res=
+  res="$RUN_DIR/results/1.1.result.json"
+  jq '.ci_runs += [.ci_runs[0] + {run_id: 9002, conclusion: "failure"}]' "$res" >"$res.tmp" && mv "$res.tmp" "$res"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >/dev/null 2>&1 || true
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(state_get '.tickets["1"].evidence.acceptance[0].evidence.why')" "concluded failure"
+  assert_eq "2" "$(state_get '.tickets["1"].evidence.checks.ci_cost.runs')"
 }

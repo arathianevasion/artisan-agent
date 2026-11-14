@@ -151,3 +151,12 @@ test_wci_wait_run_waits_on_the_run_an_earlier_call_dispatched_without_dispatchin
   assert_eq "0 9001 success" "$RC $(jq -r '"\(.run_id) \(.conclusion)"' <<<"$OUT")"
   assert_eq 1 "$(grep -c '^workflow run' "$FAKE_GH_DIR/calls")" "dispatched once"
 }
+
+test_wci_wait_run_waits_on_exactly_that_run() {
+  setup_worker
+  worker_run
+  assert_eq 0 "$RC"
+  # A run id that isn't a run for this commit is never swapped for another.
+  worker_run --wait-run 9000 --timeout-minutes 0
+  assert_eq "19 null" "$RC $(jq -r .run_id <<<"$OUT")"
+}

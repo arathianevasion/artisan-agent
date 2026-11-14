@@ -58,8 +58,8 @@ command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# The newest workflow_dispatch run of WF on BRANCH, any commit, as JSON; empty
-# when there is none.
+# The workflow_dispatch runs of WF on BRANCH (the newest 20, any commit), as a
+# JSON list; [] when there are none.
 runs_on() { # repo wf branch
   gh run list -R "$1" --workflow "$2" --branch "$3" --event workflow_dispatch --limit 20 \
     --json databaseId,headSha,status,conclusion,url,createdAt,updatedAt 2>/dev/null || echo '[]'
@@ -136,8 +136,9 @@ cmd_run() {
   fi
   deadline=$(($(date +%s) + timeout * 60))
   while :; do
-    run=$(runs_on "$repo" "$wf" "$branch" | jq -c --arg sha "$sha" --argjson b "$before" \
-      '[.[] | select(.headSha == $sha and .databaseId > $b)] | sort_by(.databaseId) | first // empty')
+    run=$(runs_on "$repo" "$wf" "$branch" | jq -c --arg sha "$sha" --argjson b "$before" --arg w "$wait_run" '
+      [.[] | select(.headSha == $sha and (if $w != "" then .databaseId == ($w | tonumber) else .databaseId > $b end))]
+      | sort_by(.databaseId) | first // empty')
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       [ -n "$run" ] || run='{}'

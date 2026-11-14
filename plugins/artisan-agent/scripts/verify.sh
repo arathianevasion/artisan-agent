@@ -343,17 +343,27 @@ cmd_start() {
 # ci_only_results ticket checks-record results: the results with one entry
 # per CI-only check (#194; the verification's checks.ci_only), passed only
 # when the worker's evidence names a run (ci_runs) that worker-ci.sh check
-# finds green for exactly the commit verified, and with that run as ci_run.
+# finds green for exactly the commit verified (the last run for it, standing
+# for every CI-only check), with that run as ci_run and the runs' cost as
+# ci_cost {runs, minutes}.
 # A red entry makes the criteria unmet as a red recorded check does.
 ci_only_results() {
-  local t="$1" ck="$2" res="$3" commit="" rec="" id="" out="" ok=false why="" run='null'
+  local t="$1" ck="$2" res="$3" commit="" rec="" id="" out="" ok=false why="" run='null' cost="null"
   [ "$(printf '%s' "$ck" | jq '(.ci_only // []) | length')" -gt 0 ] || { printf '%s\n' "$res"; return 0; }
   commit=$(get --arg t "$t" '.tickets[$t].verifications[-1].commit')
   rec="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
-  run=$(jq -c --arg c "$commit" '[(.ci_runs // [])[] | objects | select(.sha == $c and .conclusion == "success")] | last // null' "$rec" 2>/dev/null) || run=null
+  # The last run for the commit counts, and only when it stood for every
+  # CI-only check this machine has.
+  run=$(jq -c --arg c "$commit" '[(.ci_runs // [])[] | objects | select(.sha == $c)] | last // null' "$rec" 2>/dev/null) || run=null
   [ -n "$run" ] || run=null
   if [ "$run" = null ]; then
     why="no green CI run for $commit in the worker's evidence (ci_runs)"
+  elif [ "$(printf '%s' "$run" | jq -r '.conclusion')" != success ]; then
+    why="no green CI run for $commit: the worker's last run for it, $(printf '%s' "$run" | jq -r '.run_id'), concluded $(printf '%s' "$run" | jq -r '.conclusion // "nothing"')"
+    run=null
+  elif [ "$(printf '%s' "$run" | jq -c --argjson ck "$ck" '$ck.ci_only - (.checks // [])')" != '[]' ]; then
+    why="no green CI run for $commit covering $(printf '%s' "$run" | jq -r --argjson ck "$ck" '$ck.ci_only - (.checks // []) | join(", ")')"
+    run=null
   else
     id=$(printf '%s' "$run" | jq -r .run_id)
     if out=$("$SCRIPT_DIR/worker-ci.sh" check --repo "$(get .repo)" --run-id "$id" --sha "$commit"); then
@@ -363,9 +373,13 @@ ci_only_results() {
       run=null
     fi
   fi
-  printf '%s' "$res" | jq -c --argjson ck "$ck" --argjson ok "$ok" --arg why "$why" --argjson run "$run" '
+  # What the branch's CI cost the attempt, red runs included (#194).
+  cost=$(jq -c '[(.ci_runs // [])[] | objects] | {runs: length, minutes: (map(.minutes // 0) | add // 0)}' "$rec" 2>/dev/null) || cost=null
+  [ -n "$cost" ] || cost=null
+  printf '%s' "$res" | jq -c --argjson ck "$ck" --argjson ok "$ok" --arg why "$why" --argjson run "$run" --argjson cost "$cost" '
     .results += [$ck.ci_only[] | {command: ., passed: $ok, exit_code: (if $ok then 0 else 1 end), result: $why, ci: true}]
-    | if $run == null then . else .ci_run = ($run | {run_id, url, sha, tree, workflow, branch, full, inputs, minutes}) end'
+    | if $run == null then . else .ci_run = ($run | {run_id, url, sha, tree, workflow, branch, full, inputs, minutes}) end
+    | .ci_cost = $cost'
 }
 
 # Moves the criteria (a JSON array) off ticket $1 into its Human check, one
