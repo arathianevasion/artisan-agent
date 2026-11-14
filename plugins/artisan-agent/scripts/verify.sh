@@ -284,6 +284,13 @@ cmd_start() {
     --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid=
+  # The project's worktree_setup (#173) runs before the verifier starts. A
+  # failure is an error verdict with the reason "setup", not a red check.
+  if ! worktree_setup "$wt"; then
+    remove_worktree "$wt"
+    apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)' --arg t "$t" --arg r "$SETUP_ERR"
+    die "the verifier's worktree for #$t: $SETUP_ERR"
+  fi
   read_extra_args
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \

@@ -643,6 +643,14 @@ cmd_dispatch() {
   else
     git -C "$MAIN" worktree add -q -b "$branch" "$wt" "$base" >/dev/null 2>&1 || die "could not add worktree $wt"
   fi
+  # The project's worktree_setup (#173) runs before the worker starts. If it
+  # fails the attempt fails with the reason "setup", not a red test; nothing
+  # ran in the worktree, so it goes, and the attempt is the one that counts.
+  if ! worktree_setup "$wt"; then
+    git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    apply '.tickets[$t].attempts += 1 | failed_attempt($t; $r; $now)' --arg t "$t" --arg r "$SETUP_ERR"
+    state_die 6 "wave.sh: #$t attempt $n: $SETUP_ERR; it is now $(get --arg t "$t" '.tickets[$t].status')"
+  fi
 
   repo=$(get '.repo')
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
