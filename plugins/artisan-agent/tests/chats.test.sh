@@ -231,6 +231,18 @@ test_the_product_chat_never_reads_a_run_state_file() {
   case "$(sweep --chat product --idle)" in *"decision(s) waiting"*) fail "the Product chat read the run's state file" ;; esac
 }
 
+test_an_orchestrators_unclean_exit_notifies_at_once_naming_its_cause() {
+  setup_chats
+  echo '{"kind":"orchestrator-exit","cause":"error_max_turns","wave":2,"tickets":["217"],"question":"q"}' >"$TEST_TMPDIR/d.json"
+  "$SCRIPTS/state.sh" decision "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  local out=""
+  # At the terminal, not idle: still notified (#171).
+  out=$(sweep)
+  assert_contains "$out" "- Run r1: the orchestrator for wave 2 exited without finishing it (error_max_turns: #217)."
+  assert_contains "$out" "notify: Artisan Agent: 1 decision(s) waiting in run r1; run r1: the orchestrator for wave 2 exited without finishing it (error_max_turns: #217)"
+  case "$(sweep --idle)" in *"notify:"*) fail "notified twice for the same exit" ;; esac
+}
+
 test_due_follows_the_sweep_interval() {
   setup_chats
   ARTISAN_NOW=1000 "$C" due
