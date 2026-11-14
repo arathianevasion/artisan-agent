@@ -172,3 +172,82 @@ test_c_an_out_path_with_quotes_still_writes_valid_json() {
   out=$(cd "$P" && "$CHECKS" run --out "$TEST_TMPDIR/a \"q\" \\b/checks.json")
   assert_contains "$(printf '%s' "$out" | jq -r '.results[0].log')" 'a "q" \b/checks.logs/1.log'
 }
+
+# Where each check runs (#194): runs_locally always | mac | never, written by
+# setup at the end of the check's line, always when left out.
+standards_with_runs_locally() {
+  mkdir -p p
+  cat >p/CODING_STANDARDS.md <<'MD'
+# Coding standards
+
+## Checks
+
+- `./unit.sh`: proven to fail on 2026-11-01, breaking: flipped an assertion
+- `./ksp-build.sh`: proven to fail on 2026-11-01, breaking: a type error (runs_locally: mac)
+- `./e2e.sh`: proven to fail on 2026-11-01, breaking: a wrong label (runs_locally: never)
+MD
+  printf '#!/bin/sh\necho unit ok\n' >p/unit.sh
+  printf '#!/bin/sh\ntouch ran-ksp; echo ksp ok\n' >p/ksp-build.sh
+  printf '#!/bin/sh\ntouch ran-e2e; echo e2e ok\n' >p/e2e.sh
+  chmod +x p/*.sh
+}
+
+test_c_each_check_says_where_it_runs_and_a_line_without_it_is_always() {
+  standards_with_runs_locally
+  local json=
+  json=$("$CHECKS" json --dir p)
+  assert_eq "./unit.sh:always ./ksp-build.sh:mac ./e2e.sh:never" \
+    "$(printf '%s' "$json" | jq -r '[.checks[] | "\(.command):\(.runs_locally)"] | join(" ")')"
+  assert_eq "a type error" "$(printf '%s' "$json" | jq -r '.checks[1].break')" "the setting is not part of the break"
+  assert_eq "./unit.sh
+./ksp-build.sh
+./e2e.sh" "$("$CHECKS" list --dir p)"
+  # An existing line (no setting) is always, as before.
+  setup_with_checks
+  assert_eq "always always" "$(cd "$P" && "$CHECKS" json | jq -r '[.checks[].runs_locally] | join(" ")')"
+}
+
+test_c_a_runs_locally_value_not_known_is_refused() {
+  mkdir p
+  printf '## Checks\n\n- `./e2e.sh`: proven to fail on 2026-11-01, breaking: x (runs_locally: sometimes)\n' >p/CODING_STANDARDS.md
+  local rc=0
+  "$CHECKS" json --dir p >/dev/null 2>"$TEST_TMPDIR/err" || rc=$?
+  assert_eq 1 "$rc"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "runs_locally must be always, mac or never"
+}
+
+test_c_ci_only_lists_the_checks_this_machine_cant_run_when_its_merge_gate_is_ci() {
+  standards_with_runs_locally
+  assert_eq "./ksp-build.sh
+./e2e.sh" "$(ARTISAN_MERGE_GATE=ci ARTISAN_HOST_OS=linux "$CHECKS" ci-only --dir p)" "linux, ci"
+  assert_eq "./e2e.sh" "$(ARTISAN_MERGE_GATE=ci ARTISAN_HOST_OS=macos "$CHECKS" ci-only --dir p)" "mac, ci"
+  # A local merge gate: nothing changes, every check runs here.
+  assert_eq "" "$(ARTISAN_MERGE_GATE=local ARTISAN_HOST_OS=linux "$CHECKS" ci-only --dir p)" "local"
+  assert_eq "" "$(ARTISAN_MERGE_GATE=ci ARTISAN_HOST_OS=linux "$CHECKS" ci-only --dir "$TEST_TMPDIR")" "none recorded"
+}
+
+test_c_a_worker_on_a_ci_machine_leaves_ci_only_checks_to_ci_on_its_branch() {
+  standards_with_runs_locally
+  local out= rc=0
+  out=$(cd p && ARTISAN_MERGE_GATE=ci ARTISAN_HOST_OS=linux "$CHECKS" run --dir . --in . --worker) || rc=$?
+  assert_eq 0 "$rc"
+  assert_eq "./unit.sh" "$(printf '%s' "$out" | jq -r '[.results[].command] | join(" ")')"
+  assert_eq '["./ksp-build.sh: runs on CI on the branch (runs_locally: mac)","./e2e.sh: runs on CI on the branch (runs_locally: never)"]' \
+    "$(printf '%s' "$out" | jq -c .not_run)"
+  assert_eq '["./ksp-build.sh","./e2e.sh"]' "$(printf '%s' "$out" | jq -c .ci_only)"
+  [ ! -e p/ran-e2e ] && [ ! -e p/ran-ksp ] || fail "a CI-only check ran here"
+  # A local merge gate runs them all, as today, and so does a run without --worker.
+  out=$(cd p && ARTISAN_MERGE_GATE=local "$CHECKS" run --dir . --in . --worker)
+  assert_eq "./unit.sh ./ksp-build.sh ./e2e.sh" "$(printf '%s' "$out" | jq -r '[.results[].command] | join(" ")')"
+  assert_eq "[] null" "$(printf '%s' "$out" | jq -c '.not_run, .ci_only' | tr '\n' ' ' | sed 's/ $//')"
+}
+
+test_c_setup_records_runs_locally_when_it_is_not_always() {
+  seed_checks
+  git -C "$P" push -q origin main
+  answers '{"checks":[{"command":"./test.sh","break_cmd":"echo broken >value","break":"wrote a wrong value","runs_locally":"never"}]}'
+  run_setup >/dev/null
+  merge_setup_pr
+  assert_eq "./test.sh:never" "$(cd "$P" && "$CHECKS" json | jq -r '[.checks[] | "\(.command):\(.runs_locally)"] | join(" ")')"
+  assert_contains "$(cat "$P/CODING_STANDARDS.md")" "breaking: wrote a wrong value (runs_locally: never)"
+}
