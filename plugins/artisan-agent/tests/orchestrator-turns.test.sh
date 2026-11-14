@@ -56,8 +56,8 @@ test_ot_a_plan_from_before_the_setting_gets_the_template_defaults() {
 # ------------------------------------------- a 5-ticket wave with 2 CI gates
 
 # A CI run over tickets 1-5, none blocking another, Max Agents 5. Each worker
-# commits t<ticket>.txt; tickets 4 and 5 take SLOW_SECONDS, so they come back
-# while the first merge batch's CI gate is running and make a second gate.
+# commits t<ticket>.txt; tickets 4 and 5 wait until the first merge batch's CI
+# gate has started, so they come back while it runs and make a second gate.
 setup_five() {
   setup_ci 30 '["1","2","3","4","5"]'
   rm -f "$FAKE_GH_DIR/blocked_by-2.json"
@@ -69,7 +69,6 @@ setup_five() {
     | .plan.waves = [["1","2","3","4","5"]]
     | reduce ("3", "4", "5") as $t (.; .plan.tickets[$t] = (.plan.tickets["2"] | .title = "Ticket \($t)"))
     | reduce ("1", "2", "3", "4", "5") as $t (.; .plan.tickets[$t].expected_files = ["t\($t).txt"])' >/dev/null
-  export SLOW_SECONDS=${SLOW_SECONDS:-4}
   write_five_worker_script
   write_turn_counting_orchestrator
 }
@@ -83,7 +82,13 @@ t=${key%%.*}
 # 1-3 return together: each waits until all three have committed.
 barrier="$ARTISAN_RUN_DIR/../barrier"
 mkdir -p "$barrier"
-case "$t" in 4|5) sleep "$SLOW_SECONDS" ;; esac
+# 4 and 5 come back once the first merge batch's gate has started.
+case "$t" in 4|5)
+  i=0
+  until [ "$(jq -r '.merge_gate != null or ([.events[] | select(.event == "merge-gate")] | length > 0)' "$ARTISAN_RUN_DIR/state.json")" = true ]; do
+    i=$((i + 1)); [ "$i" -lt 600 ] || exit 1; sleep 0.1
+  done ;;
+esac
 echo "$t" >"t$t.txt"
 git add -A && git commit -q -m "worker $t"
 jq -n --arg t "$t" --arg c "$(git rev-parse HEAD)" '{ticket: $t, status: "complete", commit: $c,
