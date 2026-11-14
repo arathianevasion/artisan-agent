@@ -32,6 +32,18 @@ The agent needs to know when it's done. Every agent brief must have concrete, te
 - **Good:** "Running `gh issue list --label needs-triage` returns issues that have been through initial classification"
 - **Bad:** "Triage should work correctly"
 
+### Only what an agent can show
+
+A `ready-for-agent` brief's criteria hold only what an agent can show: a test, a command's output, a file, a diff. A criterion only a person can verify (in game, by eye, on a real device, with outside access) is one the verifier can never meet, so the ticket could never pass. Split it out:
+
+- The agent criteria stay. Where useful, one asks for the artefact the person will use, such as "a checklist entry for the in-game check".
+- The rest becomes a **Human check** ticket (`GLOSSARY.md`): `ready-for-human`, titled `Human check: <what> (#<agent ticket>)`, the marker `<!-- artisan-agent:human-check-for #<agent ticket> -->` as its body's first line, a "What to check" section, its criteria, and "Blocked by #<agent ticket>" with the native blocking edge. `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh split-human-check` makes it, or adds to the one that exists.
+
+- **Good:** agent: "the save round-trip test asserts every contract key survives a reload"; Human check: "contract keys stay stable across save and load, checked in game"
+- **Bad:** agent: "contract keys stay stable across save and load, checked in game"
+
+The phrases that make a criterion read as needing a person, and the rest of the rule: `${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`.
+
 ### Explicit scope boundaries
 
 State what is out of scope. This prevents the agent from gold-plating or making assumptions about adjacent features.

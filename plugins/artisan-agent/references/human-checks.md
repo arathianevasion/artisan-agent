@@ -29,7 +29,7 @@ A Human check is not a hands-on ticket: on a hands-on ticket the Artisan builds 
 
 While a flag stands, the plan can't be approved: `check` exits 1, so `publish` refuses, and `state.sh init` refuses a plan with an open flag. Each flag is cleared one of two ways:
 
-- **Split it**: `to-plan.sh split-human-check --repo <owner/name> --graph <graph.json> [--plans <plans.json>] <ticket> "<criterion>"` moves the criterion off the agent ticket into its Human check ticket, creating that ticket (title, marker, `ready-for-human`, blocking edge) or adding to the existing one. Running it again changes nothing.
+- **Split it**: `to-plan.sh split-human-check --repo <owner/name> [--graph <graph.json> [--plans <plans.json>]] <ticket> "<criterion>"` moves the criterion off the agent ticket into its Human check ticket, creating that ticket (title, marker, `ready-for-human`, blocking edge) or adding to the existing one. Running it again changes nothing. It moves a checkbox under the agent ticket body's `## Acceptance criteria`; a criterion that sits only in a brief comment is written into the Human check by hand.
 - **Override it**: the Artisan decides the criterion stays, with a reason: `--override-human-check <ticket> "<criterion>" --why "<reason>"` on `to-plan.sh check` or `publish`, or on `plan.sh build`. It is recorded on the plan (`human_check_overrides` in `plans.json` and the plan issue's body; in `plan.json` at the plan step).
 
 ## Phrases

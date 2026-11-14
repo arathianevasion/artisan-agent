@@ -102,9 +102,10 @@ How the plan step reads the project config, estimates a run and records the numb
 |---|---|---|
 | `config.sh` | Reads `.artisan-agent/config.yml` with every missing key filled from its default | the effective config as JSON, or one setting |
 | `plan.sh build` | Turns a draft plan into the run envelope: config with this run's overrides, estimates, caps, total and budget | the plan JSON for `state.sh init` |
+| `plan.sh build --override-human-check <t> "<criterion>" --why TEXT` | Flags each criterion in a ticket's optional `acceptance` list that reads as needing a person (`human_check_flags`); records the Artisan's overrides (`human_check_overrides`). `state.sh init` refuses a plan with a flag left (`references/human-checks.md`) | the plan JSON |
 | `plan.sh render` | Prints the one approval: waves, model, estimate and expected files per ticket (a warning for each ticket with none, which runs alone), total, Max Agents, the suite command (the recorded checks, a change from them, or the fallback) and every config number | Markdown |
 
-**The draft's shape.** Per ticket in scope: `title`, `model`, `blocked_by`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`). `blocked_by` is required: the ticket numbers of its open blockers, copied from `resolve-scope.sh`'s `tickets[].blocked_by` (native dependencies, or the body's "Blocked by" line where the tracker has none; a blocker outside the scope is kept). `[]` is valid; a ticket with no `blocked_by` field makes `plan.sh build` exit 1. The critical path, a hands-on pick's delay and parking all read it. `plan.sh` makes no tracker calls.
+**The draft's shape.** Per ticket in scope: `title`, `model`, `blocked_by`, `expected_output` and `expected` (`input_tokens`, `output_tokens`, `minutes`), and optionally `acceptance` (its criteria, which the build checks for ones needing a person). `blocked_by` is required: the ticket numbers of its open blockers, copied from `resolve-scope.sh`'s `tickets[].blocked_by` (native dependencies, or the body's "Blocked by" line where the tracker has none; a blocker outside the scope is kept). `[]` is valid; a ticket with no `blocked_by` field makes `plan.sh build` exit 1. The critical path, a hands-on pick's delay and parking all read it. `plan.sh` makes no tracker calls.
 
 ## The project config
 
@@ -131,6 +132,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
+| extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
 
 ## Overrides are for this run only
 
@@ -168,14 +170,17 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `to-plan.sh graph --repo <o/n> <ticket>...` | reads the tickets: title, acceptance criteria (the checkboxes under `## Acceptance criteria`), blockers within the set, open blockers outside it as `external_blockers` | 0, 1 |
 | `to-plan.sh propose --graph F --budget USD` | proposes plans (JSON) | 0, 1 |
 | `to-plan.sh split\|merge\|reorder\|move <plans> --graph F ...` | edits the plans file in place, renumbering; refused, file untouched, when a blocker would follow its dependent | 0, 1 |
-| `to-plan.sh check <plans> --graph F` | every ticket in exactly one plan, no blocker in a later plan | 0, 1 |
+| `to-plan.sh check <plans> --graph F [--override-human-check <t> "<criterion>" --why TEXT]...` | every ticket in exactly one plan, no blocker in a later plan, a Human check in its agent ticket's plan; then refuses approval (flags printed under "Needs your attention") while an agent criterion reads as needing a person. Overrides are recorded in the plans file | 0, 1 |
+| `to-plan.sh split-human-check --repo <o/n> [--graph F [--plans P]] <t> "<criterion>"` | moves the criterion off the agent ticket into its Human check ticket (created, or the open one added to), with title, marker, `ready-for-human` and the blocking edge; the graph and plans follow. A repeat changes nothing (`references/human-checks.md`) | 0, 1 |
 | `to-plan.sh render <plans> --graph F` | the approval view: a table of plans, then each plan's tickets with blockers, estimates and acceptance criteria, then warnings | 0, 1 |
-| `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent]` | creates the `plan` issues, sub-issues and blocking | 0, 1 |
+| `to-plan.sh publish <plans> --graph F --repo <o/n> --approved [--replace-parent] [--override-human-check ...]` | creates the `plan` issues, sub-issues and blocking, after `check`; overrides are listed in the plan issue's body | 0, 1 |
 | `resolve-scope.sh --repo <o/n> <issue>...` | plan issues and tickets in, the run's tickets out, each with its open `blocked_by` (a failed blocker read exits 1 naming the ticket) | 0, 1, 2, 3 |
 
 **The graph** is a JSON file the chat completes after `graph`: per ticket `slice` (what reviewable thing it helps make; none means its own slice) and an estimate, either `estimate_usd` or `model` with `expected.input_tokens` and `expected.output_tokens` priced from `references/model-prices.json` (the plan step's method). No estimate is refused; there are no defaults. The budget has no default either.
 
 **How a proposal is cut.** Tickets are grouped by slice; slices that block each other both ways become one unit; units are put in order, blockers first (ties by lowest ticket number); then packed in that order, starting a new plan when the next unit would take the plan over the budget. So a plan boundary is only ever between slices, every blocker is in the same or an earlier plan, and a single slice bigger than the budget gets a plan of its own, flagged in the view. A cycle in the tickets is refused with the cycle named. Edits may split a slice (the Artisan's call); the view then warns that neither plan ends at a slice reviewable end to end.
+
+**Human checks.** A graph ticket with `human_check_for: "<agent ticket>"` is a Human check: it needs no estimate, goes into its agent ticket's slice and plan (an edit that separates them is refused) and shows as "not estimated". The plans file may carry `human_check_overrides: [{ticket, criterion, why}]`.
 
 **Plans file** (`plans.json`): `{"schema_version": 1, "budget_usd": 6, "plans": [{"slice": "...", "tickets": ["1", "2"], "issue": 71}]}`. A plan's number is its position. `issue` appears once published; published plans refuse edits, and a repeat `publish` skips plans that already have an issue, so a failed publish resumes without duplicates.
 

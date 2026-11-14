@@ -28,13 +28,13 @@
 #                                  Each override is recorded on the plan (human_check_overrides).
 #   to-plan.sh render  <plans.json> --graph FILE      the approval view (Markdown): a table of plans,
 #                                  then each plan's tickets with their acceptance criteria
-#   to-plan.sh split-human-check --graph FILE --repo owner/name [--plans FILE] [--what TEXT] <ticket> "<criterion>"
+#   to-plan.sh split-human-check --repo owner/name [--graph FILE [--plans FILE]] [--what TEXT] <ticket> "<criterion>"
 #                                  move the criterion off the agent ticket into its Human check
 #                                  ticket (references/human-checks.md): title "Human check: <what>
 #                                  (#<ticket>)" (what defaults to the ticket's title), the marker,
 #                                  ready-for-human, blocked by the ticket. Creates it, or adds to the
-#                                  open one for that ticket; a repeat changes nothing. The graph (and
-#                                  --plans, the agent ticket's plan) follow.
+#                                  open one for that ticket; a repeat changes nothing. The graph and
+#                                  --plans (the agent ticket's plan), when given, follow.
 #   to-plan.sh publish <plans.json> --graph FILE --repo owner/name --approved [--replace-parent]
 #                      [--override-human-check <ticket> "<criterion>" --why TEXT]...
 #                                  create one `plan` issue per plan, each ticket a sub-issue of
@@ -170,7 +170,9 @@ case "$cmd" in
     py render "${POS[0]}" "$GRAPH" ;;
 
   split-human-check)
-    parse "$@"; need gh; need_repo; need_graph
+    parse "$@"; need gh; need_repo
+    [ -z "$GRAPH" ] || need_graph
+    [ -z "$PLANS" ] || [ -n "$GRAPH" ] || die "--plans needs --graph"
     [ "${#POS[@]}" -eq 2 ] || usage
     agent=${POS[0]#\#}
     printf '%s' "$agent" | grep -Eq '^[0-9]+$' || die "the agent ticket must be a number, got \"${POS[0]}\""
@@ -211,7 +213,7 @@ case "$cmd" in
       gh issue edit "$agent" -R "$REPO" --body "$(jq -r .agent_body <<<"$plan")" >/dev/null \
         || die "could not take the criterion off #$agent (Human check #$hc has it); run split-human-check again"
     fi
-    py split-files "$GRAPH" "$PLANS" "$agent" "$hc" "$crit" "$title"
+    [ -z "$GRAPH" ] || py split-files "$GRAPH" "$PLANS" "$agent" "$hc" "$crit" "$title"
     printf 'Human check #%s for #%s: %s\n' "$hc" "$agent" "$crit" ;;
 
   publish)

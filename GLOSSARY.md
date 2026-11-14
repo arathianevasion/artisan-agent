@@ -122,6 +122,10 @@ _Avoid_: round, phase
 A ticket the Artisan marks to join the current run and start at once, ahead of the queue.
 _Avoid_: hotfix, quick fix
 
+**Human check**:
+A `ready-for-human` ticket that verifies an agent ticket's result by hand: in game, by eye, on a real device, or with outside access. The agent ticket natively blocks it, and its title (`Human check: <what> (#<agent ticket>)`) and body marker (`<!-- artisan-agent:human-check-for #<n> -->`) mark it. The agent ticket's acceptance criteria keep only what an agent can show. A Human check is not a hands-on ticket: on a hands-on ticket the Artisan builds the work, while a Human check verifies work an agent built.
+_Avoid_: hand check, manual AC, in-game criterion
+
 **Backlog review**:
 The Artisan's periodic sort of open tickets into the next plan, closed, or left open. Deferred tickets come back here.
 _Avoid_: sweep (a chat's regular check of runs and gates), grooming

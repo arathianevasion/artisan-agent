@@ -61,6 +61,15 @@ Each plan's tickets look like this:
 
 Under the tables, say in a few lines why you cut where you did and the strongest alternative (a bigger plan, a different slice boundary). If a plan is over budget because one slice is, say so and recommend: raise the budget or split the slice and accept that neither half is reviewable alone.
 
+**Human checks.** An agent ticket's criterion that reads as needing a person (in game, by hand, by eye, on a real device; the list is in `${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`, plus the project's `human_check_phrases`) is flagged under "Needs your attention", and `check` refuses approval while it stands: the verifier could never pass it. For each one, recommend the split and offer the override:
+
+| Artisan says | Run |
+|---|---|
+| "split it" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh split-human-check --repo <owner/name> --graph <graph.json> --plans <plans.json> <ticket> "<criterion>"` |
+| "keep it, because …" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh check <plans.json> --graph <graph.json> --override-human-check <ticket> "<criterion>" --why "<their reason>"` |
+
+The split moves the criterion off the agent ticket into its **Human check** ticket (created with title, marker, `ready-for-human` and the blocking edge, or added to the one that exists); running it again changes nothing. The override is recorded on the plan, in `plans.json` and the plan issue's body. Never override without the Artisan's reason. A Human check sits in its agent ticket's plan, listed in the view as "not estimated": it is a person's work, not agent work.
+
 If the graph has a cycle, the script refuses and names it. Show it: it is a planning bug in the tickets, not something to route around.
 
 ### 4. Iterate until the Artisan is happy
@@ -98,7 +107,7 @@ Finish with a table of the plans (number, issue, tickets, estimate, blocked by) 
 
 ## Rules
 
-- Never create an issue before approval, and never create a plan the script's `check` refuses.
+- Never create an issue before approval, and never create a plan the script's `check` refuses, including for a criterion that needs a person.
 - Never split a blocker after its dependent, and never resolve it silently if the Artisan asks for it: explain and offer the nearest valid alternative.
 - Estimates come from the plan step's method, never from a guess at what fits the Artisan's attention.
 - A plan is not a run: the run's envelope (models, gates, Max Agents) is approved at `implement-plan`'s plan step.

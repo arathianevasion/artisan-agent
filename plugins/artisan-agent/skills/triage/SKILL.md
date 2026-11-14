@@ -77,6 +77,8 @@ Only after the Artisan approves the item's outcome.
 
 Post an agent brief ([AGENT-BRIEF.md](AGENT-BRIEF.md)); apply `ready-for-agent` (or `ready-for-human` with the reason it can't be delegated).
 
+Before applying `ready-for-agent`, read each acceptance criterion and ask whether an agent can show it is met. Any criterion only a person can verify moves to a **Human check** ticket for this one and stays out of the agent brief. Where it sits in the ticket body's `## Acceptance criteria`, `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh split-human-check --repo <owner/name> <ticket> "<criterion>"` moves it; otherwise create the Human check in the shape the reference gives (or run the split once the criterion is in the body). The rule and the phrases that flag it: `${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`.
+
 ### Discard (upstream's mechanism, kept)
 
 - **Rejected enhancement**: write or extend `.out-of-scope/<concept>.md` with a lasting reason (see [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md); a durable reason, not "too busy", which is a deferral), post a closing comment linking to it, label `wontfix` and close.
