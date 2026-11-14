@@ -505,7 +505,10 @@ set_limit() {
 test_facts_hold_the_median_gate_minutes_and_whether_it_is_over_the_limit() {
   sample_run; gate_events; mark_skipped_sha
   local f=; f=$("$RETRO" facts "$RUN_DIR")
-  # No limit in the plan's config: the default, 6.
+  # A plan from before #200 has no limit: no verdict, so no line.
+  assert_eq '10 null null' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "no limit in the plan"
+  set_limit 6
+  f=$("$RETRO" facts "$RUN_DIR")
   assert_eq '10 6 true' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "over the default"
   set_limit 10
   f=$("$RETRO" facts "$RUN_DIR")
@@ -513,13 +516,13 @@ test_facts_hold_the_median_gate_minutes_and_whether_it_is_over_the_limit() {
 }
 
 test_a_run_with_no_gate_minutes_has_no_median_and_no_verdict_on_the_limit() {
-  sample_run
+  sample_run; set_limit 6
   local f=; f=$("$RETRO" facts "$RUN_DIR")
   assert_eq 'null 6 null' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "no gates"
 }
 
 test_the_packet_says_when_the_merge_gate_is_over_its_limit_and_proposes_a_ticket() {
-  sample_run; gate_events; mark_skipped_sha; seed_lessons
+  sample_run; gate_events; mark_skipped_sha; seed_lessons; set_limit 6
   "$RETRO" check "$RUN_DIR" >/dev/null
   local out=; out=$("$RETRO" render "$RUN_DIR")
   assert_contains "$out" "**The merge gate is over its time limit:** a median of 10 minutes per gate this run, against a limit of 6 (\`merge_gate_minutes_limit\`)."

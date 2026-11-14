@@ -148,20 +148,18 @@ def median(xs):
     return num(xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2.0)
 
 
-# The merge gate's time limit when the plan's config has none (#200;
-# templates/config.yml holds the same default).
-DEFAULT_GATE_LIMIT = 6
-
-
 def gate_limit(s, costs):
     """The run's median merge-gate minutes against merge_gate_minutes_limit
-    (#200): the limit, and whether the median is over it (None when the run
-    has no gate minutes). Says so; never blocks anything."""
+    (#200), from the plan's config (config.sh fills the default from
+    templates/config.yml): the limit, and whether the median is over it. None
+    when the run has no gate minutes, or its plan has no limit (a plan from
+    before #200). Says so; never blocks anything."""
     limit = ((s.get("plan") or {}).get("config") or {}).get("merge_gate_minutes_limit")
-    if limit is None:
-        limit = DEFAULT_GATE_LIMIT
+    if not isinstance(limit, (int, float)) or isinstance(limit, bool):
+        limit = None
     med = costs.get("median_minutes")
-    return dict(costs, limit_minutes=limit, over_limit=(None if med is None else med > float(limit)))
+    over = None if med is None or limit is None else med > float(limit)
+    return dict(costs, limit_minutes=limit, over_limit=over)
 
 
 def merge_gate_costs(s, merged):
