@@ -22,7 +22,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/questions.sh file --ticket <its ticket> --criterio
   --recommendation "<what it would choose, and why>" (--blocking | --split)
 ```
 
-It files a ticket labelled `needs-triage` holding the question, the options, the recommendation and the criterion that triggered it, and logs a `question` finding in the worker's findings file (`$ARTISAN_FINDINGS_FILE`). It prints the new ticket's number.
+It files a ticket labelled `needs-triage` holding the question, the options, the recommendation and the criterion that triggered it, and logs a `question` finding in the worker's findings file (`$ARTISAN_FINDINGS_FILE`). It prints the new ticket's number. A criterion-2 question is the scope floor firing: the sweep reads that finding once and logs `guardrail-fired` for `scope-floor` (ticket, areas, question number), for guardrail health (`references/guardrail-health.md`); other criteria log no guardrail event.
 
 - `--blocking`: the worker's own ticket can't finish without the answer. The worker stops, commits what is safe, and ends with result status `blocked`; `unsure` names the question ticket.
 - `--split`: the question can be split off. The worker finishes every other criterion and ends `complete`, naming the question ticket in `unsure`. The ticket is **not** blocked.

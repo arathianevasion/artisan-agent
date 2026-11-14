@@ -157,3 +157,50 @@ test_stopping_a_worker_also_stops_its_descendants() {
   sleep 0.5
   ! kill -0 "$grandchild" 2>/dev/null || fail "grandchild $grandchild survived the stop"
 }
+
+# qfind ticket-file criterion question: a question finding as questions.sh file writes it.
+qfind() {
+  jq -nc --arg c "$2" --arg q "$3" --arg by "$(basename "$1" .jsonl)" \
+    '{kind: "question", ticket: $q, asked_by: $by, criterion: $c, blocking: false, title: ("Question #" + $q), why: "x", blocks: []}' >>"$1"
+}
+
+test_a_criterion_2_question_logs_scope_floor_fired_once_with_ticket_and_areas() {
+  init_run
+  jq '.plan.tickets["10"].areas = ["billing"]' "$RUN_DIR/state.json" >"$RUN_DIR/s.tmp" && mv "$RUN_DIR/s.tmp" "$RUN_DIR/state.json"
+  qfind "$RUN_DIR/results/findings/10.jsonl" 2 77
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "guardrail-fired")] | length')"
+  assert_eq "scope-floor 10 billing 77" "$(state_get '.events[] | select(.event == "guardrail-fired") | [.guardrail, .ticket, (.areas | join(",")), .question] | join(" ")')"
+  # Sweeping again, and a later question, log only the new one.
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "guardrail-fired")] | length')"
+  qfind "$RUN_DIR/results/findings/10.jsonl" 2 78
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq "77 78" "$(state_get '[.events[] | select(.event == "guardrail-fired") | .question] | join(" ")')"
+}
+
+test_other_criteria_log_no_guardrail_event() {
+  init_run
+  qfind "$RUN_DIR/results/findings/10.jsonl" 1 70
+  qfind "$RUN_DIR/results/findings/10.jsonl" 3 71
+  qfind "$RUN_DIR/results/findings/10.jsonl" always-ask 72
+  printf '{"to":"11","text":"plain"}\n' >>"$RUN_DIR/results/findings/10.jsonl"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq 4 "$(state_get '.findings | length')"
+  assert_eq 0 "$(state_get '[.events[]? | select(.event == "guardrail-fired")] | length')"
+}
+
+test_health_shows_the_scope_floor_as_fired_after_a_scope_question() {
+  init_run
+  qfind "$RUN_DIR/results/findings/10.jsonl" 2 77
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  export CLAUDE_CONFIG_DIR="$TEST_TMPDIR/cfg" ARTISAN_HOME="$TEST_TMPDIR/home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/tc"
+  mkdir -p "$ARTISAN_HOME"
+  git_quiet -C "$ARTISAN_HOME" init
+  git -C "$ARTISAN_HOME" symbolic-ref HEAD refs/heads/main
+  jq -nc '{id: "scope-floor", key: "scope-floor", value: "on", rule: "r", strict: 1, origin: {date: "2026-01-01T00:00:00Z", reason: "seed", who: "Andrew"}, moves: []}' >"$ARTISAN_HOME/guardrails.jsonl"
+  git_quiet -C "$ARTISAN_HOME" add -A
+  git_quiet -C "$ARTISAN_HOME" commit -m seed
+  cd "$PROJECT"
+  assert_eq fired "$("$SCRIPTS/guardrail-health.sh" health --runs "$RUN_DIR" | jq -r '.guardrails[] | select(.key == "scope-floor") | .status')"
+}

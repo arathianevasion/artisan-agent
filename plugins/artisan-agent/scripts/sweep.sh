@@ -158,13 +158,19 @@ sweep() {
     total=$(wc -l <"$f" | tr -d ' ')
     seen=$(jq -r --arg t "$ticket" '.findings_read[$t] // 0' "$tmp")
     [ "$total" -gt "$seen" ] || continue
-    step '
+    step "$STATE_JQ_DEFS"'
       .findings += ($lines | to_entries | map(
         {from: $t, seq: ($seen + .key + 1)}
         + ((.value | try fromjson catch null) as $j
            | if ($j | type) == "object" then $j else {raw: .value} end)))
-      | .findings_read[$t] = $total' \
-      --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" \
+      | .findings_read[$t] = $total
+      # A worker filing a criterion-2 question is the scope floor firing
+      # (#148). The read counter makes this once per question, not per sweep.
+      | reduce ($lines | map(try fromjson catch null)[]
+                | select(type == "object" and .kind == "question" and ((.criterion // "") | tostring) == "2")) as $q (.;
+          event({event: "guardrail-fired", guardrail: "scope-floor", ticket: $t,
+                 areas: ticket_areas([$t]), question: ($q.ticket | tostring)}; $now))' \
+      --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" --argjson now "$now" \
       --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -R . | jq -s .)"
   done
 
