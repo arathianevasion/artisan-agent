@@ -70,3 +70,160 @@ test_mb_three_green_tickets_ready_together_are_gated_by_one_ci_run_and_all_merge
   assert_eq "" "$(ci_branches)" "every ci branch is gone"
   [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran on this machine"
 }
+
+test_mb_one_red_ticket_in_a_batch_of_four_is_found_in_three_more_gates_and_only_it_is_blocked() {
+  setup_batch
+  echo BROKEN >"$FAKE_GH_DIR/ci-red-if-file"
+  ready 1 a.txt
+  ready 2 b.txt
+  ready 3 BROKEN
+  ready 4 d.txt
+  merge_batch 1 2 3 4
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged merged blocked merged" "$(state_get '[.tickets["1","2","3","4"].status] | join(" ")')"
+  # The whole batch, then [1,2] green, [3] red, and 4 merged afresh without 3.
+  assert_eq 4 "$(gates)" "found in at most 3 more gates"
+  assert_eq '[["1","2","3","4"],["1","2"],["3"],["4"]]' \
+    "$(state_get '[.events[] | select(.event == "merge-gate") | .tickets] | tojson')"
+  # Only the red ticket gets the red handling: blocked, with a decision, naming the run.
+  assert_eq '["3"]' "$(state_get '[.decisions[] | select(.kind == "exception") | .ticket] | tojson')"
+  assert_contains "$(state_get '.tickets["3"].blocked_reason')" "CI went red after merging (failure on https://github.com/local/sample/actions/runs/"
+  assert_eq "ci false failure" "$(state_get '.tickets["3"].suite | "\(.mode) \(.passed) \(.conclusion)"')"
+  assert_eq "1 1 1 1" "$(state_get '[.tickets["1","2","3","4"].attempts] | join(" ")')" "a batch run counts against no attempt"
+  # The integration branch holds 1, 2 and 4, never 3.
+  local tip=
+  tip=$(git -C "$PROJECT" rev-parse run/r1)
+  assert_eq "$tip" "$(state_get '.tickets["4"].merge_commit')"
+  assert_eq "$(state_get '.tickets["2"].merge_commit')" "$(git -C "$PROJECT" rev-parse "$tip^1")"
+  git -C "$PROJECT" cat-file -e "$tip:d.txt" || fail "4 is not on the integration branch"
+  ! git -C "$PROJECT" cat-file -e "$tip:BROKEN" 2>/dev/null || fail "the red ticket is on the integration branch"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#3 red"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#4 merged $tip"
+  assert_eq null "$(state_get '.merge_batch')"
+  assert_eq "" "$(ci_branches)" "every ci branch is gone"
+}
+
+test_mb_a_red_ticket_in_a_local_batch_is_found_and_the_rest_merge() {
+  setup_batch
+  export ARTISAN_MERGE_GATE=local
+  ready 1 a.txt
+  ready 2 BROKEN
+  ready 3 c.txt
+  merge_batch 1 2 3
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged blocked merged" "$(state_get '[.tickets["1","2","3"].status] | join(" ")')"
+  assert_eq "local false" "$(state_get '.tickets["2"].suite | "\(.mode) \(.passed)"')"
+  assert_contains "$(state_get '.tickets["2"].blocked_reason')" "the suite failed after merging"
+  [ -f "$RUN_DIR/$(state_get '.tickets["2"].suite.log')" ] || fail "no suite log at $(state_get '.tickets["2"].suite.log')"
+  assert_eq "local true" "$(state_get '.tickets["3"].suite | "\(.mode) \(.passed)"')"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(state_get '.tickets["3"].merge_commit')"
+}
+
+test_mb_a_conflict_while_building_leaves_its_ticket_out_for_the_conflict_path() {
+  setup_batch
+  ready 1 a.txt one
+  ready 2 a.txt two
+  ready 3 c.txt
+  merge_batch 1 2 3
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged returned merged" "$(state_get '[.tickets["1","2","3"].status] | join(" ")')"
+  assert_eq 1 "$(gates)" "1 and 3 gated together"
+  assert_eq '["1","3"]' "$(state_get '[.events[] | select(.event == "merge-gate")][0].tickets | tojson')"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#2 left out: conflict in a.txt"
+  assert_eq '["2"]' "$(state_get '[.events[] | select(.event == "merge-batch")][0].left_out | tojson')"
+  # Merged alone, it takes the existing conflict path: its one resolve try.
+  merge_batch 2
+  assert_eq 11 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq '["a.txt"]' "$(state_get '.tickets["2"].resolve.paths | tojson')"
+}
+
+test_mb_a_batch_of_one_is_a_merge_as_before() {
+  setup_batch
+  ready 1 a.txt
+  merge_batch 1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(cat "$TEST_TMPDIR/merge.out")" "prints the merge commit, as before"
+  case "$(state_get '.tickets["1"].suite.branch')" in ci/r1-1-1-*) ;; *) fail "not the single-merge branch" ;; esac
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "merge-batch")] | length')" "no batch"
+}
+
+test_mb_with_merge_batch_off_only_the_first_ticket_merges_alone() {
+  setup_batch
+  export ARTISAN_MERGE_BATCH=off
+  ready 1 a.txt
+  ready 2 b.txt
+  merge_batch 1 2
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged returned" "$(state_get '[.tickets["1","2"].status] | join(" ")')"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(cat "$TEST_TMPDIR/merge.out")"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "merge batching is off"
+  merge_batch 2
+  assert_eq 0 "$MERGE_STATUS"
+  assert_eq 2 "$(gates)" "one gate each"
+}
+
+test_mb_merge_batch_is_a_host_setting_on_by_default() {
+  unset ARTISAN_MERGE_BATCH
+  export ARTISAN_HOME="$TEST_TMPDIR/home"
+  mkdir -p "$ARTISAN_HOME"
+  assert_eq on "$("$MG" batch)" "on by default"
+  assert_eq "on default" "$(ARTISAN_MERGE_GATE=ci "$MG" show | jq -r '"\(.batch) \(.batch_source)"')"
+  echo '{"merge_batch": "off"}' >"$ARTISAN_HOME/host.json"
+  assert_eq off "$("$MG" batch)"
+  assert_eq "$ARTISAN_HOME/host.json" "$(ARTISAN_MERGE_GATE=ci "$MG" show | jq -r .batch_source)"
+  echo '{"merge_batch": "sometimes"}' >"$ARTISAN_HOME/host.json"
+  assert_status 1 "$MG" batch
+  assert_eq ci "$(ARTISAN_MERGE_GATE=ci "$MG" mode)" "a bad merge_batch never stops the mode"
+  assert_eq on "$(ARTISAN_MERGE_BATCH=on "$MG" batch)" "the environment wins, for tests and trials"
+}
+
+test_mb_a_batch_gate_still_running_returns_20_and_a_later_call_finishes_the_batch() {
+  setup_batch
+  export ARTISAN_MERGE_GATE=local
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = ("{ [ ! -e " + $d + "/slow ] || sleep $(cat " + $d + "/slow); } && sh check.sh")' \
+    --arg d "$TEST_TMPDIR"
+  ready 1 a.txt
+  ready 2 BROKEN
+  echo 2 >"$TEST_TMPDIR/slow"
+  MERGE_STATUS=0
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 2 --wait 0 >"$TEST_TMPDIR/merge.out" 2>"$TEST_TMPDIR/merge.err" || MERGE_STATUS=$?
+  assert_eq 20 "$MERGE_STATUS" "$(cat "$TEST_TMPDIR/merge.err")"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "merge batch 1's gate is running on #1, #2"
+  # New work branches from the batch's green base, never an ungated merge.
+  assert_eq "$(state_get '.merge_batch.pre')" "$(state_get '.merge_gate.pre')"
+  assert_eq "$(git -C "$PROJECT" rev-parse main)" "$(state_get '.merge_batch.pre')"
+  # Another ticket's merge waits for the batch.
+  ready 3 c.txt
+  merge_batch 3
+  assert_eq 20 "$MERGE_STATUS"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "merge batch 1 (#1, #2) is in progress"
+  # Naming any ticket of the batch carries it on, to the end.
+  local i=0
+  MERGE_STATUS=20
+  while [ "$MERGE_STATUS" -eq 20 ]; do
+    i=$((i + 1)); [ "$i" -le 30 ] || fail "the batch never settled"
+    merge_batch 2
+  done
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged blocked" "$(state_get '[.tickets["1","2"].status] | join(" ")')"
+  assert_eq 2 "$(gates)" "the batch, then [1] green: 2 is red without a gate of its own"
+}
+
+test_mb_ci_giving_a_batch_no_verdict_parks_the_run_and_unpark_lets_the_batch_merge_afresh() {
+  setup_batch
+  ready 1 a.txt
+  ready 2 b.txt
+  echo cancelled >"$FAKE_GH_DIR/ci-outcome"
+  merge_batch 1 2
+  assert_eq 19 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "returned returned" "$(state_get '[.tickets["1","2"].status] | join(" ")')" "CI never judged them: not blocked"
+  assert_eq '["1","2"]' "$(state_get '.ci_park.tickets | tojson')"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR" 2>/dev/null || true)" "parked ci: merge batch 1 (#1, #2)"
+  assert_eq null "$(state_get '.merge_batch')"
+  rm "$FAKE_GH_DIR/ci-outcome"
+  assert_contains "$("$SCRIPTS/wave.sh" unpark-ci "$RUN_DIR")" "merge #1, #2 again"
+  assert_eq null "$(state_get '.tickets["1"].ci_retry')"
+  merge_batch 1 2
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged merged" "$(state_get '[.tickets["1","2"].status] | join(" ")')"
+}

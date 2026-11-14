@@ -468,7 +468,7 @@ cmd_status() {
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
       elif [ "$(get '.ci_park != null')" = true ]; then next=parked
-        parked=$(get -r '.ci_park | "parked ci: #\(.ticket)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
+        parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
       elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
         # Parked on usage and behind open reviews too: both reasons show.
         if [ "$reconciled" -eq 1 ] && reviews=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then
@@ -1576,13 +1576,17 @@ cmd_unpark_ci() {
     esac
   done
   [ "$(get '.ci_park != null')" = true ] || state_die 6 "wave.sh: run $RUN_ID is not parked on CI"
+  # A batch's park retries nothing in place: its tickets are merged afresh.
   apply '.ci_park as $p
-    | .tickets[$p.ticket].ci_retry = {pre: $p.pre, sha: $p.sha, at: $now}
+    | if $p.batch then . else .tickets[$p.ticket].ci_retry = {pre: $p.pre, sha: $p.sha, at: $now} end
     | .decisions |= map(if .kind == "ci" and .status == "waiting"
                         then .status = "decided" | .choice = "retry" | .by = $by | .decided_at = $now else . end)
-    | event({event: "unparked", reason: "ci", ticket: $p.ticket, how: "retry", by: $by}; $now)
+    | event({event: "unparked", reason: "ci", ticket: $p.ticket, how: "retry", by: $by}
+            + (if $p.batch then {tickets: $p.tickets, batch: $p.batch} else {} end); $now)
     | .ci_park = null' --arg by "$by"
-  printf 'unparked: #%s merges next with the gate retried\n' "$(get -r '[.events[] | select(.event == "unparked" and .reason == "ci")] | last | .ticket')"
+  get -r '[.events[] | select(.event == "unparked" and .reason == "ci")] | last
+    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their batch is merged and gated afresh)"
+      else "unparked: #\(.ticket) merges next with the gate retried" end'
 }
 
 # ------------------------------------------------------------------- close

@@ -36,6 +36,7 @@
 #                         branch's tip in the git repo FAKE_GH_REMOTE (a path; the branch must exist
 #                         there). How it goes, from files the test writes in $FAKE_GH_DIR:
 #                           ci-outcome      success (default) | any other conclusion (failure, cancelled, ...) | never (stays in_progress)
+#                           ci-red-if-file  a path: a commit whose tree has it concludes failure (wins over ci-outcome)
 #                           ci-sha          a head SHA to report instead of the branch's tip
 #                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down
@@ -299,6 +300,9 @@ case "${1:-} ${2:-}" in
     [ ! -s "$FAKE_GH_DIR/ci-sha" ] || sha=$(cat "$FAKE_GH_DIR/ci-sha")
     outcome=success
     [ ! -s "$FAKE_GH_DIR/ci-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-outcome")
+    if [ -s "$FAKE_GH_DIR/ci-red-if-file" ] && git -C "$FAKE_GH_REMOTE" cat-file -e "$sha:$(cat "$FAKE_GH_DIR/ci-red-if-file")" 2>/dev/null; then
+      outcome=failure
+    fi
     jobs='["bash 5.2", "bash 3.2"]'
     [ ! -s "$FAKE_GH_DIR/ci-jobs" ] || jobs=$(cat "$FAKE_GH_DIR/ci-jobs")
     id=9001

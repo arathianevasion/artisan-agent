@@ -72,6 +72,8 @@ idle_report() { # run-dir: prints what is still running, one line each
   # A merge gate in flight (#142): the integration branch holds a merge commit
   # that has not passed. Alive or dead, it counts until wave.sh merge resolves it.
   jq -r 'select(.merge_gate != null) | "a merge gate is running for #\(.merge_gate.ticket) (\(.merge_gate.mode))"' "$(state_file "$rd")"
+  # A merge batch between its gates (#167): its tickets are not settled yet.
+  jq -r 'select(.merge_batch != null and .merge_gate == null) | "merge batch \(.merge_batch.id) is settling (\(.merge_batch.tickets | map("#" + .) | join(", ")))"' "$(state_file "$rd")"
   holder=$(state_lock_holder "$rd")
   me=$(state_writer_pid)
   if [ -n "$holder" ] && [ "$holder" != "$me" ] && [ "$holder" != "$PPID" ] && state_pid_alive "$holder"; then
