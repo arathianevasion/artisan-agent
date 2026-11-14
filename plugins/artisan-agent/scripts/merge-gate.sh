@@ -75,7 +75,9 @@
 #       FAIL lines of this plugin's tests/run.sh, pytest's FAILED lines, Go's
 #       --- FAIL and TAP's not ok. With no test it can name, excerpt holds
 #       the log's last error lines instead; with no log to read, tests is
-#       empty and why says so. Never fails a gate: exit 0 either way.
+#       empty and why says so. Never fails a gate: exit 0 whether or not
+#       it names a test (2 on bad arguments). A log not served yet is asked
+#       for again, three times in all, ARTISAN_CI_POLL_SECONDS apart.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -382,16 +384,24 @@ END { for (i = 1; i <= n; i++) printf "%s\t%s\t%s\t%s\n", J[i], W[i], cut(N[i], 
 
 # failed_tests run-id max: the failing tests of a red run, as JSON (above).
 failed_tests() {
-  local id="$1" max="$2" log="" esc="" parsed="" excerpt='[]'
+  local id="$1" max="$2" log="" esc="" parsed="" excerpt='[]' try=0
   esc=$(printf '\033')
-  if ! log=$(gh run view "$id" -R "$CI_REPO" --log-failed 2>/dev/null) || [ -z "$log" ]; then
+  # GitHub can be slow to serve a run's log just after it concludes.
+  while [ "$try" -lt 3 ]; do
+    try=$((try + 1))
+    log=$(gh run view "$id" -R "$CI_REPO" --log-failed 2>/dev/null) || log=""
+    [ -z "$log" ] || break
+    [ "$try" -ge 3 ] || sleep "${ARTISAN_CI_POLL_SECONDS:-20}"
+  done
+  if [ -z "$log" ]; then
     jq -nc --arg id "$id" '{tests: [], total: 0, truncated: false, why: "could not read the failed jobs'"'"' log of run \($id) (gh run view --log-failed)"}'
     return 0
   fi
-  log=$(printf '%s\n' "$log" | sed "s/${esc}\[[0-9;]*[A-Za-z]//g")
-  parsed=$(printf '%s\n' "$log" | awk "$FAILED_TESTS_AWK")
+  # In the C locale: a log cut mid-character never stops BSD sed or awk.
+  log=$(printf '%s\n' "$log" | LC_ALL=C sed "s/${esc}\[[0-9;]*[A-Za-z]//g")
+  parsed=$(printf '%s\n' "$log" | LC_ALL=C awk "$FAILED_TESTS_AWK")
   if [ -z "$parsed" ]; then
-    excerpt=$(printf '%s\n' "$log" | awk -F '\t' '{
+    excerpt=$(printf '%s\n' "$log" | LC_ALL=C awk -F '\t' '{
         l = $0; j = ""
         if (NF >= 3) { j = $1; l = $3; for (i = 4; i <= NF; i++) l = l " " $i }
         sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z ?/, "", l)

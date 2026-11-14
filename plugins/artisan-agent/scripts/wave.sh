@@ -758,7 +758,7 @@ failure_evidence() {
          (if ($f.excerpt // []) != [] then "    No test could be named from the log; its last error lines:", ($f.excerpt[] | "    - \(.)")
           else "    No failing test could be read from the log\(if $f.why then " (\($f.why))" else "" end); open the run to see what failed." end)
        else empty end),
-      "- Your covering tests passed, so the break is elsewhere in the suite: run these failing tests (or the specs they are in) yourself before you finish, as well as your own."'
+      "- The break may be outside the tests you ran last time: run these failing tests (or the specs they are in) yourself before you finish, as well as your covering tests."'
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   base=$(get --arg t "$t" '.tickets[$t].base // ""')
   if [ -n "$base" ] && log=$(git -C "$MAIN" log --oneline -n 10 "$base..refs/heads/$branch" 2>/dev/null) && [ -n "$log" ]; then
@@ -1423,7 +1423,7 @@ batch_merge_prefix() {
 # record, then blocked with a decision); the tickets after it are merged
 # afresh on pre without it (batch_run, rebuild).
 batch_red_ticket() {
-  local t= record= why= url=
+  local t= record= url=
   t=$(get '.merge_batch.order[0]')
   record=$(get -c '.merge_batch.red_record')
   # Handled first, once: a call cut off after it only moves the batch on.
