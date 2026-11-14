@@ -381,7 +381,8 @@ end_checks_json() {
   get -c "$STATE_JQ_DEFS"' . as $s
     | [.plan.scope[] | tostring | select(. as $t | $s | is_human_check($t))
        | select($s.tickets[.].status == "queued" or $s.tickets[.].human_check.state? == "deferred")
-       | {ticket: ., for: ($s | human_check_for(.)), state: ($s.tickets[.].human_check.state // "open")}
+       | . as $c
+       | {ticket: ., for: ($s | human_check_for($c)), state: ($s.tickets[.].human_check.state // "open")}
          + (($s.tickets[.].human_check.deferral // null) | if . then {deferral: .} else {} end)
          + (($s.tickets[.].human_check.gate // null) | if . then {carried_from: .} else {} end)]'
 }

@@ -127,6 +127,26 @@ test_the_end_gate_lists_deferred_gates_of_both_kinds_and_carried_cards() {
   assert_contains "$err" "#42"
 }
 
+test_the_end_gates_human_checks_name_the_agent_ticket_they_verify() {
+  setup_end
+  local n=
+  for n in 4 5; do
+    jq -n --argjson n "$n" '{number: $n, title: "Human check \($n)", state: "open", labels: [{name: "ready-for-human"}], body: "Try it."}' \
+      >"$FAKE_GH_DIR/issue-$n.json"
+  done
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .plan.scope += ["4", "5"]
+    | .plan.tickets["4"] = {title: "Human check 4 (#1)", human_check_for: "1"}
+    | .plan.tickets["5"] = {title: "Human check 5 (#3)", human_check_for: "3"}
+    | .tickets["4"] = {status: "queued"} | .tickets["5"] = {status: "queued"}
+    | .tickets["5"].human_check = {state: "deferred", for: "3", deferral: {by: "Artisan", why: "later", return: "x"}}'
+  local body=
+  body=$("$E" packet "$RUN_DIR")
+  assert_contains "$body" "| #4 (Human check 4 (#1)) | #1 |"
+  assert_contains "$body" "| #5 (Human check 5 (#3)) | #3 |"
+  assert_not_contains "$body" "#None"
+}
+
 test_the_end_gate_lists_and_waits_on_a_deferred_overrun_gate() {
   setup_end
   "$SCRIPTS/state.sh" update "$RUN_DIR" '
