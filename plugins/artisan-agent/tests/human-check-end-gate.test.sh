@@ -80,6 +80,16 @@ test_init_records_the_human_check_from_the_plan_graph() {
   assert_eq queued "$(state_get '.tickets["2"].status')"
 }
 
+test_init_reads_the_agent_ticket_as_to_plan_does() {
+  setup_plan
+  # A graph's "#1" is ticket 1, as to-plan.py reads it; "" is no Human check.
+  jq '.tickets["2"].human_check_for = "#1" | .tickets["1"].human_check_for = ""' "$TEST_TMPDIR/plan.json" >"$TEST_TMPDIR/plan2.json"
+  "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r2" "$TEST_TMPDIR/plan2.json"
+  local s="$PROJECT/.artisan-agent/runs/r2/state.json"
+  assert_eq '{"state":"open","for":"1"}' "$(jq -c '.tickets["2"].human_check' "$s")"
+  assert_eq null "$(jq -c '.tickets["1"].human_check' "$s")"
+}
+
 test_a_reconcile_changes_nothing_for_a_check_known_at_plan_time() {
   setup_plan
   local before=
