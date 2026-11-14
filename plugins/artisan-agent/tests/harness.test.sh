@@ -105,9 +105,9 @@ test_every_parallel_job_has_its_own_scratch_directory_and_no_artisan_variables()
   for n in 1 2 3 4; do
     cat >"$TEST_TMPDIR/probe/p$n.test.sh" <<'PROBE'
 test_probe() {
-  # lib.sh sets ARTISAN_USAGE_FILE itself; anything else came from the caller.
+  # lib.sh sets the usage file and the poll intervals itself; anything else came from the caller.
   local leaked=
-  leaked=$(compgen -v ARTISAN_ | grep -v '^ARTISAN_USAGE_FILE$' || true)
+  leaked=$(compgen -v ARTISAN_ | grep -Ev '^ARTISAN_(USAGE_FILE|RUNNER_POLL_SECONDS|WAIT_ANY_POLL_SECONDS|MERGE_POLL_SECONDS)$' || true)
   [ -z "$leaked" ] || fail "ARTISAN_ variables reached the test: $leaked"
   [ -z "$(ls -A)" ] || fail "scratch directory was not empty: $(ls -A)"
   : > "$TEST_TMPDIR/mine"

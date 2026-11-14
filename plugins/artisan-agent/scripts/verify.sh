@@ -98,8 +98,9 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "verify.sh: $*"; }
 
 VERIFIER_UP_SECONDS=${ARTISAN_VERIFIER_UP_SECONDS:-10}
-printf '%s' "$VERIFIER_UP_SECONDS" | grep -Eq '^[0-9]+$' \
-  || state_die 2 "verify.sh: ARTISAN_VERIFIER_UP_SECONDS must be whole seconds, got: $VERIFIER_UP_SECONDS"
+case "$VERIFIER_UP_SECONDS" in
+  ''|*[!0-9]*) state_die 2 "verify.sh: ARTISAN_VERIFIER_UP_SECONDS must be whole seconds, got: $VERIFIER_UP_SECONDS" ;;
+esac
 
 # A classifier error is never a dead session: it stops the command, and the
 # caller runs it again. Callers assign the result first (cls=$(classify ...)),
@@ -141,8 +142,9 @@ remove_worktree() { # path: a throwaway detached checkout of a committed sha
 # ------------------------------------------------------------------- start
 
 # The runner pid of verifier v, once it is up (up to VERIFIER_UP_SECONDS,
-# default 10s, as run-ticket.sh waits). 8 when it will not come up: its launch failed, or the start that
-# claimed it ended before recording it (its claim is then cleared). Call again.
+# default 10s, as run-ticket.sh waits). 8 when it will not come up: its launch
+# failed, or the start that claimed it ended before recording it (its claim is
+# then cleared). Call again.
 started_pid() { # ticket v
   local f="$RUN_DIR/workers/verify-$1.$2/runner.pid" claim="$RUN_DIR/verify/claims/$1.$2" i=0 rec= owner=
   while [ ! -s "$f" ]; do
@@ -156,7 +158,7 @@ started_pid() { # ticket v
       fi
     fi
     i=$((i + 1))
-    [ "$i" -le $((VERIFIER_UP_SECONDS * 10)) ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet; start again, or judge it"
+    [ "$i" -le $((10#$VERIFIER_UP_SECONDS * 10)) ] || state_die 8 "verify.sh: #$1's verifier $2 has not come up yet; start again, or judge it"
     sleep 0.1
   done
   cat "$f"

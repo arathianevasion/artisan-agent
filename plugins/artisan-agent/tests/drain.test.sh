@@ -387,9 +387,10 @@ setup_handoff() {
   export FAKE_CLAUDE_SCRIPT_WORKER="$TEST_TMPDIR/worker.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_WORKER" <<'EOF'
 set -e
-# Still in flight when the first orchestrator hands off: done once it has (#169).
+# Still in flight when the first orchestrator hands off: done once drain.sh
+# handoff has printed its outcome (the redirect makes the file before) (#169).
 i=0
-while [ ! -e "$ARTISAN_RUN_DIR/../handoff-1" ] && [ "$i" -lt 300 ]; do i=$((i + 1)); sleep 0.1; done
+while [ ! -s "$ARTISAN_RUN_DIR/../handoff-1" ] && [ "$i" -lt 300 ]; do i=$((i + 1)); sleep 0.1; done
 echo hi >hello.txt
 git add -A && git commit -q -m "worker"
 jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit: $c,

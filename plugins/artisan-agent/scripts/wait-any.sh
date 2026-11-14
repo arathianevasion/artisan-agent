@@ -43,9 +43,7 @@ case "${1:-}" in ''|-h|--help) usage ;; esac
 run_dir=$1
 shift
 timeout=110
-interval=${ARTISAN_WAIT_ANY_POLL_SECONDS:-1}
-printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \
-  || bad_usage "ARTISAN_WAIT_ANY_POLL_SECONDS must be a number of seconds, got: $interval"
+interval=
 seen=
 
 while [ $# -gt 0 ]; do
@@ -60,6 +58,11 @@ while [ $# -gt 0 ]; do
 done
 
 printf '%s' "$timeout" | grep -Eq '^[0-9]+$' || bad_usage "--timeout must be whole seconds"
+if [ -z "$interval" ]; then
+  interval=${ARTISAN_WAIT_ANY_POLL_SECONDS:-1}
+  printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \
+    || bad_usage "ARTISAN_WAIT_ANY_POLL_SECONDS must be a number of seconds, got: $interval"
+fi
 printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || bad_usage "--interval must be a number of seconds"
 
 if [ ! -d "$run_dir" ]; then

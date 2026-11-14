@@ -155,8 +155,10 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "wave.sh: $*"; }
 
 MERGE_POLL_SECONDS=${ARTISAN_MERGE_POLL_SECONDS:-0.5}
-printf '%s' "$MERGE_POLL_SECONDS" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \
-  || state_die 2 "wave.sh: ARTISAN_MERGE_POLL_SECONDS must be a number of seconds, got: $MERGE_POLL_SECONDS"
+case "$MERGE_POLL_SECONDS" in   # a number of seconds: digits, then at most one . and digits
+  ''|.*|*.|*.*.*|*[!0-9.]*)
+    state_die 2 "wave.sh: ARTISAN_MERGE_POLL_SECONDS must be a number of seconds, got: $MERGE_POLL_SECONDS" ;;
+esac
 
 # ----------------------------------------------------------------- helpers
 

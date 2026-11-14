@@ -520,4 +520,8 @@ test_v_a_bad_verifier_up_wait_is_a_usage_error() {
   out=$(ARTISAN_VERIFIER_UP_SECONDS=soon "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>&1) || status=$?
   assert_eq 2 "$status" "a bad ARTISAN_VERIFIER_UP_SECONDS: $out"
   assert_contains "$out" "ARTISAN_VERIFIER_UP_SECONDS"
+  # A leading zero is whole seconds, not octal: 08 launches as 8 would.
+  status=0
+  out=$(ARTISAN_VERIFIER_UP_SECONDS=08 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>&1) || status=$?
+  assert_eq 0 "$status" "ARTISAN_VERIFIER_UP_SECONDS=08: $out"
 }

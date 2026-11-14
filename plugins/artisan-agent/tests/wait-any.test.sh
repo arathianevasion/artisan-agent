@@ -129,3 +129,10 @@ test_the_poll_interval_comes_from_the_environment_and_a_bad_one_is_a_usage_error
   out=$(ARTISAN_WAIT_ANY_POLL_SECONDS=0.05 wait_any "$RUN" --timeout 5)
   assert_eq "new results/7.1.exit.json" "$out"
 }
+
+test_an_interval_given_on_the_command_line_overrides_a_bad_variable() {
+  setup_run
+  local status=0
+  ARTISAN_WAIT_ANY_POLL_SECONDS=soon wait_any "$RUN" --timeout 1 --interval 0.1 >/dev/null 2>&1 || status=$?
+  assert_eq 124 "$status" "--interval 0.1 is used; the variable is only the default"
+}
