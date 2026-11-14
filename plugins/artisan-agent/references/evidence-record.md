@@ -18,6 +18,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `acceptance` | yes | One entry per acceptance criterion, in the ticket's order (below) |
 | `tests` | yes | `{"suite_passed": true, "files": ["tests/test_export.py"], "full_suite": "left to the merge gate", "command": "...", "summary": "..."}`: the test files the worker ran (`tests.files`, non-empty: the ones covering its change), whether they passed (`suite_passed`, kept under that name for the readers of the state file), the command and its result line, and `full_suite`, which says the full suite is left to the merge gate (`wave.sh merge` / `wave.sh resolved`), which runs it locally or, on a machine whose merge gate runs on CI, on the project's gate workflow; the merge's own record, with its `mode` and, for `ci`, the run's URL, id, conclusion and per-job conclusions, is the ticket's `suite` in the state file (`references/checks.md`, "The merge gate on CI"). A worker does not run the full suite: it can outlast a foreground command, and a verifier reads `tests.files` to know what was and wasn't checked. Add a `<check>_passed` boolean per other check (`typecheck_passed`, `lint_passed`) the project has |
 | `checks` | yes | The output of `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh run`, as it is: `{"recorded": true, "results": [{"command", "passed", "exit_code", "result"}], "not_run": [...]}` with the project's recorded checks, exactly those; with none recorded, `{"recorded": false, "fallback": "no recorded checks (<reason>): found <commands>", "results": [...]}`. See `${CLAUDE_PLUGIN_ROOT}/references/checks.md` |
+| `ci_runs` | when `checks.ci_only` is non-empty | The worker's CI runs on its own branch (#194), one per `${CLAUDE_PLUGIN_ROOT}/scripts/worker-ci.sh run`, each its JSON output as it is: `{"workflow", "branch", "sha", "tree", "run_id", "url", "conclusion", "jobs", "inputs", "full", "checks", "started_at", "finished_at", "minutes"}`, red ones included, in order. The last must be green (`conclusion: "success"`) for `commit`; the verifier fails the attempt otherwise. They are what the branch's CI cost the attempt: `minutes` is each run's own time, `started_at`/`finished_at` how long the worker waited. On a machine whose merge gate is `local`, or with every check `always`, there are none and the field is left out. See `${CLAUDE_PLUGIN_ROOT}/references/checks.md`, "A worker's CI run" |
 | `unsure` | yes | What the worker was unsure of, one sentence each; `[]` if nothing |
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
 | `review` | yes | `{"ran": true, "remarks": [...]}`, every `mattpocock-skills:code-review` remark with what was done about it (below) |
@@ -108,6 +109,12 @@ For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decisio
     "results": [{ "command": "python3 -m unittest", "passed": true, "exit_code": 0, "result": "OK" }],
     "not_run": []
   },
+  "ci_runs": [
+    { "workflow": "ci.yml", "branch": "agent/07", "sha": "a1b2c3d", "tree": "5e6f7a8", "run_id": 9001,
+      "url": "https://github.com/o/n/actions/runs/9001", "conclusion": "success", "jobs": [{ "name": "e2e", "conclusion": "success" }],
+      "inputs": {}, "full": true, "checks": ["npx playwright test"],
+      "started_at": "2026-11-14T10:00:00Z", "finished_at": "2026-11-14T10:09:30Z", "minutes": 9.1 }
+  ],
   "unsure": ["Whether amounts should export in pence or pounds; the ticket doesn't say, so pence matches storage"],
   "decisions": [
     {

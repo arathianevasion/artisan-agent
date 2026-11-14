@@ -67,6 +67,13 @@ jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit:
   decisions: [{job: 3, question: "Which file?", choice: "hello.txt", alternative: "HELLO", by: "worker 1",
                kind: "engineering taste", criterion: "4", confidence: "provisional"}],
   review: {ran: true, remarks: []}, findings: []}' >"$ARTISAN_RESULT_FILE"
+# WORKER_CI=1 runs the CI-only checks on CI on its branch (worker-ci.sh, #194)
+# and puts the run in its ci_runs, as /artisan-agent:implement does.
+if [ -n "${WORKER_CI:-}" ]; then
+  ci=$("$PLUGIN_ROOT/scripts/worker-ci.sh" run --repo local/sample) || true
+  jq --argjson r "$ci" '.ci_runs = [$r]' "$ARTISAN_RESULT_FILE" >"$ARTISAN_RESULT_FILE.tmp"
+  mv "$ARTISAN_RESULT_FILE.tmp" "$ARTISAN_RESULT_FILE"
+fi
 # WORKER_PARAPHRASE=1 rewords every criterion.
 if [ -n "${WORKER_PARAPHRASE:-}" ]; then
   jq '.acceptance = [{criterion: "The file hello.txt is there", met: true, evidence: {tests: ["check.sh"]}},
@@ -88,6 +95,10 @@ set -e
 sleep "${VERIFIER_SLEEP:-0}"
 echo "$PWD" >>"$ARTISAN_RUN_DIR/../verifier-dirs"
 key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+# VERIFIER_RUN_CHECKS=1 runs the one checks command its prompt gives it.
+if [ -n "${VERIFIER_RUN_CHECKS:-}" ]; then
+  eval "$(sed -n 's/^    \$ //p' "$ARTISAN_RUN_DIR/prompts/$key.md" | head -n 1)" >/dev/null || true
+fi
 if [ "${VERIFIER_MODE:-}" = garbage ]; then echo '{"verdict": "pass"}' >"$ARTISAN_RESULT_FILE"; exit 0; fi
 jq --arg unmet "${VERIFIER_UNMET:-}" --arg g "${VERIFIER_GUARDRAIL:-}" --arg human "${VERIFIER_HUMAN:-}" --arg gate "${VERIFIER_GATE:-}" '{verdict: "pass", acceptance: [.[] | {criterion: .,
     met: (. != $unmet), evidence: (if . == $unmet then {why: "not in the diff"} else {checks: [{command: "sh check.sh", result: "suite ok"}]} end)}

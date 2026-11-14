@@ -4,13 +4,16 @@ The checks setup proved are the checks the run uses. `/artisan-agent:setup` prov
 
 ```
 - `<command>`: proven to fail on <YYYY-MM-DD>, breaking: <the break>
+- `<command>`: proven to fail on <YYYY-MM-DD>, breaking: <the break> (runs_locally: never)
 ```
+
+Each check also says **where it can run** (#194): `runs_locally: always | mac | never`, committed at the end of its line, and setup asks for it with each check. A line that doesn't say is `always`, so a project recorded before this behaves as it did. `mac` is a check only a Mac can run (a build that needs Apple's toolchain or a game installed there); `never` is one no machine of the pipeline runs, only CI (a long browser suite).
 
 **One reader.** Nothing parses that section except `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh` (`json`, `list`, `suite`, `run`; usage at its top, tested in `tests/checks.test.sh` on what setup really writes). The worker, the verifier and the plan step all go through it.
 
 | Who | With checks recorded | With none recorded |
 |---|---|---|
-| Worker (`/artisan-agent:implement`) | runs exactly the recorded checks with `checks.sh run --worker` before writing its evidence, and puts the output in the record's `checks`. A discovered command that isn't recorded is not run as a check; pass it after `--` and it is listed in `not_run`. A recorded check that is the run's suite command is not run (see below) | discovers checks as before (ticket, README, build files), runs them through `checks.sh run -- '<found command>'...` (one quoted argument per command), and the record's `checks.fallback` says `no recorded checks (<reason>): found <commands>` |
+| Worker (`/artisan-agent:implement`) | runs exactly the recorded checks with `checks.sh run --worker` before writing its evidence, and puts the output in the record's `checks`. A check this machine can't run goes to CI on its branch (below, "A worker's CI run"). A discovered command that isn't recorded is not run as a check; pass it after `--` and it is listed in `not_run`. A recorded check that is the run's suite command is not run (see below) | discovers checks as before (ticket, README, build files), runs them through `checks.sh run -- '<found command>'...` (one quoted argument per command), and the record's `checks.fallback` says `no recorded checks (<reason>): found <commands>` |
 | Verifier (`verify.sh`) | `verify.sh start` gives it the recorded checks, read from the integration worktree (what the run merged, not the worker's branch), and the one `checks.sh run --out verify/checks/<t>.<v>.json` command. `verify.sh judge` treats a verdict without those results as the verifier failing (14), and a red check makes each criterion marked met that cites it unmet (every one, when no criterion cites it) | it runs what it finds through the same command; the contract's `checks.fallback` names what it found, or says it ran none |
 | Plan step (`plan.sh build`) | a draft without `suite_command` gets `checks.sh suite` (every recorded check, in order, red if any is), `suite_source: recorded`. A different command stays, as `changed`, and the approval shows it as a change the Artisan approves | the draft's own command is `discovered` and the approval says `No recorded checks (<reason>): found <command>` (and where, from the draft's optional `suite_found`); no command at all is `none`, flagged |
 
@@ -35,5 +38,24 @@ A CI machine **never falls back to the local suite**. With no gate workflow reco
 - **The plan step** on a CI machine shows the expected CI minutes per merge, from the gate workflow's recent completed runs (`merge-gate.sh minutes`), and the total for the run's merges. Dollar cost is not shown yet.
 
 A fallback is never silent: its text always starts `no recorded checks`, with the reason (`no CODING_STANDARDS.md`, no `## Checks` section, or the section lists none).
+
+## A worker's CI run
+
+On a machine whose merge gate runs on CI, some checks can't run where the worker is. The rule (#194):
+
+- **Which checks.** `checks.sh ci-only` lists them: with the merge gate on CI (`merge-gate.sh mode`), every check whose `runs_locally` is `never`, and one that is `mac` on a machine that isn't macOS. With `merge_gate: local`, or every check `always`, it lists none and nothing below happens.
+- **The worker** (`/artisan-agent:implement`) runs every other check here, as before; `checks.sh run --worker` skips the CI-only ones, listing each in `not_run` (`<command>: runs on CI on the branch (runs_locally: <value>)`) and in `ci_only`. Once its work is committed it runs `${CLAUDE_PLUGIN_ROOT}/scripts/worker-ci.sh run`: it pushes the worker's branch, dispatches the gate workflow there (`gh workflow run <ci_gate.workflow> --ref <branch>`, with `-f key=value` for each of `ci_gate.worker_inputs`) and waits in that one call for that dispatch's run. Red, it fixes and runs it again, until the run is green for its final commit. Every run's record goes in the evidence's `ci_runs` (`references/evidence-record.md`), with the commit, the tree, the run's id and URL, and its minutes: the attempt's CI cost, beside what retries cost, for the retro. The worker opens no PR.
+- **The verifier** runs the other checks (`checks.sh run --worker`) and leaves the CI-only ones out of the checks it must show. `verify.sh judge` then takes the worker's last run in `ci_runs` for exactly the commit it verified, which must be green and stand for every CI-only check, and asks GitHub (`worker-ci.sh check`); the contract's `checks.results` gains one result per CI-only check (`ci: true`), and with no such run they are red, so the attempt fails as with any red recorded check. A green one is the contract's `checks.ci_run`, and `checks.ci_cost {runs, minutes}` totals every branch run the attempt made, red ones included.
+- **The merge gate reuses it.** `wave.sh merge` merges `--no-ff`, so the merge commit is never the commit the worker's run tested; the rule is about trees. When the verified worker's green run ran the workflow in full (`full: true`: no `ci_gate.worker_inputs`), `wave.sh` offers it to `merge-gate.sh ci` (`--reuse-run`); when the merge commit's tree equals the tree that run tested (nothing else merged since the ticket's base), the gate records green with `reused: <run id>` and `relied_on {run_id, url, sha}`, dispatches nothing, and logs `merge-gate-reused`. A tree that differs, a merge batch of several tickets (#167) and a run started with `worker_inputs` set (it left jobs out) are gated as before.
+- **`ci_gate.worker_inputs`** (a map in `.artisan-agent/config.yml`, empty by default) holds the workflow inputs a worker's run passes, for a project whose worker runs should leave jobs out. Empty means a worker's run is the gate's run, so it can be reused.
+
+Examples:
+
+| Project | Checks | On its machines |
+|---|---|---|
+| claudia | every check `always` | nothing changes: workers run every check, the merge gate runs as before |
+| claudia-kerman (KSP) | the KSP build `mac`, the rest `always` | on the Mac (`local`) nothing changes; on a Linux machine gating on CI, a worker runs the build on CI on its branch |
+| riley | the Playwright e2e suite `never`, typecheck and vitest `always` | on riley's VM (`ci`) a worker runs typecheck and vitest itself and every e2e spec on CI on its branch, so a regression in another spec shows before the merge gate; a merge whose tree is the tree that run tested is not gated again |
+| artisan-agent | the suite `always`, `ci_gate.worker_inputs: {macos: false}` (#197) | a CI machine's worker runs nothing on CI (every check is `always`); were one `never`, its branch run would leave the macOS jobs out (a GitHub Free account runs 5 macOS jobs at once and each run takes 3), so the merge gate would never reuse it |
 
 Out of scope here: reading `pr-boundaries` (#71), proving checks fail (setup, `skills/setup/PROJECT.md`), team- or individual-level checks.
