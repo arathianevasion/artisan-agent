@@ -136,8 +136,10 @@ cmd_build() {
 
   if [ -n "$config" ]; then
     cfg=$("$SCRIPT_DIR/config.sh" show --file "$config") || exit 1
-  else
+  elif git rev-parse --git-common-dir >/dev/null 2>&1; then
     cfg=$("$SCRIPT_DIR/config.sh" show) || exit 1
+  else
+    cfg=$("$SCRIPT_DIR/config.sh" defaults) || exit 1 # outside a repository: no project config
   fi
   hist=$(history_json "$history" "$(jq -r '.run_id // ""' "$draft")")
   # The recorded checks, read only through checks.sh.
