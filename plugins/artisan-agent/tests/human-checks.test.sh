@@ -398,3 +398,44 @@ test_check_all_names_a_check_carried_to_the_next_gate_while_its_rework_is_open()
   assert_contains "$out" "skipped Human check #5: it already failed at slice-1; rework #$r is open"
   assert_eq 0 "$(events human-check-passed | jq length)"
 }
+
+# ------------------------- defer and the slice gates leave out a check whose rework is open (#178)
+
+test_defer_check_refuses_a_check_whose_rework_is_open_and_records_nothing() {
+  end_gate_ready
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["5"].human_check.answers = [{gate: "slice-1", verdict: "fail", rework: "7"}]'
+  local out= rc=0 before=
+  before=$(jq -S . "$RUN_DIR/state.json")
+  out=$("$E" defer-check "$RUN_DIR" 5 --why "Needs the devkit" 2>&1) || rc=$?
+  assert_eq 6 "$rc" "defer while the rework is open"
+  assert_contains "$out" "Human check #5 already failed at slice-1; rework #7 is open"
+  assert_eq "$before" "$(jq -S . "$RUN_DIR/state.json")" "nothing is recorded"
+  assert_eq 0 "$(events human-check-deferred | jq length)"
+  assert_eq false "$(jq -r '.labels | map(.name) | index("deferred") != null' "$FAKE_GH_DIR/issue-5.json")"
+  # Once the rework merges, the check can be deferred as usual.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["7"] = {status: "merged"}'
+  "$E" defer-check "$RUN_DIR" 5 --why "Needs the devkit" >/dev/null
+  assert_eq 1 "$(events human-check-deferred | jq length)"
+}
+
+test_the_next_slice_gate_does_not_list_a_check_whose_rework_is_open_and_names_the_rework() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local num= r= num2= body= out=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  r=$("$G" check "$RUN_DIR" 5 fail --why "The greeting wraps onto two lines")
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  merged 4
+  num2=$("$G" open "$RUN_DIR" slice-2)
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$num2.json")
+  assert_contains "$body" "waiting on rework #$r"
+  assert_not_contains "$body" "check 5 pass"
+  assert_not_contains "$("$G" chat "$RUN_DIR")" "answer each with check"
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "#5 waiting on rework #$r"
+  # The rework merges: the next gate lists the check and it can be answered.
+  merged "$r"
+  assert_eq "slice-2" "$("$G" check "$RUN_DIR" 5 pass >/dev/null && events human-check-passed | jq -r '.[0].gate')"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-5.json")"
+}
