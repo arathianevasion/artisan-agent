@@ -959,8 +959,9 @@ failure_evidence() {
   if [ -f "$RUN_DIR/verify/$t.$p.evidence.json" ]; then
     jq -r '
       "- The verifier found \(.criteria_met) of \(.criteria_total) criteria met:",
-      (.acceptance[] | select(.met != true and .human != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
+      (.acceptance[] | select(.met != true and .human != true and .gate != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
+      (.acceptance[] | select(.gate == true) | "- Checked by the merge gate, not yours to meet (verifier): \(.criterion)"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
   # A red CI merge gate (#176): the tests it failed, read from the CI log.
