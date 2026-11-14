@@ -105,6 +105,24 @@ test_mg_failed_tests_reads_the_job_test_place_and_assertion_from_the_failed_log(
   assert_eq "0 true" "$(jq -r '"\(.tests | length) \(.why != null)"' <<<"$out")"
 }
 
+test_mg_failed_tests_never_names_a_flaky_or_quarantined_test_or_takes_its_output() {
+  # run.sh --rerun-failed and the quarantine (#198): FLAKY and QUARANTINED
+  # lines, with output indented below, after a FAIL that printed none.
+  setup_ci
+  red_ci_with_log
+  echo '{"databaseId": 9001, "status": "completed", "conclusion": "failure"}' >"$FAKE_GH_DIR/run-9001.json"
+  local ts='2026-11-14T10:00:00.0000000Z' out=
+  {
+    printf 'unit\tRun\t%s %s\n' "$ts" "FAIL sample: test_real"
+    printf 'unit\tRun\t%s %s\n' "$ts" "FLAKY sample: test_flaky"
+    printf 'unit\tRun\t%s %s\n' "$ts" "     assert_eq: the flaky one's message"
+    printf 'unit\tRun\t%s %s\n' "$ts" "QUARANTINED sample: test_q #190: failed"
+    printf 'unit\tRun\t%s %s\n' "$ts" "     assert_eq: the quarantined one's message"
+  } >"$FAKE_GH_DIR/ci-log-failed"
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001)
+  assert_eq '[{"job":"unit","name":"sample: test_real","where":null,"message":null}]' "$(jq -c '.tests' <<<"$out")"
+}
+
 test_mg_a_red_ci_run_with_attempts_left_is_a_failed_attempt_requeued_with_the_failing_tests() {
   setup_ci
   verified_ticket
