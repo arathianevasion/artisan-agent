@@ -382,12 +382,14 @@ setup_handoff() {
                     caps: {max_budget_usd: 0.5, max_turns: 20, deadline_seconds: 120}}}}' >"$TEST_TMPDIR/plan.json"
   "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
   PATH="$TESTS_DIR/fixtures/fake-claude:$TESTS_DIR/fixtures/fake-gh:$PATH"
-  export PATH FAKE_CLAUDE_MODE=script FAKE_CLAUDE_LOG="$TEST_TMPDIR/fake-claude.log" WORKER_SLEEP=2
+  export PATH FAKE_CLAUDE_MODE=script FAKE_CLAUDE_LOG="$TEST_TMPDIR/fake-claude.log"
 
   export FAKE_CLAUDE_SCRIPT_WORKER="$TEST_TMPDIR/worker.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_WORKER" <<'EOF'
 set -e
-sleep "$WORKER_SLEEP"
+# Still in flight when the first orchestrator hands off: done once it has (#169).
+i=0
+while [ ! -e "$ARTISAN_RUN_DIR/../handoff-1" ] && [ "$i" -lt 300 ]; do i=$((i + 1)); sleep 0.1; done
 echo hi >hello.txt
 git add -A && git commit -q -m "worker"
 jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit: $c,

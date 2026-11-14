@@ -63,7 +63,8 @@ cleanup() {
 
 # The worker: writes CONTENT to FILE (default t<t>.txt), commits, and writes
 # its evidence record; on an attempt listed in FAIL it reports failed.
-# $WAVES/ticket-<t> may set FILE, CONTENT, FAIL and SLEEP.
+# $WAVES/ticket-<t> may set FILE, CONTENT, FAIL and SLEEP. With WORKER_BARRIER=N,
+# a worker first waits (up to 30s) until N workers have started.
 write_worker() {
   export FAKE_CLAUDE_SCRIPT_WORKER="$TEST_TMPDIR/worker.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_WORKER" <<'EOF'
@@ -73,6 +74,10 @@ t=${base%.*} n=${base##*.}
 FILE="t$t.txt" CONTENT="$t" FAIL="" SLEEP="${WORKER_SLEEP:-0}"
 [ ! -f "$WAVES/ticket-$t" ] || . "$WAVES/ticket-$t"
 echo "$t.$n start" >>"$WAVES/worker.log"
+i=0
+while [ "$(grep -c ' start$' "$WAVES/worker.log")" -lt "${WORKER_BARRIER:-0}" ] && [ "$i" -lt 300 ]; do
+  i=$((i + 1)); sleep 0.1
+done
 sleep "$SLEEP"
 mkdir -p "$(dirname "$FILE")"
 printf '%s\n' "$CONTENT" >"$FILE"
@@ -213,7 +218,7 @@ wave_of() { state_get ".tickets[\"$1\"].wave"; }
 # ------------------------------------------------------------- wave width
 
 test_four_independent_tickets_and_max_agents_3_dispatch_3_in_the_first_wave() {
-  export WORKER_SLEEP=2
+  export WORKER_BARRIER=3   # none returns before all three have started
   setup_waves 3 1 2 3 4
   run_wave 1
   # Three in flight together: all three dispatched before any result came in.
