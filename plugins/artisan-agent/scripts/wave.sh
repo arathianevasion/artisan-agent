@@ -22,6 +22,14 @@
 #       guard first (budget.sh guard), the guard's step between waves, when no
 #       orchestrator's sweep is running: 18 parked on plan usage, 17 the
 #       overrun gate; nothing launches. Not on --handoff (the sweep covers it).
+#       First it judges the last orchestrator's exit, as status does, and
+#       carries out the Artisan's answer to an orchestrator-exit decision
+#       (resume, retry, halt); 23 while one waits (--resume answers it
+#       "resume").
+#   wave.sh wait <run-dir> [--timeout SECONDS]
+#       block until the last orchestrator has ended (default at most 6600
+#       seconds, then 3: wait again), then print "orchestrator: <state>". The
+#       chat runs it as a background task so the orchestrator's exit wakes it.
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
@@ -47,6 +55,14 @@
 #       tracker for it: the guard runs in the orchestrator's sweep and in
 #       launch, and a "usage guard: <verdict>, since <time>" line says
 #       what it last found.
+#       The orchestrator never fails silently (#171): once it has ended, its
+#       exit is judged once. A clean end leaves every ticket its wave
+#       dispatched with a final status; anything else (a nonzero exit,
+#       error_max_turns, a budget or deadline limit, no completion line, a
+#       ticket with no verdict, or verified but not merged) queues an
+#       orchestrator-exit decision and event, and next is "decide" (after
+#       "halted" only), with an "orchestrator-exit: <cause> in wave <n>
+#       (<tickets>): <detail>" line.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -144,7 +160,8 @@
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
 # CI, 20 the merge gate is still running, 21 launch: main changed a product
-# guardrail but the run's base is not in it, a decision is waiting. One table of every code, with
+# guardrail but the run's base is not in it, a decision is waiting, 23 launch:
+# an orchestrator-exit decision is waiting. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
