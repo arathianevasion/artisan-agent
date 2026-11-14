@@ -166,8 +166,12 @@ build_view() { # id dependents-json
   for t in $(jq -r '.tickets[]' <<<"$def"); do
     prov=$(printf '%s\n' "$prov" | grep -v "^| #$t |" || true)
   done
+  # The provisional cards grow with the run: they reach jq as files (#203).
+  printf '%s' "$guard" >"$RUN_DIR/gates/.guardrails.md"
+  printf '%s' "$prov" >"$RUN_DIR/gates/.provisional.md"
   jq -n --argjson g "$def" --argjson deps "$deps" --slurpfile s "$FILE" \
-    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
+    --rawfile guard "$RUN_DIR/gates/.guardrails.md" --rawfile prov "$RUN_DIR/gates/.provisional.md" \
+    --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
     {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps, title: ($s[0] | gate_title($g; $run))}),
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
@@ -255,10 +259,11 @@ cmd_open() {
   view="$dir/$id.view.json"
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
-    jq --argjson cards "$(PACKET cards <"$view.tmp")" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
-      '.gate.cards = $cards | . + $hc' "$view.tmp" >"$view.tmp2"
+    PACKET cards <"$view.tmp" >"$view.cards"
+    jq --slurpfile cards "$view.cards" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
+      '.gate.cards = $cards[0] | . + $hc' "$view.tmp" >"$view.tmp2"
     mv "$view.tmp2" "$view"
-    rm -f "$view.tmp"
+    rm -f "$view.tmp" "$view.cards"
   fi
   body="$dir/$id.md"
   PACKET body <"$view" >"$body"
@@ -274,8 +279,11 @@ cmd_open() {
   for d in $(jq -r '.gate.dependents[].number' "$view"); do
     add_blocker "$d" "$num" "$gid"
   done
+  # The view holds the whole state, so it reaches jq as a file, never as an
+  # argument (#203: Linux refuses one over 128 KiB).
   apply '
-    if any((.review_gates // [])[]; .id == $v.gate.id) then .
+    $view[0] as $v
+    | if any((.review_gates // [])[]; .id == $v.gate.id) then .
     else
       ($v.gate.cards | length) as $n
       | ([$v.gate.tickets[] as $t | $v.state.tickets[$t].evidence.unsure[]?] | length) as $u
@@ -299,7 +307,7 @@ cmd_open() {
           .tickets[$h.ticket].human_check = ((.tickets[$h.ticket].human_check // {state: "open", for: $h.for})
             | .gate = $v.gate.id | .shown = ((.shown // []) + [$v.gate.id])))
       | guardrails_fired($v.gate; $now)
-    end' --argjson num "$num" --argjson v "$(cat "$view")"
+    end' --argjson num "$num" --slurpfile view "$view"
   echo "$num"
 }
 
@@ -425,7 +433,7 @@ ACTION_FILTER='
 # once it is in. Returns the write's status (3: the lock is held).
 fold() {
   local f="$1" st=0
-  ( apply "$ACTION_FILTER" --argjson a "$(cat "$f")" ) 2>"$f.err" || st=$?
+  ( apply '$action[0] as $a | '"$ACTION_FILTER" --slurpfile action "$f" ) 2>"$f.err" || st=$?
   if [ "$st" -eq 0 ]; then rm -f "$f" "$f.err"; fi
   return "$st"
 }

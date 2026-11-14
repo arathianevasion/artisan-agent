@@ -119,3 +119,34 @@ test_a_plain_blocked_result_is_not_a_design_stop() {
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq 0 "$(state_get '.lessons | length')"
 }
+
+test_a_finding_with_no_blocks_list_is_skipped_and_the_next_one_is_listed_and_marked() {
+  setup
+  finding 10 '{"title":"Recorded with no blocks","why":"As the verifier records them."}'
+  finding 10 '{"title":"Use the shared parser","why":"12 should too.","blocks":["12"]}'
+  local out= rc=0
+  out=$("$SCRIPTS/findings.sh" pending "$RUN_DIR") || rc=$?
+  assert_eq 0 "$rc"
+  assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  assert_eq 2 "$(printf '%s' "$out" | jq -r .seq)"
+  assert_eq comment "$(printf '%s' "$out" | jq -r .action)"
+  "$SCRIPTS/findings.sh" mark "$RUN_DIR" 10 2 12 comment
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Use the shared parser"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-12.md")" "Use the shared parser"
+  assert_eq comment "$(state_get '.relays[0].action')"
+  assert_eq 2 "$(state_get '.relays[0].seq')"
+  assert_eq finding "$(state_get '.events[-1].event')"
+}
+
+test_a_finding_whose_blocks_is_null_or_not_a_list_is_skipped() {
+  setup
+  finding 10 '{"title":"Null blocks","why":"x","blocks":null}'
+  finding 10 '{"title":"String blocks","why":"x","blocks":"12"}'
+  finding 10 '{"title":"Object blocks","why":"x","blocks":{"12":true}}'
+  finding 10 '{"title":"Use the shared parser","why":"12 should too.","blocks":["12"]}'
+  local out= rc=0
+  out=$("$SCRIPTS/findings.sh" pending "$RUN_DIR") || rc=$?
+  assert_eq 0 "$rc"
+  assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  assert_eq 4 "$(printf '%s' "$out" | jq -r .seq)"
+}

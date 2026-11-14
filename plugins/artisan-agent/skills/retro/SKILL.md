@@ -93,8 +93,11 @@ The merge gate table (`facts.json` `merge_gates` and `artisan_wait`; `retro.py g
 | Red gates: no verdict | `merge_gates.red.no_verdict` | `ci-wait` events with `outcome: "no-verdict"` |
 | Gates not run: skipped | `merge_gates.not_run.skipped` | `merge-gate-skipped` events (#168) |
 | Gates not run: reused | `merge_gates.not_run.reused` | a ticket's `suite` record with `reused` (#194), one per CI run |
+| The time limit (#200) | `merge_gates.median_minutes`, `limit_minutes`, `over_limit` | the median of each gate that ran: each `ci-wait` event's `minutes`, less those whose `sha` a `merge-gate-skipped` or `merge-gate-reused` event names (CI ran nothing), plus each local gate as above; the limit is the plan's `merge_gate_minutes_limit` (its config, defaults filled); over means the median is above it, not at it |
 | Waiting on the Artisan | `artisan_wait.minutes`, `longest_minutes`, `decisions` | each `gate-opened` to the first `gate-approved`, `gate-decided`, `gate-redirected`, `gate-bypassed`, `gate-deferred`, `gate-resolved`, `gate-empty` or `end-gate-approved` with its `gate` (`end-gate-approved` with none closes `end`); a gate still open is not counted |
 
-A run with no `merge-gate` and no `ci-wait` event (no merge gate ran, or a state file from before they were recorded) has every `merge_gates` figure null, one whose CI gates logged no `ci-wait` (before #195) has its minutes and red gates null, and one with no decided gate has the `artisan_wait` minutes null; the table shows each as a dash.
+A run with no `merge-gate` and no `ci-wait` event (no merge gate ran, or a state file from before they were recorded) has every `merge_gates` figure null, one whose CI gates logged no `ci-wait` (before #195) has its minutes and red gates null, and one with no decided gate has the `artisan_wait` minutes null; the table shows each as a dash. With no gate minutes, `median_minutes` and `over_limit` are null; a plan from before #200 has no limit, so `limit_minutes` and `over_limit` are null.
+
+When `over_limit` is true, the round shows one line under the table: the median, the limit and a proposed ticket in this project to bring the merge gate back under the limit. It is a proposal like any other in the round: on the Artisan's yes, file it in the project's tracker as `needs-triage`, naming the median and the limit. Nothing is blocked by the limit: no merge, plan or gate.
 
 Tests: `tests/retro.test.sh`, on a seeded sample run with a throwaway individual home, the fake tracker and a stub `claude`.

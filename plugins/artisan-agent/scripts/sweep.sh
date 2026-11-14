@@ -5,6 +5,9 @@
 # Usage: sweep.sh <run-dir> [--no-guard]
 #        sweep.sh repair <run-dir> [--dry-run]
 #
+# First, a queued ticket with a wave whose next attempt has a runner
+# (workers/<ticket>.<attempt>/runner.pid) was launched by a dispatch stopped
+# before it recorded the launch: it is recorded now, as dispatched (#190).
 # For each ticket whose status is in_flight, in this order:
 #   1. a result file results/<ticket>.<attempt>.result.json -> the result is recorded
 #        (status "complete" -> returned, "blocked" -> blocked, "failed" -> failed attempt)
@@ -141,6 +144,26 @@ sweep() {
   for req in "$RUN_DIR"/levers/*.json; do
     [ -f "$req" ] || continue
     step "$STATE_JQ_DEFS"'scope_add($r[0]; $now)' --slurpfile r "$req" --argjson now "$now"
+  done
+
+  # A launch never recorded (#190): wave.sh dispatch writes the ticket's wave
+  # before it starts the worker and records the launch after, so a stop in
+  # between (the orchestrator stopped at its deadline) leaves a queued ticket
+  # with a wave whose next attempt has a runner. That attempt is taken in as
+  # dispatched, so the checks below see it.
+  local next="" runner=""
+  for t in $(jq -r '.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0) | .key' "$tmp"); do
+    next=$(( $(jq -r --arg t "$t" '.tickets[$t].attempts' "$tmp") + 1 ))
+    runner=$(cat "$RUN_DIR/workers/$t.$next/runner.pid" 2>/dev/null) || runner=""
+    state_is_uint "$runner" || continue
+    step "$STATE_JQ_DEFS"'
+      # The deadline wave.sh dispatch would have recorded: the cap, else twice
+      # the expected minutes (every dispatch has one, state.sh dispatch).
+      ($now + (.plan.tickets[$t].caps.deadline_seconds // ((.plan.tickets[$t].expected.minutes // 30) * 120))) as $deadline
+      | .tickets[$t] |= (.status = "in_flight" | .attempts += 1 | .pid = $pid
+          | .dispatched_at = $now | .deadline_at = $deadline | .result = null)
+      | event({event: "dispatch", ticket: $t, attempt: .tickets[$t].attempts, pid: $pid, unrecorded: true}; $now)' \
+      --arg t "$t" --argjson pid "$runner" --argjson now "$now"
   done
 
   tickets=$(jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | .key' "$tmp")

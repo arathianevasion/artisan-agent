@@ -57,7 +57,7 @@ The exit record:
  "output":"workers/46.1/output.json","result_file":"results/46.1.result.json"}
 ```
 
-`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
+`reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline, never before it, or on ALRM, which brings the deadline forward to now), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
 
 ## Caps
 
@@ -137,6 +137,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
 | extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
+| merge gate time limit (#200), in minutes | `merge_gate_minutes_limit` | 6: the plan step on a CI machine says so in one line when the expected CI minutes per merge are over it; the retro says so when the run's median merge gate was, and proposes a ticket to bring it back under. Nothing refuses, blocks or fails over it (source in `templates/config.yml`) |
 | release skip on the CI merge gate | `merge_gate_skip_paths` (a list of globs, `*` crossing `/`; the last match wins, a leading `!` means never skip) | none (every merge runs CI); this repo lists its version files, the plugin's changelog and `*.md` outside `plugins/` (the plugin's own files come after `!plugins/*`, which would otherwise deny them) |
 
 ## Overrides are for this run only
