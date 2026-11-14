@@ -61,7 +61,7 @@ Each of these decides the gate's `exception` decision as job 15 ("Decide what ha
 
 ## Parking behind reviews
 
-The run **parks** when every ticket left (not merged, closed, or taken out of the run) waits behind an open review, and nothing else can move: nothing in flight or returned, an empty frontier, and no waiting decision that isn't a gate. A ticket waits behind a review when it is the ticket of an open exception gate, or a tracker blocker of it is an open gate's issue, a ticket with a waiting risk gate, a ticket in a slice whose gate is due, or a ticket that itself waits behind a review.
+The run **parks** when every ticket left (not merged, closed, or taken out of the run) waits behind an open review, and nothing else can move: nothing in flight or returned, an empty frontier, and no waiting decision that isn't a gate. A ticket waits behind a review when it is the ticket of an open exception gate, or a tracker blocker of it is an open gate's issue, a ticket with a waiting risk gate, a ticket in a slice or risk gate not yet answered that the waiting ticket is not in (from plan approval: `gate_holds`, #170), or a ticket that itself waits behind a review. A gate that holds a ticket but has no issue yet (the rest of its slice hasn't merged, and the run is parked on something else too) is named `slice gate <slice> (not open yet)`.
 
 `wave.sh status` then says `next: parked` and the line `gate-action.sh parked` prints:
 

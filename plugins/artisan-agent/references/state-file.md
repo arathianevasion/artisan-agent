@@ -146,6 +146,7 @@ Top level:
 | `steering` | `[{attempt, note, at}]`, each time the Artisan stopped the worker and gave notes (`lever.sh steer`, `references/run-levers.md`). Not a failure: it is not in `failures` and uses none of the ticket's attempts; the notes go into the next worker's prompt |
 | `urgent` | `true` for an urgent ticket (`lever.sh urgent`): dispatched on the one extra slot above Max Agents, from `main`, never on the frontier or merged into the integration branch; it ships through its own end gate (`urgent_gates`) |
 | `shipped` | an urgent ticket once `end-gate.sh urgent-finish` has run: `{pr, main_merged_into, sync_commit, at}` |
+| `gate_waits` | a `queued` ticket only, written by the reconciler: the gates not yet answered that hold it through a merged blocker, `[{id, kind, slice}]` (`gate_waits` in `lib/state-lib.sh`, #170). `wave.sh status` prints `queued: waiting on slice gate <slice>`, and `gate-action.sh parked` counts it as held. Absent when nothing holds it |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
 ## Optional fields
@@ -185,7 +186,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `ci_retry` | absent (ticket field): no gate to retry |
 | `tracker_closed` | `false` (ticket field) |
 | `wave` | `0` (ticket field) |
-| `resolve`, `risk_gate`, `context_risk`, `blocked_reason` | absent (ticket fields) |
+| `resolve`, `risk_gate`, `context_risk`, `blocked_reason`, `gate_waits` | absent (ticket fields) |
 | `questions`, `answers` | `[]` (ticket fields) |
 
 #54 added `events`, `plan.suite_command`, `plan.orchestrator`, the ticket's `tracker_closed`, and (with the two-tier scripts) `integration.worktree`, `integration.base`, the ticket's `worktree`, `base` and `suite`. It also let a ticket's `cost_usd` fall back to the session's `total_cost_usd` when the result file has none. Reviewed in #96: none of these changed the meaning or type of a field that existed before (the cost fallback only fills a value that was `null`), so none needed a bump.
@@ -230,7 +231,7 @@ An exception gate the miscount already opened is printed with the command that c
 1. **Git.** A ticket whose branch was merged into the integration branch is `merged`, with the merge commit. Merges are `--no-ff`, so the merge commit sits on the integration branch's first-parent line; a ticket branch still on that line (dispatched, nothing merged) does not count. This comes before the sweep, so a worker whose branch was merged before a crash is not counted as a failed attempt.
 2. **Sweep.** As above.
 3. **Tracker.** For each ticket in scope, `gh api repos/<repo>/issues/<n>` (open or closed, labels) and `gh api repos/<repo>/issues/<n>/dependencies/blocked_by` (native blockers). A failed read exits 1 with git's merges and the sweep kept and the frontier not recomputed. A `queued` ticket the tracker has closed becomes `closed`.
-4. **Frontier.** Every `queued` ticket in scope, open on the tracker, not labelled `ready-for-human`, not a Human check (a body marker records `human_check.for`; a Human check in the run is never waited on as a blocker either), whose blockers are all merged into the integration branch (blockers in the run) or closed (blockers outside it, such as a `review-gate` issue), and none of whose blockers is in a slice whose gate is due and not yet approved (`gate_holds`). Printed one per line and stored in `frontier`.
+4. **Frontier.** Every `queued` ticket in scope, open on the tracker, not labelled `ready-for-human`, not a Human check (a body marker records `human_check.for`; a Human check in the run is never waited on as a blocker either), whose blockers are all merged into the integration branch (blockers in the run) or closed (blockers outside it, such as a `review-gate` issue), and none of whose blockers is in a slice or risk gate, not containing the ticket itself, that is not yet answered (`gate_holds(blocker; ticket)`: from plan approval, not only once the gate is due; a gate none of whose tickets merged holds nothing, #170). A `queued` ticket held that way through a merged blocker gets `gate_waits`; any other loses it. Printed one per line and stored in `frontier`.
 
 Wave width (Max Agents, the ready tickets, overlapping file sets) is applied to the frontier by `scripts/wave-width.sh pick`, not by the reconciler; see `skills/implement-plan/references/parallel-waves.md`.
 
