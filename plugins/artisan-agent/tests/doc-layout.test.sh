@@ -4,12 +4,28 @@
 # Also: the event log still names every event it named when it was one paragraph.
 # Bash 3.2-safe: awk and grep only.
 
+# A line this long is where two tickets' entries start to collide (the 0.7.1 run's conflicts).
 MAX_LINE=1000
 STATE_FILE="$PLUGIN_ROOT/references/state-file.md"
 SCRIPTS_README="$PLUGIN_ROOT/scripts/README.md"
 
 # The events the event-log paragraph named before it became a list (#207).
-EVENTS='dispatch result verify verified failed blocked merge closed conflict resolve finding design-question integration orchestrator guardrail-merge guardrail-base-kept halted resumed orchestrator-exit handoff handoff-failed risk-gate risk-gate-cleared asked answered deferred-question pulled provisional-shown gate-opened gate-decision rework gate-approved end-gate-approved pr-cut run-ended gate-redirected gate-bypassed gate-deferred gate-decided gate-resolved gate-empty repaired sent-back decided parked human-check-passed human-check-failed human-check-deferred human-check-split human-start human-done human-feedback overrun-gate overrun-decision unparked ci-gate-abandoned ci-wait merge-gate merge-gate-resumed merge-gate-abandoned merge-batch merge-batch-ended resume-asked ceiling-raised guardrail-fired guardrail-bypassed bug-found shipped-bug spot-check merge-gate-skipped'
+EVENTS='dispatch result verify verified failed blocked merge closed conflict resolve finding
+design-question integration orchestrator guardrail-merge guardrail-base-kept halted resumed
+orchestrator-exit handoff handoff-failed risk-gate risk-gate-cleared asked answered
+deferred-question pulled provisional-shown gate-opened gate-decision rework gate-approved
+end-gate-approved pr-cut run-ended gate-redirected gate-bypassed gate-deferred gate-decided
+gate-resolved gate-empty repaired sent-back decided parked human-check-passed
+human-check-failed human-check-deferred human-check-split human-start human-done
+human-feedback overrun-gate overrun-decision unparked ci-gate-abandoned ci-wait merge-gate
+merge-gate-resumed merge-gate-abandoned merge-batch merge-batch-ended resume-asked
+ceiling-raised guardrail-fired guardrail-bypassed bug-found shipped-bug spot-check
+merge-gate-skipped'
+
+# event_log_section: the event log's section of state-file.md.
+event_log_section() {
+  sed -n '/^## The event log/,/^## The sweep/p' "$STATE_FILE"
+}
 
 # long_lines file: "line number: length" for each line over MAX_LINE characters.
 long_lines() {
@@ -39,7 +55,7 @@ test_the_check_flags_an_overlong_line() {
 
 test_the_event_log_still_documents_every_event() {
   local section= e=
-  section=$(sed -n '/^## The event log/,/^## The sweep/p' "$STATE_FILE")
+  section=$(event_log_section)
   for e in $EVENTS; do
     assert_contains "$section" "\`$e\`" "event log names $e"
   done
@@ -47,11 +63,11 @@ test_the_event_log_still_documents_every_event() {
 
 test_the_event_log_lists_one_event_per_line() {
   local lines=
-  lines=$(sed -n '/^## The event log/,/^## The sweep/p' "$STATE_FILE" | grep -c '^- ')
+  lines=$(event_log_section | grep -c '^- ')
   [ "$lines" -ge 50 ] || fail "expected the event log as a list of at least 50 lines, got $lines"
 }
 
 test_each_section_says_one_entry_per_line() {
-  assert_contains "$(sed -n '/^## The event log/,/^## The sweep/p' "$STATE_FILE")" "One entry per line"
+  assert_contains "$(event_log_section)" "One entry per line"
   assert_contains "$(sed -n '1,6p' "$SCRIPTS_README")" "One entry per line"
 }

@@ -250,8 +250,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `resolve` (`ticket`, `outcome`, `why?`)
 - `finding` (`from`, `seq`, `target`, `action`)
 - `design-question` (`ticket`)
-- plus `integration`
-- `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `by?`: who answered when the run's base was not in main; `references/guardrails.md`)
+- plus `integration` `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `by?`: who answered when the run's base was not in main; `references/guardrails.md`)
 - `guardrail-base-kept` (`wave`, `ref_commit`, `in_force`, `decision`: the Artisan kept the guardrails as of the run's base) for the run's own steps
 - `halted` (`wave`, `tickets`; `reason: "orchestrator-exit"` when the Artisan answered an orchestrator-exit decision `halt`)
 - and `resumed` (`wave`) for the run as a whole
@@ -260,20 +259,17 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `handoff-failed` (`id`, `attempt`: the next orchestrator didn't launch, the hand-off record was taken back)
 - `risk-gate` (`ticket`, `percent`)
 - and `risk-gate-cleared` (`ticket`, `by`) for the context drain
-- and
-- for worker questions
+- and for worker questions
 - `asked` (`ticket`, `question`)
 - `answered` (`ticket`, `question`, `next`)
 - `deferred-question`
 - `pulled` and `provisional-shown`
-- and
-- for slice gates
+- and for slice gates
 - `gate-opened` (`gate`, `issue`, `tickets`, `dependents`)
 - `gate-decision` (`gate`, `card`, `by`, `outcome`, `redirect`, `areas`, `cards?`)
 - `rework` (`ticket`, `from`, `gate`, `card`)
 - and `gate-approved` (`gate`, `issue`, `by`)
-- and
-- for gate actions and exception gates (`scripts/gate-action.sh`)
+- and for gate actions and exception gates (`scripts/gate-action.sh`)
 - `gate-opened` with `kind: "exception"` (or `"end"`)
 - the end gate's `end-gate-approved`
 - `pr-cut` and `run-ended` (`references/end-gate.md`)
@@ -284,22 +280,19 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `gate-empty` (the same, `issue: null`, plus `left_run`, `[{number, status, title}]`, and `why`: a slice gate whose tickets all left the run, closed by `gate.sh sync` with nothing to review, #164)
 - `repaired` (`ticket`, `attempt`, `cost_usd`, `failures_taken_back`: `sweep.sh repair`, #151)
 - `sent-back` (`ticket`, `from`, `by?`: a ticket left the run with its dropped or resliced blocker; `wave.sh status` says `next: stranded`, not `blocked`, when tickets are left waiting on one, `references/gate-actions.md`)
--  `decided` (`decision`, `kind`, `choice`, `by`)
+- `decided` (`decision`, `kind`, `choice`, `by`)
 - and `parked` (`reason: "reviews"`, `detail`)
-- and
-- for Human checks (`references/human-checks.md`)
+- and for Human checks (`references/human-checks.md`)
 - `human-check-passed` (`ticket`, `agent_ticket`, `gate`, `by`, `notes?`)
 - `human-check-failed` (the same, `why`, `rework`; with `bug-found` unless the Artisan said it was not a bug, and `rework` with `human_check`)
 - and `human-check-deferred` (the same, `gate: "end"`, `why`)
 - and `human-check-split` (`ticket`: the agent ticket, `attempt`, `criteria`, `human_check`: the Human check they moved to; `verify.sh judge` on a pass, #158)
-- and
-- for hands-on tickets (`scripts/human.sh`)
+- and for hands-on tickets (`scripts/human.sh`)
 - `human-start` (`ticket`, `worktree`, `base`)
 - `human-done` (`ticket`, `attempt`, `commit`)
 - `human-feedback` (`ticket`, `attempt`: the verifier failed it and it went back to the Artisan)
 - and `parked` (`reason: "human"`, `detail`)
-- and
-- for cost and usage limits (`scripts/budget.sh`, `references/cost-and-usage.md`)
+- and for cost and usage limits (`scripts/budget.sh`, `references/cost-and-usage.md`)
 - `overrun-gate` (`gate`, `budget`, `spent`, `projected`, `tickets_over`)
 - `overrun-decision` (`gate`, `option`, `choice`, `by`, `action: "defer"`)
 - `parked` (`reason: "usage"`, `window`, `detail`)

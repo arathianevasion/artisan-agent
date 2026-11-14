@@ -241,8 +241,7 @@ The rest of the `merge-gate.sh ci` row, one clause per line:
 The rest of the `wave.sh merge <run-dir> <ticket>...` row, one clause per line:
 
 - a ticket that conflicts left out for its own merge; prints `#<t> merged <commit>`, `#<t> red` or `#<t> left out: ...` per ticket; 20 while a gate runs (naming any of its tickets carries the merge batch on), 19 parked on CI.
-- One ticket:
-- refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last)
+- One ticket: refuses unless the record's commit is the branch tip and a fresh verifier passed this attempt at that commit (13, nothing changed; `verify.sh`); an attempt that didn't complete is a failed attempt (retried, or blocked after the last)
 - merges `--no-ff` in the integration worktree, runs the merge gate (`plan.suite_command` here, or on a machine whose merge gate runs on CI, the project's gate workflow on the merge commit: `references/checks.md`, "The merge gate on CI"), records the merge with the gate's record, removes the worker's worktree.
 - The gate runs detached (`merge-gate.sh start`) and the call waits for it at most `--wait` seconds (default 60), then exits 20; the next call finishes it, waits again, resumes a CI gate whose runner died on its same run, or undoes a dead gate and gates again
 
