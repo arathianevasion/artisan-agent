@@ -292,8 +292,13 @@ set +m
 # Events are found by their parsed type (lib/stream-lib.sh), never by the
 # line's prefix: claude writes other keys before "type".
 usage_seen=0
+usage_size=-1   # the stream's size at the last look: unchanged, nothing new to read
 record_usage() {
-  local events="" lines="" total=0 now=""
+  local events="" lines="" total=0 now="" size=0
+  [ -f "$worker_dir/stream.jsonl" ] || return 0
+  size=$(($(wc -c <"$worker_dir/stream.jsonl")))
+  [ "$size" != "$usage_size" ] || return 0
+  usage_size=$size
   events=$(stream_events rate_limit_event "$worker_dir/stream.jsonl")
   [ -z "$events" ] || total=$(printf '%s\n' "$events" | wc -l | tr -d ' ')
   [ "$total" -gt "$usage_seen" ] || return 0
