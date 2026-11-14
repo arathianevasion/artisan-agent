@@ -9,6 +9,7 @@ Skills cite this file rather than copying it. The script is `${CLAUDE_PLUGIN_ROO
 - Keep each criterion to something an agent can show: a test, a command's output, a file, a diff.
 - Where a person will verify the result, an agent criterion can ask for the artefact they'll use, such as "a checklist entry for the in-game check", rather than for the check itself.
 - Everything a person has to verify goes into the Human check ticket for that agent ticket.
+- Write no criterion about the PR or CI: workers never open PRs, and the merge gate already runs the suite (or CI) on every merge. Ask for what the work leaves behind instead: "review notes committed at docs/review/<n>/", not "the PR shows the review notes"; and no "CI is green on the PR" line. One that slips in is checked by the merge gate, not judged (`references/evidence-contract.md`, "Checked by the merge gate").
 
 ## A Human check ticket
 

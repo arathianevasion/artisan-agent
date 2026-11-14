@@ -41,7 +41,7 @@ Cost is not written by the worker. Whoever reads the session's `--output-format 
 }
 ```
 
-`evidence` holds the tests that prove the criterion, the checks run and their result lines, and the diff stats for the files that meet it. Leave out a key that has nothing in it. A criterion not met says why in `evidence.why`. A criterion only a person can verify (play, eyes, a real device, outside access) is `"met": false` in a worker's record, with `evidence.why` saying so; the verifier marks it `"met": "human"` in its verdict, and it moves to a Human check instead of failing the ticket (`${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`, "Needs a human check").
+`evidence` holds the tests that prove the criterion, the checks run and their result lines, and the diff stats for the files that meet it. Leave out a key that has nothing in it. A criterion not met says why in `evidence.why`. A criterion only a person can verify (play, eyes, a real device, outside access) is `"met": false` in a worker's record, with `evidence.why` saying so; the verifier marks it `"met": "human"` in its verdict, and it moves to a Human check instead of failing the ticket (`${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`, "Needs a human check"). One about CI, the merge gate or the PR is `"met": false` in a worker's record too, with `evidence.why` saying the merge gate checks it; the verifier marks it `"met": "gate"` (the same file, "Checked by the merge gate").
 
 ### Decision cards
 

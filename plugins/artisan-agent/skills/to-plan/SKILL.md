@@ -68,6 +68,8 @@ Under the tables, say in a few lines why you cut where you did and the strongest
 | "split it" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh split-human-check --repo <owner/name> --graph <graph.json> --plans <plans.json> <ticket> "<criterion>"` |
 | "keep it, because …" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh check <plans.json> --graph <graph.json> --override-human-check <ticket> "<criterion>" --why "<their reason>"` |
 
+**PR and CI criteria.** A criterion about the PR or CI ("the PR shows …", CI green on the PR) is one no run can check: workers never open PRs and the merge gate already runs on every merge. When you see one in a ticket you show, recommend rewording it to what the work leaves behind ("review notes committed at docs/review/<n>/"), or dropping a "CI is green" line; if it stays, the merge gate checks it (`${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`, "Checked by the merge gate").
+
 The split moves the criterion off the agent ticket into its **Human check** ticket (created with title, marker, `ready-for-human` and the blocking edge, or added to the one that exists); running it again changes nothing. The override is recorded on the plan, in `plans.json` and the plan issue's body. Never override without the Artisan's reason. A Human check sits in its agent ticket's plan, listed in the view as "not estimated": it is a person's work, not agent work.
 
 If the graph has a cycle, the script refuses and names it. Show it: it is a planning bug in the tickets, not something to route around.
