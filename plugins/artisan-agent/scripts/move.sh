@@ -8,7 +8,8 @@
 #       until it is moved or `wave.sh launch --resume`). Safe to repeat.
 #   move.sh idle <run-dir>
 #       exit 0 if nothing is running (no ticket in flight, no live runner, no
-#       other live holder of the run lock); else exit 4 and say what is
+#       other live holder of the run lock, no merge gate recorded in .merge_gate,
+#       alive or not); else exit 4 and say what is
 #   move.sh out <run-dir> [--remote NAME] [--wait SECONDS]
 #       wait up to SECONDS (default 0) for idle, then push the integration
 #       branch, the run's unmerged ticket branches and the run's state folder
