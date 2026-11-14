@@ -2,6 +2,18 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.7.0 (2026-11-14)
+
+Fixes from riley's run on 0.5.0, merge batches, faster CI, and Human check and gate follow-ups.
+
+- **Never fails silently:** an orchestrator that exits leaving tickets without a verdict (non-zero exit, max turns, budget, deadline, unmerged) queues an `orchestrator-exit` decision, wakes the chat and pushes a notification naming the cause; status never says launch (#171).
+- **Criteria:** taken from the triage Agent Brief comment when the body has none, with the source recorded; a plan with a ticket that has no criteria anywhere is not approvable (#172). A criterion only the merge gate can show (PR or CI green) is `"met": "gate"`, checked by the merge gate, and the templates stop writing PR criteria (#174).
+- **`worktree_setup`:** a project command (such as `npm ci`) runs in every worker, verifier, hands-on and end-gate worktree; a failure is reason `setup` (#173).
+- **CI and the merge gate:** one-turn waits on CI gates and an orchestrator turn budget that scales with tickets and CI gates (#175); a red CI gate is a failed attempt, retried with the failing tests named, and an exception gate only when attempts run out (#176); a run halts only when a whole wave failed and none of it passed verification (#177).
+- **Merge batches:** tickets ready together are gated with one CI run and split on red (`merge_batch`, default on; #167), set with `machine-setup.sh merge-batch` (#180); a release commit that only changes version and changelog files over a green commit skips CI (`merge_gate_skip_paths`; #168). Merge batch is in the glossary (#179).
+- **Gates:** a slice gate holding a ticket that left the run comes due, or closes as empty (#164); a slice gate holds its outside dependents from plan approval (#170); the end gate's Human checks name their agent ticket (#163); a failed Human check refuses another answer until its rework merges (#165), and `defer-check` and the slice gates honour that (#178).
+- **CI:** the macOS job runs as three shards, cutting a run from 10-12.5 to about 6 minutes (#166).
+
 ## 0.6.1 (2026-11-14)
 
 Human checks follow-ups and a config fix.

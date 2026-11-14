@@ -1,6 +1,6 @@
 {
   "name": "artisan-agent",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "The Artisan Agent pipeline: agents do most of the delivery, the Artisan sets the guardrails and supplies the taste. Layers on mattpocock-skills.",
   "author": {
     "name": "arathianevasion"
