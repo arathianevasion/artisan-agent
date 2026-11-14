@@ -7,7 +7,8 @@
 # Usage:
 #   to-plan.sh graph --repo owner/name <ticket>...     print the ticket graph (JSON): title,
 #                                  acceptance criteria and blocked_by within the set for each
-#                                  ticket, open blockers outside it as external_blockers. The
+#                                  ticket, open blockers outside it as external_blockers, and
+#                                  human_check_for on a Human check (its body marker). The
 #                                  chat then adds each ticket's `slice` (a name for the
 #                                  reviewable thing it contributes to) and its estimate
 #                                  (`estimate_usd`, or `model` + `expected` tokens).
@@ -28,10 +29,10 @@
 #                                  Each override is recorded on the plan (human_check_overrides).
 #   to-plan.sh render  <plans.json> --graph FILE      the approval view (Markdown): a table of plans,
 #                                  then each plan's tickets with their acceptance criteria
-#   to-plan.sh split-human-check --repo owner/name [--graph FILE [--plans FILE]] [--what TEXT] <ticket> "<criterion>"
+#   to-plan.sh split-human-check --repo owner/name [--graph FILE [--plans FILE]] <ticket> "<criterion>"
 #                                  move the criterion off the agent ticket into its Human check
-#                                  ticket (references/human-checks.md): title "Human check: <what>
-#                                  (#<ticket>)" (what defaults to the ticket's title), the marker,
+#                                  ticket (references/human-checks.md): title "Human check: <the
+#                                  ticket's title> (#<ticket>)", the marker,
 #                                  ready-for-human, blocked by the ticket. Creates it, or adds to the
 #                                  open one for that ticket; a repeat changes nothing. The graph and
 #                                  --plans (the agent ticket's plan), when given, follow.
@@ -63,7 +64,7 @@ need jq; need python3
 py() { python3 -I "$PY" "$@"; }
 
 # Common options, parsed from anywhere after the subcommand.
-GRAPH= REPO= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= WHAT= CONFIG= OVERRIDES='[]'
+GRAPH= REPO= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= CONFIG= OVERRIDES='[]'
 parse() {
   POS=()
   while [ $# -gt 0 ]; do
@@ -78,7 +79,6 @@ parse() {
         OVERRIDES=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$OVERRIDES")
         shift 2 ;;
       --plans) [ $# -ge 2 ] || usage; PLANS=$2; shift 2 ;;
-      --what) [ $# -ge 2 ] || usage; WHAT=$2; shift 2 ;;
       --config) [ $# -ge 2 ] || usage; CONFIG=$2; shift 2 ;;
       --graph) [ $# -ge 2 ] || usage; GRAPH=$2; shift 2 ;;
       --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
@@ -140,7 +140,9 @@ case "$cmd" in
             blocked_by: [$deps[] | .number | tostring | select(. as $b | $in | index($b))],
             external_blockers: [$deps[] | select(.state == "open") | .number | tostring | select(. as $b | ($in | index($b)) | not)]
           }
-        | if .tickets[$n].external_blockers == [] then del(.tickets[$n].external_blockers) else . end' <<<"$out")
+        | if .tickets[$n].external_blockers == [] then del(.tickets[$n].external_blockers) else . end
+        | ([$issue.body // "" | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null) as $hc
+        | if $hc then .tickets[$n].human_check_for = $hc else . end' <<<"$out")
     done
     printf '%s\n' "$out" ;;
 
@@ -184,9 +186,9 @@ case "$cmd" in
     hc=$(jq -r --arg m "$marker" '[.[] | select((.body // "") | contains($m))] | sort_by(.number) | .[0].number // empty' <<<"$open")
     hc_body=null
     [ -z "$hc" ] || hc_body=$(jq --argjson n "$hc" '.[] | select(.number == $n) | .body // ""' <<<"$open")
-    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" --arg w "$WHAT" \
+    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" \
       '{agent: ($i.number | tostring), agent_title: $i.title, agent_body: ($i.body // ""),
-        criterion: $c, hc_body: $hb, what: (if $w == "" then null else $w end)}')
+        criterion: $c, hc_body: $hb}')
     plan=$(py split-text <<<"$req") || exit 1
     crit=$(jq -r .criterion <<<"$plan")
     title=$(jq -r .title <<<"$plan")
@@ -205,7 +207,7 @@ case "$cmd" in
       || die "cannot look up the id of #$agent; run split-human-check again"
     if ! err=$(gh api --method POST "repos/$REPO/issues/$hc/dependencies/blocked_by" -F "issue_id=$aid" 2>&1 >/dev/null); then
       case "$err" in
-        *[Aa]lready*) ;;
+        *[Aa]lready*|*422*) ;;
         *) die "could not block Human check #$hc by #$agent: $err (run split-human-check again)" ;;
       esac
     fi

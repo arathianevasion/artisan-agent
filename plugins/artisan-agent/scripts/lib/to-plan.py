@@ -454,7 +454,7 @@ def ac_lines(body):
 
 def split_human_check(req):
     """The text half of split-human-check. In: {agent, agent_title, agent_body,
-    criterion, hc_body (or null), what (or null)}. Out: {criterion, title,
+    criterion, hc_body (or null)}. Out: {criterion, title,
     agent_body, hc_body}, where a body is null when it needs no change. Moving
     a criterion that has already moved changes nothing."""
     agent, abody = str(req["agent"]), req.get("agent_body") or ""
@@ -467,7 +467,7 @@ def split_human_check(req):
         if not on_hc:
             raise
         crit = match_criterion(on_hc, req["criterion"], "%s's Human check" % agent)
-    what = (req.get("what") or req.get("agent_title") or "#" + agent).strip()
+    what = (req.get("agent_title") or "#" + agent).strip()
     out = {"criterion": crit, "title": "Human check: %s (#%s)" % (what, agent),
            "agent_body": None, "hc_body": None}
     if hbody is None:

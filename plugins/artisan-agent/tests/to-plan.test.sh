@@ -700,3 +700,23 @@ test_publish_takes_the_override_at_approval() {
   assert_eq "covered by a test" "$(jq -r '.human_check_overrides[0].why' "$PLANS")"
   [ "$(jq -r '.plans[0].issue' "$PLANS")" != null ] || fail "the override did not let publish through"
 }
+
+test_graph_reads_an_existing_human_check_from_its_marker() {
+  use_fake_gh
+  jq -n '{number: 6, id: 1006, title: "Human check: ticket 2 (#2)", state: "open", labels: [{name: "ready-for-human"}],
+          body: "<!-- artisan-agent:human-check-for #2 -->\n## What to check\nx\n\n## Acceptance criteria\n- [ ] percent looks right in game\n"}' \
+    >"$FAKE_GH_DIR/issue-6.json"
+  echo '[2]' >"$FAKE_GH_DIR/blocked_by-6.json"
+  "$TP" graph --repo local/sample 1 2 6 >"$TEST_TMPDIR/g.json"
+  assert_eq "2" "$(jq -r '.tickets["6"].human_check_for' "$TEST_TMPDIR/g.json")"
+  assert_eq "null" "$(jq -r '.tickets["2"].human_check_for' "$TEST_TMPDIR/g.json")"
+  jq '.tickets["1"].estimate_usd = 1 | .tickets["2"].estimate_usd = 1' "$TEST_TMPDIR/g.json" >"$TEST_TMPDIR/g2.json"
+  "$TP" propose --graph "$TEST_TMPDIR/g2.json" --budget 5 >"$TEST_TMPDIR/p.json"
+  "$TP" check "$TEST_TMPDIR/p.json" --graph "$TEST_TMPDIR/g2.json"
+}
+
+test_split_without_a_graph_still_moves_the_criterion() {
+  human_tracker
+  "$TP" split-human-check --repo local/sample 2 "checked in game" >/dev/null
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-2.json")" "checked in game"
+}
