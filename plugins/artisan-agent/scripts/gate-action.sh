@@ -878,9 +878,9 @@ cmd_parked() {
         | [$risk[] | select(. as $r | $bl | index($r))] as $riskh
         # A gate that holds a ticket from plan approval but has no open issue
         # yet (its slice not all merged: #170).
-        | ($holding | map(.id)) as $hid
+        | ($open | map(.id)) as $open_ids
         | ([$left[] | $s.tickets[.].gate_waits // [] | .[]] | unique_by(.id)
-           | map(select(.id as $i | $hid | index($i) | not))) as $unopened
+           | map(select(.id as $i | $open_ids | index($i) | not))) as $unopened
         | (($holding | length) + ($riskh | length) + ($unopened | length)) as $n
         | "parked: waiting on \($n) review\(if $n == 1 then "" else "s" end): "
           + ([$holding[] | "\(.title) #\(.issue)"] + [$riskh[] | "risk gate on #\(.)"]

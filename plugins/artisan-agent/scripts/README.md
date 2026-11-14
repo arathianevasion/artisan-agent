@@ -305,7 +305,7 @@ The sweep also reads a blocked result's `design_question`: a `design` decision f
 | :- | :- | :- | :- |
 | `gate.sh sync <run-dir>` | both (`wave.sh close`, `wave.sh status`) | folds in answers given while the lock was held, approves a gate closed by hand on the tracker, opens every gate that is due: `opened #<issue> <gate-id>` | 0, 1, 3 |
 | `gate.sh due <run-dir>` / `open <run-dir> <gate-id>` | orchestrator | the gates due; open one: the packet, the `review-gate` issue natively blocking only the slice's dependents, a `review-gate` decision; prints the issue (again, on a repeat) | 0, 1, 6 not due |
-| `gate.sh holds <run-dir> <ticket>` | `wave.sh dispatch` | `held` when the ticket's slice gate is due and not approved, else `free`; dispatch refuses its dependents (5) on anything but `free`, so an error holds | 0, 1 |
+| `gate.sh holds <run-dir> <ticket> [<dependent>]` | `wave.sh dispatch` | `held` when the ticket is in a slice or risk gate not yet answered (approved, bypassed, deferred or redirected) and the dependent is not in that gate (none named: one outside it), from plan approval on (#170); a gate none of whose tickets merged holds nothing; else `free`. Dispatch refuses the dependent (5) on anything but `free`, so an error holds | 0, 1, 2 |
 | `gate.sh chat <run-dir> [<issue>]` / `packet` / `list` | Engineering chat | the compressed packet; the full one; a table of the run's gates | 0 |
 | `gate.sh approve <run-dir> <issue>` | Engineering chat | "keep all": the remaining cards kept, the decisions posted, the issue closed | 0, 1, 6 |
 | `gate.sh change <run-dir> <issue> <card> <choice> [--bug]` | Engineering chat | a rework ticket in the run; prints its number. `--bug` logs `bug-found` for the card's ticket | 0, 1, 2, 6 |

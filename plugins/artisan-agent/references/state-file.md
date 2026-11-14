@@ -146,7 +146,7 @@ Top level:
 | `steering` | `[{attempt, note, at}]`, each time the Artisan stopped the worker and gave notes (`lever.sh steer`, `references/run-levers.md`). Not a failure: it is not in `failures` and uses none of the ticket's attempts; the notes go into the next worker's prompt |
 | `urgent` | `true` for an urgent ticket (`lever.sh urgent`): dispatched on the one extra slot above Max Agents, from `main`, never on the frontier or merged into the integration branch; it ships through its own end gate (`urgent_gates`) |
 | `shipped` | an urgent ticket once `end-gate.sh urgent-finish` has run: `{pr, main_merged_into, sync_commit, at}` |
-| `gate_waits` | a `queued` ticket only, written by the reconciler: the gates not yet answered that hold it through a merged blocker, `[{id, kind, slice}]` (`gate_waits` in `lib/state-lib.sh`, #170). `wave.sh status` prints `queued: waiting on slice gate <slice>`, and `gate-action.sh parked` counts it as held. Absent when nothing holds it |
+| `gate_waits` | a `queued` ticket only, written by the reconciler: the gates not yet answered that hold it through a merged blocker, `[{id, kind, slice}]` (`gate_waits` in `lib/state-lib.sh`, #170). `wave.sh status` prints `queued: waiting on slice gate <slice>` (`risk gate #<t>` for a risk gate), and `gate-action.sh parked` counts it as held. Absent when nothing holds it |
 | `blocked_reason` | why `wave.sh` or `verify.sh` blocked it (a conflict, a red suite, a result describing another commit, a verifier that failed twice); a ticket blocked after its last failed attempt has none, and its `failures` say why |
 
 ## Optional fields

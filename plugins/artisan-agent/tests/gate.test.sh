@@ -209,6 +209,41 @@ test_with_2_dropped_the_slice_comes_due_and_3_waits_for_its_answer() {
   assert_eq 4 "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
 }
 
+# answered_by how: slice {1, 2} merged, its gate opened, then answered by
+# gate-action.sh <how>; prints whether 3 is still held.
+answered_by() {
+  slice_of_two
+  merged_with_evidence 1
+  merged_with_evidence 2
+  local num=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  case $1 in
+    redirect) "$SCRIPTS/gate-action.sh" redirect "$RUN_DIR" "$num" --notes "Say hello instead" >/dev/null ;;
+    *) "$SCRIPTS/gate-action.sh" "$1" "$RUN_DIR" "$num" >/dev/null ;;
+  esac
+  "$G" holds "$RUN_DIR" 1 3
+}
+
+test_a_bypassed_slice_gate_frees_its_outside_dependent() { assert_eq free "$(answered_by bypass)"; }
+test_a_deferred_slice_gate_frees_its_outside_dependent() { assert_eq free "$(answered_by defer)"; }
+# The rework a redirect opens blocks 3 natively; the gate itself no longer does.
+test_a_redirected_slice_gate_no_longer_holds_its_outside_dependent() { assert_eq free "$(answered_by redirect)"; }
+
+# A planned risk gate holds the same way: 3 depends on 4, which has one.
+test_a_planned_risk_gate_holds_its_dependent_from_plan_approval() {
+  setup_gate
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "risk", after: "4", tests: ["new-seam"]}]'
+  assert_eq held "$("$G" holds "$RUN_DIR" 4 3)"
+  merged_with_evidence 4
+  assert_eq held "$("$G" holds "$RUN_DIR" 4 3)"
+  assert_eq 1 "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
+  local num=
+  num=$("$G" open "$RUN_DIR" risk-1)
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  assert_eq free "$("$G" holds "$RUN_DIR" 4 3)"
+  assert_eq "1 3" "$("$SCRIPTS/reconcile.sh" "$RUN_DIR" | tr '\n' ' ' | sed 's/ $//')"
+}
+
 test_a_slice_with_nothing_merged_holds_nothing() {
   slice_of_two
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].status = "closed" | .tickets["2"].status = "dropped"'
