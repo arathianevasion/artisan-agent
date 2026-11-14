@@ -313,15 +313,17 @@ impact() {
 
 # stranded: JSON [{blocker, status, waiting: [tickets], checks: [{ticket, for}]}],
 # one per dropped or resliced ticket that still holds tickets in the run that
-# can never start, or open Human checks of it or of those tickets (#161).
+# can never start, or open Human checks (#161) of it, of those tickets or of
+# the tickets already sent back with it.
 stranded() {
-  local out='[]' b="" w="" ws="" hc="[]"
+  local out='[]' b="" w="" ws="" hc="[]" sb=""
   for b in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "dropped" or .tickets[$t].status == "resliced") | $t'); do
     ws=$(downstream "$b" | tr '\n' ' ')
     # shellcheck disable=SC2086
     w=$(json_list $ws)
+    sb=$(get --arg b "$b" '[.tickets | to_entries[] | select(.value.status == "sent_back" and (.value.sent_back.from? | tostring) == $b) | .key] | join(" ")')
     # shellcheck disable=SC2086
-    hc=$(checks_json "$(checks_of "$b" $ws)")
+    hc=$(checks_json "$(checks_of "$b" $ws $sb)")
     [ "$w" != "[]" ] || [ "$hc" != "[]" ] || continue
     out=$(jq -c --arg b "$b" --arg s "$(get --arg b "$b" '.tickets[$b].status')" --argjson w "$w" --argjson hc "$hc" \
       '. + [{blocker: $b, status: $s, waiting: $w, checks: $hc}]' <<<"$out")
@@ -672,7 +674,7 @@ cmd_send_back() {
   open_run "$1"
   shift
   parse_opts "$@"
-  local st= n= b= w= d= all=" " dl= hcs="" c="" a="" hc="[]" what=""
+  local st= n= b= w= d= all=" " dl= hcs="" c="" a="" hc="[]" what="" how=""
   st=$(stranded)
   if [ "$st" = "[]" ]; then echo "No ticket is stranded."; return 0; fi
   hold
@@ -688,9 +690,10 @@ cmd_send_back() {
       case "$all" in *" $c "*) ;; *) hcs="$hcs$c $a"$'\n'; all="$all$c " ;; esac
     done <<<"$(jq -r ".[$n].checks[]? | \"\(.ticket) \(.for)\"" <<<"$st")"
     [ -n "$w" ] || [ -n "$hcs" ] || continue
+    how="was $(get --arg b "$b" '.tickets[$b].status')"
     # shellcheck disable=SC2086
-    [ -z "$w" ] || send_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" $w
-    send_checks_back "$b" "was $(get --arg b "$b" '.tickets[$b].status')" "$hcs"
+    [ -z "$w" ] || send_back "$b" "$how" $w
+    send_checks_back "$b" "$how" "$hcs"
     # shellcheck disable=SC2086
     dl=$(json_list $w)
     hc=$(checks_json "$hcs")

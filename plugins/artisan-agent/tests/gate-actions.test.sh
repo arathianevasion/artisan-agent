@@ -798,20 +798,26 @@ test_a_drop_with_no_dependents_still_takes_its_human_check() {
   assert_eq "sent_back queued" "$(state_get '"\(.tickets["11"].status) \(.tickets["12"].status)"')"
 }
 
-# The old way: #3 dropped and its Human check left queued in the run.
+# The old way: #3 dropped, #2 and #4 sent back with it, and the Human checks
+# of #3 and #2 left queued in the run.
 test_a_stranded_human_check_is_reported_and_sent_back() {
   seed_stranded
   human_check_issue 11 3
-  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'.plan.scope += ["11"]
+  human_check_issue 12 2
+  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'.plan.scope += ["11", "12"]
     | .plan.tickets["11"] = {title: "Human check 11 (#3)", human_check_for: "3"} | .tickets["11"] = new_ticket("11")
-    | .tickets["2"].status = "sent_back" | .tickets["4"].status = "sent_back"'
+    | .plan.tickets["12"] = {title: "Human check 12 (#2)", human_check_for: "2"} | .tickets["12"] = new_ticket("12")
+    | .tickets["2"] |= (.status = "sent_back" | .sent_back = {from: "3"})
+    | .tickets["4"] |= (.status = "sent_back" | .sent_back = {from: "3"})'
   local out=
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: stranded"
-  assert_contains "$out" "#3 dropped: Human check #11 has no work of #3 to check"
+  assert_contains "$out" "#3 dropped: Human check #11 has no work of #3 to check; Human check #12 has no work of #2 to check"
   out=$("$A" send-back "$RUN_DIR" --by Andrew)
-  assert_contains "$out" "sent back to needs-triage, out of the run: Human check #11 (stranded behind #3)"
+  assert_contains "$out" "sent back to needs-triage, out of the run: Human checks #11, #12 (stranded behind #3)"
   assert_eq "sent_back 3" "$(state_get '"\(.tickets["11"].status) \(.tickets["11"].sent_back.from)"')"
+  assert_eq "sent_back 2" "$(state_get '"\(.tickets["12"].status) \(.tickets["12"].sent_back.from)"')"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-12.md")" "it is the Human check for #2, which depends on #3"
   assert_eq "needs-triage,ready-for-human" "$(labels 11)"
   assert_contains "$(cat "$FAKE_GH_DIR/comments-11.md")" "it is the Human check for #3, which was dropped"
   assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: done"
