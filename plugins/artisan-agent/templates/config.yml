@@ -116,3 +116,20 @@ host_configured: false
 ci_gate:
   workflow:
   timeout_minutes: 30
+
+# The release skip (#168). On the merge gate on CI, a merge whose changes since
+# the newest green run of the gate workflow (on a commit the merge descends
+# from) are all in this list is recorded green without dispatching CI; the
+# record names that run. Shell globs, where * crosses /; read in order, the
+# last pattern to match a path decides, and a leading ! means "never skip on
+# this". Empty by default: every merge runs CI. Never skips an ordinary
+# ticket in practice, because a ticket changes scripts, tests or skills.
+# Example (a plugin's release: version files and the changelog). Put the
+# plugin's own files after "!plugins/*", or that pattern denies them:
+#   merge_gate_skip_paths:
+#     - "*.md"
+#     - "!plugins/*"
+#     - plugins/my-plugin/CHANGELOG.md
+#     - plugins/my-plugin/.claude-plugin/plugin.json
+#     - .claude-plugin/marketplace.json
+merge_gate_skip_paths: []

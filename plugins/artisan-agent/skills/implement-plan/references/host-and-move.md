@@ -16,7 +16,7 @@ The run's `location` travels with its state. `out` writes `moved` into this copy
 
 ## Rules
 
-- A running merge gate (`.merge_gate` set, its process alive or dead) makes the run not idle: `move.sh out` waits for it (`--wait`) or refuses with exit 4, since the integration branch holds an ungated merge commit. Let the gate finish and `wave.sh merge` record it.
+- A running merge gate (`.merge_gate` set, its process alive or dead) makes the run not idle: `move.sh out` waits for it (`--wait`) or refuses with exit 4, since the integration branch holds an ungated merge commit. Let the gate finish and `wave.sh merge` record it. A merge batch still settling (`.merge_batch` set, #167) counts the same: run `wave.sh merge` on its tickets until it ends.
 - Never move a run that is not idle, and never copy a run folder by hand: the lock and the location would not travel.
 - Ticket worktrees are never moved; the receiving machine makes the integration worktree (`wave.sh start`) and each ticket gets a fresh worktree when it is next dispatched.
 - A context hand-off while draining is refused like any launch; let the orchestrator finish its wave in place.

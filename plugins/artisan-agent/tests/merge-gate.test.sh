@@ -451,6 +451,188 @@ test_mg_minutes_per_merge_come_from_the_workflows_recent_runs() {
   assert_eq '{"runs":0,"minutes":null}' "$("$MG" minutes --repo local/sample --workflow none.yml)"
 }
 
+# ---- the release skip (#168): merge-gate.sh ci --skip-path
+
+SKIP_PATHS=(--skip-path '*.md' --skip-path '!plugins/*' --skip-path CHANGELOG.md
+  --skip-path plugins/p/.claude-plugin/plugin.json --skip-path .claude-plugin/marketplace.json)
+
+# A repo whose first commit A passed CI (a run on file), with a bare origin
+# for the gate's push. Sets SK_DIR, SK_A.
+setup_skip() {
+  SK_DIR="$TEST_TMPDIR/skip" ORIGIN="$TEST_TMPDIR/skip-origin.git"
+  mkdir -p "$SK_DIR/plugins/p/.claude-plugin" "$SK_DIR/.claude-plugin"
+  git_quiet init "$SK_DIR"
+  printf '{"version":"1"}\n' >"$SK_DIR/plugins/p/.claude-plugin/plugin.json"
+  printf '{"version":"1"}\n' >"$SK_DIR/.claude-plugin/marketplace.json"
+  echo "# changes" >"$SK_DIR/CHANGELOG.md"
+  echo 'echo hi' >"$SK_DIR/plugins/p/run.sh"
+  echo "# plugin doc" >"$SK_DIR/plugins/p/README.md"
+  git_quiet -C "$SK_DIR" add -A
+  git_quiet -C "$SK_DIR" commit -m A
+  SK_A=$(git -C "$SK_DIR" rev-parse HEAD)
+  git_quiet clone --bare "$SK_DIR" "$ORIGIN"
+  git_quiet -C "$SK_DIR" remote add origin "$ORIGIN"
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker" FAKE_GH_REMOTE="$ORIGIN" ARTISAN_CI_POLL_SECONDS=0
+  mkdir -p "$FAKE_GH_DIR"
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
+  skip_run 9000 "$SK_A" success
+}
+
+skip_run() { # id sha conclusion
+  jq -n --argjson id "$1" --arg sha "$2" --arg c "$3" '{databaseId: $id, workflowName: "ci.yml", headBranch: "main",
+    headSha: $sha, event: "push", status: "completed", conclusion: $c,
+    url: "https://github.com/local/sample/actions/runs/\($id)", jobs: []}' >"$FAKE_GH_DIR/run-$1.json"
+}
+
+# skip_commit FILE...: a commit changing each file; sets SK_SHA.
+skip_commit() {
+  local f=""
+  for f in "$@"; do mkdir -p "$(dirname "$SK_DIR/$f")"; echo "$RANDOM" >>"$SK_DIR/$f"; done
+  git_quiet -C "$SK_DIR" add -A
+  git_quiet -C "$SK_DIR" commit -m change
+  SK_SHA=$(git -C "$SK_DIR" rev-parse HEAD)
+}
+
+skip_gate() { # [extra args]: SK_OUT, SK_RC
+  SK_RC=0
+  SK_OUT=$("$MG" ci --repo local/sample --workflow ci.yml --branch ci/r1-1-1-1 --sha "$SK_SHA" --dir "$SK_DIR" \
+    --timeout-minutes 1 "$@" 2>/dev/null) || SK_RC=$?
+}
+
+dispatched() { grep -q '^workflow run' "$FAKE_GH_DIR/calls" 2>/dev/null; }
+
+test_mg_skip_a_release_commit_over_a_green_commit_is_green_without_a_dispatch() {
+  setup_skip
+  skip_commit CHANGELOG.md plugins/p/.claude-plugin/plugin.json .claude-plugin/marketplace.json docs/notes.md
+  skip_gate "${SKIP_PATHS[@]}"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  assert_eq "true success 9000 $SK_A" "$(jq -r '"\(.skipped) \(.conclusion) \(.relied_on.run_id) \(.relied_on.sha)"' <<<"$SK_OUT")"
+  assert_eq "https://github.com/local/sample/actions/runs/9000" "$(jq -r .relied_on.url <<<"$SK_OUT")"
+  assert_contains "$(jq -r .why <<<"$SK_OUT")" "run 9000"
+  assert_eq "$SK_SHA" "$(jq -r .sha <<<"$SK_OUT")"
+  if dispatched; then fail "CI was dispatched for a release commit"; fi
+  assert_eq "" "$(git -C "$ORIGIN" for-each-ref 'refs/heads/ci/')" "nothing was pushed"
+}
+
+test_mg_skip_rides_over_a_green_commit_several_release_commits_back() {
+  setup_skip
+  skip_commit CHANGELOG.md
+  skip_commit plugins/p/.claude-plugin/plugin.json
+  skip_gate "${SKIP_PATHS[@]}"
+  assert_eq "0 true 9000" "$SK_RC $(jq -r '"\(.skipped) \(.relied_on.run_id)"' <<<"$SK_OUT")"
+}
+
+test_mg_skip_any_change_to_a_script_a_test_or_a_skill_dispatches_as_before() {
+  local f=""
+  for f in plugins/p/run.sh tests/a.test.sh plugins/p/skills/x/SKILL.md plugins/p/README.md; do
+    setup_skip
+    skip_commit CHANGELOG.md "$f"
+    skip_gate "${SKIP_PATHS[@]}"
+    assert_eq 0 "$SK_RC" "$f: $SK_OUT"
+    dispatched || fail "$f: CI was not dispatched"
+    assert_eq null "$(jq '.skipped // null' <<<"$SK_OUT")" "$f: ran CI, not skipped"
+    assert_eq "9001" "$(jq -r .run_id <<<"$SK_OUT")" "$f: the dispatched run"
+    rm -rf "$TEST_TMPDIR/tracker" "$TEST_TMPDIR/skip" "$TEST_TMPDIR/skip-origin.git"
+  done
+}
+
+test_mg_skip_with_no_green_run_to_compare_against_dispatches() {
+  setup_skip
+  rm "$FAKE_GH_DIR/run-9000.json"
+  skip_commit CHANGELOG.md
+  skip_gate "${SKIP_PATHS[@]}"
+  assert_eq 0 "$SK_RC"
+  dispatched || fail "CI was not dispatched with no green run"
+  # A red run, a green run of another workflow, and a green run for a commit
+  # the candidate does not descend from are no baseline either.
+  rm -rf "$FAKE_GH_DIR"; mkdir -p "$FAKE_GH_DIR"
+  skip_run 9000 "$SK_A" failure
+  jq '.workflowName = "other.yml" | .databaseId = 9002' "$FAKE_GH_DIR/run-9000.json" | sed 's/failure/success/' >"$FAKE_GH_DIR/run-9002.json"
+  local main_branch=""
+  main_branch=$(git -C "$SK_DIR" symbolic-ref --short HEAD)
+  git_quiet -C "$SK_DIR" checkout -q -b side "$SK_A"
+  echo x >"$SK_DIR/side.txt"
+  git_quiet -C "$SK_DIR" add side.txt
+  git_quiet -C "$SK_DIR" commit -m side
+  skip_run 9003 "$(git -C "$SK_DIR" rev-parse HEAD)" success
+  git_quiet -C "$SK_DIR" checkout -q "$main_branch"
+  skip_gate "${SKIP_PATHS[@]}"
+  assert_eq 0 "$SK_RC"
+  dispatched || fail "CI was not dispatched without a usable green baseline"
+  assert_eq null "$(jq '.skipped // null' <<<"$SK_OUT")"
+}
+
+test_mg_skip_with_no_allowlist_every_merge_dispatches() {
+  setup_skip
+  skip_commit CHANGELOG.md
+  skip_gate
+  assert_eq 0 "$SK_RC"
+  dispatched || fail "CI was not dispatched with no allowlist"
+}
+
+test_mg_skip_the_last_matching_pattern_decides_and_bang_denies() {
+  setup_skip
+  skip_commit plugins/p/README.md
+  skip_gate "${SKIP_PATHS[@]}"
+  dispatched || fail "plugins/ docs are not on the allowlist"
+  rm -rf "$FAKE_GH_DIR"; mkdir -p "$FAKE_GH_DIR"; skip_run 9000 "$SK_A" success
+  skip_gate --skip-path '*.md'
+  assert_eq "0 true" "$SK_RC $(jq -r .skipped <<<"$SK_OUT")" "without the ! a plugins doc is allowed"
+}
+
+# The repo's own list, read through config.sh, against a release like v0.6.1
+# (plugin.json and the plugin's CHANGELOG.md) and against a script change.
+test_mg_skip_this_repos_allowlist_lets_a_release_like_v0_6_1_go_and_a_script_change_dispatch() {
+  local cfg="$PLUGIN_ROOT/../../.artisan-agent/config.yml" args=() p=""
+  [ -f "$cfg" ] || fail "no repo config at $cfg"
+  while IFS= read -r p; do args+=(--skip-path "$p"); done \
+    < <("$PLUGIN_ROOT/scripts/config.sh" get merge_gate_skip_paths --file "$cfg" | jq -r '.[]')
+  [ "${#args[@]}" -gt 0 ] || fail "the repo config has no merge_gate_skip_paths"
+  local pj=plugins/artisan-agent/.claude-plugin/plugin.json cl=plugins/artisan-agent/CHANGELOG.md
+  setup_skip
+  skip_commit "$pj" "$cl"
+  skip_gate "${args[@]}"
+  assert_eq "0 true" "$SK_RC $(jq -r .skipped <<<"$SK_OUT")" "a v0.6.1-style release skips: $SK_OUT"
+  if dispatched; then fail "CI was dispatched for a release"; fi
+  rm -rf "$TEST_TMPDIR/tracker" "$TEST_TMPDIR/skip" "$TEST_TMPDIR/skip-origin.git"
+  setup_skip
+  skip_commit "$pj" "$cl" plugins/artisan-agent/scripts/merge-gate.sh
+  skip_gate "${args[@]}"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "a scripts change was not dispatched"
+  assert_eq null "$(jq '.skipped // null' <<<"$SK_OUT")"
+}
+
+test_mg_skip_a_merge_that_only_changed_release_files_is_merged_with_the_green_run_named() {
+  setup_ci
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.merge_gate_skip_paths = ["hello.txt"]'
+  # CI passed on the tree the ticket merges into.
+  skip_run 9000 "$MAIN_HEAD" success
+  git_quiet -C "$ORIGIN" fetch -q "$PROJECT" "$MAIN_HEAD"
+  verified_ticket
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  if dispatched; then fail "CI was dispatched"; fi
+  [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran on this machine"
+  assert_eq "true 9000 $MAIN_HEAD" "$(state_get '.tickets["1"].suite | "\(.skipped) \(.relied_on.run_id) \(.relied_on.sha)"')"
+  assert_eq "9000 https://github.com/local/sample/actions/runs/9000" \
+    "$(state_get '[.events[] | select(.event == "merge-gate-skipped")] | last | "\(.run_id) \(.url)"')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "merge-gate-skipped" and .ticket == "1")] | length')"
+}
+
+test_mg_skip_a_ticket_that_changes_other_files_runs_ci_even_with_an_allowlist() {
+  setup_ci
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.merge_gate_skip_paths = ["CHANGELOG.md"]'
+  skip_run 9000 "$MAIN_HEAD" success
+  verified_ticket
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  dispatched || fail "CI was not dispatched for a ticket"
+  assert_eq null "$(state_get '.tickets["1"].suite.skipped // null')"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "merge-gate-skipped")] | length')"
+}
+
 # ---- the plan step on a CI machine
 
 ci_draft() {

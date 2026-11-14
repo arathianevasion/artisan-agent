@@ -14,7 +14,11 @@
 #   merge-gate.sh mode
 #       local or ci: the mode this machine's merge gate runs in.
 #   merge-gate.sh show
-#       how it was chosen, as JSON: {mode, setting, source, os}.
+#       how it was chosen, as JSON: {mode, setting, source, os, batch,
+#       batch_source}.
+#   merge-gate.sh batch
+#       on or off: whether wave.sh merge gates tickets ready together as one
+#       batch (#167). host.json's merge_batch (on | off), default on.
 #   merge-gate.sh start --result FILE --pid-file FILE --log FILE -- local|ci ARGS...
 #       run the gate (merge-gate.sh local or ci with ARGS) detached, the way
 #       run-ticket.sh starts a worker (lib/detach-lib.sh), so it outlives its
@@ -35,6 +39,7 @@
 #       no CI run to wait on.
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
+#                    [--skip-path PATTERN]...
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -50,6 +55,15 @@
 #       counts. --deadline stops waiting at that epoch second instead of M
 #       minutes from now. --resume waits on a run already dispatched on B
 #       (a gate whose runner died): no push and no new dispatch.
+#       --skip-path (#168, from merge_gate_skip_paths in the config) is the
+#       release allowlist: before pushing, find the newest run of FILE that
+#       concluded success on a commit that is an ancestor of SHA; when every
+#       path SHA changed since that commit matches the allowlist, nothing is
+#       pushed or dispatched and the record is green with skipped: true,
+#       relied_on {run_id, url, sha} and a why naming that run. Patterns are
+#       shell globs ("*" crosses "/"); they are read in order and the last to
+#       match a path decides, a leading "!" meaning "never skip on this".
+#       With no green ancestor, or any other path changed, CI runs as usual.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -62,8 +76,8 @@
 #       exit 0 when the workflow file has a workflow_dispatch trigger; 1 and a
 #       line naming it otherwise (setup refuses such a gate workflow).
 #
-# Environment: ARTISAN_MERGE_GATE (auto|local|ci) overrides host.json, for
-# tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
+# Environment: ARTISAN_MERGE_GATE (auto|local|ci) and ARTISAN_MERGE_BATCH
+# (on|off) override host.json, for tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
 # ARTISAN_HOME, CLAUDE_CONFIG_DIR place host.json (as login-check.sh);
 # ARTISAN_CI_POLL_SECONDS, the wait between readings (default 20).
 #
@@ -91,7 +105,25 @@ host_os() {
   elif [ "$(uname -s)" = Darwin ]; then echo macos; else echo linux; fi
 }
 
-cmd_show() {
+# batch_setting: "<on|off> <source>", from ARTISAN_MERGE_BATCH, else
+# host.json's merge_batch, else on.
+batch_setting() {
+  local b="" src=""
+  if [ -n "${ARTISAN_MERGE_BATCH:-}" ]; then
+    b=$ARTISAN_MERGE_BATCH src=ARTISAN_MERGE_BATCH
+  elif [ -f "$HOST_FILE" ] && b=$(jq -er '.merge_batch // empty' "$HOST_FILE" 2>/dev/null); then
+    src=$HOST_FILE
+  else
+    b=on src=default
+  fi
+  case "$b" in on | off) ;; *) die "merge_batch must be on or off, not \"$b\" ($src)" ;; esac
+  printf '%s %s\n' "$b" "$src"
+}
+
+cmd_batch() { batch_setting | cut -d' ' -f1; }
+
+# mode_json: how the mode was chosen, {mode, setting, source, os}.
+mode_json() {
   local setting="" source="" os="" mode=""
   if [ -n "${ARTISAN_MERGE_GATE:-}" ]; then
     setting=$ARTISAN_MERGE_GATE source=ARTISAN_MERGE_GATE
@@ -110,7 +142,14 @@ cmd_show() {
     '{mode: $m, setting: $s, source: $src, os: $os}'
 }
 
-cmd_mode() { cmd_show | jq -r .mode; }
+cmd_show() {
+  local m="" batch=""
+  m=$(mode_json)
+  batch=$(batch_setting)
+  jq -c --arg b "${batch%% *}" --arg bsrc "${batch#* }" '. + {batch: $b, batch_source: $bsrc}' <<<"$m"
+}
+
+cmd_mode() { mode_json | jq -r .mode; }
 
 # ----------------------------------------------------------------------- ci
 
@@ -137,8 +176,58 @@ find_run() {
     | jq -c --arg sha "$CI_SHA" '[.[] | select(.headSha == $sha)] | first // empty' 2>/dev/null || true
 }
 
+# skippable PATH PATTERN...: 0 when the allowlist lets a change to PATH go
+# without CI: the last pattern to match decides, and "!" denies.
+skippable() {
+  local path="$1" pat="" neg=0 ok=1
+  shift
+  for pat in "$@"; do
+    neg=0
+    case "$pat" in '!'*) neg=1 pat=${pat#!} ;; esac
+    # shellcheck disable=SC2254
+    case "$path" in $pat) if [ "$neg" -eq 1 ]; then ok=1; else ok=0; fi ;; esac
+  done
+  return "$ok"
+}
+
+# green_ancestor: the newest successful run of the workflow whose head SHA is
+# an ancestor of the candidate, as the run's JSON; empty when there is none.
+green_ancestor() {
+  local runs="" sha=""
+  runs=$(gh run list -R "$CI_REPO" --workflow "$CI_WF" --limit 50 \
+    --json databaseId,headSha,status,conclusion,url 2>/dev/null) || return 0
+  for sha in $(jq -r '.[] | select(.conclusion == "success") | .headSha' <<<"$runs" 2>/dev/null); do
+    if git -C "$CI_DIR" merge-base --is-ancestor "$sha" "$CI_SHA" 2>/dev/null; then
+      jq -c --arg sha "$sha" '[.[] | select(.conclusion == "success" and .headSha == $sha)] | first' <<<"$runs"
+      return 0
+    fi
+  done
+}
+
+# try_skip PATTERN...: when only allowlisted paths changed since the last
+# green run, print the green record and return 0; 1 means run CI.
+try_skip() {
+  local green="" base="" path="" changed="" n=0
+  [ $# -gt 0 ] || return 1
+  green=$(green_ancestor)
+  [ -n "$green" ] || return 1
+  base=$(jq -r .headSha <<<"$green")
+  changed=$(git -C "$CI_DIR" -c core.quotepath=off diff --name-only --no-renames "$base" "$CI_SHA" 2>/dev/null) || return 1
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    skippable "$path" "$@" || return 1
+    n=$((n + 1))
+  done <<<"$changed"
+  jq -nc --argjson g "$green" --argjson n "$n" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" '
+    {mode: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: $g.databaseId, url: $g.url,
+     conclusion: "success", jobs: [], skipped: true,
+     relied_on: {run_id: $g.databaseId, url: $g.url, sha: $g.headSha},
+     why: "CI not dispatched: only release paths changed (\($n) file\(if $n == 1 then "" else "s" end)) since \($g.headSha[0:12]), which run \($g.databaseId) passed"}'
+}
+
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
+  local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo) [ $# -ge 2 ] || usage; CI_REPO=$2; shift 2 ;;
@@ -149,6 +238,7 @@ cmd_ci() {
       --remote) [ $# -ge 2 ] || usage; CI_REMOTE=$2; shift 2 ;;
       --timeout-minutes) [ $# -ge 2 ] || usage; timeout=$2; shift 2 ;;
       --deadline) [ $# -ge 2 ] || usage; deadline=$2; shift 2 ;;
+      --skip-path) [ $# -ge 2 ] || usage; skip+=("$2"); shift 2 ;;
       --resume) resume=1; shift ;;
       *) usage ;;
     esac
@@ -159,6 +249,7 @@ cmd_ci() {
   case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
 
   if [ "$resume" -eq 0 ]; then
+    if try_skip ${skip[@]+"${skip[@]}"}; then return 0; fi
     if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
       record '{}' "could not push $CI_BRANCH to $CI_REMOTE"
       return 19
@@ -342,6 +433,7 @@ shift
 case "$cmd" in
   mode) [ $# -eq 0 ] || usage; cmd_mode ;;
   show) [ $# -eq 0 ] || usage; cmd_show ;;
+  batch) [ $# -eq 0 ] || usage; cmd_batch ;;
   ci) cmd_ci "$@" ;;
   find) cmd_find "$@" ;;
   local) cmd_local "$@" ;;
