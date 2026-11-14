@@ -86,3 +86,45 @@ test_the_linux_job_writes_its_step_summary_from_outside_the_tester_user() {
   printf '%s\n' "$job" | grep -q 'if: always()' || fail "the summary step must run after a red run too"
   printf '%s\n' "$job" | grep -q '>> *"\$GITHUB_STEP_SUMMARY"' || fail "the summary step must append to the real step summary"
 }
+
+# --- a Linux-only worker run (#197) ---
+
+# The workflow_dispatch block: from its key to the end of the on: block.
+dispatch_block() {
+  awk '/^  workflow_dispatch:/ {on=1; print; next} on && /^[^ #]/ {on=0} on {print}' "$WORKFLOW"
+}
+
+test_dispatch_has_a_boolean_macos_input_defaulting_to_true() {
+  local input=""
+  input=$(dispatch_block | awk '/^      macos:/ {on=1; next} on && /^      [^ ]/ {on=0} on {print}')
+  [ -n "$input" ] || fail "workflow_dispatch has no macos input"
+  printf '%s\n' "$input" | grep -q 'type: boolean' || fail "the macos input must be a boolean"
+  printf '%s\n' "$input" | grep -q 'default: true' || fail "the macos input must default to true"
+}
+
+test_macos_job_runs_unless_a_dispatch_turns_it_off() {
+  local cond=""
+  cond=$(macos_job | grep '^    if:' || true)
+  [ -n "$cond" ] || fail "the macOS job has no if: condition"
+  # A pull request has no inputs, and GitHub compares null loosely equal to
+  # false, so the condition must only read the input on a dispatch.
+  assert_contains "$cond" "github.event_name != 'workflow_dispatch' || inputs.macos" "the macOS job's condition"
+  assert_not_contains "$cond" "!= false" "a missing input compares equal to false"
+  assert_not_contains "$cond" "github.event.inputs" "github.event.inputs holds strings, so 'false' would be truthy"
+}
+
+test_only_the_macos_job_reads_the_macos_input() {
+  local n=""
+  n=$(grep -v '^ *#' "$WORKFLOW" | grep -c 'inputs.macos' || true)
+  assert_eq 1 "$n" "inputs.macos in the workflow"
+}
+
+test_workflow_comment_says_what_the_macos_input_is_for() {
+  head -n 30 "$WORKFLOW" | grep -q '^#.*macos input' || fail "the comment at the top must describe the macos input"
+}
+
+test_this_repo_runs_worker_branch_runs_on_linux_only() {
+  local got=""
+  got=$(cd "$PLUGIN_ROOT/../.." && "$PLUGIN_ROOT/scripts/config.sh" show --file .artisan-agent/config.yml | jq -c '.ci_gate.worker_inputs')
+  assert_eq '{"macos":false}' "$got" "ci_gate.worker_inputs in this repo's config"
+}

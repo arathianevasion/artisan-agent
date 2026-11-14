@@ -15,6 +15,14 @@ name: Script tests
 # tests/quarantine.txt run but can't fail it; the quarantine job checks, once per run,
 # that each entry's issue is still open. Flaky and quarantined tests go to the run's
 # step summary.
+#
+# A dispatch's macos input (default true) set to false leaves the macOS job out, so
+# the run is Linux only and its overall conclusion is the Linux job's. It is for a
+# worker's branch run (ci_gate.worker_inputs in .artisan-agent/config.yml): a GitHub
+# Free account runs at most 5 macOS jobs at once across all its repos, and each run
+# takes 3. A pull request has no inputs and a dispatch that doesn't pass it gets the
+# default, so both run macOS; the merge gate never passes it, so every merge is still
+# gated on Linux and Apple bash 3.2.
 on:
   pull_request:
     # Documentation outside the plugin isn't read by any test.
@@ -26,6 +34,10 @@ on:
         type: choice
         options: [github, ubicloud]
         default: github
+      macos:
+        description: Run the macOS job (false leaves it out; a worker's branch run)
+        type: boolean
+        default: true
 
 # A newer run for the same PR or branch cancels its older run.
 concurrency:
@@ -72,6 +84,9 @@ jobs:
     name: Script tests (macOS, Apple bash 3.2, ${{ matrix.shard }}/3)
     # Apple's own /bin/bash 3.2: the only build that reproduces the EXIT-trap masking
     # #126 guards against (a bash 3.2 built from source on Linux doesn't).
+    # On a pull request inputs.macos is null, which GitHub compares equal to false,
+    # so the input is read only on a dispatch.
+    if: github.event_name != 'workflow_dispatch' || inputs.macos
     runs-on: macos-latest
     timeout-minutes: 45
     strategy:
