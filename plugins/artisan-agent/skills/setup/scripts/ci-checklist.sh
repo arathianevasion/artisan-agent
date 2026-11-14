@@ -35,7 +35,7 @@ has() { printf '%s\n' "$1" | grep -Eq -- "$2"; }
 have_wf=1
 [ -n "$wf" ] || have_wf=0
 
-# Each item sets st (present|missing|n/a), how, anchor.
+# add <item> <present|missing|n/a> <one-line how> <reference anchor>
 rows=""
 add() { # name status how anchor
   rows="$rows
@@ -71,7 +71,7 @@ else
     add "Shard the slow suite" missing "split the slow suite across runners with a matrix and the runner's --shard flag" shard
   fi
   # caching
-  if has "$wf" '(actions/cache|cache:|cache-dependency-path|ms-playwright)'; then
+  if has "$wf" '(actions/cache|cache:[[:space:]]*['"'"'"]?[a-eg-z]|cache-dependency-path)'; then
     add "Cache dependencies and browsers" present "a cache step or a setup action's cache: is set" cache
   else
     add "Cache dependencies and browsers" missing "turn on the setup action's cache: and cache the browser directory" cache
@@ -83,7 +83,7 @@ else
     add "Cheap checks first, fail fast" missing "put lint and typecheck in a job the test jobs need" fail-fast
   fi
   # cancel superseded
-  if has "$wf" 'cancel-in-progress:[[:space:]]*true'; then
+  if has "$wf" 'cancel-in-progress:' && ! has "$wf" 'cancel-in-progress:[[:space:]]*['"'"'"]?false'; then
     add "Cancel superseded runs" present "concurrency cancels in-progress runs" cancel-superseded
   else
     add "Cancel superseded runs" missing "add a concurrency group per ref with cancel-in-progress: true" cancel-superseded
@@ -98,7 +98,7 @@ else
   fi
   # retries and quarantine
   retries=0
-  has "$both" '(retries:[[:space:]]*[1-9]|retryTimes|retry:[[:space:]]*[1-9]|--retries[ =][1-9]|--rerun-failed|--reruns|nick-fields/retry)' && retries=1
+  has "$both" '(retries:[[:space:]]*([1-9]|[^,]*\?[[:space:]]*[1-9])|retryTimes|retry:[[:space:]]*[1-9]|--retries[ =][1-9]|--rerun-failed|--reruns|nick-fields/retry)' && retries=1
   if [ $retries = 1 ] && [ $quarantine = 1 ]; then
     add "Retry in the job, with a quarantine list" present "retries and a quarantine list are both set" retries-and-quarantine
   elif [ $retries = 1 ]; then
@@ -128,7 +128,7 @@ EOF2
     add "One gate command" missing "put the gate in one script (like tests/run.sh) and have the workflow call it" one-gate-command
   fi
   # no second run on main
-  if ! has "$wf" '^[[:space:]]*push:'; then
+  if ! has "$wf" '(^[[:space:]]*push:|^on:.*push|^[[:space:]]*-[[:space:]]*push[[:space:]]*$)'; then
     add "No second run on main" n/a "no push trigger, so nothing runs again on main" no-second-run-on-main
   elif [ "$skiptree" = present ]; then
     add "No second run on main" present "the push run can skip a tree that passed (artifact lookup)" no-second-run-on-main
@@ -149,7 +149,7 @@ EOF2
          END {exit found ? 0 : 1}' "$config" && skip=1
   fi
   if [ $filter = 1 ] && [ $skip = 1 ]; then
-    add "Docs-only changes run nothing" present "a workflow path filter and merge_gate_skip_paths agree" docs-only
+    add "Docs-only changes run nothing" present "a workflow path filter and merge_gate_skip_paths are both set" docs-only
   elif [ $filter = 1 ]; then
     add "Docs-only changes run nothing" missing "the workflow filters paths, but merge_gate_skip_paths is empty: add the same paths" docs-only
   elif [ $skip = 1 ]; then

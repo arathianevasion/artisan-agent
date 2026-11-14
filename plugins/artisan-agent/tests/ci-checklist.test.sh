@@ -122,3 +122,15 @@ test_the_reference_says_why_actions_cache_cannot_hold_the_record() {
 test_bad_usage_exits_2() {
   assert_status 2 "$CL" "$TEST_TMPDIR/does-not-exist"
 }
+
+test_realistic_spellings_are_read_the_way_a_person_reads_them() {
+  local d="$TEST_TMPDIR/s" out=
+  mkdir -p "$d/.github/workflows"
+  printf 'on: [push, pull_request]\nconcurrency:\n  group: g\n  cancel-in-progress: ${{ github.ref != '"'"'refs/heads/main'"'"' }}\njobs:\n  t:\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          cache: false\n' >"$d/.github/workflows/ci.yml"
+  printf 'export default defineConfig({ retries: process.env.CI ? 2 : 0 });\n' >"$d/playwright.config.ts"
+  out=$("$CL" "$d")
+  assert_eq missing "$(status_of "$out" "No second run on main")" "an inline push trigger is a push trigger"
+  assert_eq present "$(status_of "$out" "Cancel superseded runs")" "an expression is not false"
+  assert_eq missing "$(status_of "$out" "Cache dependencies and browsers")" "cache: false is no cache"
+  assert_contains "$out" "retries are set but no quarantine list"
+}

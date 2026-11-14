@@ -36,7 +36,7 @@ Run lint, typecheck and other cheap checks first, in a job the slow jobs `needs:
 
 ## cancel-superseded
 
-`concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}` cancels the run a newer push to the same ref makes useless. **Trade-off:** never put it on a workflow the merge gate dispatches or one that publishes (the gate's branches are unique, so its groups never collide, but a shared group would cancel a gate run); a cancelled run has no conclusion, which the gate treats as no verdict.
+`concurrency: {group: ci-${{ github.ref }}, cancel-in-progress: true}` cancels the run a newer push to the same ref makes useless. **Trade-off:** never put it on a workflow the merge gate dispatches or one that publishes (the gate's branches are unique, so its groups never collide, but a shared group would cancel a gate run); a run cancelled by its own concurrency group reaches the gate as `cancelled`, which parks the run (`references/checks.md`).
 
 ## skip-passed-trees
 
