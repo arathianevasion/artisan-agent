@@ -13,7 +13,9 @@
 #
 # Otherwise prints the digest, Markdown:
 #   where the run is   wave, the orchestrator's state, tickets merged, cost
-#                      against the budget, halted or not; then the ticket table
+#                      against the budget, halted or not, the minutes merges
+#                      waited on CI (per merge and in total, #195); then the
+#                      ticket table
 #   what's waiting     the decisions waiting for the Artisan, as a table
 #   what changed       the events since the chat last saw the digest, as a table
 # and marks those events seen (.digest-seen in the run folder) unless --peek.

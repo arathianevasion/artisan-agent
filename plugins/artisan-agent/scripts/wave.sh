@@ -41,7 +41,10 @@
 #       gate, or how many at each)" line when any is open (references/human-checks.md: a Human
 #       check is never waited on, so the run can be done with it open).
 #       "parked" (with a line naming it) means the merge gate
-#       on CI got no verdict ("parked ci: ...", cleared with unpark-ci), or only a hands-on
+#       on CI got no verdict ("parked ci: ...", cleared with unpark-ci), or
+#       merging is parked on a red base and nothing else can run ("parked
+#       base: ...", cleared with unpark-base; with work on the frontier, next
+#       is launch and the line still shows), or only a hands-on
 #       ticket the Artisan is building, and work behind it, is left
 #       (human.sh parked), or everything left waits behind open reviews
 #       ("waiting on N reviews", gate-action.sh parked), or dispatch is
@@ -124,6 +127,15 @@
 #       merge is undone, the ticket stays returned and nothing merges or
 #       dispatches until unpark-ci; a gate a crash cut short is undone here
 #       and gated again.
+#       Before a red CI gate counts (#195), merge-gate.sh reruns its failed
+#       jobs and gates the base (the integration tip before the merge, or
+#       the merge batch's base) at once: a green rerun merges as flaky
+#       (0, a flaky-test finding for triage, no attempt used); a base that
+#       fails the same tests undoes the merge and parks merging (19, "the
+#       base is red": base_park and a base-red decision; the tickets stay
+#       verified, no attempt used, dispatch carries on) until unpark-base;
+#       only failures new against the base are charged (7, as above). Each
+#       CI gate logs a ci-wait event (minutes from its start to its outcome).
 #       While a gate runs, new work branches from the commit before its merge.
 #       An attempt that did not complete is a failed attempt: queued for a
 #       fresh worker, or blocked once it has used its attempts (6).
@@ -134,6 +146,10 @@
 #       and the untracked files removed); 7: suite red, or CI red. Either way
 #       the ticket is blocked with its branch and worktree kept. 19: parked on
 #       CI, as merge (the resolved merge commit is the one retried).
+#   wave.sh unpark-base <run-dir> [--by NAME]
+#       the Artisan has fixed the base: clears a park on a red base and
+#       decides its base-red decision; the parked tickets, still verified,
+#       are merged afresh by the next merge. 6: not parked on a red base.
 #   wave.sh unpark-ci <run-dir> [--by NAME]
 #       the Artisan clears a park on CI: the parked ticket's next merge
 #       retries the gate on the same merge commit. 6: not parked on CI.
@@ -144,7 +160,8 @@
 #       post the evidence contract on the ticket (evidence.sh comment), tick
 #       its met criteria, close it.
 #   wave.sh report <run-dir>
-#       the wave report (JSON) the orchestrator writes as its result file.
+#       the wave report (JSON) the orchestrator writes as its result file;
+#       ci_wait has the minutes each merge waited on CI and their total.
 #       Halts the run first if every ticket dispatched in this wave failed.
 #
 # Environment:
