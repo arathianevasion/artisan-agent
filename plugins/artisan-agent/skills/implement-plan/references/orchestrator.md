@@ -29,4 +29,4 @@ Your prompt gives you the run folder (`$RUN`, below), the integration worktree y
    A ticket whose worker ended `blocked` after filing a question: `$S/questions.sh block $RUN <ticket>` (it waits on the question ticket; the wave carries on; `${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`). A `question` finding is not relayed or filed again.
 6. **Report and exit.** `$S/wave.sh report $RUN > "$ARTISAN_RESULT_FILE"`, then end your reply with the completion line the ticket runner asked for. Do not start the next wave: the chat decides that.
 
-Stop, report and exit when nothing is in flight, nothing is left to merge and no failed attempt is waiting for its retry. If every ticket you dispatched this wave ended blocked, `wave.sh report` halts the run and says so in the report (`halted`); don't try to work around it.
+Stop, report and exit when nothing is in flight, nothing is left to merge and no failed attempt is waiting for its retry. If every ticket you dispatched this wave ended blocked and none passed verification, `wave.sh report` halts the run and says so in the report (`halted`); don't try to work around it.

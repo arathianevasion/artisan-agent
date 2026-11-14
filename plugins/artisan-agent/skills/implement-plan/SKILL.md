@@ -174,7 +174,7 @@ Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/sk
 - **A worker fails or runs out of time.** The sweep counts the failed attempt; the orchestrator dispatches it once more with the failure evidence (two attempts in all by default), then it is blocked with a decision for the Artisan.
 - **A worker reports success but the diff misses the expected output.** The orchestrator blocks it rather than merging. A result file is a claim; the merge is the fact.
 - **A merge conflicts or the suite goes red after a merge.** `wave.sh merge` undoes the merge, blocks the ticket and queues a decision; the branch and worktree stay for inspection.
-- **Everything in a wave fails.** The run halts: something upstream is wrong (a bad spec, a broken base, a missing setup step) and the next wave would fail the same way. Report it and wait for the Artisan.
+- **Everything in a wave fails.** When every ticket in a wave ended blocked and none passed verification, the run halts: something upstream is wrong (a bad spec, a broken base, a missing setup step) and the next wave would fail the same way. Report it and wait for the Artisan.
 - **A finding invalidates the graph.** Show the Artisan the new graph before the next wave. A silently reshuffled plan is one the Artisan never approved.
 
 ## Rules
