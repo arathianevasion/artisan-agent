@@ -105,3 +105,8 @@ merge_gate_skip_paths:
   - plugins/artisan-agent/CHANGELOG.md
   - plugins/artisan-agent/.claude-plugin/plugin.json
   - .claude-plugin/marketplace.json
+
+# The engineering session's workers write their result files to
+# .claude/orchestrator/results/ in the main checkout; the folder stays
+# untracked but not ignored, so /move-session carries it (#191).
+main_checkout_runtime: [.claude/orchestrator/]

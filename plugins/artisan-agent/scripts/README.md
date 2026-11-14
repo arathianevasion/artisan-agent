@@ -142,6 +142,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | host configured | `host_configured` | false |
 | extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
 | merge gate time limit (#200), in minutes | `merge_gate_minutes_limit` | 6: the plan step on a CI machine says so in one line when the expected CI minutes per merge are over it; the retro says so when the run's median merge gate was, and proposes a ticket to bring it back under. Nothing refuses, blocks or fails over it (source in `templates/config.yml`) |
+| runtime folders the main-checkout guard lets sessions write (#191) | `main_checkout_runtime` (a list of folders relative to the repo root, each ending in `/`; runtime files only, never source; `references/main-checkout.md`) | none; this repo lists `.claude/orchestrator/` |
 | release skip on the CI merge gate | `merge_gate_skip_paths` (a list of globs, `*` crossing `/`; the last match wins, a leading `!` means never skip) | none (every merge runs CI); this repo lists its version files, the plugin's changelog and `*.md` outside `plugins/` (the plugin's own files come after `!plugins/*`, which would otherwise deny them) |
 
 ## Overrides are for this run only
