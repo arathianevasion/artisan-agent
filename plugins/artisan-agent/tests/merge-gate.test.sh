@@ -71,9 +71,11 @@ test_mg_a_green_ci_run_for_the_merge_commit_records_the_merge_and_no_suite_runs_
 }
 
 # A red CI run whose failed jobs' log is the canned Playwright and run.sh
-# output in fixtures/ci-logs (gh run view --log-failed).
+# output in fixtures/ci-logs (gh run view --log-failed). Red because of the
+# ticket's hello.txt, so the base (#195) stays green and the rerun red.
 red_ci_with_log() { # conclusion
-  echo "${1:-failure}" >"$FAKE_GH_DIR/ci-outcome"
+  echo hello.txt >"$FAKE_GH_DIR/ci-red-if-file"
+  echo "${1:-failure}" >"$FAKE_GH_DIR/ci-red-outcome"
   cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
 }
 

@@ -37,6 +37,7 @@
 #                         there). How it goes, from files the test writes in $FAKE_GH_DIR:
 #                           ci-outcome      success (default) | any other conclusion (failure, cancelled, ...) | never (stays in_progress)
 #                           ci-red-if-file  a path: a commit whose tree has it concludes failure (wins over ci-outcome)
+#                           ci-red-outcome  the conclusion ci-red-if-file gives instead of failure (timed_out, ...)
 #                           ci-sha          a head SHA to report instead of the branch's tip
 #                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down
@@ -47,7 +48,12 @@
 #                         one run, with jobs [{name, status, conclusion}]
 #   gh run view <id> [-R repo] --log-failed
 #                         the failed jobs' log ("<job>\t<step>\t<timestamp> <line>"): the file
-#                         ci-log-failed the test writes in $FAKE_GH_DIR; with none, it fails
+#                         ci-log-failed-<id>, else ci-log-failed, the test writes in $FAKE_GH_DIR;
+#                         with neither, it fails
+#   gh run rerun <id> [-R repo] [--failed]
+#                         a new attempt of the run (attempt + 1, as GitHub numbers them), concluded
+#                         at once: the file ci-rerun-outcome if the test wrote one, else as the
+#                         dispatch decides for the run's head SHA (so a real failure stays red)
 # Anything else fails with exit 1. Needs jq (and git, for workflow run).
 
 set -euo pipefail
@@ -87,6 +93,17 @@ parse() {
 
 emit() { # json-object-or-array
   if [ -n "$filter" ]; then printf '%s' "$1" | jq -r "$filter"; else printf '%s\n' "$1"; fi
+}
+
+# outcome_for sha: how a run of that commit concludes (ci-outcome, ci-red-if-file).
+outcome_for() {
+  local o=success
+  [ ! -s "$FAKE_GH_DIR/ci-outcome" ] || o=$(cat "$FAKE_GH_DIR/ci-outcome")
+  if [ -s "$FAKE_GH_DIR/ci-red-if-file" ] && git -C "${FAKE_GH_REMOTE:-.}" cat-file -e "$1:$(cat "$FAKE_GH_DIR/ci-red-if-file")" 2>/dev/null; then
+    o=failure
+    [ ! -s "$FAKE_GH_DIR/ci-red-outcome" ] || o=$(cat "$FAKE_GH_DIR/ci-red-outcome")
+  fi
+  printf '%s\n' "$o"
 }
 
 api_method=GET api_fields=
@@ -301,11 +318,7 @@ case "${1:-} ${2:-}" in
     sha=$(git -C "$FAKE_GH_REMOTE" rev-parse -q --verify "refs/heads/$ref^{commit}") \
       || { echo "gh: could not find ref $ref (HTTP 422)" >&2; exit 1; }
     [ ! -s "$FAKE_GH_DIR/ci-sha" ] || sha=$(cat "$FAKE_GH_DIR/ci-sha")
-    outcome=success
-    [ ! -s "$FAKE_GH_DIR/ci-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-outcome")
-    if [ -s "$FAKE_GH_DIR/ci-red-if-file" ] && git -C "$FAKE_GH_REMOTE" cat-file -e "$sha:$(cat "$FAKE_GH_DIR/ci-red-if-file")" 2>/dev/null; then
-      outcome=failure
-    fi
+    outcome=$(outcome_for "$sha")
     jobs='["bash 5.2", "bash 3.2"]'
     [ ! -s "$FAKE_GH_DIR/ci-jobs" ] || jobs=$(cat "$FAKE_GH_DIR/ci-jobs")
     id=9001
@@ -314,7 +327,7 @@ case "${1:-} ${2:-}" in
     jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
       --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" '
       (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
-      | {databaseId: $id, workflowName: $wf, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
+      | {databaseId: $id, attempt: 1, workflowName: $wf, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
          url: "https://github.com/\($repo)/actions/runs/\($id)", createdAt: $now, updatedAt: $now}
         + $s + {jobs: [$jobs[] | {name: ., status: $s.status, conclusion: $s.conclusion}]}' >"$FAKE_GH_DIR/run-$id.json" ;;
   "run list")
@@ -352,11 +365,31 @@ case "${1:-} ${2:-}" in
     done
     [ -f "$FAKE_GH_DIR/run-$id.json" ] || { echo "gh: run $id not found (HTTP 404)" >&2; exit 1; }
     if [ -n "$logfailed" ]; then
+      if [ -f "$FAKE_GH_DIR/ci-log-failed-$id" ]; then cat "$FAKE_GH_DIR/ci-log-failed-$id"; exit 0; fi
       [ -f "$FAKE_GH_DIR/ci-log-failed" ] || { echo "gh: log not found" >&2; exit 1; }
       cat "$FAKE_GH_DIR/ci-log-failed"
       exit 0
     fi
     out=$(jq -c . "$FAKE_GH_DIR/run-$id.json")
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
+  "run rerun")
+    shift 2
+    id=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --failed) shift ;;
+        -*) echo "gh (fake): run rerun: unsupported: $1" >&2; exit 1 ;;
+        *) id=$1; shift ;;
+      esac
+    done
+    f="$FAKE_GH_DIR/run-$id.json"
+    [ -f "$f" ] || { echo "gh: run $id not found (HTTP 404)" >&2; exit 1; }
+    outcome=$(outcome_for "$(jq -r .headSha "$f")")
+    [ ! -s "$FAKE_GH_DIR/ci-rerun-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-rerun-outcome")
+    jq --arg o "$outcome" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+      (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
+      | .attempt = ((.attempt // 1) + 1) | .updatedAt = $now | . + $s
+      | .jobs = [.jobs[] | . + {status: $s.status, conclusion: $s.conclusion}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f" ;;
   *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;
 esac
