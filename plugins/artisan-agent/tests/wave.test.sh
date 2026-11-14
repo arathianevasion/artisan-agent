@@ -57,7 +57,7 @@ write_worker_script() {
   cat >"$FAKE_CLAUDE_SCRIPT_WORKER" <<'EOF'
 set -e
 sleep "${WORKER_SLEEP:-0}"
-echo hi >"${WORKER_FILE:-hello.txt}"
+echo "${WORKER_TEXT:-hi}" >"${WORKER_FILE:-hello.txt}"
 git add -A && git commit -q --allow-empty -m "worker"
 jq -n --arg c "$(git rev-parse HEAD)" '{ticket: "1", status: "complete", commit: $c,
   acceptance: [{criterion: "hello.txt exists", met: true, evidence: {tests: ["check.sh"]}},

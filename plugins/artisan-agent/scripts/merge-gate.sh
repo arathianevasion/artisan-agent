@@ -14,7 +14,11 @@
 #   merge-gate.sh mode
 #       local or ci: the mode this machine's merge gate runs in.
 #   merge-gate.sh show
-#       how it was chosen, as JSON: {mode, setting, source, os}.
+#       how it was chosen, as JSON: {mode, setting, source, os, batch,
+#       batch_source}.
+#   merge-gate.sh batch
+#       on or off: whether wave.sh merge gates tickets ready together as one
+#       batch (#167). host.json's merge_batch (on | off), default on.
 #   merge-gate.sh start --result FILE --pid-file FILE --log FILE -- local|ci ARGS...
 #       run the gate (merge-gate.sh local or ci with ARGS) detached, the way
 #       run-ticket.sh starts a worker (lib/detach-lib.sh), so it outlives its
@@ -62,8 +66,8 @@
 #       exit 0 when the workflow file has a workflow_dispatch trigger; 1 and a
 #       line naming it otherwise (setup refuses such a gate workflow).
 #
-# Environment: ARTISAN_MERGE_GATE (auto|local|ci) overrides host.json, for
-# tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
+# Environment: ARTISAN_MERGE_GATE (auto|local|ci) and ARTISAN_MERGE_BATCH
+# (on|off) override host.json, for tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
 # ARTISAN_HOME, CLAUDE_CONFIG_DIR place host.json (as login-check.sh);
 # ARTISAN_CI_POLL_SECONDS, the wait between readings (default 20).
 #
@@ -91,7 +95,25 @@ host_os() {
   elif [ "$(uname -s)" = Darwin ]; then echo macos; else echo linux; fi
 }
 
-cmd_show() {
+# batch_setting: "<on|off> <source>", from ARTISAN_MERGE_BATCH, else
+# host.json's merge_batch, else on.
+batch_setting() {
+  local b="" src=""
+  if [ -n "${ARTISAN_MERGE_BATCH:-}" ]; then
+    b=$ARTISAN_MERGE_BATCH src=ARTISAN_MERGE_BATCH
+  elif [ -f "$HOST_FILE" ] && b=$(jq -er '.merge_batch // empty' "$HOST_FILE" 2>/dev/null); then
+    src=$HOST_FILE
+  else
+    b=on src=default
+  fi
+  case "$b" in on | off) ;; *) die "merge_batch must be on or off, not \"$b\" ($src)" ;; esac
+  printf '%s %s\n' "$b" "$src"
+}
+
+cmd_batch() { batch_setting | cut -d' ' -f1; }
+
+# mode_json: how the mode was chosen, {mode, setting, source, os}.
+mode_json() {
   local setting="" source="" os="" mode=""
   if [ -n "${ARTISAN_MERGE_GATE:-}" ]; then
     setting=$ARTISAN_MERGE_GATE source=ARTISAN_MERGE_GATE
@@ -110,7 +132,14 @@ cmd_show() {
     '{mode: $m, setting: $s, source: $src, os: $os}'
 }
 
-cmd_mode() { cmd_show | jq -r .mode; }
+cmd_show() {
+  local m="" batch=""
+  m=$(mode_json)
+  batch=$(batch_setting)
+  jq -c --arg b "${batch%% *}" --arg bsrc "${batch#* }" '. + {batch: $b, batch_source: $bsrc}' <<<"$m"
+}
+
+cmd_mode() { mode_json | jq -r .mode; }
 
 # ----------------------------------------------------------------------- ci
 
@@ -342,6 +371,7 @@ shift
 case "$cmd" in
   mode) [ $# -eq 0 ] || usage; cmd_mode ;;
   show) [ $# -eq 0 ] || usage; cmd_show ;;
+  batch) [ $# -eq 0 ] || usage; cmd_batch ;;
   ci) cmd_ci "$@" ;;
   find) cmd_find "$@" ;;
   local) cmd_local "$@" ;;
