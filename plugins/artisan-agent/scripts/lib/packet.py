@@ -287,7 +287,9 @@ def checks_table(view, deferred=False):
         verifies = "#%s" % c.get("for")
         if c.get("carried_from"):
             verifies += ", carried from %s" % c["carried_from"]
-        if deferred:
+        if c.get("waiting_on"):
+            last = "waiting on rework #%s: it can't be answered until it merges" % c["waiting_on"]
+        elif deferred:
             d = c.get("deferral") or {}
             last = "deferred by %s: %s; return condition: %s" % (d.get("by", "-"), d.get("why", "-"), d.get("return", "-"))
         else:
@@ -433,7 +435,7 @@ def body(view):
             "| `change <card> to <choice>` | a rework ticket in this run for that card; the rest are kept when you approve |",
             "| `change <card> to <choice>, a bug` | the same, and records a bug found at this gate in the card's ticket: tighten evidence for its areas at the retro (`--bug`); a redirect takes it too |",
             "| `guardrail <card> <level> <reach>` | keeps the card and records it as a guardrail to make (level team, product or individual; reach ticket, area or everywhere) |"]
-    if view.get("human_checks"):
+    if any(not c.get("waiting_on") for c in view.get("human_checks") or []):
         out += ["| `check <n> pass` | the Human check passed: it closes, with the result posted (`gate.sh check <run-dir> <n> pass [--notes T]`); `pass all checks` passes every one here (`gate.sh check <run-dir> all pass --gate <issue>`) |",
                 "| `check <n> fail: <why>` | a bug in its agent ticket: a rework ticket in this run, as a redirect (`gate.sh check <run-dir> <n> fail --why W`; `--not-bug` when it isn't one) |",
                 "| `check <n> later` | not done yet: it carries to the next gate |"]
@@ -456,10 +458,14 @@ def chat(view):
                 c["card"], c["ticket"], cell(c.get("question")), cell(c.get("choice")),
                 "**%s (low)**" % conf if is_low(c) else conf))
         out.append("")
-    checks = view.get("human_checks") or []
+    checks = [c for c in view.get("human_checks") or [] if not c.get("waiting_on")]
+    waiting = [c for c in view.get("human_checks") or [] if c.get("waiting_on")]
     if checks:
         out += ["Human checks: %s; answer each with check <n> pass, fail or later (keep all leaves them open)." % ", ".join(
             "#%s (%s)" % (c["ticket"], c["title"]) if c.get("title") else "#%s" % c["ticket"] for c in checks), ""]
+    if waiting:
+        out += ["Human checks waiting on a rework: %s." % ", ".join(
+            "#%s (rework #%s)" % (c["ticket"], c["waiting_on"]) for c in waiting), ""]
     out.append("Keep all, or name one to change.")
     return "\n".join(out) + "\n"
 

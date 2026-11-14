@@ -61,6 +61,7 @@ test_defaults_hold_every_setting_from_the_ticket_table() {
   assert_eq 30 "$(jq .deferral_review_days <<<"$d")" "deferral review"
   assert_eq 3 "$(jq .evidence_threshold <<<"$d")" "evidence threshold"
   assert_eq 5 "$(jq .hands_on_nudge_runs <<<"$d")" "hands-on nudge"
+  assert_eq "20 12 10" "$(jq -r '.orchestrator_turns | "\(.base) \(.per_ticket) \(.per_ci_gate)"' <<<"$d")" "orchestrator turns"
   assert_eq '{}' "$(jq -c .areas <<<"$d")" "areas"
   assert_eq null "$(jq .team_guardrails_repo <<<"$d")" "team guardrails repo"
   assert_eq '{}' "$(jq -c .estimate_multipliers <<<"$d")" "estimate multipliers"
@@ -259,7 +260,8 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
     usage_reserve.seven_day_ceiling_percent stale_usage_minutes attempts_per_ticket \
     deferral_review_days evidence_threshold hands_on_nudge_runs areas \
     team_guardrails_repo estimate_multipliers minimum_estimates.claude-sonnet-5-5 \
-    minimum_estimates.all host_configured; do
+    minimum_estimates.all host_configured orchestrator_turns.base orchestrator_turns.per_ticket \
+    orchestrator_turns.per_ci_gate; do
     assert_contains "$out" "| $key |" "setting $key in the approval"
   done
 }
