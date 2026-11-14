@@ -27,7 +27,7 @@ Only verified work merges: a fresh verifier's `pass` for the ticket's current at
 | `wave.sh merge` exit | Means | Do |
 |---|---|---|
 | 0 | merged, suite green | `wave.sh close` |
-| 7 | the suite went red | nothing: the merge was undone and only this ticket is blocked; carry on merging the rest |
+| 7 | the suite went red | the merge was undone. A red local suite blocks only this ticket; a red CI gate is a failed attempt (#176): `queued` again (dispatch it, its notes list the failing tests) or blocked after its last. Carry on merging the rest |
 | 11 | a conflict, left in progress | the one resolution try, below |
 | 6 | refused, or a conflict whose try is used | nothing: blocked. If the ticket is `queued` again instead, its attempt didn't complete and it is retried (below) |
 | 8 | its worker is still ending | wait, then merge again |
@@ -55,7 +55,7 @@ Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fai
 - **First failure:** the ticket goes back to `queued`. Dispatch it again in the same wave with `wave.sh dispatch`. That is a **fresh worker**: a new session in a new worktree on the same branch, so the first attempt's commits are there to build on, and its prompt carries the failure evidence (`prompts/<t>.<n>.failure.md`): why the attempt counted as failed, how it ended, what its evidence record said (unmet criteria, what it was unsure of, its notes), what the verifier found unmet, if it got that far, its commits, and the end of its last reply and its stderr. Exit 8 means the failed session is still ending: wait and dispatch again.
 - **Second failure:** the ticket is blocked with an exception decision for the Artisan, and the next `wave.sh status` opens its exception gate (`${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`). Never dispatch it a third time unless the Artisan chooses "retry with notes" there, which grants one more attempt.
 
-A conflict the try couldn't resolve, a red suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan.
+A conflict the try couldn't resolve, a red local suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan. A red CI merge gate is a failed attempt (#176).
 
 ## A wave that fails whole halts the run
 
