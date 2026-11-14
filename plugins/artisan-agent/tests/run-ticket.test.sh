@@ -124,7 +124,7 @@ test_worker_usage_is_recorded_with_the_time_it_was_received() {
   before=$(date +%s)
   assert_eq worker "$(jq -r .source "$u")"
   assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$u")" "utilisation 0.29 is 29 percent"
-  assert_eq 1794610800 "$(jq -r '.rate_limits.seven_day.resets_at' "$u")"
+  assert_eq 4102444800 "$(jq -r '.rate_limits.seven_day.resets_at' "$u")"
   [ $((before - $(jq -r .received_at "$u"))) -lt 30 ] || fail "received_at is not the time the runner saw it"
   wait_for_file "$EXIT_RECORD"
   assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$u")" "the second window joins the first"

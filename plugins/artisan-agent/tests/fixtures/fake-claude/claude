@@ -18,7 +18,8 @@
 #               the completion line
 #   stream      like complete, but as `--output-format stream-json --verbose`
 #               prints: a system event, a rate_limit_event (the shape seen live:
-#               one window, utilization a fraction, resetsAt), then FAKE_CLAUDE_SLEEP
+#               one window, utilization a fraction, resetsAt: in 2100, so the
+#               reading never goes stale), then FAKE_CLAUDE_SLEEP
 #               seconds later (default 2) a second one for the other window, then
 #               the result event
 #               A line that is not JSON sits between them, as a stream cut
@@ -123,10 +124,10 @@ ARTISAN-WORKER: complete"
     ;;
   stream)
     echo '{"type":"system","subtype":"init","session_id":"s1"}'
-    rate_limit seven_day 0.29 1794610800
+    rate_limit seven_day 0.29 4102444800
     sleep "${FAKE_CLAUDE_SLEEP:-2}"
     echo '{"session_id":"s1","type":"result","result":"cut off'
-    rate_limit five_hour 0.5 1794610000
+    rate_limit five_hour 0.5 4102444000
     write_result_file
     result success false 4 "Built the ticket.
 
