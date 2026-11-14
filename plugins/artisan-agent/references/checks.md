@@ -58,4 +58,6 @@ Examples:
 | riley | the Playwright e2e suite `never`, typecheck and vitest `always` | on riley's VM (`ci`) a worker runs typecheck and vitest itself and every e2e spec on CI on its branch, so a regression in another spec shows before the merge gate; a merge whose tree is the tree that run tested is not gated again |
 | artisan-agent | the suite `always`, `ci_gate.worker_inputs: {macos: false}` (#197) | a CI machine's worker runs nothing on CI (every check is `always`); were one `never`, its branch run would leave the macOS jobs out (a GitHub Free account runs 5 macOS jobs at once and each run takes 3), so the merge gate would never reuse it |
 
+How the project's CI is built (sharding, caching, skipping a passed tree, retries and quarantine, the gate command, timings) is a checklist setup prints after the checks, `references/ci.md` (#196).
+
 Out of scope here: reading `pr-boundaries` (#71), proving checks fail (setup, `skills/setup/PROJECT.md`), team- or individual-level checks.

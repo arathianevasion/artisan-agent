@@ -1,0 +1,4 @@
+merge_gate_minutes_limit: 6
+merge_gate_skip_paths:
+  - "*.md"
+  - "docs/*"

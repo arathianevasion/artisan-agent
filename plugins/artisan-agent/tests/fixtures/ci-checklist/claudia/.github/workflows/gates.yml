@@ -1,0 +1,39 @@
+name: Gates
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          cache: pip
+      - run: tools/gates/gates.sh lint
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache
+          key: deps-${{ hashFiles('requirements.txt') }}
+      - name: Has this tree passed?
+        run: gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=passed-$(git rev-parse HEAD^{tree})"
+      - run: tools/gates/gates.sh test --shard ${{ matrix.shard }}/2 --reruns 1 --junitxml=report.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timings-${{ matrix.shard }}
+          path: report.xml
