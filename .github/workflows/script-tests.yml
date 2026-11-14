@@ -17,10 +17,10 @@ name: Script tests
 # step summary.
 #
 # A dispatch's macos input (default true) set to false leaves the macOS job out, so
-# the run is Linux only and its overall conclusion is the Linux job's. It is for a
-# worker's branch run (ci_gate.worker_inputs in .artisan-agent/config.yml): a GitHub
-# Free account runs at most 5 macOS jobs at once across all its repos, and each run
-# takes 3. A pull request has no inputs and a dispatch that doesn't pass it gets the
+# the run is Linux only: its overall conclusion is the Linux job's and the quarantine
+# check's. It is for a worker's branch run (ci_gate.worker_inputs in
+# .artisan-agent/config.yml): a GitHub Free account runs at most 5 macOS jobs at once
+# across all its repos, and each run takes 3. A pull request has no inputs and a dispatch that doesn't pass it gets the
 # default, so both run macOS; the merge gate never passes it, so every merge is still
 # gated on Linux and Apple bash 3.2.
 on:
