@@ -328,6 +328,25 @@ test_repair_returns_a_ticket_the_stream_miscount_failed_and_its_gate_closes_as_r
   assert_eq returned "$(state_get '.tickets["3"].status')"
   assert_eq 0 "$(state_get '[.events[] | select(.event == "gate-bypassed" or .event == "guardrail-bypassed")] | length')"
   assert_contains "$(cat "$FAKE_GH_DIR/comments-$num.md")" "Resolved by the repair"
+  # The attempts taken back are given back: a real failure now is a retry, not a new exception.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" "$STATE_JQ_DEFS"'failed_attempt("3"; "verifier: t3.txt is empty"; 300)'
+  assert_eq queued "$(state_get '.tickets["3"].status')"
+}
+
+test_repair_prefers_the_result_files_cost_and_returns_a_ticket_whose_gate_was_deferred() {
+  setup_run
+  miscounted_3
+  jq '. + {cost_usd: 0.9}' "$RUN_DIR/results/3.2.result.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$RUN_DIR/results/3.2.result.json"
+  "$A" sync "$RUN_DIR" >/dev/null
+  local num= out=
+  num=$(state_get '.exception_gates[0].issue')
+  "$A" defer "$RUN_DIR" "$num" >/dev/null
+  out=$("$SCRIPTS/sweep.sh" repair "$RUN_DIR")
+  assert_eq returned "$(state_get '.tickets["3"].status')"
+  assert_eq 0.9 "$(state_get '.tickets["3"].attempt_costs["2"]')" "the result file's cost_usd wins, as in the sweep"
+  assert_contains "$out" "gate-action.sh repaired $RUN_DIR $num"
+  "$A" repaired "$RUN_DIR" "$num" >/dev/null
+  assert_eq resolved "$(state_get '.exception_gates[0].status')"
 }
 
 test_repaired_is_refused_on_a_gate_the_repair_did_not_resolve() {

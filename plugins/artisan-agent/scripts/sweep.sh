@@ -32,9 +32,10 @@
 # rebuilds output.json from the saved stream.jsonl. Then every failed attempt
 # that now classifies as completed, with a result file saying complete, is
 # taken back: the failure leaves tickets.<t>.failures (kept under
-# tickets.<t>.repaired), the attempt's cost is recorded, and when it was the
-# ticket's latest attempt and the ticket is queued or blocked by its failures,
-# it is returned with its result, as the sweep would have left it. An
+# tickets.<t>.repaired), the attempt is given back (extra_attempts), its cost
+# is recorded, and when it was the ticket's latest attempt and the ticket is
+# queued, blocked by its failures or deferred at its exception gate, it is
+# returned with its result, as the sweep would have left it. An
 # exception decision the miscount queued and no gate carries yet is decided
 # "resolved by repair"; an exception gate already open for the ticket is named
 # with the command that closes it as resolved by the repair (gate-action.sh
@@ -196,18 +197,24 @@ sweep() {
 }
 
 # A failed attempt taken back by the repair: its failure entries move to
-# tickets.<t>.repaired, its cost is recorded, and the latest attempt of a
-# ticket its failures queued or blocked is returned with its result.
+# tickets.<t>.repaired, the attempt it used is given back (extra_attempts, as
+# a retry grants one), its cost is recorded (the result file's own first, as
+# the sweep does), and the latest attempt of a ticket its failures queued,
+# blocked or left deferred at its exception gate is returned with its result.
 REPAIR_FILTER="$STATE_JQ_DEFS"'
   ([.tickets[$t].failures[]? | select(.attempt == $n)]) as $taken
+  | $rs[0] as $r
+  | ($r.cost_usd // $r.total_cost_usd // $usd) as $usd
   | .tickets[$t].failures |= map(select(.attempt != $n))
+  | .tickets[$t].extra_attempts = ((.tickets[$t].extra_attempts // 0) + 1)
   | attempt_cost($t; $n; $usd)
   | .tickets[$t].repaired = ((.tickets[$t].repaired // []) + [{attempt: $n, cost_usd: $usd, failures: $taken, at: $now}])
   | event({event: "repaired", ticket: $t, attempt: $n, cost_usd: $usd, failures_taken_back: ($taken | length)}; $now)
   | .tickets[$t] as $tk
-  | if $n == $tk.attempts and ($tk.status == "queued" or ($tk.status == "blocked" and $tk.blocked_reason == null)) then
-      $rs[0] as $r
-      | .tickets[$t] |= (.status = "returned" | .pid = null
+  | if $n == $tk.attempts and ($tk.status == "queued"
+        or ($tk.status == "blocked" and $tk.blocked_reason == null)
+        or ($tk.status == "deferred" and $tk.cut == null)) then
+      .tickets[$t] |= (.status = "returned" | .pid = null
           | .result = {status: "complete", commit: ($r.commit // null), notes: ($r.notes // null), file: $file})
       | reduce ([.decisions[] | select(.kind == "exception" and .ticket == $t and .status == "waiting" and .issue == null) | .id][]) as $id
           (.; decide($id; {job: 15, choice: "resolved by repair", by: "sweep.sh repair"}; $now))
