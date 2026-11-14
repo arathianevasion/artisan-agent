@@ -387,7 +387,7 @@ cmd_render() {
       ( $p.config | settings_list[] | .key as $k
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
-      (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) tickets have no acceptance criteria (above)."
+      (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) ticket(s) with no acceptance criteria (above)."
        elif ($p.human_check_flags // []) == [] then "Approve as shown, or name any number to change for this run only."
        else "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)." end)
   ' "$plan"

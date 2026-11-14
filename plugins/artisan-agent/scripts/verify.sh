@@ -117,7 +117,9 @@ read_criteria() { # ticket
   else
     issue=$(gh issue view "$1" -R "$(get .repo)" --json body,comments) \
       || die "could not read #$1 from the tracker; not verifying blind"
-    printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket | jq -c .criteria
+    issue=$(printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket) \
+      || die "could not read #$1's criteria; not verifying blind"
+    printf '%s' "$issue" | jq -c .criteria
     return
   fi
   printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract

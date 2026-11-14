@@ -605,7 +605,7 @@ test_a_ticket_with_no_criteria_anywhere_makes_the_plan_unapprovable_and_is_named
   local out="" msg=""
   out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "| #10 (Retry failed uploads) |"
-  assert_contains "$out" "Not approvable yet: 1 tickets have no acceptance criteria"
+  assert_contains "$out" "Not approvable yet: 1 ticket(s) with no acceptance criteria"
   msg=$("$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json" 2>&1) || true
   assert_contains "$msg" "#10"
   assert_contains "$msg" "Acceptance criteria"
