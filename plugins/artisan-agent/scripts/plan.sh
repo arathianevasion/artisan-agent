@@ -23,8 +23,14 @@
 #                  path): the ticket, its focus, whether it is on the critical path
 #                  and the delay it costs the run (human.sh annotate)
 #   estimate_usd   the total; budget_usd = total + overrun allowance
-#   human_check_flags  each criterion in a ticket's optional `acceptance` list
-#                  that reads as needing a person (references/human-checks.md,
+#   human_check_flags  each criterion that reads as needing a person, from a
+#                  ticket's optional `acceptance` list in the draft (which
+#                  wins; its issue is then not read) or, with none, from the
+#                  ticket's issue body (gh issue view, scripts/lib/criteria.py
+#                  extract; the criteria then show in tickets.<t>.acceptance).
+#                  An issue that can't be read (no gh, offline) leaves the
+#                  build succeeding, with those tickets named on stderr
+#                  as unchecked (references/human-checks.md,
 #                  plus config human_check_phrases): [{ticket, criterion, phrase}].
 #                  While one stands the plan is not approvable: render says so
 #                  and state.sh init refuses it. Split it into a Human check
@@ -231,6 +237,26 @@ cmd_build() {
     out=$(printf '%s' "$out" | jq --argjson m "$mins" --arg wf "$wf" '.merge_gate = ({mode: "ci",
       workflow: (if $wf == "" then null else $wf end), timeout_minutes: .config.ci_gate.timeout_minutes,
       minutes_per_merge: $m.minutes, from_runs: $m.runs} + (if $m.note then {note: $m.note} else {} end))')
+  fi
+  # A ticket the draft gives no `acceptance` list gets its criteria from its
+  # issue body (criteria.py extract); a draft's own list wins and its issue is
+  # not read. Tickets whose issue can't be read are named on stderr.
+  local repo="" t="" body="" crit="" unchecked=""
+  repo=$(jq -r '.repo // ""' "$draft")
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    body=""
+    if [ -n "$repo" ] && command -v gh >/dev/null 2>&1; then
+      body=$(gh issue view "$t" -R "$repo" --json body -q .body 2>/dev/null) || body=""
+    fi
+    if [ -z "$body" ] || ! crit=$(printf '%s\n' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract 2>/dev/null); then
+      unchecked="${unchecked:+$unchecked, }#$t"
+      continue
+    fi
+    out=$(printf '%s' "$out" | jq --arg t "$t" --argjson c "$crit" '.tickets[$t].acceptance = $c')
+  done < <(printf '%s' "$out" | jq -r '.tickets | to_entries[] | select(.value.acceptance == null and (.value.human_check_for // null) == null) | .key')
+  if [ -n "$unchecked" ]; then
+    printf 'plan.sh: could not read the issue for %s: those tickets'"'"' criteria were not checked for Human check flags\n' "$unchecked" >&2
   fi
   # Agent criteria that need a person (references/human-checks.md), less the
   # Artisan's overrides.

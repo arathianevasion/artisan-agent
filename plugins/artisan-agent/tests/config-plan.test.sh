@@ -9,6 +9,9 @@ plan() { "$SCRIPTS/plan.sh" "$@"; }
 
 # write_draft path: two tickets, one Sonnet and one Opus, in two waves.
 write_draft() {
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
+  mkdir -p "$FAKE_GH_DIR"
+  case ":$PATH:" in *":$TESTS_DIR/fixtures/fake-gh:"*) ;; *) PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"; export PATH ;; esac
   jq -n '{
     run_id: "r1", repo: "owner/repo", integration_branch: "run/r1",
     scope: ["10", "11"], waves: [["10"], ["11"]], gates: [{kind: "end"}],
@@ -520,4 +523,47 @@ test_build_records_an_override_and_the_plan_becomes_approvable() {
   assert_contains "$out" "| #10 | the retry banner looks right in game | a screenshot test covers it |"
   assert_contains "$out" "Approve as shown"
   assert_contains "$out" "| human_check_phrases | none |"
+}
+
+# ------------------------------------------------- criteria from the tracker (#160)
+
+put_issue() { # n body
+  jq -n --argjson n "$1" --arg b "$2" '{number: $n, title: "t", body: $b, state: "open", labels: []}' >"$FAKE_GH_DIR/issue-$1.json"
+}
+
+test_build_reads_a_drafts_missing_acceptance_from_the_issue_and_flags_it() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 10 $'## Acceptance criteria\n- [ ] retries twice\n- [ ] the banner looks right in game\n'
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json" 2>"$TEST_TMPDIR/err"
+  assert_eq '[{"ticket":"10","criterion":"the banner looks right in game","phrase":"in game"}]' \
+    "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "Not approvable yet"
+  assert_status 1 "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json"
+  assert_eq "" "$(cat "$TEST_TMPDIR/err")"
+}
+
+test_build_uses_a_drafts_acceptance_as_is_and_does_not_read_its_issue() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 10 $'## Acceptance criteria\n- [ ] the banner looks right in game\n'
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  jq '.tickets["10"].acceptance = ["retries twice"]' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  : >"$FAKE_GH_DIR/calls"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json" 2>"$TEST_TMPDIR/err"
+  assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "issue view 10"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "issue view 11"
+}
+
+test_build_succeeds_when_an_issue_cant_be_read_and_names_the_unchecked_tickets() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json" 2>"$TEST_TMPDIR/err"
+  assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "#10"
+  assert_not_contains "$(cat "$TEST_TMPDIR/err")" "#11"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "not checked"
 }
