@@ -187,13 +187,16 @@ blockers_merged() { # ticket
   done
 }
 
-is_hands_on() { # ticket: labelled ready-for-human on the tracker, or the plan's pick
-  local t="$1" labels=
+# A Human check (its body marker, references/human-checks.md) is never a
+# hands-on ticket: it verifies work an agent built, at a gate.
+HUMAN_CHECK_MARK='<!-- artisan-agent:human-check-for #'
+is_hands_on() { # ticket: labelled ready-for-human on the tracker, or the plan's pick; never a Human check
+  local t="$1" issue=""
+  [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] || return 1
   [ "$(get --arg t "$t" '(.plan.hands_on.ticket // "" | tostring) == $t')" != true ] || return 0
-  labels=$(gh api "repos/$(get '.repo')/issues/$t" | jq -r '[.labels[]? | (.name? // .)] | join(" ")'; exit "${PIPESTATUS[0]}") \
-    || die "could not read #$t from the tracker"
-  case " $labels " in *" ready-for-human "*) return 0 ;; esac
-  return 1
+  issue=$(gh api "repos/$(get '.repo')/issues/$t") || die "could not read #$t from the tracker"
+  jq -e --arg m "$HUMAN_CHECK_MARK" '(.body // "") | contains($m) | not' <<<"$issue" >/dev/null || return 1
+  jq -e '[.labels[]? | (.name? // .)] | index("ready-for-human") != null' <<<"$issue" >/dev/null
 }
 
 start_one() { # ticket: sets WORKTREE
@@ -203,7 +206,7 @@ start_one() { # ticket: sets WORKTREE
   [ "$status" = queued ] || die "#$t is $status, not queued"
   WORKTREE=$(get --arg t "$t" '.tickets[$t].human.worktree // ""')
   if [ -n "$WORKTREE" ] && [ -d "$WORKTREE" ]; then return 0; fi
-  is_hands_on "$t" || die "#$t is not a hands-on ticket (no ready-for-human label, not the plan's hands-on pick)"
+  is_hands_on "$t" || die "#$t is not a hands-on ticket (no ready-for-human label, not the plan's hands-on pick, or a Human check)"
   blockers_merged "$t" || state_die 5 "human.sh: #$t waits: a blocker is not merged into $(integration_branch) yet"
   ib=$(integration_branch)
   base=$(integration_tip)
@@ -235,7 +238,8 @@ cmd_start() {
 cmd_setup() {
   open_run "${1:-}"
   local t= rc=
-  for t in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "queued" and .tickets[$t].human == null) | $t'); do
+  for t in $(get "$STATE_JQ_DEFS"' . as $s | .plan.scope[] as $t
+               | select(.tickets[$t].status == "queued" and .tickets[$t].human == null and ($s | is_human_check($t) | not)) | $t'); do
     rc=0
     (start_one "$t" >/dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] || continue
@@ -360,10 +364,11 @@ cmd_parked() {
   local record=0
   [ "${2:-}" != --record ] || record=1
   local line=
-  line=$(get '
+  line=$(get "$STATE_JQ_DEFS"'
     . as $s | ($s.plan.tickets // {}) as $pt
     | $s.plan.scope as $scope
-    | [$scope[] | select($s.tickets[.].status != "merged" and $s.tickets[.].status != "closed")] as $open
+    | [$scope[] | select($s.tickets[.].status != "merged" and $s.tickets[.].status != "closed")
+        | select(. as $t | $s | is_human_check($t) | not)] as $open
     | [$open[] | select($s.tickets[.].human != null or (($s.plan.hands_on.ticket // "" | tostring) == .))] as $hum
     | def blk($t): [($pt[$t].blocked_by // [])[] | tostring];
       (reduce range(0; ($scope | length) + 1) as $_ ($hum;

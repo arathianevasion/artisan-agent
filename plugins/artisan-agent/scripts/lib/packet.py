@@ -19,14 +19,22 @@ Usage:
       tests it meets (plan.tickets.<t>.escalation), or "No escalation tests met."
   python3 -I packet.py chat < view.json
       the compressed packet: a counts line, one table row per decision
-      (low confidence in bold), then "Keep all, or name one to change."
+      (low confidence in bold), a line naming its Human checks, then "Keep
+      all, or name one to change."
+  python3 -I packet.py checks < view.json
+      the end gate's "Human checks" section: every check still open, and
+      every one deferred past the run with who deferred it and why.
 
 view.json is what gate.sh assembles:
   {"gate": {kind, slice, title, issue?, role, tickets: [t...],
             dependents: [{number, title}], problem?, solution?, cards?},
    "state": <the state file>,
    "guardrails": "<guardrails.sh table output, or an empty string>",
-   "provisional": "<questions.sh provisional output, or an empty string>"}
+   "provisional": "<questions.sh provisional output, or an empty string>",
+   "human_checks": [{ticket, for, title, body, carried_from?, state?, deferral?}],
+   "build": {commit, worktree, branch}}
+human_checks and build are optional (wave-lib.sh human_checks_view); a slice
+gate's packet gets a "Human checks" section only when it has one.
 
 Standard-library Python 3.
 """
@@ -207,6 +215,89 @@ def risk_section(view):
 GATE_HEADER = "| Gate | Role needed | Slice | Tickets blocked |"  # `packet.py header`
 
 
+# ---- Human checks (references/human-checks.md) -------------------------------
+
+def section(body, heading):
+    """The lines under a `## heading` of an issue body, up to the next one."""
+    out, inside = [], False
+    for line in (body or "").splitlines():
+        if line.startswith("## "):
+            inside = line[3:].strip().lower() == heading.lower()
+            continue
+        if inside:
+            out.append(line)
+    return out
+
+
+def check_parts(check):
+    """What to check (one line) and the criteria (joined), from its body."""
+    what = " ".join(l.strip() for l in section(check.get("body"), "What to check") if l.strip())
+    crit = []
+    for l in section(check.get("body"), "Acceptance criteria"):
+        l = l.strip()
+        for box in ("- [ ] ", "- [x] ", "- [X] ", "* [ ] "):
+            if l.startswith(box):
+                crit.append(l[len(box):].strip())
+    return what, "; ".join(crit)
+
+
+def build_line(view):
+    b = view.get("build") or {}
+    commit = (b.get("commit") or "")[:7]
+    where = "`%s`" % commit if commit else "the integration branch's tip"
+    if b.get("worktree"):
+        where += " in `%s`" % b["worktree"]
+    if b.get("branch"):
+        where += " (branch `%s`)" % b["branch"]
+    return where
+
+
+def checks_table(view, deferred=False):
+    rows = []
+    for c in view.get("human_checks") or []:
+        what, crit = check_parts(c)
+        label = "#%s (%s)" % (c["ticket"], c["title"]) if c.get("title") else "#%s" % c["ticket"]
+        verifies = "#%s" % c.get("for")
+        if c.get("carried_from"):
+            verifies += ", carried from %s" % c["carried_from"]
+        if deferred:
+            d = c.get("deferral") or {}
+            last = "deferred by %s: %s; return condition: %s" % (d.get("by", "-"), d.get("why", "-"), d.get("return", "-"))
+        else:
+            n = c["ticket"]
+            last = "`check %s pass` · `check %s fail --why <what failed>` · `check %s later`" % (n, n, n)
+        rows.append("| %s | %s | %s | %s | %s |" % (cell(label), cell(verifies), cell(what), cell(crit), last))
+    return ["| Human check | Verifies | What to check | Criteria | %s |" % ("Deferred" if deferred else "Answer"),
+            "|---|---|---|---|---|"] + rows
+
+
+def checks_section(view):
+    """A slice gate's Human checks: one checklist, with the build to try."""
+    checks = view.get("human_checks") or []
+    if not checks:
+        return []
+    return ["## Human checks", "",
+            "Try each on the build: %s. Keep all leaves them open; one you don't answer carries to the next gate." % build_line(view),
+            ""] + checks_table(view) + [""]
+
+
+def end_checks(view):
+    """The end gate's Human checks: open ones hold the approval; deferred ones are listed."""
+    checks = view.get("human_checks") or []
+    opened = [c for c in checks if c.get("state") != "deferred"]
+    deferred = [c for c in checks if c.get("state") == "deferred"]
+    out = ["## Human checks", ""]
+    if not checks:
+        return out + ["None open.", ""]
+    if opened:
+        out += ["No PR is cut while one is open. Try each on the build: %s. Answer with `gate.sh check`, or defer it past the run with `end-gate.sh defer-check <run-dir> <n> --why <reason>`." % build_line(view), ""]
+        out += checks_table(dict(view, human_checks=opened)) + [""]
+    if deferred:
+        out += ["Deferred past the run (still open on the tracker):", ""]
+        out += checks_table(dict(view, human_checks=deferred), deferred=True) + [""]
+    return out
+
+
 def body(view):
     gate, state = view["gate"], view["state"]
     the_cards = gate.get("cards") or cards(view)
@@ -299,6 +390,9 @@ def body(view):
         out.append("| #%s | %s | %s |" % (
             t, "`%s`" % sha[:7] if sha else "-",
             "`git diff %s^1 %s`" % (sha[:7], sha[:7]) if sha else "-"))
+    out += [""] + checks_section(view)
+    if out[-1] == "":
+        out.pop()
     out += ["", "## Overall action", "",
             "Answer with the choice alone; why, confidence, guardrail level and reach are optional.", "",
             "| Say | Does |", "|---|---|",
@@ -308,6 +402,10 @@ def body(view):
             "| `change <card> to <choice>` | a rework ticket in this run for that card; the rest are kept when you approve |",
             "| `change <card> to <choice>, a bug` | the same, and records a bug found at this gate in the card's ticket: tighten evidence for its areas at the retro (`--bug`); a redirect takes it too |",
             "| `guardrail <card> <level> <reach>` | keeps the card and records it as a guardrail to make (level team, product or individual; reach ticket, area or everywhere) |"]
+    if view.get("human_checks"):
+        out += ["| `check <n> pass` | the Human check passed: it closes, with the result posted (`gate.sh check <run-dir> <n> pass [--notes T]`); `pass all checks` passes every one here (`gate.sh check <run-dir> all pass --gate <issue>`) |",
+                "| `check <n> fail: <why>` | a bug in its agent ticket: a rework ticket in this run, as a redirect (`gate.sh check <run-dir> <n> fail --why W`; `--not-bug` when it isn't one) |",
+                "| `check <n> later` | not done yet: it carries to the next gate |"]
     return "\n".join(out) + "\n"
 
 
@@ -325,6 +423,10 @@ def chat(view):
                 c["card"], c["ticket"], cell(c.get("question")), cell(c.get("choice")),
                 "**%s (low)**" % conf if is_low(c) else conf))
         out.append("")
+    checks = view.get("human_checks") or []
+    if checks:
+        out += ["Human checks: %s; answer each with check <n> pass, fail or later (keep all leaves them open)." % ", ".join(
+            "#%s (%s)" % (c["ticket"], c["title"]) if c.get("title") else "#%s" % c["ticket"] for c in checks), ""]
     out.append("Keep all, or name one to change.")
     return "\n".join(out) + "\n"
 
@@ -333,7 +435,7 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == "header":
         print(GATE_HEADER)
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat", "risk"):
+    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat", "risk", "checks"):
         sys.stderr.write(__doc__)
         sys.exit(2)
     view = json.load(sys.stdin)
@@ -341,6 +443,8 @@ def main():
     if cmd == "cards":
         json.dump(cards(view), sys.stdout)
         sys.stdout.write("\n")
+    elif cmd == "checks":
+        sys.stdout.write("\n".join(end_checks(view)) + "\n")
     elif cmd == "risk":
         sys.stdout.write("\n".join(risk_section(view)) + "\n")
     elif cmd == "body":

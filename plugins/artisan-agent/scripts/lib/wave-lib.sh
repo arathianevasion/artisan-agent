@@ -120,3 +120,22 @@ check_returned() {
     state_die 6 "$who: #$t $what: the result file does not describe the branch tip"
   fi
 }
+
+# human_checks_view checks-json: the part of a gate's view packet.py's Human
+# checks section reads (references/human-checks.md). checks-json is a list of
+# {ticket, for, carried_from?, state?, deferral?}; each gains its title and
+# its issue body (what to check, its criteria) from the tracker. The build to
+# try is the integration branch's tip and the run's integration worktree.
+human_checks_view() {
+  local list="$1" t="" issue="" out='[]' tip="" ib=""
+  for t in $(jq -r '.[].ticket' <<<"$list"); do
+    issue=$(gh api "repos/$(get '.repo')/issues/$t") || die "could not read Human check #$t from the tracker"
+    out=$(jq -c --argjson i "$issue" --argjson l "$list" --arg t "$t" --arg title "$(get --arg t "$t" '.plan.tickets[$t].title // ""')" '
+      . + [($l[] | select(.ticket == $t))
+           + {title: (if $title == "" then ($i.title // null) else $title end), body: ($i.body // "")}]' <<<"$out")
+  done
+  ib=$(integration_branch)
+  tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib" 2>/dev/null || true)
+  jq -nc --argjson c "$out" --arg tip "$tip" --arg wt "$(get '.integration.worktree // ""')" --arg b "$ib" \
+    '{human_checks: $c, build: {commit: $tip, worktree: $wt, branch: $b}}'
+}

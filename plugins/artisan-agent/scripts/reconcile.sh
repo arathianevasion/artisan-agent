@@ -13,10 +13,14 @@
 #   2. runs the sweep (sweep.sh) over in-flight tickets and findings;
 #   3. reads each ticket in scope from the tracker (gh api): open or closed,
 #      labels, and its native blocked-by list;
-#   4. marks closed any queued ticket the tracker has closed without a merge;
+#   4. marks closed any queued ticket the tracker has closed without a merge,
+#      and records as a Human check (tickets.<t>.human_check.for) every
+#      ticket whose body carries the marker (references/human-checks.md);
 #   5. writes the frontier: queued tickets, open on the tracker, not labelled
-#      ready-for-human and not held for the Artisan (human.sh), whose blockers are all merged into the integration
-#      branch (blockers in the run) or closed (blockers outside it). Higher
+#      ready-for-human, not a Human check and not held for the Artisan
+#      (human.sh), whose blockers are all merged into the integration
+#      branch (blockers in the run) or closed (blockers outside it); a Human
+#      check in the run is never waited on as a blocker. Higher
 #      plan.tickets.<t>.priority first (a ticket added mid-run, lever.sh add),
 #      then by number; an urgent ticket is never on it (it dispatches at once).
 # Prints the frontier, one ticket per line. Running it again on the same git
@@ -104,6 +108,7 @@ reconcile() {
       $acc + {($t): {
         state: ($i.state | ascii_downcase),
         labels: [$i.labels[]? | (.name? // .)],
+        human_check_for: ([($i.body // "") | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null),
         blocked_by: [$b[]? | {number: (.number | tostring), state: (.state | ascii_downcase)}]
       }}')
   done
@@ -112,6 +117,9 @@ reconcile() {
     .tickets |= with_entries(
       if .value.status == "queued" and $tr[.key].state == "closed"
       then .value.status = "closed" else . end)
+    # A Human check is known by its body marker (references/human-checks.md).
+    | reduce ($tr | to_entries[] | select(.value.human_check_for != null)) as $h (.;
+        .tickets[$h.key].human_check = ((.tickets[$h.key].human_check // {state: "open"}) + {for: $h.value.human_check_for}))
     | . as $s
     | .frontier = [
         $s.plan.scope[] as $t
@@ -119,9 +127,10 @@ reconcile() {
         | select($tr[$t].state == "open")
         | select(($tr[$t].labels | index("ready-for-human")) == null)
         | select($s.tickets[$t].human == null)
+        | select($s | is_human_check($t) | not)
         | select(($s.tickets[$t].urgent // false) | not)
         | select((($s.plan.hands_on.ticket // "") | tostring) != $t)
-        | select(all($tr[$t].blocked_by[];
+        | select(all($tr[$t].blocked_by[] | select(.number as $b | $s | is_human_check($b) | not);
             if $s.tickets[.number] != null
             then $s.tickets[.number].status == "merged"
                  and ($s.tickets[.number].risk_gate.status? // "") != "waiting"

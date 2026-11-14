@@ -251,8 +251,8 @@ open_dependents() {
 }
 
 
-# downstream ticket...: the in-scope tickets still to run (queued or blocked)
-# that depend on any of these, directly or through others, one per line, in
+# downstream ticket...: the in-scope tickets still to run (queued or blocked),
+# Human checks aside, that depend on any of these, directly or through others, one per line, in
 # ticket order. The tracker's native edges say who depends on whom.
 downstream() {
   local seen=" $* " d= st= b= changed=1 found=
@@ -262,6 +262,8 @@ downstream() {
       case "$seen" in *" $d "*) continue ;; esac
       st=$(get --arg d "$d" '.tickets[$d].status // ""')
       case "$st" in queued | blocked) ;; *) continue ;; esac
+      # A Human check is no dependent in the run (references/human-checks.md).
+      [ "$(get --arg d "$d" "$STATE_JQ_DEFS"' is_human_check($d)')" = false ] || continue
       for b in $seen; do
         if blocks "$d" "$b"; then
           seen="$seen$d "
@@ -787,7 +789,7 @@ cmd_parked() {
     and (waiting_non_gate_decisions | map(select(.kind != "usage")) | length) == 0
     and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
          + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0')" = true ] || return 1
-  for t in $(get '.plan.scope[] as $t | select(.tickets[$t].status == "queued") | $t'); do
+  for t in $(get "$STATE_JQ_DEFS"' . as $s | .plan.scope[] as $t | select(.tickets[$t].status == "queued" and ($s | is_human_check($t) | not)) | $t'); do
     tracker=$(jq -c --arg t "$t" --argjson b "$(blockers_of "$t" || echo null)" \
       '. + {($t): ($b // null | if . == null then null else [.[] | select((.state | ascii_downcase) == "open") | .number | tostring] end)}' <<<"$tracker")
   done
@@ -797,7 +799,8 @@ cmd_parked() {
     | ($open | map(.issue | tostring)) as $gi
     | [$s.tickets | to_entries[] | select(.value.risk_gate.status? == "waiting") | .key] as $risk
     | out_of_run as $o
-    | [$s.plan.scope[] | select(($s.tickets[.].status) as $st | $st != "merged" and $st != "closed" and ($o | index($st) | not))] as $left
+    | [$s.plan.scope[] | select(($s.tickets[.].status) as $st | $st != "merged" and $st != "closed" and ($o | index($st) | not))
+        | select(. as $t | $s | is_human_check($t) | not)] as $left
     | [($s.exception_gates // [])[] | select(.status == "open") | .ticket] as $held0
     | (reduce range(0; ($left | length) + 1) as $_ ($held0;
         . as $h | ($h + [$left[] | select(. as $t | $s.tickets[$t].status == "queued" and $tr[$t] != null

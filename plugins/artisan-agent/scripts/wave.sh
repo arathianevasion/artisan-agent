@@ -386,6 +386,22 @@ record_orchestrator_cost() { # id attempt
     --arg id "$1" --argjson a "$2" --argjson usd "$usd"
 }
 
+# "Human checks: N open (<where they are answered>)", when any is open
+# (references/human-checks.md): the next slice gate, or the end gate once the
+# run is done or no slice gate is left to open.
+human_checks_line() { # next
+  local n= left=
+  n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
+  [ "$n" -gt 0 ] || return 0
+  left=$(get "$STATE_JQ_DEFS"' . as $s | [slice_gates[] | select(.kind == "slice")
+           | select(.id as $id | ($s.review_gates // []) | all(.id != $id or .status == "open"))] | length')
+  if [ "$1" = done ] || [ "$left" -eq 0 ]; then
+    echo "Human checks: $n open (end gate)"
+  else
+    echo "Human checks: $n open (next slice gate)"
+  fi
+}
+
 cmd_status() {
   open_run "${1:-}"
   local last= id= attempt= wave= pid= cls= next= reconciled=1 waiting= o= parked= usage_park= reviews= stranded=
@@ -455,8 +471,10 @@ $reviews"
       elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
       # A ticket the Artisan took out of the run at a gate (dropped, resliced,
       # bypassed, deferred) is finished for this run.
-      elif [ "$(get "$STATE_JQ_DEFS"' out_of_run as $o | [.plan.scope[] as $t | .tickets[$t].status
-               | select(. as $st | $st == "merged" or $st == "closed" or ($o | index($st)))] | length')" \
+      # A Human check is not work the run waits on: the gates settle it.
+      elif [ "$(get "$STATE_JQ_DEFS"' . as $s | out_of_run as $o | [.plan.scope[] as $t
+               | select(($s | is_human_check($t)) or (.tickets[$t].status | . as $st
+                        | $st == "merged" or $st == "closed" or ($o | index($st))))] | length')" \
              = "$(get '.plan.scope | length')" ]; then next=done
       elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
       # Tickets left waiting for good behind a dropped or resliced one (#116).
@@ -468,6 +486,7 @@ $reviews"
   echo "next: $next"
   [ "$next" != parked ] || echo "$parked"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
+  human_checks_line "$next"
   [ "$next" != stranded ] || echo "$stranded"
   [ "$reconciled" -eq 1 ] || echo "tracker: unreadable, frontier not recomputed ($(tr '\n' ' ' <"$RUN_DIR/.status.err"))"
   [ "$next" != halted ] || get '"halted: \(.halted.reason) (\(.halted.tickets | map("#" + .) | join(", "))); nothing more launches until the Artisan decides"'
@@ -497,6 +516,8 @@ check_blockers() { # ticket
     || die "could not read the blockers of #$t from the tracker; not dispatching blind"
   for b in $(printf '%s' "$blockers" | jq -r '.[] | "\(.number)=\(.state | ascii_downcase)"'); do
     state=${b#*=} b=${b%%=*}
+    # A Human check in the run never holds anything up (references/human-checks.md).
+    [ "$(get --arg b "$b" "$STATE_JQ_DEFS"' is_human_check($b)')" = false ] || continue
     status=$(get --arg b "$b" '.tickets[$b].status // ""')
     if [ -n "$status" ]; then
       sha=$(get --arg b "$b" '.tickets[$b].merge_commit // ""')
@@ -525,6 +546,8 @@ cmd_dispatch() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
+  [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] \
+    || die "#$t is a Human check: the Artisan answers it at a gate (gate.sh check); it is never dispatched to a worker"
   local status= in_flight= max= urgent=
   status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"

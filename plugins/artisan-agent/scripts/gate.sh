@@ -152,6 +152,24 @@ build_view() { # id dependents-json
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
 
+# The Human checks a slice gate lists (references/human-checks.md): every one
+# still open whose agent ticket is in the slice, and every one carried from a
+# gate that is no longer open (answered "later", or left unanswered there).
+# A risk gate lists none. JSON for human_checks_view.
+checks_for_gate() { # def
+  jq -c --argjson g "$1" "$STATE_JQ_DEFS"'
+    . as $s
+    | if ($g.kind // "slice") != "slice" then []
+      else [open_human_checks[] as $c
+        | ($s | human_check_for($c)) as $a
+        | ($s.tickets[$c].human_check.gate // null) as $hg
+        | select($hg != $g.id)
+        | select(($g.tickets | index($a)) != null
+                 or ($hg != null and all(($s.review_gates // [])[]; .id != $hg or .status != "open")))
+        | {ticket: $c, for: $a} + (if $hg != null then {carried_from: $hg} else {} end)]
+      end' "$FILE"
+}
+
 # The in-run tickets still to merge that a ticket of the gate blocks natively.
 dependents() { # def
   local def="$1" repo= t= blockers= out='[]'
@@ -159,6 +177,8 @@ dependents() { # def
   for t in $(get '.plan.scope[]'); do
     jq -e --arg t "$t" '.tickets | index($t)' <<<"$def" >/dev/null && continue
     case "$(get --arg t "$t" '.tickets[$t].status // ""')" in merged|closed|deferred) continue ;; esac
+    # A Human check is no dependent: it verifies the slice, never waits on it.
+    [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] || continue
     blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
       || die "could not read the blockers of #$t from the tracker"
     if jq -e --argjson d "$def" 'any(.[]; (.number | tostring) as $n | $d.tickets | index($n))' <<<"$blockers" >/dev/null; then
@@ -198,7 +218,8 @@ cmd_open() {
   view="$dir/$id.view.json"
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
-    jq --argjson cards "$(PACKET cards <"$view.tmp")" '.gate.cards = $cards' "$view.tmp" >"$view.tmp2"
+    jq --argjson cards "$(PACKET cards <"$view.tmp")" --argjson hc "$(human_checks_view "$(checks_for_gate "$def")")" \
+      '.gate.cards = $cards | . + $hc' "$view.tmp" >"$view.tmp2"
     mv "$view.tmp2" "$view"
     rm -f "$view.tmp"
   fi
@@ -226,6 +247,7 @@ cmd_open() {
           id: $v.gate.id, kind: $v.gate.kind, slice: $v.gate.slice, title: $v.gate.title,
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
+          human_checks: [($v.human_checks // [])[].ticket],
           status: "open", opened_at: $now, decisions: [], reworks: []}
           + (if $v.gate.guardrails then {guardrails: $v.gate.guardrails} else {} end)])
       | .provisional_shown = (((.provisional_shown // []) + $v.gate.tickets + $other) | unique)
@@ -235,6 +257,9 @@ cmd_open() {
       | event({event: "gate-opened", gate: $v.gate.id, issue: $num, tickets: $v.gate.tickets,
                dependents: ($v.gate.dependents | map(.number))}; $now)
       | event({event: "provisional-shown"}; $now)
+      | reduce ($v.human_checks // [])[] as $h (.;
+          .tickets[$h.ticket].human_check = ((.tickets[$h.ticket].human_check // {state: "open", for: $h.for})
+            | .gate = $v.gate.id | .shown = ((.shown // []) + [$v.gate.id])))
       | guardrails_fired($v.gate; $now)
     end' --argjson num "$num" --argjson v "$(cat "$view")"
   echo "$num"
@@ -292,9 +317,40 @@ ACTION_FILTER='
     | if ($k | length) == 0 then .
       else event({event: "gate-decision", gate: $a.gate, card: null, by: $a.by, outcome: "keep",
                   redirect: false, areas: ticket_areas([$k[].ticket]), cards: ($k | length)}; $now) end;
+  # A Human check answered at a gate (gate.sh check): pass closes it, fail
+  # sends its agent ticket to rework (and logs bug-found unless the Artisan
+  # said it is not a bug), later carries it to the next gate. The answer is
+  # kept on the check; its key makes a second fold change nothing.
+  def check_answer($a; $i):
+    ($a.ticket) as $t
+    | if any((.tickets[$t].human_check.answers // [])[]; .action == $a.key) then .
+      else
+        ({ticket: $t, agent_ticket: $a.agent, gate: $a.gate, by: $a.by}) as $e
+        | .tickets[$t].human_check.answers = ((.tickets[$t].human_check.answers // [])
+            + [{verdict: $a.verdict, gate: $a.gate, by: $a.by, at: $now, action: $a.key}
+               + (if ($a.notes // "") != "" then {notes: $a.notes} else {} end)
+               + (if ($a.why // "") != "" then {why: $a.why} else {} end)
+               + (if $a.rework then {rework: ($a.rework.number | tostring)} else {} end)])
+        | if $a.verdict == "pass" then
+            .tickets[$t].status = "closed" | .tickets[$t].human_check.state = "passed"
+            | event($e + (if ($a.notes // "") != "" then {notes: $a.notes} else {} end) + {event: "human-check-passed"}; $now)
+          elif $a.verdict == "fail" then
+            ($a.rework.number | tostring) as $r | ($a.agent) as $f
+            | .plan.scope = ((.plan.scope + [$r]) | unique)
+            | .plan.tickets[$r] = ((.plan.tickets[$f] // {}) | del(.branch, .slice, .ticket_path)
+                + {title: $a.rework.title, rework_of: $f, gate: $a.gate, human_check: $t})
+            | (if .tickets[$r] == null then .tickets[$r] = new_ticket($r) else . end)
+            | (if $i == null then .
+               else .review_gates[$i].reworks = ((.review_gates[$i].reworks // []) + [{card: null, ticket: $r, human_check: $t}]) end)
+            | event($e + {event: "human-check-failed", why: $a.why, rework: $r}; $now)
+            | (if $a.bug == true then bug_found($f; $a.gate; $a.by; $a.why; $now) else . end)
+            | event({event: "rework", ticket: $r, from: $f, gate: $a.gate, card: null, human_check: $t}; $now)
+          else . end
+      end;
   . as $s0
   | ((.review_gates // []) | map(.id) | index($a.gate)) as $i
-  | if $i == null or any(.review_gates[$i].decisions[]; .action == $a.key) then .
+  | if $a.type == "check" then check_answer($a; $i)
+    elif $i == null or any(.review_gates[$i].decisions[]; .action == $a.key) then .
     else
       .review_gates[$i].decisions += ($a.decisions | map(. + {action: $a.key}))
       | .lessons = ((.lessons // []) + [$a.decisions[] | select(.guardrail_level != null)
@@ -533,6 +589,132 @@ cmd_bug() {
   echo "bug in #$t recorded at $gate"
 }
 
+# ------------------------------------------------------------ Human checks
+
+# The gate a Human check is answered at: the open or deferred review gate
+# that lists it, else the end gate while it is open. Prints its id; 6 when
+# the check is on no gate the Artisan can answer now.
+check_gate() { # ticket
+  local t="$1" hg=""
+  [ "$(jget 'is_human_check($t)' --arg t "$t")" = true ] || state_die 6 "gate.sh: #$t is not a Human check of this run"
+  [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
+    || state_die 6 "gate.sh: Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
+  hg=$(get --arg t "$t" '.tickets[$t].human_check.gate // ""')
+  if [ -n "$hg" ] && [ "$(get --arg g "$hg" 'any((.review_gates // [])[]; .id == $g and (.status == "open" or .status == "deferred"))')" = true ]; then
+    printf '%s\n' "$hg"
+  elif [ "$(get '.end_gate.status // ""')" = open ]; then
+    echo end
+  else
+    state_die 6 "gate.sh: Human check #$t is on no open gate yet; it is answered at the slice gate after #$(jget 'human_check_for($t)' --arg t "$t") merges, or at the end gate"
+  fi
+}
+
+# One Human check answered: the tracker first (close it, or open its rework
+# ticket), then the action, recorded or kept for the next sync.
+check_one() { # ticket verdict notes not-bug want-gate
+  local t="$1" verdict="$2" notes="$3" not_bug="$4" want="$5" gid="" agent="" repo="" f="" num="" url="" title="" gid_num="" rework='null' d=""
+  gid=$(check_gate "$t") || exit $?
+  [ -z "$want" ] || [ "$want" = "$gid" ] || state_die 6 "gate.sh: Human check #$t is on $gid, not on $want"
+  agent=$(jget 'human_check_for($t)' --arg t "$t")
+  repo=$(get '.repo')
+  case "$verdict" in
+    pass)
+      gh issue close "$t" -R "$repo" --comment "Human check passed at $gid by $BY, on the build of #$agent.${notes:+ Notes: $notes}" >/dev/null \
+        || die "could not close Human check #$t"
+      ;;
+    fail)
+      title="Rework #$agent: Human check #$t failed"
+      num=$(gh issue list -R "$repo" --state open --label in-run --json number,title,body \
+              | jq -r --arg t "$title" --arg mark "Human check #$t failed at $gid." \
+                  '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
+      if [ -z "$num" ]; then
+        url=$(gh issue create -R "$repo" --title "$title" --label ready-for-agent --label in-run --body "## Parent
+
+Human check #$t failed at $gid. In run $RUN_ID.
+
+## What to build
+
+$BY checked the build of #$agent by hand and it failed:
+
+> $(printf '%s' "$WHY" | sed 's/^/> /; 1s/^> //')
+
+## Acceptance criteria
+
+- [ ] #$agent's work no longer fails Human check #$t: $(printf '%s' "$WHY" | head -1)
+- [ ] The full suite passes
+") || die "could not open the rework ticket"
+        num=${url##*/}
+      fi
+      gid_num=$(issue_id "$num") || die "could not read #$num"
+      # As a redirect: an open gate's dependents wait for the rework too; the
+      # check itself is tried again on the rework's build.
+      if [ "$gid" != end ] && [ "$(get --arg g "$gid" '.review_gates[] | select(.id == $g) | .status')" = open ]; then
+        for d in $(get --arg g "$gid" '.review_gates[] | select(.id == $g) | .dependents[].number'); do
+          add_blocker "$d" "$num" "$gid_num"
+        done
+      fi
+      add_blocker "$t" "$num" "$gid_num"
+      gh issue comment "$t" -R "$repo" --body "Human check failed at $gid by $BY: $WHY. Rework ticket #$num joins this run; try this check again on its build." >/dev/null \
+        || echo "gate.sh: could not comment on #$t" >&2
+      rework=$(jq -nc --argjson n "$num" --arg title "$title" '{number: $n, title: $title}')
+      echo "$num"
+      ;;
+  esac
+  f=$(new_action "$gid")
+  jq -n --arg key "$(basename "$f" .json)" --arg g "$gid" --arg t "$t" --arg agent "$agent" --arg v "$verdict" \
+    --arg by "$BY" --arg notes "$notes" --arg why "$WHY" --argjson bug "$([ "$not_bug" = 1 ] && echo false || echo true)" \
+    --argjson rework "$rework" '
+    {key: $key, type: "check", gate: $g, ticket: $t, agent: $agent, verdict: $v, by: $by, notes: $notes, why: $why,
+     bug: ($v == "fail" and $bug), rework: $rework}' >"$f"
+  record "$f"
+  case "$verdict" in
+    pass) echo "Human check #$t passed and closed" ;;
+    later) echo "Human check #$t carries to the next gate" ;;
+  esac
+}
+
+cmd_check() {
+  [ $# -ge 3 ] || usage
+  open_run "$1"
+  local which="$2" verdict="$3" want="" notes="" not_bug=0 t="" list="" g=""
+  shift 3
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --gate) [ $# -ge 2 ] && [ -n "$2" ] || usage; want=$2; shift 2 ;;
+      --notes) [ $# -ge 2 ] || usage; notes=$2; shift 2 ;;
+      --not-bug) not_bug=1; shift ;;
+      --bug) not_bug=0; shift ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  parse_opts ${rest[@]+"${rest[@]}"}
+  case "$verdict" in
+    pass|later) ;;
+    fail) [ -n "$WHY" ] && [ "$which" != all ] || usage ;;
+    *) usage ;;
+  esac
+  # --gate names a gate by its issue (or "end"): the check must be on it.
+  if [ -n "$want" ] && [ "$want" != end ]; then
+    g=$(recorded "$want")
+    [ -n "$g" ] || state_die 6 "gate.sh: #$want is not a gate of this run"
+    want=$(jq -r .id <<<"$g")
+  fi
+  if [ "$which" = all ]; then
+    for t in $(jget 'open_human_checks[]'); do
+      g=$( (check_gate "$t") 2>/dev/null) || continue
+      [ -z "$want" ] || [ "$g" = "$want" ] || continue
+      list="$list $t"
+    done
+    [ -n "$list" ] || state_die 6 "gate.sh: no Human check is waiting on ${want:-an open gate}"
+  else
+    list=$which
+  fi
+  for t in $list; do
+    check_one "$t" "$verdict" "$notes" "$not_bug" "$want"
+  done
+}
+
 # --------------------------------------------------------------------- sync
 
 cmd_sync() {
@@ -654,5 +836,6 @@ case "$cmd" in
   guardrail) cmd_guardrail "$@" ;;
   approve) cmd_approve "$@" ;;
   bug) cmd_bug "$@" ;;
+  check) cmd_check "$@" ;;
   *) usage ;;
 esac

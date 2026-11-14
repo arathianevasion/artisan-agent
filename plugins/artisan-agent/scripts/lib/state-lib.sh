@@ -285,8 +285,14 @@ state_usage() {
 #     a review gate (#122): event bug-found, with t's areas and where "gate"
 #   guardrails_fired(gate; at): one guardrail-fired event per guardrail that
 #     opened the gate (its `guardrails`, [{guardrail, area?}])
+#   human_check_for(t): the agent ticket Human check t verifies, as a string
+#     (tickets.<t>.human_check.for, which the reconciler reads from the body
+#     marker, or plan.tickets.<t>.human_check_for), else null
+#   is_human_check(t): t is a Human check (references/human-checks.md): never
+#     dispatched, never a blocker or a dependent in the run's own logic
+#   open_human_checks: the Human checks in scope still to be answered (queued)
 #   slice_gates: the review gates placed on tickets: the plan's slice and
-#     risk gates, and a risk gate per ticket whose evidence holds a new-seam
+#     risk gates (their Human checks left out), and a risk gate per ticket whose evidence holds a new-seam
 #     card (criterion 3) no planned risk gate covers; each {id, kind, why,
 #     slice, role, problem, solution, guardrails, tickets}; guardrails is
 #     [{guardrail: "area:<name>", area}] for an area's risk gate, else null (references/review-gates.md,
@@ -348,6 +354,13 @@ STATE_JQ_DEFS='
      "seam-card": "new seam (decision card)"}[.]
     // (if startswith("area:") then "area \(.[5:]) gate setting" else . end);
   def seam_card: ((.criterion? // "") | tostring) == "3";
+  def human_check_for($t):
+    (.tickets[$t | tostring].human_check.for? // .plan.tickets[$t | tostring].human_check_for? // null)
+    | if . == null then null else tostring end;
+  def is_human_check($t): human_check_for($t) != null;
+  def open_human_checks:
+    . as $s | [.plan.scope[] | tostring
+      | select(. as $t | ($s | is_human_check($t)) and $s.tickets[$t].status? == "queued")];
   def slice_gates:
     . as $s
     | [($s.plan.gates // []) | to_entries[] | select((.value.kind? // "") == "slice" or (.value.kind? // "") == "risk")
@@ -361,7 +374,8 @@ STATE_JQ_DEFS='
                        | if . == [] then null else . end),
           tickets: ([($g.tickets // (if $g.after != null then [$g.after] else null end)
                       // [$s.plan.tickets | to_entries[] | select($g.slice != null and .value.slice? == $g.slice) | .key])
-                     | .. | scalars | tostring] | unique_by(tonumber? // .))}
+                     | .. | scalars | tostring] | unique_by(tonumber? // .)
+                    | map(select(. as $x | $s | is_human_check($x) | not)))}
        | select(.tickets != [])]
     | . as $planned
     # A new-seam card (controversy criterion 3) in a ticket evidence raises a
