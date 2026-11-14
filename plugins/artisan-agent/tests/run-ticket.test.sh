@@ -156,6 +156,37 @@ test_output_json_is_the_streams_result_event() {
   assert_eq "completed -" "$("$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46)"
 }
 
+# #151: current claude writes "type" after other keys. The result event and
+# the rate_limit_events are found by their parsed type, a line that is not
+# JSON (the fake writes a cut-off one) is skipped, and the cost is kept.
+test_events_are_found_by_their_type_not_by_how_the_line_starts() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=0
+  launch stream
+  wait_for_file "$EXIT_RECORD"
+  local out="$RUN/workers/46.1/output.json"
+  grep -q '^{"duration_api_ms".*"type":"result"' "$RUN/workers/46.1/stream.jsonl" \
+    || fail "the fake's result line should put type after other keys"
+  assert_eq result "$(jq -r .type "$out")"
+  assert_eq 0.01 "$(jq -r .total_cost_usd "$out")" "the session's cost is in output.json"
+  assert_eq 1 "$(wc -l <"$out" | tr -d ' ')" "the cut-off line is not taken for the result"
+  assert_eq "completed -" "$("$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46)"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$RUN/workers/46.1/usage.json")"
+  assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$RUN/workers/46.1/usage.json")"
+}
+
+test_events_with_type_first_are_still_found() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=0 FAKE_CLAUDE_TYPE_FIRST=1
+  launch stream
+  wait_for_file "$EXIT_RECORD"
+  grep -q '^{"type":"result"' "$RUN/workers/46.1/stream.jsonl" || fail "the fake should put type first"
+  assert_eq 0.01 "$(jq -r .total_cost_usd "$RUN/workers/46.1/output.json")"
+  assert_eq "completed -" "$("$PLUGIN_ROOT/scripts/classify-worker.sh" "$RUN" 46)"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$RUN/workers/46.1/usage.json")"
+  assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$RUN/workers/46.1/usage.json")"
+}
+
 test_small_estimates_get_a_floor_of_twenty_turns() {
   setup_run
   export FAKE_CLAUDE_MODE=complete

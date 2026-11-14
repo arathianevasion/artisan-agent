@@ -158,6 +158,8 @@ findings_file=$run_dir/results/findings/$ticket.jsonl
 
 # shellcheck source=lib/detach-lib.sh
 . "$(dirname "$0")/lib/detach-lib.sh"
+# shellcheck source=lib/stream-lib.sh
+. "$(dirname "$0")/lib/stream-lib.sh"
 
 if [ -z "$foreground" ]; then
   if [ -e "$worker_dir" ] || [ -e "$exit_record" ]; then
@@ -281,14 +283,17 @@ set +m
 # a resent old limit must not pass as fresh). Windows accumulate: an event
 # names one window, and each keeps the time it was last seen. Utilisation is
 # a fraction (0.29); the reading holds percent, as the status line does.
+# Events are found by their parsed type (lib/stream-lib.sh), never by the
+# line's prefix: claude writes other keys before "type".
 usage_seen=0
 record_usage() {
-  local lines= total= now=
-  total=$(grep -c '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" 2>/dev/null) || total=0
+  local events="" lines="" total=0 now=""
+  events=$(stream_events rate_limit_event "$worker_dir/stream.jsonl")
+  [ -z "$events" ] || total=$(printf '%s\n' "$events" | wc -l | tr -d ' ')
   [ "$total" -gt "$usage_seen" ] || return 0
   # Every event since the last look, in order, so two landing between polls
   # both count; the later one wins a window.
-  lines=$(grep '^{"type":"rate_limit_event"' "$worker_dir/stream.jsonl" | tail -n +$((usage_seen + 1)))
+  lines=$(printf '%s\n' "$events" | tail -n +$((usage_seen + 1)))
   usage_seen=$total
   now=$(date +%s)
   jq -nc --argjson now "$now" --arg t "$ticket" --argjson n "$attempt" \
@@ -309,7 +314,7 @@ record_usage() {
 # finish_output: output.json is the stream's final result event, as before.
 finish_output() {
   record_usage
-  grep '^{"type":"result"' "$worker_dir/stream.jsonl" 2>/dev/null | tail -n 1 >"$worker_dir/output.json" || true
+  stream_result "$worker_dir/stream.jsonl" >"$worker_dir/output.json" || true
   return 0
 }
 
