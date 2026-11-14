@@ -129,9 +129,19 @@ host_configured: false
 # and refuses one without a workflow_dispatch trigger); none means a CI
 # machine can't merge for this project. With no conclusion after
 # timeout_minutes, the run parks (reason ci) until the Artisan clears it.
+# worker_inputs (#194) are the workflow inputs a worker's run on its own
+# branch passes (gh workflow run -f key=value), for a project whose runs
+# should leave jobs out when a worker runs them. Empty, the default, means a
+# worker's run is the gate's own run, so the merge gate can reuse a green one
+# whose tree it would test again; set, the merge gate never reuses it.
+# Example (leave the macOS jobs out of a worker's run):
+#   ci_gate:
+#     worker_inputs:
+#       macos: false
 ci_gate:
   workflow:
   timeout_minutes: 30
+  worker_inputs: {}
 
 # The release skip (#168). On the merge gate on CI, a merge whose changes since
 # the newest green run of the gate workflow (on a commit the merge descends
