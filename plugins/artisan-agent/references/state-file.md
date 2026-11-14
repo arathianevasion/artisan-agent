@@ -259,13 +259,11 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `handoff-failed` (`id`, `attempt`: the next orchestrator didn't launch, the hand-off record was taken back)
 - `risk-gate` (`ticket`, `percent`)
 - and `risk-gate-cleared` (`ticket`, `by`) for the context drain
-- and for worker questions
-- `asked` (`ticket`, `question`)
+- and for worker questions `asked` (`ticket`, `question`)
 - `answered` (`ticket`, `question`, `next`)
 - `deferred-question`
 - `pulled` and `provisional-shown`
-- and for slice gates
-- `gate-opened` (`gate`, `issue`, `tickets`, `dependents`)
+- and for slice gates `gate-opened` (`gate`, `issue`, `tickets`, `dependents`)
 - `gate-decision` (`gate`, `card`, `by`, `outcome`, `redirect`, `areas`, `cards?`)
 - `rework` (`ticket`, `from`, `gate`, `card`)
 - and `gate-approved` (`gate`, `issue`, `by`)
@@ -301,8 +299,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - and `ci-gate-abandoned` (`ticket`, `branch`)
 - and for the base check on a red gate (#195) `parked` (`reason: "base"`, `ticket`, `attempt`, `detail`, and `tickets`, `batch` for a merge batch)
 - `unparked` (`reason: "base"`, `ticket`, `how: "merge"`, `by`) and
-- for every CI merge gate
-- `ci-wait` (`ticket`, or `batch` and `tickets`; `gate`, `sha`, `minutes` from the gate's start to its outcome, `outcome`: `success`, `red` or `no-verdict`)
+- for every CI merge gate `ci-wait` (`ticket`, or `batch` and `tickets`; `gate`, `sha`, `minutes` from the gate's start to its outcome, `outcome`: `success`, `red` or `no-verdict`)
 - which `wave.sh report` (`ci_wait`) and the run digest add up per merge and in total
 - and for the detached merge gate (#142) `merge-gate` (`ticket`, `attempt`, `gate`, `mode`, `sha`: a gate started, between `verified` and `merge`)
 - `merge-gate-resumed` (`ticket`, `branch`, `run_id`)
