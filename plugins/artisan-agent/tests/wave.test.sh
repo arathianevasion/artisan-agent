@@ -520,7 +520,8 @@ test_a_worker_launched_by_an_orchestrator_stopped_mid_dispatch_is_still_named() 
   STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_eq returned "$(state_get '.tickets["1"].status')" "the sweep took the launched attempt in"
   assert_eq 1 "$(state_get '.tickets["1"].attempts')"
-  assert_eq 1 "$(state_get '[.events[] | select(.event == "dispatch" and .ticket == "1")] | length')"
+  assert_eq true "$(state_get '[.events[] | select(.event == "dispatch" and .ticket == "1")] | length == 1 and .[0].unrecorded')"
+  assert_eq 120 "$(state_get '.tickets["1"].deadline_at - .tickets["1"].dispatched_at')" "the plan's deadline cap"
   assert_exit_decision not-completed '["1"]' "#1 returned, no verdict"
   # Judged once: another status queues nothing more.
   assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"

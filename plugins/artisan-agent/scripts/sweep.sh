@@ -157,7 +157,9 @@ sweep() {
     runner=$(cat "$RUN_DIR/workers/$t.$next/runner.pid" 2>/dev/null) || runner=""
     state_is_uint "$runner" || continue
     step "$STATE_JQ_DEFS"'
-      ((.plan.tickets[$t].caps.deadline_seconds // null) as $s | if $s == null then null else $now + $s end) as $deadline
+      # The deadline wave.sh dispatch would have recorded: the cap, else twice
+      # the expected minutes (every dispatch has one, state.sh dispatch).
+      ($now + (.plan.tickets[$t].caps.deadline_seconds // ((.plan.tickets[$t].expected.minutes // 30) * 120))) as $deadline
       | .tickets[$t] |= (.status = "in_flight" | .attempts += 1 | .pid = $pid
           | .dispatched_at = $now | .deadline_at = $deadline | .result = null)
       | event({event: "dispatch", ticket: $t, attempt: .tickets[$t].attempts, pid: $pid, unrecorded: true}; $now)' \
