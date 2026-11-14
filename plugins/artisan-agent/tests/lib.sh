@@ -46,11 +46,37 @@ kill_test_processes() {
   done
 }
 
+# Every ARTISAN_* variable lib.sh itself sets, as NAME=VALUE lines. run.sh
+# clears the caller's ARTISAN_* before sourcing lib.sh (#121), so these are the
+# only ones a test starts with; artisan_vars_from_caller (below) reads this
+# same list, so the leak checks allow exactly these names with these values.
+TEST_LIB_ARTISAN_VARS="ARTISAN_USAGE_FILE=$TEST_TMPDIR.usage.json
+ARTISAN_RUNNER_POLL_SECONDS=0.1
+ARTISAN_WAIT_ANY_POLL_SECONDS=0.1
+ARTISAN_MERGE_POLL_SECONDS=0.1"
+
+# artisan_vars_from_caller: print each ARTISAN_* variable in this shell that is
+# not one of TEST_LIB_ARTISAN_VARS with exactly its value; empty when none.
+artisan_vars_from_caller() {
+  local v= line= found=
+  for v in $(compgen -v ARTISAN_); do
+    found=
+    while IFS= read -r line; do
+      [ "$line" != "$v=${!v}" ] || { found=1; break; }
+    done <<<"$TEST_LIB_ARTISAN_VARS"
+    [ -n "$found" ] || printf '%s\n' "$v"
+  done
+}
+
+while IFS= read -r _lib_line; do
+  export "$_lib_line"
+done <<<"$TEST_LIB_ARTISAN_VARS"
+unset _lib_line
+
 # A fresh plan-usage reading well under the limits, so the usage guard
 # (budget.sh, #72) lets every test's dispatch through; tests of the guard
 # write their own. Never the machine's own reading. Beside the test's folder,
 # not in it (tests check what lands there); run.sh removes it.
-export ARTISAN_USAGE_FILE="$TEST_TMPDIR.usage.json"
 jq -nc --argjson t "$(date +%s)" '{schema_version: 1, written_at: $t,
   rate_limits: {at: $t, five_hour: {used_percentage: 10, resets_at: ($t + 3600)},
                 seven_day: {used_percentage: 20, resets_at: ($t + 86400)}}}' >"$ARTISAN_USAGE_FILE"
@@ -74,7 +100,5 @@ merge_gate_local "$CLAUDE_CONFIG_DIR/artisan-agent"
 # The pipeline's poll intervals, short (#169): a test waits on a runner, the
 # orchestrator's wait-any and a merge gate many times, and at the production
 # intervals (1s, 1s, 0.5s) most of a run test's time is spent asleep. Each
-# script's header documents its variable; the defaults are unchanged.
-export ARTISAN_RUNNER_POLL_SECONDS=0.1
-export ARTISAN_WAIT_ANY_POLL_SECONDS=0.1
-export ARTISAN_MERGE_POLL_SECONDS=0.1
+# script's header documents its variable; the defaults are unchanged. They are
+# set above, from TEST_LIB_ARTISAN_VARS, with the usage file.
