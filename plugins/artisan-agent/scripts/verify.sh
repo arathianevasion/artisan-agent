@@ -108,15 +108,19 @@ classify() {
 
 # The ticket's acceptance criteria, verbatim, as a JSON array.
 read_criteria() { # ticket
-  local path= body=
+  local path= body= issue=
   path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
   if [ -n "$path" ]; then
     case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
     [ -f "$path" ] || die "no ticket file $path for #$1"
     body=$(cat "$path")
   else
-    body=$(gh issue view "$1" -R "$(get .repo)" --json body -q .body) \
+    issue=$(gh issue view "$1" -R "$(get .repo)" --json body,comments) \
       || die "could not read #$1 from the tracker; not verifying blind"
+    issue=$(printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket) \
+      || die "could not read #$1's criteria; not verifying blind"
+    printf '%s' "$issue" | jq -c .criteria
+    return
   fi
   printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract
 }
@@ -249,6 +253,7 @@ cmd_start() {
     printf -- '- Guardrails that apply to this ticket (an area-scoped one only if the ticket touches its area): run %s resolve --run-dir %s --ticket %s\n' \
       "$SCRIPT_DIR/guardrails.sh" "$RUN_DIR" "$t"
     printf -- '- Expected output (from the plan): %s\n' "$expected"
+    printf -- '- Dependencies (such as node_modules) are installed by the project'"'"'s worktree_setup before you start. "Not found" or a missing module is a setup failure, not a code failure: say so in notes and never mark a criterion unmet for it.\n'
     [ -z "$suite" ] || printf -- '- The full suite: %s\n' "$suite"
     printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
     if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then
@@ -284,6 +289,13 @@ cmd_start() {
     --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid=
+  # The project's worktree_setup (#173) runs before the verifier starts. A
+  # failure is an error verdict with the reason "setup", not a red check.
+  if ! worktree_setup "$wt"; then
+    remove_worktree "$wt"
+    apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)' --arg t "$t" --arg r "$SETUP_ERR"
+    die "the verifier's worktree for #$t: $SETUP_ERR"
+  fi
   read_extra_args
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \

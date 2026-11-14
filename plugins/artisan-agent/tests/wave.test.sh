@@ -97,10 +97,14 @@ EOF
 }
 
 # The orchestrator's loop, as references/orchestrator.md tells the real one.
+# ORCH_STOP=returned stops once the workers are back (nothing verified);
+# ORCH_STOP=verified verifies but merges nothing; ORCH_STOP=fail ends at once,
+# without the completion line.
 write_orchestrator_script() {
   export FAKE_CLAUDE_SCRIPT_ORCHESTRATOR="$TEST_TMPDIR/orchestrator.sh"
   cat >"$FAKE_CLAUDE_SCRIPT_ORCHESTRATOR" <<EOF
 set -euo pipefail
+[ "\${ORCH_STOP:-}" != fail ] || exit 1
 S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
@@ -124,9 +128,11 @@ while [ "\$(inflight)" -gt 0 ]; do
   "\$S/wait-any.sh" "\$R" --timeout 5 >/dev/null || true
   "\$S/sweep.sh" "\$R"
 done
+if [ "\${ORCH_STOP:-}" = returned ]; then "\$S/wave.sh" report "\$R" >"\$ARTISAN_RESULT_FILE"; exit 0; fi
 for t in \$(jq -r '.tickets | to_entries[] | select(.value.status == "returned") | .key' "\$R/state.json"); do
   n=\$(jq -r --arg t "\$t" '.tickets[\$t].attempts' "\$R/state.json")
   while [ "\$("\$S/classify-worker.sh" "\$R" "\$t" "\$n")" = "running -" ]; do sleep 0.2; done
+  if [ "\${ORCH_STOP:-}" = verified ]; then verify "\$t" || true; continue; fi
   if verify "\$t" && "\$S/wave.sh" merge "\$R" "\$t"; then "\$S/wave.sh" close "\$R" "\$t"; fi
 done
 "\$S/wave.sh" report "\$R" >"\$ARTISAN_RESULT_FILE"
@@ -399,4 +405,167 @@ test_fractional_expected_minutes_still_dispatch_with_a_deadline() {
   "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
   assert_eq in_flight "$(state_get '.tickets["1"].status')"
   [ "$(state_get '.tickets["1"].deadline_at - .tickets["1"].dispatched_at')" -ge 299 ] || fail "deadline not twice 2.5 minutes"
+}
+
+# ---------------------------------------------- the orchestrator's exit (#171)
+
+# Launch wave 1, wait for its orchestrator to end, and run status once.
+exit_wave() {
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+}
+
+# The one orchestrator-exit decision queued, with its cause and tickets, and
+# its event; status says decide and names both; launch refuses (23).
+assert_exit_decision() { # cause tickets-json detail-fragment
+  assert_eq 1 "$(state_get '[.decisions[] | select(.kind == "orchestrator-exit")] | length')"
+  assert_eq "$1" "$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .cause')"
+  assert_eq "$2" "$(jq -c '.decisions[] | select(.kind == "orchestrator-exit") | .tickets' "$RUN_DIR/state.json")"
+  assert_eq 1 "$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .wave')"
+  assert_eq "$1" "$(state_get '[.events[] | select(.event == "orchestrator-exit")] | last | .cause')"
+  assert_contains "$STATUS_OUT" "next: decide"
+  assert_contains "$STATUS_OUT" "orchestrator-exit: $1 in wave 1"
+  assert_contains "$STATUS_OUT" "$3"
+  assert_contains "$STATUS_OUT" "(orchestrator-exit)"
+  assert_status 23 "$SCRIPTS/wave.sh" launch "$RUN_DIR"
+  assert_eq 1 "$(state_get '.orchestrators | length')" "nothing launched"
+}
+
+test_a_zero_exit_leaving_a_ticket_without_a_verdict_queues_an_orchestrator_exit_decision() {
+  setup_wave
+  export ORCH_STOP=returned
+  exit_wave
+  assert_contains "$STATUS_OUT" "orchestrator: completed"
+  assert_exit_decision no-verdict '["1"]' "#1 returned, no verdict"
+  # Judged once: another status queues nothing more and still says decide.
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
+  assert_eq 1 "$(state_get '.decisions | length')"
+}
+
+test_a_verified_but_unmerged_ticket_counts_as_unfinished() {
+  setup_wave
+  export ORCH_STOP=verified
+  exit_wave
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_exit_decision unmerged '["1"]' "#1 verified, not merged"
+}
+
+test_error_max_turns_queues_the_decision_with_that_cause() {
+  setup_wave
+  export FAKE_CLAUDE_ORCHESTRATOR_END=turns
+  exit_wave
+  assert_contains "$STATUS_OUT" "orchestrator: failed turns"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_exit_decision error_max_turns '[]' "exit code 1"
+}
+
+test_a_budget_limit_queues_the_decision_with_that_cause() {
+  setup_wave
+  export FAKE_CLAUDE_ORCHESTRATOR_END=budget ORCH_STOP=verified
+  exit_wave
+  assert_exit_decision budget '["1"]' "#1 verified, not merged"
+}
+
+test_a_nonzero_exit_queues_the_decision_with_that_cause() {
+  setup_wave
+  export FAKE_CLAUDE_ORCHESTRATOR_END=nonzero
+  exit_wave
+  assert_exit_decision nonzero-exit '[]' "exit code 3"
+}
+
+test_a_deadline_queues_the_decision_with_that_cause() {
+  setup_wave
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.orchestrator.deadline_seconds = 3'
+  export FAKE_CLAUDE_ORCHESTRATOR_END=hang ORCH_STOP=returned
+  exit_wave
+  assert_contains "$STATUS_OUT" "orchestrator: failed deadline"
+  assert_exit_decision deadline '["1"]' "#1 returned, no verdict"
+}
+
+test_a_clean_wave_end_queues_nothing() {
+  setup_wave
+  exit_wave
+  assert_contains "$STATUS_OUT" "next: done"
+  assert_eq true "$(state_get '.orchestrators[0].exit.clean')"
+  assert_eq 0 "$(state_get '.decisions | length')"
+  case "$STATUS_OUT" in *orchestrator-exit*) fail "a clean wave named an orchestrator exit" ;; esac
+}
+
+test_resume_answers_the_exit_decision_and_carries_the_wave_on() {
+  setup_wave
+  export ORCH_STOP=returned
+  exit_wave
+  unset ORCH_STOP
+  "$SCRIPTS/wave.sh" launch "$RUN_DIR" --resume >"$TEST_TMPDIR/launch2.out"
+  assert_eq "orchestrator-w1 2" "$(awk '{print $1, $2}' "$TEST_TMPDIR/launch2.out")" "the same wave carries on"
+  assert_eq resume "$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .choice')"
+  assert_eq true "$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .applied')"
+  wait_for "$RUN_DIR/results/$(awk '{print $1 "." $2}' "$TEST_TMPDIR/launch2.out").exit.json" 60
+  assert_eq merged "$(state_get '.tickets["1"].status')" "the next orchestrator verified and merged it"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: done"
+}
+
+test_retry_sends_the_tickets_back_for_fresh_workers() {
+  setup_wave
+  export ORCH_STOP=returned
+  exit_wave
+  local d=""
+  d=$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .id')
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" "$d" retry >/dev/null
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: launch"
+  assert_eq queued "$(state_get '.tickets["1"].status')"
+  assert_contains "$(state_get '.tickets["1"].steering[-1].note')" "exited (no-verdict)"
+  assert_eq 0 "$(state_get '.tickets["1"].failures | length')" "no attempt used"
+}
+
+test_halt_halts_the_run_until_the_artisan_resumes() {
+  setup_wave
+  export ORCH_STOP=returned
+  exit_wave
+  local d=""
+  d=$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .id')
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" "$d" halt >/dev/null
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: halted"
+  assert_contains "$(state_get '.halted.reason')" "exited (no-verdict)"
+  assert_status 12 "$SCRIPTS/wave.sh" launch "$RUN_DIR"
+}
+
+test_wait_returns_once_the_orchestrator_has_ended() {
+  setup_wave
+  export WORKER_SLEEP=2 ARTISAN_WAIT_INTERVAL=1
+  start_and_launch
+  assert_status 3 "$SCRIPTS/wave.sh" wait "$RUN_DIR" --timeout 0
+  local out=""
+  out=$("$SCRIPTS/wave.sh" wait "$RUN_DIR" --timeout 60)
+  assert_contains "$out" "orchestrator: completed - (wave 1, attempt 1)"
+  [ -f "$ORCH_EXIT" ] || fail "wait returned before the orchestrator ended"
+}
+
+test_an_orchestrator_ending_without_its_completion_line_queues_the_decision() {
+  setup_wave
+  export ORCH_STOP=fail
+  exit_wave
+  assert_contains "$STATUS_OUT" "orchestrator: not-completed"
+  assert_exit_decision not-completed '[]' "exit code 0"
+}
+
+# A ticket an earlier wave left without a verdict is still unfinished when a
+# later wave's orchestrator ends cleanly.
+test_an_earlier_waves_unfinished_ticket_is_still_unfinished_later() {
+  setup_wave
+  export ORCH_STOP=returned
+  exit_wave
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" 1 resume >/dev/null
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.decisions[0].applied = true
+    | .orchestrators += [{id: "orchestrator-w2", wave: 2, attempt: 1, launched_at: 1}]'
+  mkdir -p "$RUN_DIR/workers/orchestrator-w2.1"
+  cp "$RUN_DIR/workers/orchestrator-w1.1/output.json" "$RUN_DIR/workers/orchestrator-w2.1/"
+  cp "$RUN_DIR/results/orchestrator-w1.1.exit.json" "$RUN_DIR/results/orchestrator-w2.1.exit.json"
+  cp "$RUN_DIR/results/orchestrator-w1.1.result.json" "$RUN_DIR/results/orchestrator-w2.1.result.json"
+  echo 1 >"$RUN_DIR/workers/orchestrator-w2.1/runner.pid"
+  local out=""
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: decide"
+  assert_contains "$out" "orchestrator-exit: no-verdict in wave 2 (#1)"
 }

@@ -15,7 +15,11 @@
 #               FAKE_CLAUDE_SCRIPT_VERIFIER or FAKE_CLAUDE_SCRIPT_WORKER (by
 #               $ARTISAN_ROLE) in its working
 #               directory; completes if the file exits 0, else ends without
-#               the completion line
+#               the completion line. FAKE_CLAUDE_ORCHESTRATOR_END makes the
+#               orchestrator, once its script has run, end another way
+#               instead: turns (error_max_turns, exit 1), budget
+#               (error_max_budget_usd, exit 1), nonzero (exit 3) or hang
+#               (sleeps until its runner stops it at its deadline)
 #   stream      like complete, but as `--output-format stream-json --verbose`
 #               prints: a system event, a rate_limit_event (the shape seen live:
 #               one window, utilization a fraction, resetsAt: in 2100, so the
@@ -115,6 +119,14 @@ ARTISAN-WORKER: complete"
       *) script=${FAKE_CLAUDE_SCRIPT_WORKER:-} ;;
     esac
     if [ -n "$script" ] && bash "$script" >>"${FAKE_CLAUDE_LOG:-/dev/null}" 2>&1; then
+      if [ "${ARTISAN_ROLE:-}" = orchestrator ]; then
+        case "${FAKE_CLAUDE_ORCHESTRATOR_END:-}" in
+          turns) result error_max_turns true 41 ""; exit 1 ;;
+          budget) result error_max_budget_usd true 9 ""; exit 1 ;;
+          nonzero) echo "fake claude: boom" >&2; exit 3 ;;
+          hang) sh -c 'sleep 300; :' "fake-claude-stray:$PWD"; exit 0 ;;
+        esac
+      fi
       result success false 6 "Ran the script.
 
 ARTISAN-WORKER: complete"

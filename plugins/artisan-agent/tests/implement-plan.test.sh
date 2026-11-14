@@ -58,3 +58,14 @@ test_the_orchestrator_is_launched_detached_never_as_a_background_command() {
   assert_contains "$skill" "wave.sh launch"
   assert_contains "$skill" "**end your turn**"
 }
+
+test_the_orchestrators_exit_wakes_the_chat_which_notifies_at_once() {
+  local skill=
+  skill=$(cat "$SKILL_DIR/SKILL.md")
+  assert_contains "$skill" 'scripts/wave.sh wait <run folder>` as a **background** Bash task'
+  assert_contains "$skill" "so the orchestrator's exit wakes you"
+  assert_contains "$skill" "the \`wave.sh wait\` task ends"
+  assert_contains "$skill" "**The orchestrator never fails silently.**"
+  assert_contains "$skill" "send its \`notify:\` line as a push notification"
+  assert_contains "$skill" "an orchestrator's exit is notified idle or not"
+}

@@ -41,7 +41,18 @@ It prints, in order:
 | Plans waiting for Engineering | Engineering | `plan` issues not yet in a run, oldest first |
 | Decisions waiting | Engineering | the waiting decisions in a run's state file |
 
-Then `ACTION` lines for the chat to act on (`gates`, `announce-changes`, `start-plan <issue> approve-envelope|envelope-approved`), and, with `--idle`, a `notify: <text>` line when a decision waits that no earlier sweep notified (a gate, a plan needing its envelope approved, a run's decision). Send the text with the PushNotification tool. The sweep remembers what it has notified in `.artisan-agent/runs/.chat/<chat>.json` (git-ignored, each chat's own) and forgets it once the decision is answered.
+Then `ACTION` lines for the chat to act on (`gates`, `announce-changes`, `start-plan <issue> approve-envelope|envelope-approved`), and, with `--idle`, a `notify: <text>` line when a decision waits that no earlier sweep notified (a gate, a plan needing its envelope approved, a run's decision). An orchestrator that exited without finishing its wave (an `orchestrator-exit` decision, #171) is notified at once, `--idle` or not, the text naming its cause and tickets. Send the text with the PushNotification tool. When the sweep surfaces something only the Artisan can decide (a gate, a plan needing its envelope approved, a run's decision, a worker question), the chat ends its turn with the `Waiting on you:` line ([Waiting on you](#waiting-on-you)). The sweep remembers what it has notified in `.artisan-agent/runs/.chat/<chat>.json` (git-ignored, each chat's own) and forgets it once the decision is answered.
+
+## Waiting on you
+
+The Agent Cockpit's agents pane flags a chat as **needs input** when the last text of its turn has a line of its own starting `Waiting on you:` (any case; it may be bold), and shows the rest of that line as what the chat waits for. Anything the Artisan types next clears the flag. Both chats use it the same way:
+
+- **When a chat ends its turn needing the Artisan to decide or do something, its final line is `Waiting on you: <what, naming the issue>`**, for example `Waiting on you: approve the wave 2 plan (#347)` or `Waiting on you: rule on #31 (worker question from #12)`. When several things wait, name the most pressing one and say how many more (`Waiting on you: gate #41 and 2 more decisions`).
+- **Handing work to the other chat is not waiting on the Artisan.** A turn that only rings a doorbell, runs `chats.sh send` or files a question for triage doesn't add the line.
+- **A chat that is only reporting progress doesn't add it.** That covers a wave still running, a launched wave, or a sweep with nothing for the Artisan.
+- **When the Artisan says to hold** ("hold", "not now", "later"), reply without the line so the flag clears. Add it again only when the chat next ends a turn waiting on them.
+
+Skills cite this section rather than copying it.
 
 ## Plans queued behind the run lock
 
