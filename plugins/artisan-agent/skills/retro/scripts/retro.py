@@ -116,6 +116,87 @@ def action_focus(a, jobs):
         return "chore"  # names no job, so serves no focus
 
 
+# A gate the Artisan decides is opened by gate-opened and closed by the first
+# of these with its gate id (end-gate-approved without one closes "end").
+GATE_CLOSERS = ("gate-approved", "gate-decided", "gate-redirected", "gate-bypassed", "gate-deferred",
+                "gate-resolved", "gate-empty", "end-gate-approved")
+# What ends a local merge gate: its merge, its block, or the next gate.
+LOCAL_GATE_ENDS = ("merge", "failed", "blocked", "merge-gate", "merge-gate-abandoned", "merge-batch-ended")
+
+
+def concerns(e, g):
+    """Whether event e is about the same ticket or merge batch as gate g."""
+    if g.get("ticket") is not None:
+        return e.get("ticket") == g["ticket"]
+    if g.get("batch") is not None:
+        return e.get("batch") == g["batch"] or e.get("ticket") in (g.get("tickets") or [])
+    return False
+
+
+def per(x, n):
+    return num(float(x) / n) if n else None
+
+
+def merge_gate_costs(s, merged):
+    """What the run's merge gates cost, from its events (references/state-file.md).
+    Every figure is None for a run with no merge-gate or ci-wait event: no gate,
+    or a state file from before #142 and #195 recorded them."""
+    events = s.get("events") or []
+    starts = [(i, e) for i, e in enumerate(events) if e.get("event") == "merge-gate"]
+    waits = [e for e in events if e.get("event") == "ci-wait"]
+    if not starts and not waits:
+        return {"run": None, "run_per_merged": None, "minutes": None, "minutes_per_merged": None,
+                "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
+                "not_run": {"skipped": None, "reused": None}}
+    skipped = len([e for e in events if e.get("event") == "merge-gate-skipped"])
+    # A gate #194 reuses records green with reused: <run id> on the suite
+    # record; flaky (#195) is on the suite record of the gate that merged.
+    suites = [t.get("suite") for t in (s.get("tickets") or {}).values() if isinstance(t.get("suite"), dict)]
+    def distinct(rows):
+        return len(set(json.dumps([r.get("run_id"), r.get("sha"), r.get("batch")]) for r in rows))
+    reused = distinct([r for r in suites if r.get("reused")])
+    flaky = distinct([r for r in suites if (r.get("base_check") or {}).get("verdict") == "flaky"])
+
+    minutes = sum(float(e.get("minutes") or 0) for e in waits)
+    local_red = 0
+    for i, g in starts:
+        if g.get("mode") != "local":
+            continue
+        end = next((e for e in events[i + 1:] if e.get("event") in LOCAL_GATE_ENDS and concerns(e, g)), None)
+        if end is None or "at" not in end or "at" not in g:
+            continue
+        minutes += max(0, end["at"] - g["at"]) / 60.0
+        if end.get("event") in ("failed", "blocked"):
+            local_red += 1
+    base = len([e for e in events if e.get("event") == "parked" and e.get("reason") == "base"])
+    ci_red = len([e for e in waits if e.get("outcome") == "red"])
+    no_verdict = len([e for e in waits if e.get("outcome") == "no-verdict"])
+    own = max(0, ci_red - base) + local_red
+    run = len(starts) - skipped
+    return {"run": run, "run_per_merged": per(run, merged),
+            "minutes": num(minutes), "minutes_per_merged": per(minutes, merged),
+            "red": {"total": own + base + flaky + no_verdict, "own": own, "base": base,
+                    "flaky": flaky, "no_verdict": no_verdict},
+            "not_run": {"skipped": skipped, "reused": reused}}
+
+
+def artisan_wait(s):
+    """Minutes gates waited on the Artisan: gate-opened to the event that
+    closed it. None when the run opened no gate that was decided."""
+    events = s.get("events") or []
+    waits = []
+    for i, o in enumerate(events):
+        if o.get("event") != "gate-opened" or "at" not in o:
+            continue
+        for e in events[i + 1:]:
+            if e.get("event") in GATE_CLOSERS and e.get("gate", "end") == o.get("gate") and "at" in e:
+                waits.append(max(0, e["at"] - o["at"]) / 60.0)
+                break
+    if not waits:
+        return {"decisions": 0, "minutes": None, "longest_minutes": None}
+    return {"decisions": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
+
+
 def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
@@ -192,6 +273,8 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "triage_misses": len(misses),
         "actions": {"total": n, "counts": counts, "shares_percent": shares},
         "rubber_stamp": rubber,
+        "merge_gates": merge_gate_costs(s, len(merged)),
+        "artisan_wait": artisan_wait(s),
     }
 
 
@@ -297,6 +380,29 @@ def signals_table(f):
     return "| Signal | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
 
 
+def dash(x):
+    return "-" if x is None else str(x)
+
+
+def gate_costs_table(g, w):
+    """The merge gates' costs and the waits on the Artisan as a Markdown table;
+    a figure the run can't have is a dash."""
+    if g["run"] is None:
+        run = wait = red = not_run = "-"
+    else:
+        run = "%s (%s per merged ticket)" % (g["run"], dash(g["run_per_merged"]))
+        wait = "%s min (%s per merged ticket)" % (g["minutes"], dash(g["minutes_per_merged"]))
+        r = g["red"]
+        red = "%s: own failure %s · red base %s · flaky %s · no verdict %s" % (
+            r["total"], r["own"], r["base"], r["flaky"], r["no_verdict"])
+        not_run = "skipped %s · reused %s" % (g["not_run"]["skipped"], g["not_run"]["reused"])
+    artisan = ("%s min over %d decisions (longest %s min)" % (w["minutes"], w["decisions"], w["longest_minutes"])
+               if w["minutes"] is not None else "-")
+    rows = [("Merge gates run", run), ("Waiting on merge gates", wait), ("Red gates by cause", red),
+            ("Gates not run", not_run), ("Waiting on the Artisan", artisan)]
+    return "| Merge gates | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
+
+
 def cell(s):
     return str(s).replace("|", "\\|").replace("\n", " ")
 
@@ -334,6 +440,8 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
                 out.append("   Strongest alternative: %s" % l["alternative"])
         out.append("")
     out += ["### Signals", "", signals_table(f), ""]
+    if "merge_gates" in f:  # facts from before #199 have none
+        out += [gate_costs_table(f["merge_gates"], f["artisan_wait"]), ""]
     out += ["### How did this run feel?", ""]
     if motivation_path and os.path.isfile(motivation_path):
         with open(motivation_path) as fh:

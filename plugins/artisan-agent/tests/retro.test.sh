@@ -393,3 +393,77 @@ test_a_failed_delivery_leaves_the_misses_for_the_next_retro() {
   assert_status 1 "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json"
   [ ! -f "$PROJECT/.artisan-agent/retro/last" ] || fail "marked done after a failure"
 }
+
+# gate_events: the sample run's merge gates (#199): #10 red then green
+# (green on a rerun: flaky), #11 no verdict, a red base, then a skipped gate,
+# #12 red on a local gate, and two gates the Artisan decided.
+gate_events() {
+  local t0=1800000000
+  jq --argjson t0 "$t0" '
+    .tickets["10"].suite = {passed: true, mode: "ci", run_id: 501, base_check: {verdict: "flaky"}}
+    | .events = [
+      {seq: 1, at: $t0, event: "dispatch", ticket: "10"},
+      {seq: 2, at: ($t0 + 100), event: "merge-gate", ticket: "10", mode: "ci", gate: 1},
+      {seq: 3, at: ($t0 + 820), event: "ci-wait", ticket: "10", gate: 1, minutes: 12, outcome: "red"},
+      {seq: 4, at: ($t0 + 820), event: "failed", ticket: "10", kind: "ci"},
+      {seq: 5, at: ($t0 + 1000), event: "merge-gate", ticket: "10", mode: "ci", gate: 2},
+      {seq: 6, at: ($t0 + 2200), event: "ci-wait", ticket: "10", gate: 2, minutes: 20, outcome: "success"},
+      {seq: 7, at: ($t0 + 3600), event: "merge", ticket: "10"},
+      {seq: 8, at: ($t0 + 3700), event: "merge-gate", ticket: "11", mode: "ci", gate: 3},
+      {seq: 9, at: ($t0 + 4000), event: "ci-wait", ticket: "11", gate: 3, minutes: 5, outcome: "no-verdict"},
+      {seq: 10, at: ($t0 + 4000), event: "parked", reason: "ci", ticket: "11"},
+      {seq: 11, at: ($t0 + 4500), event: "merge-gate", ticket: "11", mode: "ci", gate: 4},
+      {seq: 12, at: ($t0 + 4980), event: "ci-wait", ticket: "11", gate: 4, minutes: 8, outcome: "red"},
+      {seq: 13, at: ($t0 + 4980), event: "parked", reason: "base", ticket: "11"},
+      {seq: 14, at: ($t0 + 6000), event: "merge-gate", ticket: "11", mode: "ci", gate: 5},
+      {seq: 15, at: ($t0 + 6000), event: "merge-gate-skipped", ticket: "11"},
+      {seq: 16, at: ($t0 + 6000), event: "ci-wait", ticket: "11", gate: 5, minutes: 0, outcome: "success"},
+      {seq: 17, at: ($t0 + 7200), event: "merge", ticket: "11"},
+      {seq: 18, at: ($t0 + 7300), event: "merge-gate", ticket: "12", mode: "local", gate: 6},
+      {seq: 19, at: ($t0 + 7900), event: "blocked", ticket: "12"},
+      {seq: 20, at: ($t0 + 8000), event: "gate-opened", gate: "e1", kind: "exception"},
+      {seq: 21, at: ($t0 + 8000 + 31 * 60), event: "gate-decided", gate: "e1", kind: "exception"},
+      {seq: 22, at: ($t0 + 10000), event: "gate-opened", gate: "end", kind: "end"},
+      {seq: 23, at: ($t0 + 10000 + 76 * 60), event: "end-gate-approved"}]' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/state.json.new" && mv "$RUN_DIR/state.json.new" "$RUN_DIR/state.json"
+}
+
+test_facts_show_what_the_merge_gates_cost() {
+  sample_run; gate_events
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '5 2.5' "$(jq -r '.merge_gates | "\(.run) \(.run_per_merged)"' <<<"$f")" "gates run, per merged ticket"
+  # CI: 12 + 20 + 5 + 8 + 0; the local gate 10 minutes, start to block.
+  assert_eq '55 27.5' "$(jq -r '.merge_gates | "\(.minutes) \(.minutes_per_merged)"' <<<"$f")" "minutes waiting"
+  assert_eq '5 2 1 1 1' "$(jq -r '.merge_gates.red | "\(.total) \(.own) \(.base) \(.flaky) \(.no_verdict)"' <<<"$f")" "red by cause"
+  assert_eq '1 0' "$(jq -r '.merge_gates.not_run | "\(.skipped) \(.reused)"' <<<"$f")" "gates not run"
+  assert_eq '2 107 76' "$(jq -r '.artisan_wait | "\(.decisions) \(.minutes) \(.longest_minutes)"' <<<"$f")" "waiting on the Artisan"
+}
+
+test_a_state_file_from_before_the_gate_events_gives_null_figures() {
+  sample_run
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq 'null null null null' "$(jq -r '.merge_gates | "\(.run) \(.minutes) \(.red.total) \(.not_run.skipped)"' <<<"$f")" "no gate figures"
+  assert_eq 'null null' "$(jq -r '.artisan_wait | "\(.minutes) \(.longest_minutes)"' <<<"$f")" "no gate waits"
+  jq 'del(.events)' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq null "$(jq .merge_gates.run <<<"$f")" "no events at all"
+}
+
+test_the_retro_round_shows_the_merge_gate_costs_as_a_table() {
+  sample_run; gate_events; seed_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Merge gates run | 5 (2.5 per merged ticket) |"
+  assert_contains "$out" "| Waiting on merge gates | 55 min (27.5 per merged ticket) |"
+  assert_contains "$out" "| Red gates by cause | 5: own failure 2 · red base 1 · flaky 1 · no verdict 1 |"
+  assert_contains "$out" "| Gates not run | skipped 1 · reused 0 |"
+  assert_contains "$out" "| Waiting on the Artisan | 107 min over 2 decisions (longest 76 min) |"
+}
+
+test_an_old_run_shows_a_dash_for_each_merge_gate_figure() {
+  sample_run; seed_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Merge gates run | - |"
+  assert_contains "$out" "| Waiting on the Artisan | - |"
+}
