@@ -8,7 +8,8 @@
 #       until it is moved or `wave.sh launch --resume`). Safe to repeat.
 #   move.sh idle <run-dir>
 #       exit 0 if nothing is running (no ticket in flight, no live runner, no
-#       other live holder of the run lock); else exit 4 and say what is
+#       other live holder of the run lock, no merge gate recorded in .merge_gate,
+#       alive or not); else exit 4 and say what is
 #   move.sh out <run-dir> [--remote NAME] [--wait SECONDS]
 #       wait up to SECONDS (default 0) for idle, then push the integration
 #       branch, the run's unmerged ticket branches and the run's state folder
@@ -68,6 +69,9 @@ idle_report() { # run-dir: prints what is still running, one line each
     pid=$(cat "$f")
     state_pid_alive "$pid" && printf 'session %s is still running (pid %s)\n' "$(basename "$(dirname "$f")")" "$pid"
   done
+  # A merge gate in flight (#142): the integration branch holds a merge commit
+  # that has not passed. Alive or dead, it counts until wave.sh merge resolves it.
+  jq -r 'select(.merge_gate != null) | "a merge gate is running for #\(.merge_gate.ticket) (\(.merge_gate.mode))"' "$(state_file "$rd")"
   holder=$(state_lock_holder "$rd")
   me=$(state_writer_pid)
   if [ -n "$holder" ] && [ "$holder" != "$me" ] && [ "$holder" != "$PPID" ] && state_pid_alive "$holder"; then
@@ -90,6 +94,9 @@ cmd_drain() {
     if .halted != null then .
     else .halted = {wave: current_wave, tickets: [], reason: "draining to move to another machine", at: $now, move: true}
       | event({event: "halted", wave: current_wave, tickets: [], reason: "move"}; $now) end' --argjson now "$(state_now)"
+  if jq -e '.merge_gate != null' "$(state_file "$rd")" >/dev/null; then
+    printf 'a merge gate is running for #%s: let the gate finish (wave.sh merge records it) before move.sh out\n' "$(jq -r '.merge_gate.ticket' "$(state_file "$rd")")"
+  fi
 }
 
 # ---------------------------------------------------------------- snapshot
