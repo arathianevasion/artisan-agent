@@ -12,7 +12,14 @@
 #       integration branch (in its worktree); record the plugin version and
 #       each source's commit in the state file (state.sh wave-start). Prints
 #       one JSON line. Exit 6: main would not merge cleanly (a decision is
-#       queued, the wave is not recorded).
+#       queued, the wave is not recorded). When the run's base (integration.base)
+#       is not in main, main is not merged on its own: exit 9, an exception
+#       decision (reason guardrail-base: base, ref, commits each side lacks, the
+#       changed guardrail files) is queued, answered with `state.sh decide <id>
+#       merge|keep-base|halt`. merge brings main in (guardrail-merge, with by);
+#       keep-base records the base's guardrails as the product's for the wave
+#       (guardrail-base-kept) and is not asked again until the guardrail files
+#       change again on main; halt halts the run (exit 10).
 #   guardrails.sh resolve [--run-dir D] [--role product|engineering] [--ticket T[,T...]] [--areas A[,A...]]
 #       the guardrails in force, as JSON: {sources, applied, own_reviews,
 #       overridden, conflicts}. With --run-dir it reads each source at the
@@ -61,6 +68,7 @@
 #
 # Exit status: 0 ok, 1 error (a source could not be fetched), 2 usage,
 # 5 a loosening (tighten) or not a loosening (loosen), 6 merge conflict,
+# 9 wave-start: the run's base is not in main, a decision is waiting, 10 wave-start: halted by that decision,
 # 7 loosen refused: the scope floor or a defer-only gate, 8 loosen refused:
 # the latest health report doesn't propose it (or there is none).
 #
@@ -184,9 +192,36 @@ queue_conflict() { # run-dir ref
   rm -f "$d"
 }
 
+# guardrail_fingerprint commit: a checksum of the product guardrail files as
+# they are at the commit, so "the guardrail files changed again" is a compare.
+guardrail_fingerprint() {
+  local wt=$1 c=$2 tab=
+  tab=$(printf '\t')
+  git -C "$wt" ls-tree -r "$c" | grep -E "$tab${PRODUCT_PATHS#^}" | cksum | cut -d' ' -f1,2 || true
+}
+
+# queue_diverged run ref pc base fingerprint files worktree: the run's base is not in
+# the product's ref, so main is not brought in; the Artisan chooses.
+queue_diverged() {
+  local run=$1 ref=$2 pc=$3 base=$4 fp=$5 files=$6 wt=$7 counts= only_ref= only_base= d=
+  counts=$(git -C "$wt" rev-list --left-right --count "$base...$pc")
+  only_base=${counts%%[[:space:]]*}
+  only_ref=${counts##*[[:space:]]}
+  d=$(mktemp "${TMPDIR:-/tmp}/guardrail-decision.XXXXXX")
+  jq -n --arg r "$ref" --arg pc "$pc" --arg b "$base" --arg fp "$fp" --arg f "$files" \
+    --argjson ob "$only_base" --argjson orf "$only_ref" '{id: 0, kind: "exception", reason: "guardrail-base",
+    question: "Main (\($r), \($pc[0:7])) changed a product guardrail, but this run is based on \($b[0:7]), which \($r) does not contain: the run has \($ob) commit(s) \($r) lacks, and \($r) has \($orf) the run lacks. Changed guardrail files: \($f | split("\n") | map(select(. != "")) | join(", ")). Merge anyway, keep the guardrails as of the run base, or halt the run? Answer with state.sh decide <id> merge|keep-base|halt.",
+    base: $b, ref: $r, product: $pc, fingerprint: $fp,
+    base_only: $ob, ref_only: $orf, files: ($f | split("\n") | map(select(. != ""))),
+    options: ["merge", "keep-base", "halt"], status: "waiting"}' >"$d"
+  "$SCRIPT_DIR/state.sh" decision "$run" "$d" >/dev/null || { rm -f "$d"; die "could not queue the guardrail-base decision"; }
+  rm -f "$d"
+}
+
 cmd_wave_start() {
   [ $# -eq 2 ] || usage
-  local run=$1 wave=$2 m= src= wt= ib= ref= pc= tip= version= merged=false changed=
+  local run=$1 wave=$2 m= src= wt= ib= ref= pc= tip= version= merged=false changed= base= by= kept=false
+  local fp="" files="" dec="" choice="" did="" inforce=""
   state_require_run_dir "$run"
   run=$(cd "$run" && pwd)
   m=$(main_checkout "$run")
@@ -195,24 +230,71 @@ cmd_wave_start() {
   ref=$(jq -r '.product.ref // ""' <<<"$src")
   wt=$(jq -r '.integration.worktree // ""' "$(state_file "$run")")
   ib=$(jq -r '.integration.branch // ""' "$(state_file "$run")")
+  base=$(jq -r '.integration.base // ""' "$(state_file "$run")")
+  by=""
   if [ -n "$pc" ] && [ -n "$wt" ] && [ -d "$wt" ] && ! git -C "$wt" merge-base --is-ancestor "$pc" HEAD; then
     tip=$(git -C "$wt" rev-parse HEAD)
-    changed=$(git -C "$wt" diff --name-only "$tip...$pc" | grep -Ec "$PRODUCT_PATHS" || true)
+    files=$(git -C "$wt" diff --name-only "$tip...$pc" | grep -E "$PRODUCT_PATHS" || true)
+    changed=0
+    [ -z "$files" ] || changed=$(printf '%s\n' "$files" | grep -c .)
     if [ "$changed" -gt 0 ]; then
-      if ! git -C "$wt" $(cd "$wt" && git_id) merge -q --no-ff -m "Bring $ref into $ib: a product guardrail changed" "$pc" >/dev/null 2>&1; then
-        git -C "$wt" merge --abort >/dev/null 2>&1 || true
-        queue_conflict "$run" "$ref"
-        state_die 6 "guardrails.sh: $ref would not merge into $ib; a decision is queued"
+      choice=merge
+      # A run based on a commit main does not contain is not main's to
+      # merge into: ask, then do what the Artisan answered.
+      if [ -n "$base" ] && ! git -C "$wt" merge-base --is-ancestor "$base" "$pc"; then
+        fp=$(guardrail_fingerprint "$wt" "$pc")
+        dec=$(jq -c --arg fp "$fp" '[.decisions[] | select(.reason? == "guardrail-base" and .fingerprint == $fp
+              and (.choice? != "halt" or .applied? != true))] | last // {}' "$(state_file "$run")")
+        did=$(jq -r '.id // ""' <<<"$dec")
+        choice=$(jq -r 'if .status == "decided" then .choice else "" end' <<<"$dec")
+        by=$(jq -r '.by // ""' <<<"$dec")
+        case "$choice" in
+          merge | keep-base | halt) ;;
+          *)
+            if [ -z "$did" ]; then
+              queue_diverged "$run" "$ref" "$pc" "$base" "$fp" "$files" "$wt"
+              did=$(jq -r '.decisions | last | .id' "$(state_file "$run")")
+            fi
+            state_die 9 "guardrails.sh: $ref changed a product guardrail but the run's base $base is not in it; decision $did is waiting (state.sh decide $run $did merge|keep-base|halt); the wave is not recorded"
+            ;;
+        esac
       fi
-      merged=true
-      "$SCRIPT_DIR/state.sh" event "$run" "$(jq -nc --arg c "$pc" --arg w "$wave" \
-        '{event: "guardrail-merge", wave: ($w | tonumber), from: $c}')" >/dev/null
+      case "$choice" in
+        halt)
+          "$SCRIPT_DIR/state.sh" update "$run" "$STATE_JQ_DEFS"'
+            .decisions |= map(if .id == $id then .applied = true else . end)
+            | .halted = {wave: ($w | tonumber), tickets: [], at: $now, reason: "halted at the guardrail-base decision (\($id)): the run is based on a commit \($ref) does not contain"}
+            | event({event: "halted", wave: ($w | tonumber), tickets: [], reason: "guardrail-base", decision: $id}; $now)' \
+            --argjson id "$did" --arg w "$wave" --arg ref "$ref" --argjson now "$(date +%s)" >/dev/null
+          state_die 10 "guardrails.sh: the run is halted at decision $did: it is based on a commit $ref does not contain (wave.sh launch --resume carries on and asks again)"
+          ;;
+        keep-base)
+          kept=true
+          "$SCRIPT_DIR/state.sh" event "$run" "$(jq -nc --arg c "$pc" --arg t "$tip" --arg w "$wave" --argjson d "$did" \
+            '{event: "guardrail-base-kept", wave: ($w | tonumber), ref_commit: $c, in_force: $t, decision: $d}')" >/dev/null
+          ;;
+        *)
+          if ! git -C "$wt" $(cd "$wt" && git_id) merge -q --no-ff -m "Bring $ref into $ib: a product guardrail changed" "$pc" >/dev/null 2>&1; then
+            git -C "$wt" merge --abort >/dev/null 2>&1 || true
+            queue_conflict "$run" "$ref"
+            state_die 6 "guardrails.sh: $ref would not merge into $ib; a decision is queued"
+          fi
+          merged=true
+          "$SCRIPT_DIR/state.sh" event "$run" "$(jq -nc --arg c "$pc" --arg w "$wave" --arg by "$by" \
+            '{event: "guardrail-merge", wave: ($w | tonumber), from: $c} + (if $by == "" then {} else {by: $by} end)')" >/dev/null
+          ;;
+      esac
     fi
   fi
+  # Keeping the base's guardrails: the product commit in force is the
+  # integration tip's, which holds them.
+  inforce=$pc
+  [ "$kept" != true ] || inforce=$tip
   version=$(jq -r '.version // "unknown"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo unknown)
   "$SCRIPT_DIR/state.sh" wave-start "$run" "$wave" "$version" \
-    "$(jq -r '.team.commit // "-"' <<<"$src")" "${pc:--}" "$(jq -r '.individual.commit // "-"' <<<"$src")" >/dev/null
-  jq -c --arg v "$version" --argjson merged "$merged" '{plugin_version: $v, team: .team.commit, product: .product.commit, individual: .individual.commit, main_merged: $merged}' <<<"$src"
+    "$(jq -r '.team.commit // "-"' <<<"$src")" "${inforce:--}" "$(jq -r '.individual.commit // "-"' <<<"$src")" >/dev/null
+  jq -c --arg v "$version" --argjson merged "$merged" --argjson kept "$kept" --arg inforce "$inforce" \
+    '{plugin_version: $v, team: .team.commit, product: (if $inforce == "" then .product.commit else $inforce end), individual: .individual.commit, main_merged: $merged, product_kept_base: $kept}' <<<"$src"
 }
 
 # ----------------------------------------------------------------- resolve

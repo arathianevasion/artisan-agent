@@ -124,7 +124,8 @@
 # expected files overlap, 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
-# CI, 20 the merge gate is still running. One table of every code, with
+# CI, 20 the merge gate is still running, 21 launch: main changed a product
+# guardrail but the run's base is not in it, a decision is waiting. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -324,8 +325,14 @@ EOF
   # each commit and the plugin version for this wave (references/guardrails.md).
   # A hand-off carries the wave on with the guardrails its workers were given.
   if [ "$handoff" -eq 0 ]; then
-    "$SCRIPT_DIR/guardrails.sh" wave-start "$RUN_DIR" "$wave" >/dev/null \
-      || die "could not read the guardrails for wave $wave (guardrails.sh wave-start failed)"
+    local gs=0
+    "$SCRIPT_DIR/guardrails.sh" wave-start "$RUN_DIR" "$wave" >/dev/null || gs=$?
+    case "$gs" in
+      0) ;;
+      9) exit 21 ;;   # the run's base is not in main: a decision is waiting (guardrails.sh said so)
+      10) exit 12 ;;  # the Artisan answered halt: the run is halted
+      *) die "could not read the guardrails for wave $wave (guardrails.sh wave-start failed)" ;;
+    esac
   fi
 
   apply '

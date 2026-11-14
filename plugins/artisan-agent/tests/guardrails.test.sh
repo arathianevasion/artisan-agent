@@ -221,3 +221,82 @@ test_with_no_areas_every_guardrail_is_listed_as_before() {
   "$G" wave-start "$RUN_DIR" 1 >/dev/null
   assert_eq "money-rounding naming" "$("$G" resolve --run-dir "$RUN_DIR" | jq -r '[.applied[].key] | sort | join(" ")')"
 }
+
+# diverge: the run's base is a commit main does not contain. Main then changes
+# a product guardrail.
+diverge() {
+  setup_levels
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  wt=$(state_get .integration.worktree)
+  echo local >"$wt/local.txt"; commit_all "$wt" "only in the run"
+  # main loses the run's base: rewind the recorded base to a commit only the run has
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.integration.base = $b' --arg b "$(git -C "$wt" rev-parse HEAD)" >/dev/null
+  rec prod-1 pr-boundary per-ticket 1 >"$PROJECT/.artisan-agent/guardrails.jsonl"
+  commit_all "$PROJECT" "product guardrail"
+}
+
+test_a_base_main_does_not_contain_queues_a_decision_instead_of_merging() {
+  diverge
+  tip=$(git -C "$wt" rev-parse HEAD)
+  assert_status 9 "$G" wave-start "$RUN_DIR" 2
+  assert_eq "$tip" "$(git -C "$wt" rev-parse HEAD)"
+  assert_eq 1 "$(state_get '.waves | length')"
+  assert_eq "exception guardrail-base waiting" "$(state_get '.decisions[0] | [.kind, .reason, .status] | join(" ")')"
+  assert_eq ".artisan-agent/guardrails.jsonl" "$(state_get '.decisions[0].files | join(",")')"
+  assert_eq "$(git -C "$PROJECT" rev-parse main)" "$(state_get '.decisions[0].product')"
+  assert_eq "1 1" "$(state_get '.decisions[0] | "\(.base_only) \(.ref_only)"')"
+  state_get '.decisions[0].question' | grep -q "state.sh decide" || fail "the question does not say how to answer"
+  # asking again queues no second decision
+  assert_status 9 "$G" wave-start "$RUN_DIR" 2
+  assert_eq 1 "$(state_get '.decisions | length')"
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" 2>&1 | grep -q "Main (" || fail "wave.sh status does not show the waiting decision"
+}
+
+test_merge_anyway_merges_and_logs_who_answered() {
+  diverge
+  assert_status 9 "$G" wave-start "$RUN_DIR" 2
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" 1 merge --by Andrew >/dev/null
+  "$G" wave-start "$RUN_DIR" 2 | jq -e '.main_merged == true' >/dev/null
+  git -C "$wt" merge-base --is-ancestor "$(git -C "$PROJECT" rev-parse main)" HEAD || fail "main is not in the integration branch"
+  assert_eq "guardrail-merge Andrew" "$(state_get '[.events[] | select(.event == "guardrail-merge")] | last | "\(.event) \(.by)"')"
+}
+
+test_keep_base_continues_without_merging_and_is_not_asked_again() {
+  diverge
+  assert_status 9 "$G" wave-start "$RUN_DIR" 2
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" 1 keep-base >/dev/null
+  tip=$(git -C "$wt" rev-parse HEAD)
+  "$G" wave-start "$RUN_DIR" 2 | jq -e '.main_merged == false and .product_kept_base == true' >/dev/null
+  assert_eq "$tip" "$(git -C "$wt" rev-parse HEAD)"
+  assert_eq "$tip" "$(state_get '.waves[] | select(.wave == 2) | .guardrails.product')"
+  assert_eq guardrail-base-kept "$(state_get '[.events[] | select(.event == "guardrail-base-kept")] | last | .event')"
+  # a later wave, and an ordinary commit on main: still not asked
+  echo hi >"$PROJECT/other.txt"; commit_all "$PROJECT" "ordinary"
+  "$G" wave-start "$RUN_DIR" 3 >/dev/null
+  assert_eq 1 "$(state_get '.decisions | length')"
+  # the guardrail files change again on main: asked again
+  rec prod-2 pr-boundary per-ticket 2 >>"$PROJECT/.artisan-agent/guardrails.jsonl"
+  commit_all "$PROJECT" "guardrail again"
+  assert_status 9 "$G" wave-start "$RUN_DIR" 4
+  assert_eq 2 "$(state_get '.decisions | length')"
+}
+
+test_halt_halts_the_run() {
+  diverge
+  assert_status 9 "$G" wave-start "$RUN_DIR" 2
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" 1 halt >/dev/null
+  tip=$(git -C "$wt" rev-parse HEAD)
+  assert_status 10 "$G" wave-start "$RUN_DIR" 2
+  assert_eq "$tip" "$(git -C "$wt" rev-parse HEAD)"
+  assert_eq true "$(state_get '.halted != null')"
+  assert_eq guardrail-base "$(state_get '[.events[] | select(.event == "halted")] | last | .reason')"
+}
+
+test_a_base_main_contains_still_merges_without_asking() {
+  setup_levels
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  rec prod-1 pr-boundary per-ticket 1 >"$PROJECT/.artisan-agent/guardrails.jsonl"
+  commit_all "$PROJECT" "product guardrail"
+  "$G" wave-start "$RUN_DIR" 2 | jq -e '.main_merged == true' >/dev/null
+  assert_eq 0 "$(state_get '.decisions | length')"
+}

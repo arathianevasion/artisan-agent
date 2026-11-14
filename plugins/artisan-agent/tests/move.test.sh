@@ -106,6 +106,22 @@ test_out_refuses_a_run_that_is_not_idle_and_changes_nothing() {
   assert_eq "live laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
 }
 
+test_a_running_merge_gate_makes_the_run_not_idle_and_out_pushes_nothing() {
+  two_machines
+  jq '.merge_gate = {ticket: "10", attempt: 1, mode: "local", pre: "x", sha: "y"}' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s.json"
+  cp "$TEST_TMPDIR/s.json" "$RUN_DIR/state.json"
+  assert_contains "$("$SCRIPTS/move.sh" idle "$RUN_DIR" || true)" "a merge gate is running for #10 (local)"
+  assert_status 4 "$SCRIPTS/move.sh" idle "$RUN_DIR"
+  assert_status 4 bash -c "cd '$PROJECT' && ARTISAN_MACHINE=laptop '$SCRIPTS/move.sh' out '$RUN_DIR'"
+  if git -C "$REMOTE" rev-parse -q --verify refs/heads/runs/r1 >/dev/null; then fail "runs/r1 was pushed mid-gate"; fi
+  assert_contains "$("$SCRIPTS/move.sh" drain "$RUN_DIR")" "let the gate finish"
+  jq '.merge_gate = null' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s.json"
+  cp "$TEST_TMPDIR/s.json" "$RUN_DIR/state.json"
+  "$SCRIPTS/move.sh" idle "$RUN_DIR"
+  laptop "$SCRIPTS/move.sh" out "$RUN_DIR" >/dev/null
+  assert_eq "moved host" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR" | sed 's/^moved .*/moved host/')"
+}
+
 test_a_live_runner_keeps_the_run_busy_even_when_no_ticket_is_in_flight() {
   two_machines
   sleep 30 &
