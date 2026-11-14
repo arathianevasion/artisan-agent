@@ -71,8 +71,8 @@
 #       --not-bug (--bug, the default, says so); prints the rework ticket's
 #       number; the check stays open. An answer kept in gates/pending/
 #       while the lock is held counts: a second answer is refused (6).
-#       A failed check whose rework hasn't merged refuses every answer (6);
-#       it is answered again at the next gate once the rework merges.
+#       A failed check whose rework hasn't merged (or left the run) refuses
+#       every answer (6); then it is answered again at the next gate.
 #       later: it carries to the next gate. "all pass --gate <issue>" passes
 #       every check on that gate, skipping (and naming) one whose rework is
 #       open. Events human-check-passed and human-check-failed. 6: not an
@@ -749,8 +749,13 @@ cmd_check() {
     for t in $(jget 'open_human_checks[]'); do
       open=$(check_rework_open "$t") || exit $?
       if [ -n "$open" ]; then
-        # Named, not answered: the failed answer stands until the rework merges.
-        [ -z "$want" ] || [ "${open% *}" = "$want" ] || continue
+        # Named, not answered: the failed answer stands until the rework
+        # merges. With --gate, named when it failed at that gate, is listed
+        # on it now (carried), or the gate is the end gate.
+        case "$want" in
+          ""|end|"${open% *}"|"$(get --arg t "$t" '.tickets[$t].human_check.gate // ""')") ;;
+          *) continue ;;
+        esac
         echo "gate.sh: skipped Human check #$t: it already failed at ${open% *}; rework #${open#* } is open"
         continue
       fi

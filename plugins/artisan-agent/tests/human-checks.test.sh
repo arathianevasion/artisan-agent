@@ -382,3 +382,19 @@ test_after_the_rework_merges_the_check_is_answered_at_the_next_gate() {
   assert_eq 2 "$(state_get '.tickets["5"].human_check.answers | length')"
   assert_eq 1 "$(events human-check-failed | jq length)"
 }
+
+test_check_all_names_a_check_carried_to_the_next_gate_while_its_rework_is_open() {
+  setup_checks
+  merged 1
+  "$SCRIPTS/reconcile.sh" "$RUN_DIR" >/dev/null
+  local num= r= num2= out= rc=0
+  num=$("$G" open "$RUN_DIR" slice-1)
+  r=$("$G" check "$RUN_DIR" 5 fail --why "The greeting wraps onto two lines")
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  merged 4
+  num2=$("$G" open "$RUN_DIR" slice-2)
+  out=$("$G" check "$RUN_DIR" all pass --gate "$num2" 2>&1) || rc=$?
+  assert_eq 6 "$rc"
+  assert_contains "$out" "skipped Human check #5: it already failed at slice-1; rework #$r is open"
+  assert_eq 0 "$(events human-check-passed | jq length)"
+}
