@@ -17,7 +17,7 @@ A worktree gives each worker its own checkout and branch off the same repository
 | `<repo>/` | the main checkout: never edited, only fast-forwarded | |
 | `<repo>/.artisan-agent/runs/<run-id>/` | the run folder (git-ignored): `state.json`, `results/`, `workers/`, `prompts/`, `merges/` | `state.sh init` |
 | `<repo>-wt/run-<run-id>/` | the run's integration worktree, on the integration branch `run/<run-id>`; every merge happens here | `wave.sh start` |
-| `<repo>-wt/<run-id>-<ticket>.<attempt>/` | a worker's worktree, on `agent/<ticket>`, branched from the integration tip | `wave.sh dispatch` |
+| `<repo>-wt/<run-id>-<ticket>.<attempt>/` | a worker's worktree, on `agent/<ticket>`, branched from the integration tip; the project's `worktree_setup` (config) runs in it first, and a failing one fails the attempt with the reason `setup` | `wave.sh dispatch` |
 
 Worktrees sit beside the repo, never in it, so they never appear in a glob, a test run or a build in the main checkout.
 
