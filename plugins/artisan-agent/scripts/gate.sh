@@ -166,8 +166,12 @@ build_view() { # id dependents-json
   for t in $(jq -r '.tickets[]' <<<"$def"); do
     prov=$(printf '%s\n' "$prov" | grep -v "^| #$t |" || true)
   done
+  # The provisional cards grow with the run: they reach jq as files (#203).
+  printf '%s' "$guard" >"$RUN_DIR/gates/.guardrails.md"
+  printf '%s' "$prov" >"$RUN_DIR/gates/.provisional.md"
   jq -n --argjson g "$def" --argjson deps "$deps" --slurpfile s "$FILE" \
-    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
+    --rawfile guard "$RUN_DIR/gates/.guardrails.md" --rawfile prov "$RUN_DIR/gates/.provisional.md" \
+    --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
     {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps, title: ($s[0] | gate_title($g; $run))}),
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
