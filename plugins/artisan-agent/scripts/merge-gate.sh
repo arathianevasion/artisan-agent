@@ -39,7 +39,7 @@
 #       no CI run to wait on.
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
-#                    [--skip-path PATTERN]...
+#                    [--skip-path PATTERN]... [--reuse-run ID --reuse-sha W]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -64,6 +64,12 @@
 #       shell globs ("*" crosses "/"); they are read in order and the last to
 #       match a path decides, a leading "!" meaning "never skip on this".
 #       With no green ancestor, or any other path changed, CI runs as usual.
+#       --reuse-run (#194, wave.sh passes it for a ticket whose worker ran
+#       the gate workflow in full on its branch) is checked first: when run
+#       ID concluded success for exactly commit W, and W's tree is SHA's tree
+#       (a --no-ff merge over an unmoved base), nothing is pushed or
+#       dispatched and the record is green with reused: ID, relied_on {run_id,
+#       url, sha: W} and a why naming that run. Otherwise the gate runs.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
 #   merge-gate.sh failed-tests --repo O/N --run-id ID [--max N]
@@ -218,6 +224,19 @@ green_ancestor() {
   done
 }
 
+# try_reuse run-id sha: when that run is green for exactly sha and sha's
+# tree is the candidate's, print the green record and return 0 (#194).
+try_reuse() {
+  local id="$1" w="$2" run="" t=""
+  [ -n "$id" ] && [ -n "$w" ] || return 1
+  t=$(git -C "$CI_DIR" rev-parse -q --verify "$w^{tree}" 2>/dev/null) || return 1
+  [ "$t" = "$(git -C "$CI_DIR" rev-parse "$CI_SHA^{tree}")" ] || return 1
+  run=$(gh run view "$id" -R "$CI_REPO" --json databaseId,headSha,status,conclusion,url,jobs 2>/dev/null) || return 1
+  jq -e --arg w "$w" '.headSha == $w and .conclusion == "success"' <<<"$run" >/dev/null 2>&1 || return 1
+  record "$run" "CI not dispatched: the merge's tree is the tree of ${w:0:12}, which run $id passed" \
+    | jq -c --argjson r "$run" --arg sha "$CI_SHA" '.sha = $sha | . + {reused: $r.databaseId, relied_on: {run_id: $r.databaseId, url: $r.url, sha: $r.headSha}}'
+}
+
 # try_skip PATTERN...: when only allowlisted paths changed since the last
 # green run, print the green record and return 0; 1 means run CI.
 try_skip() {
@@ -241,6 +260,7 @@ try_skip() {
 
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
+  local reuse_run="" reuse_sha=""
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -254,6 +274,8 @@ cmd_ci() {
       --deadline) [ $# -ge 2 ] || usage; deadline=$2; shift 2 ;;
       --skip-path) [ $# -ge 2 ] || usage; skip+=("$2"); shift 2 ;;
       --resume) resume=1; shift ;;
+      --reuse-run) [ $# -ge 2 ] || usage; reuse_run=$2; shift 2 ;;
+      --reuse-sha) [ $# -ge 2 ] || usage; reuse_sha=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -263,6 +285,7 @@ cmd_ci() {
   case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
 
   if [ "$resume" -eq 0 ]; then
+    if try_reuse "$reuse_run" "$reuse_sha"; then return 0; fi
     if try_skip ${skip[@]+"${skip[@]}"}; then return 0; fi
     if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
       record '{}' "could not push $CI_BRANCH to $CI_REMOTE"

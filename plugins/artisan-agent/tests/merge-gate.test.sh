@@ -730,3 +730,58 @@ test_mg_on_a_ci_machine_the_plan_step_shows_expected_ci_minutes_per_merge() {
   assert_eq null "$(jq -c .merge_gate "$TEST_TMPDIR/plan3.json")"
   assert_not_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan3.json")" "Merge gate"
 }
+
+# Reuse (#194): a worker's green run on its branch, for a commit whose tree
+# is the merge commit's tree, is the merge gate's run: nothing is dispatched.
+# Sets RU_W (the worker's commit, green in run 9100) and SK_SHA (the --no-ff
+# merge of it). With "moved", main gains a commit first, so the trees differ.
+setup_reuse() { # [moved] [conclusion]
+  setup_skip
+  local main=""
+  main=$(git -C "$SK_DIR" symbolic-ref --short HEAD)
+  git_quiet -C "$SK_DIR" checkout -b agent/1
+  echo work >"$SK_DIR/plugins/p/work.sh"
+  git_quiet -C "$SK_DIR" add -A
+  git_quiet -C "$SK_DIR" commit -m "the ticket"
+  RU_W=$(git -C "$SK_DIR" rev-parse HEAD)
+  jq -n --arg sha "$RU_W" --arg c "${2:-success}" '{databaseId: 9100, workflowName: "ci.yml", headBranch: "agent/1",
+    headSha: $sha, event: "workflow_dispatch", status: "completed", conclusion: $c,
+    url: "https://github.com/local/sample/actions/runs/9100", jobs: [{name: "e2e", conclusion: $c}]}' >"$FAKE_GH_DIR/run-9100.json"
+  git_quiet -C "$SK_DIR" checkout "$main"
+  if [ "${1:-}" = moved ]; then echo other >"$SK_DIR/plugins/p/other.sh"; git_quiet -C "$SK_DIR" add -A; git_quiet -C "$SK_DIR" commit -m other; fi
+  git_quiet -C "$SK_DIR" merge --no-ff --no-edit agent/1
+  SK_SHA=$(git -C "$SK_DIR" rev-parse HEAD)
+}
+
+test_mg_reuse_a_no_ff_merge_with_the_tree_the_workers_green_run_tested_dispatches_nothing() {
+  setup_reuse
+  [ "$SK_SHA" != "$RU_W" ] || fail "the merge commit is the worker's commit"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  assert_eq "9100 success $SK_SHA 9100 $RU_W" "$(jq -r '"\(.reused) \(.conclusion) \(.sha) \(.relied_on.run_id) \(.relied_on.sha)"' <<<"$SK_OUT")"
+  assert_eq "https://github.com/local/sample/actions/runs/9100" "$(jq -r .url <<<"$SK_OUT")"
+  assert_contains "$(jq -r .why <<<"$SK_OUT")" "run 9100"
+  if dispatched; then fail "CI was dispatched for a tree the worker's run already tested"; fi
+  assert_eq "" "$(git -C "$ORIGIN" for-each-ref 'refs/heads/ci/')" "nothing was pushed"
+}
+
+test_mg_reuse_a_merge_whose_tree_differs_runs_the_gate() {
+  setup_reuse moved
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "CI was not dispatched for a new tree"
+  assert_eq "null 9001" "$(jq -r '"\(.reused // null) \(.run_id)"' <<<"$SK_OUT")"
+}
+
+test_mg_reuse_never_counts_a_run_that_was_not_green_for_that_commit() {
+  setup_reuse "" failure
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a red run was reused"
+  assert_eq null "$(jq -r '.reused // null' <<<"$SK_OUT")"
+  # A green run for another commit than the one named is not reused either.
+  rm -rf "$TEST_TMPDIR/tracker" "$TEST_TMPDIR/skip" "$TEST_TMPDIR/skip-origin.git"
+  setup_reuse
+  jq --arg a "$SK_A" '.headSha = $a' "$FAKE_GH_DIR/run-9100.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9100.json"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a run for another commit was reused"
+}
