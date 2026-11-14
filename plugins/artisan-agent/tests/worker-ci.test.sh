@@ -139,3 +139,15 @@ test_wci_check_wants_a_green_run_for_exactly_the_commit() {
   rc=0; "$WCI" check --repo local/sample --run-id 4242 --sha "$sha" >/dev/null || rc=$?
   assert_eq 7 "$rc" "no such run"
 }
+
+test_wci_wait_run_waits_on_the_run_an_earlier_call_dispatched_without_dispatching_again() {
+  setup_worker
+  echo never >"$FAKE_GH_DIR/ci-outcome"
+  worker_run --timeout-minutes 0
+  assert_eq "19 9001" "$RC $(jq -r .run_id <<<"$OUT")"
+  # Called again on that run (the first call's wait was cut short): the same run.
+  jq '.status = "completed" | .conclusion = "success"' "$FAKE_GH_DIR/run-9001.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9001.json"
+  worker_run --wait-run 9001 --timeout-minutes 0
+  assert_eq "0 9001 success" "$RC $(jq -r '"\(.run_id) \(.conclusion)"' <<<"$OUT")"
+  assert_eq 1 "$(grep -c '^workflow run' "$FAKE_GH_DIR/calls")" "dispatched once"
+}

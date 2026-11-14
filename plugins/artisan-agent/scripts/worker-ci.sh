@@ -10,14 +10,17 @@
 #
 # Usage:
 #   worker-ci.sh run [--dir D] [--branch B] [--repo O/N] [--remote R]
-#                    [--timeout-minutes M]
+#                    [--timeout-minutes M] [--wait-run ID]
 #       push B (default: D's current branch; D defaults to the top of the
 #       checkout holding the current directory) at its tip to R (default
 #       origin), dispatch the gate workflow (ci_gate.workflow in the project
 #       config) there with the inputs in ci_gate.worker_inputs (gh workflow
 #       run -f key=value each), and wait, in this one call, for that
 #       dispatch's run (a workflow_dispatch run on B for the tip, newer than
-#       any before the dispatch). Prints the record as JSON:
+#       any before the dispatch). --wait-run ID waits on run ID, which an
+#       earlier call dispatched for the same tip and gave up waiting on (19,
+#       no conclusion in time): no push and no new dispatch. Prints the
+#       record as JSON:
 #         {workflow, branch, sha, tree, run_id, url, conclusion, jobs,
 #          inputs, full, checks, started_at, finished_at, minutes}
 #       full is true when inputs is empty: the run is the gate's own run, so
@@ -65,6 +68,7 @@ runs_on() { # repo wf branch
 cmd_run() {
   local dir="" branch="" repo="" remote=origin timeout="" cfg="" wf="" inputs="" ci="" sha="" tree=""
   local before=0 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" started="" f=""
+  local wait_run=""
   local -a fields=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -73,6 +77,7 @@ cmd_run() {
       --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
       --remote) [ $# -ge 2 ] || usage; remote=$2; shift 2 ;;
       --timeout-minutes) [ $# -ge 2 ] || usage; timeout=$2; shift 2 ;;
+      --wait-run) [ $# -ge 2 ] || usage; wait_run=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -90,6 +95,7 @@ cmd_run() {
   inputs=$(jq -c '.ci_gate.worker_inputs // {}' <<<"$cfg")
   [ -n "$timeout" ] || timeout=$(jq -r '.ci_gate.timeout_minutes // 30' <<<"$cfg")
   case "$timeout" in '' | *[!0-9]*) die "--timeout-minutes must be a whole number" ;; esac
+  case "$wait_run" in *[!0-9]*) die "--wait-run must be a run id" ;; esac
   if [ -z "$repo" ]; then
     repo=$(git -C "$dir" remote get-url "$remote" 2>/dev/null | sed -E 's#.*github.com[:/]##; s#\.git$##') || true
     [ -n "$repo" ] || die "could not tell the GitHub repo from $remote; pass --repo"
@@ -113,20 +119,25 @@ cmd_run() {
   }
 
   started=$(now_iso)
-  # The newest run before the dispatch: only a newer one is this dispatch's.
-  before=$(runs_on "$repo" "$wf" "$branch" | jq '[.[].databaseId] | max // 0')
-  if ! git -C "$dir" push -q --force "$remote" "$sha:refs/heads/$branch" >/dev/null 2>&1; then
-    record '{}' "could not push $branch to $remote"
-    return 19
-  fi
-  if ! gh workflow run "$wf" -R "$repo" --ref "$branch" ${fields[@]+"${fields[@]}"} >/dev/null 2>&1; then
-    record '{}' "could not dispatch $wf on $branch (gh workflow run failed)"
-    return 19
+  if [ -n "$wait_run" ]; then
+    # Waiting on a run an earlier call dispatched: no push, no new dispatch.
+    before=$((wait_run - 1))
+  else
+    # The newest run before the dispatch: only a newer one is this dispatch's.
+    before=$(runs_on "$repo" "$wf" "$branch" | jq '[.[].databaseId] | max // 0')
+    if ! git -C "$dir" push -q --force "$remote" "$sha:refs/heads/$branch" >/dev/null 2>&1; then
+      record '{}' "could not push $branch to $remote"
+      return 19
+    fi
+    if ! gh workflow run "$wf" -R "$repo" --ref "$branch" ${fields[@]+"${fields[@]}"} >/dev/null 2>&1; then
+      record '{}' "could not dispatch $wf on $branch (gh workflow run failed)"
+      return 19
+    fi
   fi
   deadline=$(($(date +%s) + timeout * 60))
   while :; do
     run=$(runs_on "$repo" "$wf" "$branch" | jq -c --arg sha "$sha" --argjson b "$before" \
-      '[.[] | select(.headSha == $sha and .databaseId > $b)] | sort_by(.databaseId) | last // empty')
+      '[.[] | select(.headSha == $sha and .databaseId > $b)] | sort_by(.databaseId) | first // empty')
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       [ -n "$run" ] || run='{}'
