@@ -388,7 +388,8 @@ end_checks_json() {
        | . as $c
        | {ticket: ., for: ($s | human_check_for($c)), state: ($s.tickets[.].human_check.state // "open")}
          + (($s.tickets[.].human_check.deferral // null) | if . then {deferral: .} else {} end)
-         + (($s.tickets[.].human_check.gate // null) | if . then {carried_from: .} else {} end)]'
+         + (($s.tickets[.].human_check.gate // null) | if . then {carried_from: .} else {} end)
+         + (($s | check_rework($c)) | if . then {waiting_on: split(" ")[1]} else {} end)]'
 }
 
 human_checks_section() {
@@ -403,7 +404,7 @@ open_checks() { get -r "$STATE_JQ_DEFS"' open_human_checks | map("#" + .) | join
 cmd_defer_check() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local t="$2" by=Artisan why="" ret="" agent="" repo=""
+  local t="$2" by=Artisan why="" ret="" agent="" repo="" open=""
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -421,6 +422,9 @@ cmd_defer_check() {
   esac
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
     || refuse "Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
+  # The same refusal as gate.sh check: a failed check waits on its rework (#178).
+  open=$(get -r --arg t "$t" "$STATE_JQ_DEFS"' check_rework($t) // ""')
+  [ -z "$open" ] || refuse "Human check #$t already failed at ${open% *}; rework #${open#* } is open"
   agent=$(get --arg t "$t" "$STATE_JQ_DEFS"' human_check_for($t)')
   [ -n "$ret" ] || ret="check #$agent's work on $(main_branch) once run $RUN_ID's PRs are merged"
   repo=$(get -r .repo)

@@ -18,7 +18,7 @@ The checks setup proved are the checks the run uses. `/artisan-agent:setup` prov
 
 ## The merge gate on CI
 
-The merge gate is the full suite after every merge (`wave.sh merge`, `wave.sh resolved`). **The machine chooses where it runs, not the project** (#139): `merge_gate: auto | local | ci` in `host.json` in the individual home, written by machine setup (`machine-setup.sh merge-gate`) and read only through `${CLAUDE_PLUGIN_ROOT}/scripts/merge-gate.sh`. `auto`, the default, is `local` on macOS and `ci` on Linux, so a shared always-on host never spends its CPU on the suite; a Linux laptop can set `local`.
+The merge gate is the full suite after every merge (`wave.sh merge`, `wave.sh resolved`). **The machine chooses where it runs, not the project** (#139): `merge_gate: auto | local | ci` in `host.json` in the individual home, written by machine setup (`machine-setup.sh merge-gate`) and read only through `${CLAUDE_PLUGIN_ROOT}/scripts/merge-gate.sh`. `auto`, the default, is `local` on macOS and `ci` on Linux, so a shared always-on host never spends its CPU on the suite; a Linux laptop can set `local`. Whether ready tickets merge as one batch (#167) is `merge_batch: on | off` beside it, written by `machine-setup.sh merge-batch` (default `on`).
 
 | Mode | After a merge | Green | Red | No verdict |
 |---|---|---|---|---|

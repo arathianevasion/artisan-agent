@@ -581,7 +581,7 @@ record_orchestrator_cost() { # id attempt
 # still to open will (its agent ticket is in that slice, or it is carried from
 # a gate that has closed); else at the end gate.
 human_checks_line() {
-  local n="" at_slice=""
+  local n="" at_slice="" waiting=""
   n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
   [ "$n" -gt 0 ] || return 0
   at_slice=$(get "$STATE_JQ_DEFS"' . as $s | ($s.review_gates // []) as $rg
@@ -591,6 +591,8 @@ human_checks_line() {
        | select(any($rg[]; .id == $hg and (.status == "open" or .status == "deferred"))
                 or any($unopened[]; .tickets | index($a))
                 or ($hg != null and ($unopened | length) > 0))] | length')
+  waiting=$(get -r "$STATE_JQ_DEFS"' . as $s | [open_human_checks[] as $c | ($s | check_rework($c)) as $o
+    | select($o != null) | "#\($c) waiting on rework #\($o | split(" ")[1])"] | join(", ")')
   if [ "$at_slice" -eq 0 ]; then
     echo "Human checks: $n open (end gate)"
   elif [ "$at_slice" -eq "$n" ]; then
@@ -598,6 +600,7 @@ human_checks_line() {
   else
     echo "Human checks: $n open ($at_slice at the next slice gate, $((n - at_slice)) at the end gate)"
   fi
+  [ -z "$waiting" ] || echo "Human checks waiting on a rework: $waiting"
 }
 
 cmd_status() {
