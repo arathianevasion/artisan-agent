@@ -13,7 +13,8 @@
 #                  (blocked): it reads the finding on its ticket
 #         triage   the target has finished (returned, merged, closed) or is not
 #                  in the run: `mark` files a needs-triage ticket
-#       A finding that names no ticket in "blocks" is not listed.
+#       A finding that names no ticket in "blocks" is not listed, nor one whose
+#       "blocks" is missing, null or not a list.
 #   findings.sh mark <run-dir> <from> <seq> <target> <relay|comment|triage>
 #       does the tracker half and records it, once: a comment on both tickets
 #       (relay, comment) or a needs-triage ticket plus a comment on the finding's
@@ -44,7 +45,7 @@ cmd_pending() {
     . as $s
     | (.relays // []) as $done
     | .findings[]
-    | select(.from != null and ((.blocks // []) | type) == "array")
+    | select(.from != null and (.blocks | type) == "array")
     | . as $f
     | ($f.blocks[] | tostring) as $t
     | select($t != $f.from)
