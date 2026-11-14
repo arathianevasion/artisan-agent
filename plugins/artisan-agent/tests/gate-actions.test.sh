@@ -775,12 +775,16 @@ test_a_drop_or_reslice_takes_the_human_checks_of_what_leaves_with_it() {
     assert_eq "13" "$(state_get "$STATE_JQ_DEFS"' open_human_checks | join(" ")')" "$choice"
   done
   # The next slice gate lists only the check that stayed; the end gate neither.
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "merged" | .merge_commit = "abcdef1234567" | .attempts = 1)'
+  # (#2 left the slice, so the gate is down to #1.)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "merged" | .merge_commit = "abcdef1234567" | .attempts = 1)
+    | .plan.gates[0].tickets = ["1"]'
   "$G" open "$RUN_DIR" slice-1 >/dev/null
   assert_eq "13" "$(state_get '.review_gates[0].human_checks | join(" ")')"
-  out=$("$SCRIPTS/end-gate.sh" packet "$RUN_DIR")
+  # The end gate's Human checks section (its ticket tables still show them, sent_back).
+  out=$("$SCRIPTS/end-gate.sh" packet "$RUN_DIR" | awk '/^## Human checks/ {on = 1; next} /^## / {on = 0} on')
+  assert_contains "$out" "#13 (Human check 13 (#1))"
   assert_not_contains "$out" "#11"
-  assert_not_contains "$out" "#12 "
+  assert_not_contains "$out" "#12"
 }
 
 test_a_drop_with_no_dependents_still_takes_its_human_check() {
