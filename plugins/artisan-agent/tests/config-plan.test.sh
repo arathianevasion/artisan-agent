@@ -486,3 +486,38 @@ test_a_draft_with_expected_files_lands_its_area_and_gate_setting_in_the_plan() {
   assert_eq '[{"kind":"risk","after":"11","tests":["area:billing"]}]' \
     "$(jq -c '[.gates[] | select(.kind == "risk")]' "$TEST_TMPDIR/plan.json")"
 }
+
+# ------------------------------------------------------------ Human checks (#156)
+
+test_build_flags_an_agent_criterion_that_needs_a_person_and_the_plan_is_not_approvable() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["10"].acceptance = ["retries twice", "the retry banner looks right in game"]' \
+    "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[{"ticket":"10","criterion":"the retry banner looks right in game","phrase":"in game"}]' \
+    "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Needs your attention"
+  assert_contains "$out" "| #10 (Retry failed uploads) | the retry banner looks right in game | \"in game\" |"
+  assert_contains "$out" "Not approvable yet"
+  assert_not_contains "$out" "Approve as shown"
+  assert_status 1 "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json"
+}
+
+test_build_records_an_override_and_the_plan_becomes_approvable() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["10"].acceptance = ["the retry banner looks right in game"]' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  assert_status 1 "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/d2.json" --config "$PROJECT/.artisan-agent/config.yml" \
+    --override-human-check 10 "looks right in game"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json" \
+    --override-human-check 10 "looks right in game" --why "a screenshot test covers it") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_eq "the retry banner looks right in game|a screenshot test covers it" \
+    "$(jq -r '.human_check_overrides[] | "\(.criterion)|\(.why)"' "$TEST_TMPDIR/plan.json")"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "| #10 | the retry banner looks right in game | a screenshot test covers it |"
+  assert_contains "$out" "Approve as shown"
+  assert_contains "$out" "| human_check_phrases | none |"
+}

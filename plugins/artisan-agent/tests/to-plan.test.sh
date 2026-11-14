@@ -573,3 +573,130 @@ test_resolve_scope_fails_naming_the_ticket_when_a_blocker_read_fails() {
   assert_contains "$(cat "$TEST_TMPDIR/err")" "cannot read the blockers of #2"
   assert_eq "" "$(cat "$TEST_TMPDIR/out")" "a partial scope was printed"
 }
+
+# ---- Human checks (#156) ---------------------------------------------------
+
+# The sample graph with one in-game criterion on #2.
+human_graph() {
+  sample_graph
+  jq '.tickets["2"].acceptance += ["contract keys stay stable, checked in game"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+}
+
+test_check_flags_an_agent_criterion_checked_in_game_and_refuses_approval() {
+  human_graph
+  local out=
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH"
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "| #2 (Upload progress) | criterion \"contract keys stay stable, checked in game\" reads as needing a person (\"in game\")"
+  assert_contains "$out" "split-human-check"
+  assert_contains "$out" "not ready to approve"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "| #2 (Upload progress) | criterion \"contract keys stay stable"
+  use_fake_gh
+  assert_status 1 "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved
+  ! grep -q 'issue create' "$FAKE_GH_DIR/calls" || fail "a plan with a flagged criterion reached the tracker"
+}
+
+test_phrases_match_whole_words_case_insensitively_and_a_project_adds_its_own() {
+  sample_graph
+  jq '.tickets["1"].acceptance = ["Visually matches the mockup", "the gameplay loop runs in games tests", "works on the console"]' \
+    "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+  local out=; out=$("$TP" render "$PLANS" --graph "$GRAPH")
+  assert_contains "$out" "\"Visually matches the mockup\" reads as needing a person"
+  assert_not_contains "$out" "runs in games tests\" reads"
+  assert_not_contains "$out" "works on the console\" reads"
+  printf 'human_check_phrases: [on the console]\n' >"$TEST_TMPDIR/config.yml"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH" --config "$TEST_TMPDIR/config.yml")" \
+    "\"works on the console\" reads as needing a person (\"on the console\")"
+}
+
+test_a_human_check_is_in_its_agent_tickets_plan_unestimated_and_never_flagged() {
+  sample_graph
+  jq '.tickets["6"] = {"title": "Human check: Upload progress (#2)", "human_check_for": "2", "blocked_by": ["2"],
+                       "acceptance": ["percent looks right in game"]}' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+  assert_eq "1,2,6" "$(plan_of "$PLANS" 0)" "the Human check joins its agent ticket's plan"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+  local view=; view=$("$TP" render "$PLANS" --graph "$GRAPH")
+  assert_contains "$view" "| #6 (Human check: Upload progress (#2)) | #2 | not estimated (Human check for #2) | ☐ percent looks right in game |"
+  assert_contains "$view" "| Plan 1 | upload | 3 | \$4.00 of \$6.00 | nothing |"
+  assert_not_contains "$view" "Needs your attention"
+  # Moving it away from its agent ticket is refused.
+  assert_status 1 "$TP" move "$PLANS" --graph "$GRAPH" 6 2
+}
+
+human_tracker() {
+  use_fake_gh
+  jq '.body = "## What\nx\n\n## Acceptance criteria\n- [ ] shows percent\n- [ ] contract keys stay stable, checked in game\n- [ ] snapshots recorded in a career, by hand\n\n## Blocked by\n- #1"' \
+    "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-2.json"
+  human_graph
+}
+
+test_split_moves_the_criterion_into_a_human_check_ticket_once() {
+  human_tracker
+  local out= hc= body=
+  out=$("$TP" split-human-check --repo local/sample --graph "$GRAPH" --plans "$PLANS" 2 "contract keys stay stable, checked in game")
+  hc=$(jq -r '[.[]] | max_by(.number) | .number' <<<"$(jq -s . "$FAKE_GH_DIR"/issue-*.json)")
+  assert_contains "$out" "Human check #$hc for #2"
+  assert_eq "Human check: ticket 2 (#2)" "$(jq -r .title "$FAKE_GH_DIR/issue-$hc.json")"
+  assert_eq '["ready-for-human"]' "$(jq -c '[.labels[].name]' "$FAKE_GH_DIR/issue-$hc.json")"
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")
+  assert_eq "<!-- artisan-agent:human-check-for #2 -->" "$(printf '%s\n' "$body" | head -1)"
+  assert_contains "$body" "## What to check"
+  assert_contains "$body" "- [ ] contract keys stay stable, checked in game"
+  assert_contains "$body" "## Blocked by"
+  assert_eq "[2]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-$hc.json")" "the agent ticket blocks the Human check natively"
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-2.json")
+  assert_not_contains "$body" "checked in game"
+  assert_contains "$body" "- [ ] shows percent"
+  assert_contains "$body" "## Blocked by"
+  # The graph and the plan follow; the flag is gone, so check passes.
+  assert_eq "2" "$(jq -r --arg h "$hc" '.tickets[$h].human_check_for' "$GRAPH")"
+  assert_not_contains "$(jq -r '.tickets["2"].acceptance | join("|")' "$GRAPH")" "in game"
+  assert_contains "$(plan_of "$PLANS" 0)" "$hc"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+  # Twice: nothing new.
+  local calls=; calls=$(grep -c '^issue \(create\|edit\)' "$FAKE_GH_DIR/calls")
+  "$TP" split-human-check --repo local/sample --graph "$GRAPH" --plans "$PLANS" 2 "contract keys stay stable, checked in game" >/dev/null
+  assert_eq "$calls" "$(grep -c '^issue \(create\|edit\)' "$FAKE_GH_DIR/calls")" "a repeat wrote to the tracker"
+  assert_eq 1 "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json" | grep -c 'checked in game')"
+  assert_eq 1 "$(jq --arg h "$hc" '[.plans[].tickets[] | select(. == $h)] | length' "$PLANS")"
+}
+
+test_a_second_split_adds_to_the_existing_human_check() {
+  human_tracker
+  "$TP" split-human-check --repo local/sample --graph "$GRAPH" 2 "checked in game" >/dev/null
+  local before=; before=$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l)
+  "$TP" split-human-check --repo local/sample --graph "$GRAPH" 2 "by hand" >/dev/null
+  assert_eq "$before" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l)" "a second Human check was created"
+  local hc=; hc=$(jq -r 'to_entries[] | select(.value.human_check_for == "2") | .key' <<<"$(jq .tickets "$GRAPH")")
+  local body=; body=$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")
+  assert_contains "$body" "- [ ] contract keys stay stable, checked in game
+- [ ] snapshots recorded in a career, by hand"
+  assert_eq 2 "$(jq --arg h "$hc" '.tickets[$h].acceptance | length' "$GRAPH")"
+  assert_status 1 "$TP" split-human-check --repo local/sample --graph "$GRAPH" 2 "no such criterion"
+}
+
+test_an_override_with_a_reason_lets_approval_through_and_is_recorded_on_the_plan() {
+  human_tracker
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH" --override-human-check 2 "checked in game"
+  "$TP" check "$PLANS" --graph "$GRAPH" --override-human-check 2 "checked in game" --why "the save test covers it"
+  assert_eq "contract keys stay stable, checked in game|the save test covers it" \
+    "$(jq -r '.human_check_overrides[] | "\(.criterion)|\(.why)"' "$PLANS")"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" \
+    "| #2 | contract keys stay stable, checked in game | the save test covers it |"
+  "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >/dev/null 2>&1
+  local p1=; p1=$(jq -r '.plans[0].issue' "$PLANS")
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$p1.json")" \
+    "- #2: \"contract keys stay stable, checked in game\" stays on the agent ticket. Why: the save test covers it"
+}
+
+test_publish_takes_the_override_at_approval() {
+  human_tracker
+  "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved \
+    --override-human-check 2 "contract keys stay stable, checked in game" --why "covered by a test" >/dev/null 2>&1
+  assert_eq "covered by a test" "$(jq -r '.human_check_overrides[0].why' "$PLANS")"
+  [ "$(jq -r '.plans[0].issue' "$PLANS")" != null ] || fail "the override did not let publish through"
+}
