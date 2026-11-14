@@ -250,3 +250,18 @@ test_mb_a_ticket_named_beside_a_batch_in_progress_is_reported_not_dropped() {
   assert_eq "merged merged returned" "$(state_get '[.tickets["1","2","3"].status] | join(" ")')"
   assert_contains "$(cat "$TEST_TMPDIR/merge.out")" "#3 not merged: not in merge batch 1; merge it next"
 }
+
+test_mb_a_batch_of_release_only_changes_over_a_green_commit_is_gated_without_a_dispatch() {
+  setup_batch
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.merge_gate_skip_paths = ["a.txt", "b.txt"]'
+  skip_run 9000 "$MAIN_HEAD" success
+  ready 1 a.txt
+  ready 2 b.txt
+  merge_batch 1 2
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "merged merged" "$(state_get '[.tickets["1","2"].status] | join(" ")')"
+  if dispatched; then fail "CI was dispatched"; fi
+  assert_eq "true true" "$(state_get '[.tickets["1","2"].suite.skipped] | map(tostring) | join(" ")')"
+  assert_eq '9000 ["1","2"]' "$(state_get '[.events[] | select(.event == "merge-gate-skipped")] | last | "\(.run_id) \(.tickets | tojson)"')" \
+    "the event names the green run and the batch's tickets"
+}

@@ -1313,7 +1313,7 @@ batch_await() {
 # judged; red marks it the shortest red prefix; no verdict from CI parks the
 # run (batch_park). The integration worktree ends at the batch's green pre.
 batch_outcome() {
-  local wt= result= rc= mode= sha= pre= p= suite= record= head=
+  local wt= result= rc= mode= sha= pre= p= suite= record= head= who=
   wt=$(integration_worktree)
   result=$(gate_result)
   mode=$(get '.merge_gate.mode') sha=$(get '.merge_gate.sha') pre=$(get '.merge_gate.pre')
@@ -1338,8 +1338,9 @@ batch_outcome() {
   record=$(jq -c --argjson b "$(get '.merge_batch.id')" --argjson ts "$(get -c '.merge_gate.tickets')" \
     '. + {batch: $b, batch_tickets: $ts}' <<<"$record")
   case "$rc" in
-    0) batch_merge_prefix "$p" "$record"
-       note_skipped_gate "$record" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')" ;;
+    0) who=$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')
+       batch_merge_prefix "$p" "$record"
+       note_skipped_gate "$record" "$who" ;;
     7)
       git -C "$wt" reset -q --hard "$pre"
       apply '.merge_batch |= (.red = $p | .red_record = $r) | .merge_gate = null' --argjson p "$p" --argjson r "$record" ;;
