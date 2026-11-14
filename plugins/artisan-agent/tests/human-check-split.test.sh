@@ -81,6 +81,12 @@ test_h_a_criterion_needing_a_human_check_does_not_save_an_unmet_one() {
   [ ! -f "$FAKE_GH_DIR/issue-3.json" ] || fail "a failed attempt split a Human check"
   assert_eq 0 "$(state_get '[.events[] | select(.event == "human-check-split")] | length')"
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [ ] It says hi" "the criterion stays on the ticket"
+  # The fresh worker is told what to meet, and what is not its to meet.
+  local prompt=
+  prompt=$("$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null; cat "$RUN_DIR/prompts/1.2.md")
+  assert_contains "$prompt" "- Unmet (verifier): hello.txt exists"
+  assert_contains "$prompt" "- Needs a human check, not yours to meet (verifier): It says hi"
+  assert_not_contains "$prompt" "- Unmet (verifier): It says hi"
 }
 
 test_h_a_ticket_whose_criteria_all_need_a_human_check_passes_with_a_note() {
