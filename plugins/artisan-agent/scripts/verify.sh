@@ -97,6 +97,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/headless-lib.sh
+. "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
 state_require_jq
 
 DEFAULT_MODEL=claude-sonnet-5-5
@@ -326,10 +328,11 @@ cmd_start() {
     die "the verifier's worktree for #$t: $SETUP_ERR"
   fi
   read_extra_args
+  headless_args "$VERIFIER_TOOLS"
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" \
-    -- --permission-mode acceptEdits --allowedTools "$VERIFIER_TOOLS" --add-dir "$RUN_DIR" \
+    -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR" \
     ${EXTRA[@]+"${EXTRA[@]}"}); then
     remove_worktree "$wt"
     apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = "could not launch")' --arg t "$t"

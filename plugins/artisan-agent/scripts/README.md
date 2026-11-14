@@ -55,11 +55,13 @@ The exit record:
 ```json
 {"ticket":"46","attempt":1,"exit_code":0,"reason":"exited","runner_pid":123,
  "started_at":"2026-11-10T19:38:48Z","finished_at":"2026-11-10T19:39:14Z",
- "max_budget_usd":"3.00","max_turns":60,"deadline_seconds":3600,
+ "max_budget_usd":"3.00","max_turns":60,"deadline_seconds":3600,"permission_denials":0,
  "output":"workers/46.1/output.json","result_file":"results/46.1.result.json"}
 ```
 
 `reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline, never before it, or on ALRM, which brings the deadline forward to now), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
+
+`permission_denials` counts the tool calls the session was denied, from its final result event (the calls themselves are in `output.json`). Every headless session starts with `lib/headless-lib.sh`'s `headless_args`: `--permission-mode dontAsk` and its allowlist, so a tool outside the allowlist is denied at once and never waits on a prompt, whichever `claude` is on PATH (#187).
 
 ## Caps
 

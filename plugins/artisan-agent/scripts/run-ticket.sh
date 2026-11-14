@@ -58,6 +58,10 @@
 # it is not a ticket either, and it never gets a writer pid. Every session
 # gets ARTISAN_ROLE (worker, orchestrator or verifier) and ARTISAN_RUN_DIR.
 #
+# The exit record counts the tool calls the session was denied
+# (permission_denials in its final result event; the calls are in
+# output.json): a denied tool shows in the evidence, not as a silent failure.
+#
 # A worker (not an orchestrator or verifier) is also started with
 #   --name worker-<ticket> --settings '{"crossSessionInbound":"accept"}'
 # so the orchestrator can relay a finding to it (references/findings.md).
@@ -194,14 +198,15 @@ if [ -z "$deadline_seconds" ]; then
 fi
 
 child= code= reason= recorded= stop_requested= deadline_now=
+denials=0   # tool calls the session was denied (its result's permission_denials, #187)
 
 write_exit_record() {
   [ -z "$recorded" ] || return 0
   recorded=1
   local tmp="$run_dir/results/.$key.exit.json.tmp"
-  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"}\n' \
+  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"permission_denials":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"}\n' \
     "$ticket" "$attempt" "${code:-255}" "${reason:-runner-error}" "$$" "$started_at" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$key" "$key" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$denials" "$key" "$key" \
     >"$tmp"
   mv "$tmp" "$exit_record"
 }
@@ -328,6 +333,8 @@ record_usage() {
 finish_output() {
   record_usage
   stream_result "$worker_dir/stream.jsonl" >"$worker_dir/output.json" || true
+  denials=$(jq '.permission_denials // [] | length' "$worker_dir/output.json" 2>/dev/null) || denials=0
+  [ -n "$denials" ] || denials=0
   return 0
 }
 

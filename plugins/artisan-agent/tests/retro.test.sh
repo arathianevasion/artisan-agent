@@ -337,12 +337,32 @@ STUB
   assert_contains "$args" "[-p]"
   assert_contains "$args" "[--max-budget-usd]
 [0.50]"
+  assert_contains "$args" "[--permission-mode]
+[dontAsk]
+[--allowedTools]"
+  local tool=
+  for tool in 'Bash(ls:*)' 'Bash(head:*)' 'Bash(python3 -I:*)' 'Bash(jq:*)' Write; do
+    assert_contains "$args" "$tool"
+  done
   assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "- Chat log: \`$TEST_TMPDIR/chat.jsonl\`
 "
   assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "Prepare the retro"
   assert_contains "$(cat "$RUN_DIR/retro/env")" "ROLE=retro"
   assert_eq 5 "$(jq .actions.total "$RUN_DIR/retro/facts.json")" "the chat's action counted with the decisions and the miss"
   assert_eq 1 "$(jq .actions.counts.chore "$RUN_DIR/retro/facts.json")" "the chat's chore"
+}
+
+test_prepare_says_what_the_preparer_was_denied() {
+  sample_run
+  cat >"$TEST_TMPDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo '{"lessons":[]}' >"$ARTISAN_RUN_DIR/retro/lessons.json"
+echo '{"type":"result","permission_denials":[{"tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"for f in a; do ls $f; done"}}]}'
+STUB
+  chmod +x "$TEST_TMPDIR/bin/claude"
+  ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/bin/claude" "$RETRO" prepare "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || true
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "the preparer was denied these tool calls:
+  Bash: for f in a; do ls \$f; done"
 }
 
 test_prepare_fails_when_the_preparer_writes_no_lessons() {

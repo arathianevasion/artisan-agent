@@ -223,6 +223,28 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "main checkout is clean"
 }
 
+# Every headless session starts with headless_args (#187): dontAsk and its
+# allowlist, never acceptEdits, so a tool outside it is denied, never asked.
+test_orchestrator_worker_and_verifier_start_in_dont_ask_mode() {
+  setup_wave
+  export FAKE_CLAUDE_ARGS_DIR="$TEST_TMPDIR/args"
+  mkdir -p "$FAKE_CLAUDE_ARGS_DIR"
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  local role= args=
+  for role in orchestrator worker verifier; do
+    [ -f "$FAKE_CLAUDE_ARGS_DIR/$role.args" ] || fail "no $role session started"
+    args=$(cat "$FAKE_CLAUDE_ARGS_DIR/$role.args")
+    assert_contains "$args" "[--permission-mode]
+[dontAsk]
+[--allowedTools]
+["
+    case "$args" in *acceptEdits*) fail "the $role still starts in acceptEdits" ;; esac
+  done
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/worker.args")" "[Bash,Read,Write,Edit,Glob,Grep,Skill,Agent]"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/verifier.args")" "[Bash,Read,Write,Glob,Grep]"
+}
+
 test_a_worker_that_paraphrases_every_criterion_still_closes_the_ticket_ticked() {
   setup_wave
   export WORKER_PARAPHRASE=1
