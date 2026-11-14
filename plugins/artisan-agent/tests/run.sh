@@ -40,6 +40,11 @@
 # Tests run under the same bash that runs this script ($BASH), not whichever
 # `bash` is first on PATH, so `/bin/bash tests/run.sh` really tests bash 3.2.
 #
+# TESTS_TIMES=1 prints, after the summary, the seconds each test took, slowest
+# first, one "<seconds> <file>: <test>" line per test, to find what to speed
+# up. The clock is bash's EPOCHREALTIME (bash 5) or whole seconds (bash 3.2).
+# Tests never see TESTS_TIMES.
+#
 # Exit status: 0 when every test passes, 1 when any fails, 2 when no tests
 # were found (an empty suite is never reported green).
 #
@@ -57,13 +62,23 @@ export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
 
 
+# now: the time in seconds, with a fraction where this bash has EPOCHREALTIME.
+now() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then
+    echo "${EPOCHREALTIME/,/.}"
+  else
+    date +%s
+  fi
+}
+
 # run_one: one test, in its own process, scratch directory and marker directory.
 # Called as `run.sh --run-one <resdir> <file> <name> <idx>` (by xargs). Writes
 # <resdir>/<idx>.out, then <idx>.status (0 pass, 1 fail) last, atomically, so
 # the printer never reads a half-written result. Always exits 0.
 run_one() {
   local resdir=$1 file=$2 name=$3 idx=$4
-  local tmp= markdir= marker= output= status= pid=
+  local tmp= markdir= marker= output= status= pid= started=
+  started=$(now)
   tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/artisan-test.XXXXXX")" && pwd -P)
   markdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-pass.XXXXXX")
   marker="$markdir/passed"
@@ -72,6 +87,7 @@ run_one() {
     # Clear every ARTISAN_* variable the caller has, by prefix, so a suite
     # run inside a real worker never reaches that worker'"'"'s run (#121).
     for v in $(compgen -v ARTISAN_); do unset "$v"; done
+    unset TESTS_TIMES
     source "$TESTS_DIR/lib.sh"
     source "$1"
     "$2"
@@ -92,6 +108,7 @@ run_one() {
   done
   rm -rf "$tmp" "$tmp.usage.json" "$tmp.claude" "$markdir"   # lib.sh's usage reading and config folder sit beside the test's folder
   printf '%s\n' "$output" >"$resdir/$idx.out"
+  awk -v a="$started" -v b="$(now)" 'BEGIN { printf "%.2f\n", b - a }' >"$resdir/$idx.secs"
   [ "$status" -eq 0 ] || status=1
   echo "$status" >"$resdir/$idx.status.tmp"
   mv "$resdir/$idx.status.tmp" "$resdir/$idx.status"
@@ -219,6 +236,15 @@ xpid=
 total=$((passed + failed))
 echo
 echo "$passed passed, $failed failed"
+if [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
+  echo "Seconds per test, slowest first:"
+  i=0
+  while [ "$i" -lt "$n_run" ]; do
+    i=$((i + 1))
+    [ -e "$resdir/$i.label" ] && [ -e "$resdir/$i.secs" ] || continue
+    printf '%s %s\n' "$(cat "$resdir/$i.secs")" "$(cat "$resdir/$i.label")"
+  done | sort -k1,1nr -s | awk '{ s = $1; $1 = ""; printf "%8s%s\n", s, $0 }'
+fi
 if [ "$total" -eq 0 ]; then
   echo "run.sh: no tests found in $suite_dir" >&2
   exit 2

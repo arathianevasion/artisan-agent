@@ -215,3 +215,36 @@ test_no_fake_claude_stray_outlives_a_test_that_leaves_one() {
   done
   fail "a fake-claude-stray outlived its test"
 }
+
+# --- per-test durations (#169) ---
+
+test_tests_times_prints_each_tests_seconds_after_the_summary_slowest_first() {
+  local out= times=
+  out=$(TESTS_TIMES=1 "$TESTS_DIR/run.sh" "$FIXTURES/slow-first" 2>&1) || true
+  assert_contains "$out" "2 passed, 1 failed"
+  times=$(printf '%s\n' "$out" | sed -n '/^2 passed, 1 failed$/,$p' | sed 1d)
+  assert_eq "Seconds per test, slowest first:" "$(printf '%s\n' "$times" | sed -n 1p)"
+  printf '%s\n' "$times" | sed -n 2p | grep -Eq '^ *[0-9]+(\.[0-9]+)? +sample: test_a_slow$' \
+    || fail "the 1s test is not listed first: $times"
+  assert_contains "$times" "sample: test_b_fast"
+  assert_contains "$times" "sample: test_c_fails_fast"
+  assert_eq 4 "$(printf '%s\n' "$times" | grep -c .)" "one line per test: $times"
+}
+
+test_tests_times_lists_the_same_durations_under_parallel_jobs() {
+  local out=
+  out=$(TESTS_TIMES=1 "$TESTS_DIR/run.sh" -j 3 "$FIXTURES/slow-first" 2>&1) || true
+  printf '%s\n' "$out" | grep -A1 '^Seconds per test' | sed -n 2p | grep -q 'sample: test_a_slow$' \
+    || fail "the 1s test is not listed first under -j 3: $out"
+}
+
+test_without_tests_times_no_durations_are_printed_and_tests_never_see_it() {
+  local out= status=0
+  out=$("$TESTS_DIR/run.sh" "$FIXTURES/passing" 2>&1) || status=$?
+  assert_not_contains "$out" "Seconds per test"
+  mkdir "$TEST_TMPDIR/probe"
+  printf 'test_p() { [ -z "${TESTS_TIMES:-}" ] || fail "TESTS_TIMES reached the test"; }\n' \
+    >"$TEST_TMPDIR/probe/p.test.sh"
+  out=$(TESTS_TIMES=1 "$TESTS_DIR/run.sh" "$TEST_TMPDIR/probe" 2>&1) || status=$?
+  assert_eq 0 "$status" "$out"
+}
