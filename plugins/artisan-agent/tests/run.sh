@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Script test harness for the pipeline's scripts.
 #
-# Usage: tests/run.sh [-j N] [--shard i/n] [dir]
+# Usage: tests/run.sh [-j N] [--shard i/n] [--rerun-failed] [dir]
+#        tests/run.sh --check-quarantine [dir]
 #
 #   -j N         run up to N tests at once, one test per job (default 1).
 #                Output order, format, summary and exit status are those of a
@@ -11,6 +12,29 @@
 #                of the full ordered list of tests, so n machines can split
 #                the suite. A shard that gets no test exits 2 like an empty
 #                suite. Combines with -j.
+#   --rerun-failed
+#                after every test has run, run each failed test once more, on
+#                its own. One that passes is printed on a "FLAKY <file>: <test>"
+#                line (with its first run's output), never on a FAIL line, and
+#                doesn't fail the suite; one that fails again is a FAIL as
+#                without the flag. Rerun results print after the others, and the
+#                summary line adds ", N flaky". Combines with -j and --shard.
+#                Without it, output and exit status are as they always were.
+#   --check-quarantine
+#                run no test: check that every entry in dir/quarantine.txt
+#                names an open issue (gh issue view; set GH_REPO outside a
+#                clone). Exits 1 on a closed or unreadable issue or a bad line.
+#
+# Quarantine: dir/quarantine.txt, when it exists, lists known flaky tests,
+# one per line as "<file>: <test> #<issue> <why>" (<file> as on the FAIL line,
+# without .test.sh; blank lines and # comments are skipped). A quarantined
+# test still runs, but is printed on a "QUARANTINED <file>: <test> #<issue>:
+# passed|failed" line (its output below when failed) and can't fail the suite;
+# the summary line adds ", N quarantined". A line that isn't an entry, or an
+# entry that names no test in the whole suite (any shard), is a FAIL.
+#
+# GITHUB_STEP_SUMMARY, when set, gets a list of the flaky and quarantined
+# tests (nothing when there are none). Tests never see it.
 #
 # Runs every test_* function in every *.test.sh file directly inside dir
 # (default: this script's own directory; subdirectories are not searched).
@@ -45,7 +69,8 @@
 # up. The clock is bash's EPOCHREALTIME (bash 5) or whole seconds (bash 3.2).
 # Tests never see TESTS_TIMES.
 #
-# Exit status: 0 when every test passes, 1 when any fails, 2 when no tests
+# Exit status: 0 when every test passes (flaky and quarantined ones aside),
+# 1 when any fails, 2 when no tests
 # were found (an empty suite is never reported green).
 #
 # Portable to bash 3.2 (macOS) and Linux.
