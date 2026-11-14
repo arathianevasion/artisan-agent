@@ -89,3 +89,17 @@ test_ws_a_hands_on_worktree_runs_the_setup_and_a_failure_keeps_the_ticket_queued
   "$SCRIPTS/human.sh" start "$RUN_DIR" 1 >/dev/null
   [ -e "$TEST_TMPDIR/project-wt/r1-1.human/deps-installed" ] || fail "setup did not run in the hands-on worktree"
 }
+
+test_ws_a_verifier_worktree_runs_the_setup_once_before_the_verifier_starts() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  export SETUP_LOG="$TEST_TMPDIR/setup.log"
+  set_setup 'echo "$PWD $ARTISAN_MAIN" >>"$SETUP_LOG"; touch deps-installed'
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  assert_eq 1 "$(wc -l <"$SETUP_LOG" | tr -d ' ')" "ran once"
+  assert_contains "$(cat "$SETUP_LOG")" "project-wt/r1-verify-1.1 "
+}

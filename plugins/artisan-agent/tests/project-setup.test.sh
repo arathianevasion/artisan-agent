@@ -438,3 +438,11 @@ test_setup_offers_a_worktree_setup_default_for_a_node_project_and_records_it() {
   answers '{"worktree_setup":"pnpm i"}'
   assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "kept: .artisan-agent/config.yml has worktree_setup: npm ci --prefer-offline"
 }
+
+test_setup_picks_the_node_default_by_lockfile() {
+  seed
+  printf '{}\n' >"$P/package-lock.json"; : >"$P/yarn.lock"
+  assert_contains "$("$PS" scan "$P")" "node-setup	yarn install --frozen-lockfile"
+  : >"$P/pnpm-lock.yaml"
+  assert_contains "$("$PS" scan "$P")" "node-setup	pnpm install --frozen-lockfile --prefer-offline"
+}
