@@ -140,6 +140,30 @@ def per(x, n):
     return num(float(x) / n) if n else None
 
 
+def median(xs):
+    if not xs:
+        return None
+    xs = sorted(xs)
+    mid = len(xs) // 2
+    return num(xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2.0)
+
+
+# The merge gate's time limit when the plan's config has none (#200;
+# templates/config.yml holds the same default).
+DEFAULT_GATE_LIMIT = 6
+
+
+def gate_limit(s, costs):
+    """The run's median merge-gate minutes against merge_gate_minutes_limit
+    (#200): the limit, and whether the median is over it (None when the run
+    has no gate minutes). Says so; never blocks anything."""
+    limit = ((s.get("plan") or {}).get("config") or {}).get("merge_gate_minutes_limit")
+    if limit is None:
+        limit = DEFAULT_GATE_LIMIT
+    med = costs.get("median_minutes")
+    return dict(costs, limit_minutes=limit, over_limit=(None if med is None else med > float(limit)))
+
+
 def merge_gate_costs(s, merged):
     """What the run's merge gates cost, from its events (references/state-file.md).
     Every figure is None for a run with no merge-gate or ci-wait event: no gate,
@@ -149,6 +173,7 @@ def merge_gate_costs(s, merged):
     waits = [e for e in events if e.get("event") == "ci-wait"]
     if not starts and not waits:
         return {"run": None, "run_per_merged": None, "minutes": None, "minutes_per_merged": None,
+                "median_minutes": None,
                 "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
                 "not_run": {"skipped": None, "reused": None}}
     skipped = len([e for e in events if e.get("event") == "merge-gate-skipped"])
@@ -161,6 +186,11 @@ def merge_gate_costs(s, merged):
     flaky = distinct([r for r in suites if (r.get("base_check") or {}).get("verdict") == "flaky"])
 
     minutes = sum(float(e.get("minutes") or 0) for e in waits)
+    # Each gate that ran, for the median: a gate skipped (#168) or reused
+    # (#194) logs a ci-wait with its sha but ran nothing.
+    not_ran = set(e.get("sha") for e in events
+                  if e.get("event") in ("merge-gate-skipped", "merge-gate-reused") and e.get("sha"))
+    each = [float(e.get("minutes") or 0) for e in waits if not (e.get("sha") and e.get("sha") in not_ran)]
     local_red = 0
     for i, g in starts:
         if g.get("mode") != "local":
@@ -169,6 +199,7 @@ def merge_gate_costs(s, merged):
         if end is None or "at" not in end or "at" not in g:
             continue
         minutes += max(0, end["at"] - g["at"]) / 60.0
+        each.append(max(0, end["at"] - g["at"]) / 60.0)
         if end.get("event") in ("failed", "blocked"):
             local_red += 1
     base = len([e for e in events if e.get("event") == "parked" and e.get("reason") == "base"])
@@ -180,11 +211,11 @@ def merge_gate_costs(s, merged):
         # CI gates from before #195 logged no ci-wait: their minutes and red
         # causes are unknown, not zero.
         return {"run": run, "run_per_merged": per(run, merged), "minutes": None, "minutes_per_merged": None,
-                "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
+                "median_minutes": None, "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
                 "not_run": {"skipped": skipped, "reused": reused}}
     return {"run": run, "run_per_merged": per(run, merged),
             "minutes": num(minutes), "minutes_per_merged": per(minutes, merged),
-            "red": {"total": own + base + flaky + no_verdict, "own": own, "base": base,
+            "median_minutes": median(each), "red": {"total": own + base + flaky + no_verdict, "own": own, "base": base,
                     "flaky": flaky, "no_verdict": no_verdict},
             "not_run": {"skipped": skipped, "reused": reused}}
 
@@ -282,7 +313,7 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "triage_misses": len(misses),
         "actions": {"total": n, "counts": counts, "shares_percent": shares},
         "rubber_stamp": rubber,
-        "merge_gates": merge_gate_costs(s, len(merged)),
+        "merge_gates": gate_limit(s, merge_gate_costs(s, len(merged))),
         "artisan_wait": artisan_wait(s),
     }
 
@@ -414,6 +445,17 @@ def gate_costs_table(g, w):
     return "| Merge gates | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
 
 
+def over_limit_lines(g):
+    """The packet's line when the run's median merge gate was over the limit
+    (#200), with the ticket it proposes; nothing at or under it."""
+    if not g.get("over_limit"):
+        return []
+    return ["**The merge gate is over its time limit:** a median of %s minutes per gate this run, against a "
+            "limit of %s (`merge_gate_minutes_limit`). Proposed: a ticket in this project to bring the merge "
+            "gate back under %s minutes. Nothing was blocked by it." % (g["median_minutes"], g["limit_minutes"],
+                                                                       g["limit_minutes"]), ""]
+
+
 def cell(s):
     return str(s).replace("|", "\\|").replace("\n", " ")
 
@@ -453,6 +495,7 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
     out += ["### Signals", "", signals_table(f), ""]
     if "merge_gates" in f:  # facts from before #199 have none
         out += [gate_costs_table(f["merge_gates"], f["artisan_wait"]), ""]
+        out += over_limit_lines(f["merge_gates"])
     out += ["### How did this run feel?", ""]
     if motivation_path and os.path.isfile(motivation_path):
         with open(motivation_path) as fh:

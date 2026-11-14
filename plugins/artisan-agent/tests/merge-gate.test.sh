@@ -741,6 +741,12 @@ test_mg_on_a_ci_machine_the_plan_step_shows_expected_ci_minutes_per_merge() {
   out=$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Merge gate: on CI"
   assert_contains "$out" "about 9.2 minutes per merge (mean of its last 1 completed runs), about 19 minutes for this run's 2 merges"
+  # 9.2 minutes is over the default limit, 6: one line with both numbers.
+  assert_contains "$out" "**Over the merge gate's time limit:** about 9.2 minutes per merge against a limit of 6 (\`merge_gate_minutes_limit\`)."
+  # At or under the limit, no line.
+  printf 'merge_gate_minutes_limit: 9.2\n' >>"$PROJECT/.artisan-agent/config.yml"
+  (cd "$PROJECT" && "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan-under.json"
+  assert_not_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan-under.json")" "time limit"
   # No gate workflow recorded: the approval says nothing can merge.
   printf 'max_agents: 5\n' >"$PROJECT/.artisan-agent/config.yml"
   (cd "$PROJECT" && "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan2.json"

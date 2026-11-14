@@ -487,3 +487,46 @@ test_the_table_dashes_only_the_figures_an_old_ci_run_cannot_have() {
   assert_contains "$out" "| Waiting on merge gates | - |"
   assert_contains "$out" "| Red gates by cause | - |"
 }
+
+# ---- the merge gate's time limit (#200)
+
+# The sample run's gates that ran: CI 12, 20, 5 and 8 minutes and the local
+# gate's 10; the skipped gate (its ci-wait shares the skipped event's sha)
+# ran nothing, so the median is 10.
+mark_skipped_sha() {
+  jq '.events |= map(if (.event == "merge-gate-skipped") or (.event == "ci-wait" and .gate == 5) then . + {sha: "s5"} else . end)' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+}
+set_limit() {
+  jq --argjson l "$1" '.plan.config.merge_gate_minutes_limit = $l' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" \
+    && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+}
+
+test_facts_hold_the_median_gate_minutes_and_whether_it_is_over_the_limit() {
+  sample_run; gate_events; mark_skipped_sha
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  # No limit in the plan's config: the default, 6.
+  assert_eq '10 6 true' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "over the default"
+  set_limit 10
+  f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '10 10 false' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "at the limit is not over"
+}
+
+test_a_run_with_no_gate_minutes_has_no_median_and_no_verdict_on_the_limit() {
+  sample_run
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq 'null 6 null' "$(jq -r '.merge_gates | "\(.median_minutes) \(.limit_minutes) \(.over_limit)"' <<<"$f")" "no gates"
+}
+
+test_the_packet_says_when_the_merge_gate_is_over_its_limit_and_proposes_a_ticket() {
+  sample_run; gate_events; mark_skipped_sha; seed_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "**The merge gate is over its time limit:** a median of 10 minutes per gate this run, against a limit of 6 (\`merge_gate_minutes_limit\`)."
+  assert_contains "$out" "Proposed: a ticket in this project to bring the merge gate back under 6 minutes."
+  set_limit 10
+  rm -f "$RUN_DIR/retro/facts.json"
+  out=$("$RETRO" render "$RUN_DIR")
+  assert_not_contains "$out" "over its time limit"
+  assert_not_contains "$out" "back under"
+}
