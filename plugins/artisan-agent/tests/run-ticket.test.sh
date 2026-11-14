@@ -366,3 +366,21 @@ test_a_worker_gets_a_name_and_accepts_messages_from_other_sessions() {
 [worker-46]"
   assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" '[{"crossSessionInbound":"accept"}]'
 }
+
+# --- settable poll interval (#169) ---
+
+test_a_bad_runner_poll_interval_is_refused_before_anything_starts() {
+  setup_run
+  local status=0
+  ARTISAN_RUNNER_POLL_SECONDS=soon FAKE_CLAUDE_MODE=complete run_ticket >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 2 "$status" "a bad ARTISAN_RUNNER_POLL_SECONDS"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "ARTISAN_RUNNER_POLL_SECONDS"
+  [ ! -e "$RUN/workers/46.1" ] || fail "a worker folder was made"
+}
+
+test_a_short_runner_poll_interval_still_leaves_the_exit_record() {
+  setup_run
+  ARTISAN_RUNNER_POLL_SECONDS=0.05 launch complete
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 0 "$(jq -r .exit_code "$EXIT_RECORD")"
+}

@@ -15,6 +15,9 @@
 # first call with no seen file reports every file already present: files are
 # the truth, so a caller that just started reconciles against all of them.
 #
+# --interval, how often it looks, defaults to ARTISAN_WAIT_ANY_POLL_SECONDS,
+# else 1 second (tests set it shorter).
+#
 # --timeout defaults to 110 seconds, under the Bash tool's 2-minute default
 # timeout. A caller passing a longer --timeout must pass the Bash tool a
 # longer timeout too.
@@ -40,7 +43,9 @@ case "${1:-}" in ''|-h|--help) usage ;; esac
 run_dir=$1
 shift
 timeout=110
-interval=1
+interval=${ARTISAN_WAIT_ANY_POLL_SECONDS:-1}
+printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \
+  || bad_usage "ARTISAN_WAIT_ANY_POLL_SECONDS must be a number of seconds, got: $interval"
 seen=
 
 while [ $# -gt 0 ]; do

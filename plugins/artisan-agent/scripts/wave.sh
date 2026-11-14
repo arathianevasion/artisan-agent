@@ -121,6 +121,9 @@
 #                           every orchestrator and worker session
 #   ARTISAN_MAX_BUDGET_USD  ceiling on any one session's --max-budget-usd
 #                           (for trials; caps are otherwise twice the estimate)
+#   ARTISAN_MERGE_POLL_SECONDS  how often merge and resolved look for the
+#                           merge gate's outcome while they wait (default 0.5;
+#                           tests set it shorter)
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 lock held or an orchestrator still
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
@@ -150,6 +153,10 @@ SESSION_TOOLS="Bash,Read,Write,Edit,Glob,Grep,Skill,Agent"
 
 usage() { state_usage "$0"; }
 die() { state_die 1 "wave.sh: $*"; }
+
+MERGE_POLL_SECONDS=${ARTISAN_MERGE_POLL_SECONDS:-0.5}
+printf '%s' "$MERGE_POLL_SECONDS" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \
+  || state_die 2 "wave.sh: ARTISAN_MERGE_POLL_SECONDS must be a number of seconds, got: $MERGE_POLL_SECONDS"
 
 # ----------------------------------------------------------------- helpers
 
@@ -1007,7 +1014,7 @@ await_gate() {
   result=$(gate_result)
   end=$((SECONDS + wait))
   while [ ! -f "$result" ] && [ "$SECONDS" -lt "$end" ] && gate_alive; do
-    sleep 0.5
+    sleep "$MERGE_POLL_SECONDS"
   done
   if [ -f "$result" ]; then
     finish_gate "$t" "$wt" "$result"

@@ -116,3 +116,16 @@ test_help_prints_the_whole_header() {
   assert_contains "$out" "Exit status: 0 on a change, 124 on timeout, 2 on bad usage."
   assert_contains "$out" "Portable to bash 3.2"
 }
+
+# --- settable poll interval (#169) ---
+
+test_the_poll_interval_comes_from_the_environment_and_a_bad_one_is_a_usage_error() {
+  setup_run
+  local out= status=0
+  out=$(ARTISAN_WAIT_ANY_POLL_SECONDS=soon wait_any "$RUN" --timeout 1 2>&1) || status=$?
+  assert_eq 2 "$status" "a bad ARTISAN_WAIT_ANY_POLL_SECONDS"
+  assert_contains "$out" "ARTISAN_WAIT_ANY_POLL_SECONDS"
+  later 0.3 touch "$RUN/results/7.1.exit.json"
+  out=$(ARTISAN_WAIT_ANY_POLL_SECONDS=0.05 wait_any "$RUN" --timeout 5)
+  assert_eq "new results/7.1.exit.json" "$out"
+}

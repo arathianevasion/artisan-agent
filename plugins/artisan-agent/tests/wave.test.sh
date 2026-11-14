@@ -400,3 +400,12 @@ test_fractional_expected_minutes_still_dispatch_with_a_deadline() {
   assert_eq in_flight "$(state_get '.tickets["1"].status')"
   [ "$(state_get '.tickets["1"].deadline_at - .tickets["1"].dispatched_at')" -ge 299 ] || fail "deadline not twice 2.5 minutes"
 }
+
+# --- settable merge-gate poll interval (#169) ---
+
+test_a_bad_merge_poll_interval_is_a_usage_error() {
+  local out= status=0
+  out=$(ARTISAN_MERGE_POLL_SECONDS=soon "$SCRIPTS/wave.sh" status "$TEST_TMPDIR/none" 2>&1) || status=$?
+  assert_eq 2 "$status" "a bad ARTISAN_MERGE_POLL_SECONDS: $out"
+  assert_contains "$out" "ARTISAN_MERGE_POLL_SECONDS"
+}

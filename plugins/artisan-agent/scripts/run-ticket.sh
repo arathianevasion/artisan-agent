@@ -61,6 +61,10 @@
 #   --name worker-<ticket> --settings '{"crossSessionInbound":"accept"}'
 # so the orchestrator can relay a finding to it (references/findings.md).
 #
+# Environment: ARTISAN_RUNNER_POLL_SECONDS, how often the runner looks at its
+# worker (whether it ended, the deadline, a stop, the latest rate-limit
+# reading); default 1 (tests set it shorter).
+#
 # Exit status: 0 launched, 1 failed to launch, 2 bad usage, 4 the ticket is
 # outside the approved scope.
 #
@@ -130,6 +134,8 @@ case "$role" in
   *) die_usage "--role is worker, orchestrator or verifier" ;;
 esac
 [ -z "$lock_from" ] || [ "$role" = orchestrator ] || die_usage "--lock-from is for an orchestrator"
+poll_seconds=${ARTISAN_RUNNER_POLL_SECONDS:-1}
+is_number "$poll_seconds" || die_usage "ARTISAN_RUNNER_POLL_SECONDS must be a number of seconds, got: $poll_seconds"
 
 # Nothing launches without an approved plan, and the scope is exactly the set
 # approved: never launch a worker outside it.
@@ -332,7 +338,7 @@ while kill -0 "$child" 2>/dev/null; do
     break
   fi
   record_usage
-  sleep 1
+  sleep "$poll_seconds"
 done
 
 code=0
