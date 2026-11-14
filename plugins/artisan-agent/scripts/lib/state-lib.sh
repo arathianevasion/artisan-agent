@@ -297,8 +297,17 @@ state_usage() {
 #     slice, role, problem, solution, guardrails, tickets}; guardrails is
 #     [{guardrail: "area:<name>", area}] for an area's risk gate, else null (references/review-gates.md,
 #     references/end-gate.md)
-#   gate_due(g): every ticket of gate g merged (or closed) and the gate not
-#     yet answered (approved, bypassed, deferred or redirected: gate-action.sh)
+#   gate_done(g; t): ticket t of gate g is done for the gate: merged, closed
+#     or out of the run (out_of_run, sent_back included: #164)
+#   gate_left(g): the tickets of gate g that left the run (out_of_run)
+#   gate_left_run(g): the same as [{number, status, title}], status in words
+#     ("sent back"), for the packet and the recorded gate's left_run
+#   gate_due(g): every ticket of gate g done (gate_done), at least one merged,
+#     and the gate not yet answered (approved, bypassed, deferred or
+#     redirected: gate-action.sh)
+#   gate_title(g; run): the review-gate issue's title for gate g of run run
+#   gate_empty(g): every ticket of gate g done, none merged, and the gate not
+#     recorded: nothing to review, so gate.sh sync closes it as "empty"
 #   decide(id; d; at): waiting decision id decided, with the decision record d
 #     (references/decision-record.md); unchanged when it is not waiting
 #   out_of_run: the statuses that take a ticket out of the run without a
@@ -306,7 +315,17 @@ state_usage() {
 #     resliced blocker) included; with merged and closed, it is done
 #   waiting_non_gate_decisions: the decisions waiting for the Artisan that no
 #     gate carries: not a risk or review gate, nor an exception with its gate open
-#   gate_holds(t): t is in a slice gate that is due: its dependents wait
+#   gate_answered(g): gate g is recorded and no longer open: approved,
+#     bypassed, deferred, redirected or closed as empty
+#   gate_pending(g): gate g still holds: not answered, and not a gate with
+#     every ticket done and none merged (gate_empty: nothing to review). From
+#     plan approval, not only once it is due (#170)
+#   gate_holds(t; d): ticket d, which depends on t, waits for a gate: t is in
+#     a slice or risk gate that is pending and d is not in it (a ticket is
+#     never held by its own gate). d null: any dependent outside the gate
+#   gate_holds(t): gate_holds(t; null)
+#   gate_waits(d; bs): the pending gates that hold d through its blockers bs
+#     (ticket numbers as strings), each {id, kind, slice}
 STATE_JQ_DEFS='
   def attempt_cost($t; $n; $usd):
     if $usd == null then .
@@ -398,11 +417,30 @@ STATE_JQ_DEFS='
            role: "Engineering (QA)", tickets: [$t],
            problem: "#\($t) merged while the orchestrator was at \($pct)% context, the review band.",
            solution: "Look over what merged before its dependents start on it: the cards, the uncertainties and the diff below. Only its dependents wait; nothing else does."}];
+  def out_of_run: ["dropped", "resliced", "bypassed", "deferred", "sent_back"];
+  def gate_done($t):
+    (.tickets[$t].status // "") as $st
+    | $st == "merged" or $st == "closed" or (out_of_run | index($st)) != null;
+  def gate_left($g):
+    . as $s | [$g.tickets[] | select(($s.tickets[.].status // "") as $st | out_of_run | index($st))];
+  def gate_left_run($g):
+    . as $s | [gate_left($g)[] | {number: ., status: ($s.tickets[.].status | sub("_"; " ")),
+                                  title: ($s.plan.tickets[.].title // null)}];
+  def gate_title($g; $run):
+    . as $s
+    | if $g.kind == "risk"
+      then "Risk gate: \($g.tickets | map(. as $t | "#\($t)" + ($s.plan.tickets[$t].title // null | if . then " (\(.))" else "" end)) | join(", ")), \($g.why) (run \($run))"
+      else "Slice gate: \($g.slice) (run \($run))" end;
   def gate_due($g):
     . as $s
-    | all($g.tickets[]; ($s.tickets[.].status // "") as $st | $st == "merged" or $st == "closed")
+    | all($g.tickets[]; . as $t | $s | gate_done($t))
       and any($g.tickets[]; $s.tickets[.].status? == "merged")
       and ([($s.review_gates // [])[] | select(.id == $g.id and .status != "open")] == []);
+  def gate_empty($g):
+    . as $s
+    | all($g.tickets[]; . as $t | $s | gate_done($t))
+      and all($g.tickets[]; $s.tickets[.].status? != "merged")
+      and all(($s.review_gates // [])[]; .id != $g.id);
   def decide($id; $d; $at):
     .decisions |= map(if .id == $id and .status == "waiting"
       then . + $d + {status: "decided", decided_at: $at} else . end);
@@ -446,10 +484,25 @@ STATE_JQ_DEFS='
         | event({event: (if $r.urgent == true then "urgent-added" else "work-added" end), ticket: $t,
                  estimate_usd: $est, budget_usd: .plan.budget_usd}; $at)
       end;
-  def out_of_run: ["dropped", "resliced", "bypassed", "deferred", "sent_back"];
   def waiting_non_gate_decisions:
     [.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
                            and (.kind != "exception" or .issue == null))];
-  def gate_holds($t):
-    . as $s | any(slice_gates[]; (.tickets | index($t)) != null and (. as $g | $s | gate_due($g)));
+  def gate_answered($g):
+    any((.review_gates // [])[]; .id == $g.id and .status != "open");
+  def gate_pending($g):
+    . as $s
+    | (gate_answered($g) | not)
+      and ((all($g.tickets[]; . as $t | $s | gate_done($t))
+            and all($g.tickets[]; $s.tickets[.].status? != "merged")) | not);
+  def gate_waits($d; $bs):
+    . as $s
+    | [slice_gates[] | select((.tickets | index($d)) == null)
+       | select(.tickets as $gt | any($bs[]; . as $b | $gt | index($b) != null))
+       | select(. as $g | $s | gate_pending($g)) | {id, kind, slice}];
+  def gate_holds($t; $d):
+    . as $s
+    | any(slice_gates[]; (.tickets | index($t)) != null
+          and ($d == null or (.tickets | index($d)) == null)
+          and (. as $g | $s | gate_pending($g)));
+  def gate_holds($t): gate_holds($t; null);
 '

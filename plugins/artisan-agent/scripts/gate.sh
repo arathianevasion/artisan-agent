@@ -71,13 +71,19 @@
 #       --not-bug (--bug, the default, says so); prints the rework ticket's
 #       number; the check stays open. An answer kept in gates/pending/
 #       while the lock is held counts: a second answer is refused (6).
+#       A failed check whose rework hasn't merged (or left the run) refuses
+#       every answer (6); then it is answered again at the next gate.
 #       later: it carries to the next gate. "all pass --gate <issue>" passes
-#       every check on that gate. Events human-check-passed and
-#       human-check-failed. 6: not an open Human check, or on no open gate.
-#   gate.sh holds <run-dir> <ticket>
-#       prints "held" when the ticket is in a slice gate that is due and not
-#       yet approved (its dependents wait), else "free". A caller treats
-#       anything else (an error) as held.
+#       every check on that gate, skipping (and naming) one whose rework is
+#       open. Events human-check-passed and human-check-failed. 6: not an
+#       open Human check, its rework is open, or on no open gate.
+#   gate.sh holds <run-dir> <ticket> [<dependent>]
+#       prints "held" when the dependent, which depends on the ticket, waits
+#       for a gate: the ticket is in a slice or risk gate not yet answered
+#       (from plan approval, not only once it is due: #170) and the dependent
+#       is not in that gate; else "free". With no dependent: one outside the
+#       gate. A gate none of whose tickets merged holds nothing. A caller
+#       treats anything else (an error) as held.
 #
 # Every decision recorded carries its job and who made it (--by, default
 # Artisan); the card's own job for a card, job 13 for the gate.
@@ -137,9 +143,9 @@ cmd_due() {
 }
 
 cmd_holds() {
-  [ $# -eq 2 ] || usage
+  [ $# -eq 2 ] || [ $# -eq 3 ] || usage
   open_run "$1"
-  case "$(jget 'gate_holds($t)' --arg t "$2")" in
+  case "$(jget 'gate_holds($t; $d)' --arg t "$2" --argjson d "$(jq -n --arg d "${3:-}" 'if $d == "" then null else $d end')")" in
     true) echo held ;;
     false) echo free ;;
     *) die "could not read the gates of #$2" ;;
@@ -161,11 +167,8 @@ build_view() { # id dependents-json
     prov=$(printf '%s\n' "$prov" | grep -v "^| #$t |" || true)
   done
   jq -n --argjson g "$def" --argjson deps "$deps" --slurpfile s "$FILE" \
-    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" '
-    {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps,
-                  title: (if $g.kind == "risk"
-                          then "Risk gate: \($g.tickets | map(. as $t | "#\($t)" + ($s[0].plan.tickets[$t].title // null | if . then " (\(.))" else "" end)) | join(", ")), \($g.why) (run \($run))"
-                          else "Slice gate: \($g.slice) (run \($run))" end)}),
+    --arg guard "$guard" --arg prov "$prov" --arg run "$RUN_ID" "$STATE_JQ_DEFS"'
+    {gate: ($g + {kind: ($g.kind // "slice"), dependents: $deps, title: ($s[0] | gate_title($g; $run))}),
      state: $s[0], guardrails: $guard, provisional: $prov}'
 }
 
@@ -193,7 +196,8 @@ dependents() { # def
   repo=$(get '.repo')
   for t in $(get '.plan.scope[]'); do
     jq -e --arg t "$t" '.tickets | index($t)' <<<"$def" >/dev/null && continue
-    case "$(get --arg t "$t" '.tickets[$t].status // ""')" in merged|closed|deferred) continue ;; esac
+    # Merged, closed or out of the run (#164): nothing to hold.
+    case "$(get --arg t "$t" '.tickets[$t].status // ""')" in merged|closed|deferred|dropped|resliced|bypassed|sent_back) continue ;; esac
     # A Human check is no dependent: it verifies the slice, never waits on it.
     [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] || continue
     blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
@@ -218,6 +222,13 @@ add_blocker() { # ticket blocker-issue blocker-id
     || die "could not make #$2 a blocker of #$1"
 }
 
+# A ticket that left the run (#164) is no ticket of the review: the gate's
+# left_run names it ({number, status, title}), so the packet can say the slice
+# can't be reviewed end to end.
+without_left() { # def
+  jget 'gate_left($g) as $l | gate_left_run($g) as $r | $g | .tickets -= $l | .left_run = $r' --argjson g "$1" -c
+}
+
 cmd_open() {
   [ $# -eq 2 ] || usage
   open_run "$1"
@@ -228,6 +239,7 @@ cmd_open() {
   [ -n "$def" ] || state_die 6 "gate.sh: no slice gate $id in the plan"
   [ "$(jget 'gate_due($g)' --argjson g "$def")" = true ] \
     || state_die 6 "gate.sh: $id is not due: not every ticket of its slice has merged"
+  def=$(without_left "$def")
   dir=$(gates_dir)
   repo=$(get '.repo')
   # Built once and kept, so a call that crashed after opening the issue
@@ -265,6 +277,7 @@ cmd_open() {
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
           human_checks: [($v.human_checks // [])[].ticket],
+          left_run: ($v.gate.left_run // []),
           status: "open", opened_at: $now, decisions: [], reworks: []}
           + (if $v.gate.guardrails then {guardrails: $v.gate.guardrails} else {} end)])
       | .provisional_shown = (((.provisional_shown // []) + $v.gate.tickets + $other) | unique)
@@ -608,14 +621,26 @@ cmd_bug() {
 
 # ------------------------------------------------------------ Human checks
 
+# A Human check failed and waiting on its rework (#165): its last answer is a
+# fail whose rework ticket hasn't merged. Prints "<gate> <rework>", or
+# nothing; once the rework merges (or leaves the run) the check is answered
+# again at the next gate that lists it.
+check_rework_open() { # ticket -> "<gate> <rework>"
+  jget '. as $s | (.tickets[$t].human_check.answers // []) | last
+    | select(. != null and .verdict == "fail" and (.rework // null) != null)
+    | .rework as $r | select($s | gate_done($r) | not) | "\(.gate) \($r)"' --arg t "$1"
+}
+
 # The gate a Human check is answered at: the open or deferred review gate
 # that lists it, else the end gate while it is open. Prints its id; 6 when
 # the check is on no gate the Artisan can answer now.
 check_gate() { # ticket
-  local t="$1" hg="" f=""
+  local t="$1" hg="" f="" open=""
   [ "$(jget 'is_human_check($t)' --arg t "$t")" = true ] || state_die 6 "gate.sh: #$t is not a Human check of this run"
   [ "$(get --arg t "$t" '.tickets[$t].status')" = queued ] \
     || state_die 6 "gate.sh: Human check #$t is $(get --arg t "$t" '.tickets[$t].human_check.state // .tickets[$t].status'), not open"
+  open=$(check_rework_open "$t") || exit $?
+  [ -z "$open" ] || state_die 6 "gate.sh: Human check #$t already failed at ${open% *}; rework #${open#* } is open"
   # An answer given while the lock was held counts already (gates/pending/).
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
@@ -699,7 +724,7 @@ $BY checked the build of #$agent by hand and it failed:
 cmd_check() {
   [ $# -ge 3 ] || usage
   open_run "$1"
-  local which="$2" verdict="$3" want="" notes="" not_bug=0 t="" list="" g=""
+  local which="$2" verdict="$3" want="" notes="" not_bug=0 t="" list="" g="" open=""
   shift 3
   local -a rest=()
   while [ $# -gt 0 ]; do
@@ -725,6 +750,18 @@ cmd_check() {
   fi
   if [ "$which" = all ]; then
     for t in $(jget 'open_human_checks[]'); do
+      open=$(check_rework_open "$t") || exit $?
+      if [ -n "$open" ]; then
+        # Named, not answered: the failed answer stands until the rework
+        # merges. With --gate, named when it failed at that gate, is listed
+        # on it now (carried), or the gate is the end gate.
+        case "$want" in
+          ""|end|"${open% *}"|"$(get --arg t "$t" '.tickets[$t].human_check.gate // ""')") ;;
+          *) continue ;;
+        esac
+        echo "gate.sh: skipped Human check #$t: it already failed at ${open% *}; rework #${open#* } is open"
+        continue
+      fi
       g=$( (check_gate "$t") 2>/dev/null) || continue
       [ -z "$want" ] || [ "$g" = "$want" ] || continue
       list="$list $t"
@@ -777,6 +814,32 @@ cmd_sync() {
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
     echo "opened #$num $id"
   done
+  close_empty
+}
+
+# A gate none of whose tickets merged (they all left the run or were closed,
+# #164) has nothing to review: it is
+# recorded as answered ("empty", with the reason and a gate-empty event),
+# never opened on the tracker, and holds nothing. One line per gate closed.
+close_empty() {
+  local ids=""
+  ids=$(jget '. as $s | slice_gates[] | select(. as $g | $s | gate_empty($g)) | .id')
+  [ -n "$ids" ] || return 0
+  apply '. as $s
+    | reduce (slice_gates[] | select(. as $g | $s | gate_empty($g))) as $g (.;
+        ($s | gate_left_run($g)) as $left
+        | ([$g.tickets[] | "#\(.) \($s.tickets[.].status | sub("_"; " "))"] | join(", ")) as $who
+        | {by: "run", at: $now, why: ("none of its tickets merged (" + $who + "): nothing to review")} as $r
+        | .review_gates = ((.review_gates // []) + [{
+            id: $g.id, kind: $g.kind, slice: $g.slice,
+            title: ($s | gate_title($g; $run)),
+            role: $g.role, issue: null, tickets: [], left_run: $left, dependents: [], cards: [],
+            human_checks: [], status: "empty", opened_at: null, decisions: [], reworks: [],
+            empty: $r, answered: [$r + {action: "nothing to review"}]}])
+        | event({event: "gate-empty", gate: $g.id, issue: null, kind: $g.kind, choice: "nothing to review",
+                 by: "run", left_run: $left, why: $r.why}; $now))' --arg run "$RUN_ID"
+  jget '(.review_gates // [])[] | select(.status == "empty" and (.id as $id | $ids | index($id)))
+    | "closed \(.id): \(.empty.why)"' --argjson ids "$(printf '%s\n' "$ids" | jq -R . | jq -sc .)"
 }
 
 # ------------------------------------------------------------- list/chat/packet
@@ -840,6 +903,7 @@ cmd_packet() {
   fi
   def=$(gate_def "$2")
   [ -n "$def" ] || state_die 6 "gate.sh: no gate $2"
+  def=$(without_left "$def")
   build_view "$def" "$(dependents "$def")" | PACKET body
 }
 

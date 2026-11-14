@@ -389,6 +389,8 @@ ticket_table() {
                 + (if $k.tracker_closed then ", closed" else ", not closed yet" end)
              elif $k.status == "blocked" then ": \($k.blocked_reason // ($k.failures | last | .reason) // "see decisions")"
              elif $k.status == "in_flight" then " (attempt \($k.attempts))"
+             elif $k.status == "queued" and ($k.gate_waits // []) != [] then
+               ": waiting on " + ($k.gate_waits | map("\(.kind) gate \(.slice)") | join(", "))
              else "" end) + " |" )' "$FILE"
 }
 
@@ -556,8 +558,8 @@ check_blockers() { # ticket
       fi
       [ "$(get --arg b "$b" '.tickets[$b].risk_gate.status? // ""')" != waiting ] \
         || state_die 5 "wave.sh: refusing #$t: its blocker #$b merged under a risk gate the Artisan hasn't cleared (drain.sh gate)"
-      [ "$("$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" 2>/dev/null)" = free ] \
-        || state_die 5 "wave.sh: refusing #$t: its blocker #$b is in a slice whose review gate the Artisan hasn't approved (gate.sh)"
+      [ "$("$SCRIPT_DIR/gate.sh" holds "$RUN_DIR" "$b" "$t" 2>/dev/null)" = free ] \
+        || state_die 5 "wave.sh: refusing #$t: its blocker #$b is in a slice whose review gate the Artisan hasn't answered (gate.sh)"
     elif [ "$state" != closed ]; then
       state_die 5 "wave.sh: refusing #$t: its blocker #$b, outside this run, is still open"
     fi

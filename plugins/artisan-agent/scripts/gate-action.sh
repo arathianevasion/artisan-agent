@@ -866,8 +866,8 @@ cmd_parked() {
     | [($s.exception_gates // [])[] | select(.status == "open") | .ticket] as $held0
     | (reduce range(0; ($left | length) + 1) as $_ ($held0;
         . as $h | ($h + [$left[] | select(. as $t | $s.tickets[$t].status == "queued" and $tr[$t] != null
-            and any($tr[$t][]; . as $b | ($gi | index($b)) or ($h | index($b)) or ($risk | index($b))
-                                         or ($s | gate_holds($b)))) ]) | unique)) as $held
+            and ((($s.tickets[$t].gate_waits // []) != []) or any($tr[$t][]; . as $b | ($gi | index($b)) or ($h | index($b)) or ($risk | index($b))
+                                         or ($s | gate_holds($b; $t))))) ]) | unique)) as $held
     | if $tr | any(.[]; . == null) then empty
       elif ($left | length) == 0 or any($left[]; . as $t | $held | index($t) | not) then empty
       else
@@ -876,9 +876,15 @@ cmd_parked() {
         | [$open[] | select((.kind == "exception" and (.ticket as $t | $held0 | index($t)))
                            or ((.issue | tostring) as $i | $bl | index($i)))] as $holding
         | [$risk[] | select(. as $r | $bl | index($r))] as $riskh
-        | (($holding | length) + ($riskh | length)) as $n
+        # A gate that holds a ticket from plan approval but has no open issue
+        # yet (its slice not all merged: #170).
+        | ($open | map(.id)) as $open_ids
+        | ([$left[] | $s.tickets[.].gate_waits // [] | .[]] | unique_by(.id)
+           | map(select(.id as $i | $open_ids | index($i) | not))) as $unopened
+        | (($holding | length) + ($riskh | length) + ($unopened | length)) as $n
         | "parked: waiting on \($n) review\(if $n == 1 then "" else "s" end): "
-          + ([$holding[] | "\(.title) #\(.issue)"] + [$riskh[] | "risk gate on #\(.)"] | join(", "))
+          + ([$holding[] | "\(.title) #\(.issue)"] + [$riskh[] | "risk gate on #\(.)"]
+             + [$unopened[] | "\(.kind) gate \(.slice) (not open yet)"] | join(", "))
           + "; \($left | length) ticket\(if ($left | length) == 1 then " waits" else "s wait" end) behind \(if $n == 1 then "it" else "them" end): "
           + ($left | map("#" + .) | join(", "))
       end' --argjson tr "$tracker")
@@ -912,7 +918,7 @@ cmd_list() {
   echo "| Gate | Issue | Kind | Tickets | Status | Holds |"
   echo "|---|---|---|---|---|---|"
   get '[(.review_gates // [])[], (.exception_gates // [])[]] | sort_by(.opened_at // 0)[]
-    | "| \(.title) | #\(.issue) | \(.kind // "slice") | \(.tickets | map("#" + .) | join(", ")) | \(.status) | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
+    | "| \(.title) | \(if .issue == null then "-" else "#\(.issue)" end) | \(.kind // "slice") | \(if (.tickets // []) == [] then "-" else .tickets | map("#" + .) | join(", ") end) | \(.status) | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
 }
 
 cmd_deferred() {
