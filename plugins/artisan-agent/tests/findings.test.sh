@@ -122,7 +122,7 @@ test_a_plain_blocked_result_is_not_a_design_stop() {
 
 test_a_finding_with_no_blocks_list_is_skipped_and_the_next_one_is_listed_and_marked() {
   setup
-  finding 10 '{"title":"A note with no blocks","why":"Recorded by the verifier."}'
+  finding 10 '{"title":"Recorded with no blocks","why":"As the verifier records them."}'
   finding 10 '{"title":"Use the shared parser","why":"12 should too.","blocks":["12"]}'
   local out= rc=0
   out=$("$SCRIPTS/findings.sh" pending "$RUN_DIR") || rc=$?
