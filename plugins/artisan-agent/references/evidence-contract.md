@@ -21,6 +21,7 @@ A ticket that misses a criterion is never merged; it is a failed attempt like an
 | Line | Exit | Means |
 |---|---|---|
 | `pass <met>/<total>` | 0 | every criterion met: merge it |
+| `pass <met>/<total>, <k> to Human check #<n>` | 0 | every criterion met but `k` that need a human check, which moved to Human check `#<n>`: merge it (below) |
 | `fail <met>/<total> retry: <first unmet>` | 6 | a failed attempt with attempts left: the ticket is `queued`; dispatch it again and the fresh worker's failure evidence lists what the verifier found unmet |
 | `fail <met>/<total> blocked: <first unmet>` | 6 | a failed attempt, the last: blocked, with an exception decision for the Artisan |
 | `error <reason>` | 14 | the verifier failed (crashed, ran out of budget, wrote no verdict): start it again; no attempt is used up |
@@ -35,12 +36,20 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 
 | Field | Required | Values |
 |---|---|---|
-| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met`, `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health |
+| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met` (`true`, `false`, or `"human"`: needs a human check, below), `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health |
 | `verdict` | no | `pass` or `fail`; advisory, since the contract recomputes it |
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
 
 `judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
+
+## Needs a human check
+
+A criterion only a person can verify (in game, by eye, on a real device, with outside access) belongs in a Human check ticket (`references/human-checks.md`), not an agent ticket. When one slips into an agent ticket anyway, the verifier marks it `"met": "human"`, with `evidence.why` saying what only a person can do there. It is for a criterion that code, tests, checks and the diff can't show; never for one that is merely hard to test.
+
+- It is neither met nor unmet: it never fails an attempt. The verdict passes when every other criterion is met; a ticket whose criteria all need a human check passes too, with a `note` in its contract. An unmet criterion still fails the attempt, `human` ones or not.
+- A red recorded check that no criterion cites leaves none to a human check either: they are unmet, so a broken build is never handed to the Artisan to try.
+- On a pass, `judge` first moves them into the agent ticket's Human check (`to-plan.sh split-human-check`: title, marker, `ready-for-human`, the criteria, blocked by the agent ticket), then records the verdict with the Human check in the run's scope (`tickets.<n>.human_check.for`) and logs `human-check-split` in the same write. Nothing is ticked for them on the agent ticket (they are no longer on it) and a comment there says where they went. The next slice gate lists the Human check (`references/human-checks.md`, "In a run"). A judge that stops part way records nothing and runs again; the split action finds the Human check it made, so there is never a second.
 
 ## The evidence contract
 
@@ -49,9 +58,11 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | Field | Values |
 |---|---|
 | `ticket`, `title`, `attempt`, `commit`, `base` | which work was verified: the worker's attempt, its commit and the integration commit it branched from |
-| `verdict` | `pass` when every criterion is met, else `fail` |
-| `criteria_met`, `criteria_total` | the counts |
-| `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
+| `verdict` | `pass` when every criterion is met or needs a human check, else `fail` |
+| `criteria_met`, `criteria_human`, `criteria_total` | the counts: met, needing a human check, all |
+| `human_check` | the Human check the `human` criteria moved to, when there are any (a ticket with a `ticket_path` has none: its `unsure` says to move them by hand) |
+| `note` | only when every criterion needs a human check: says the work passed on the Human check alone |
+| `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's; `false` for one needing a human check), `human` (`true` only on one needing a human check), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
 | `tests` | the worker's run of the test files covering its change: `{suite_passed, files, full_suite, command, summary}`; the full suite is left to the merge gate |
 | `checks` | the checks the verifier ran through `checks.sh run`: the recorded checks with their results, or `{recorded: false, fallback: "no recorded checks (…): found …"}`. With checks recorded, `worker_matches` says whether the worker's evidence listed exactly them (`worker_listed`), and the comment flags it when not. A red recorded check makes each criterion that cites it unmet (all of them when none does); `references/checks.md` |
 | `diff` | `summary` (`git diff --shortstat`) and `files` (`<path> +<added> -<deleted>`, comma-separated), base to commit |

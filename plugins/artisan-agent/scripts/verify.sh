@@ -260,6 +260,7 @@ cmd_start() {
       printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
       printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
     fi
+    printf -- '- A criterion only a person can verify (play, eyes, a real device, outside access; never one merely hard to test): mark it "met": "human" with evidence.why saying what only a person can do. It moves to a Human check and does not fail the ticket.\n'
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
   } >"$prompt"

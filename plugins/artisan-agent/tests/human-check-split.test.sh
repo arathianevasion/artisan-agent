@@ -71,3 +71,74 @@ test_h_the_pass_splits_the_human_criteria_into_one_human_check_once() {
   [ ! -f "$FAKE_GH_DIR/issue-4.json" ] || fail "a second Human check was created"
   assert_eq 1 "$(state_get '[.events[] | select(.event == "human-check-split")] | length')"
 }
+
+test_h_a_criterion_needing_a_human_check_does_not_save_an_unmet_one() {
+  export VERIFIER_UNMET="hello.txt exists"
+  judge_human "It says hi"
+  assert_eq 6 "$JUDGE_STATUS"
+  assert_eq "fail 0/2 retry: hello.txt exists" "$JUDGE_OUT"
+  assert_contains "$(state_get '.tickets["1"].failures[-1].reason')" "the verifier found 1 of 2 criteria unmet, first: hello.txt exists"
+  [ ! -f "$FAKE_GH_DIR/issue-3.json" ] || fail "a failed attempt split a Human check"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "human-check-split")] | length')"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")" "- [ ] It says hi" "the criterion stays on the ticket"
+}
+
+test_h_a_ticket_whose_criteria_all_need_a_human_check_passes_with_a_note() {
+  judge_human "hello.txt exists|It says hi"
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq "pass 0/2, 2 to Human check #3" "$JUDGE_OUT"
+  assert_contains "$(state_get '.tickets["1"].evidence.note')" "Every criterion needs a human check"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-3.json")" "- [ ] hello.txt exists
+- [ ] It says hi"
+  assert_eq '["hello.txt exists","It says hi"]' \
+    "$(state_get '[.events[] | select(.event == "human-check-split")][0].criteria' | jq -c .)"
+}
+
+test_h_a_red_recorded_check_no_criterion_cites_leaves_nothing_to_a_human_check() {
+  setup_wave
+  record_checks
+  # Runs the recorded checks as its prompt says, then marks every criterion "human".
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'EOF2'
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+eval "$(sed -n 's/^    \$ //p' "$ARTISAN_RUN_DIR/prompts/$key.md")" >/dev/null || true
+jq '{acceptance: [.[] | {criterion: ., met: "human", evidence: {why: "only play shows it"}}]}' \
+  "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+EOF2
+  export WORKER_FILE=BROKEN
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq 6 "$JUDGE_STATUS"
+  assert_eq "fail 0/2 retry: hello.txt exists" "$JUDGE_OUT"
+  [ ! -f "$FAKE_GH_DIR/issue-3.json" ] || fail "a broken build was handed to a Human check"
+}
+
+test_h_the_next_slice_gate_lists_the_new_human_check() {
+  judge_human "It says hi"
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null
+  "$SCRIPTS/wave.sh" close "$RUN_DIR" 1 >/dev/null
+  export ARTISAN_HOME="$TEST_TMPDIR/artisan-home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/team-cache"
+  export CLAUDE_CONFIG_DIR="$TEST_TMPDIR/claude-config"
+  merge_gate_local "$ARTISAN_HOME"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "slice", slice: "hello", tickets: ["1"]}, {kind: "end"}]'
+  local num= body=
+  num=$("$SCRIPTS/gate.sh" open "$RUN_DIR" slice-1)
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
+  assert_contains "$body" "## Human checks"
+  assert_contains "$body" "#3 (Human check: Add hello (#1))"
+  assert_contains "$body" "It says hi"
+}
+
+test_h_a_judge_that_split_but_crashed_before_recording_splits_nothing_more() {
+  setup_wave
+  returned_ticket
+  export VERIFIER_HUMAN="It says hi"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  # The split happened, then the judge died before writing the verdict.
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH" "$SCRIPTS/to-plan.sh" split-human-check --repo local/sample 1 "It says hi" >/dev/null
+  judge_verifier 1
+  assert_eq "pass 1/2, 1 to Human check #3" "$JUDGE_OUT"
+  [ ! -f "$FAKE_GH_DIR/issue-4.json" ] || fail "a second Human check was created"
+  assert_eq 1 "$(jq -r .body "$FAKE_GH_DIR/issue-3.json" | grep -c 'It says hi')" "the criterion is on the Human check once"
+}
