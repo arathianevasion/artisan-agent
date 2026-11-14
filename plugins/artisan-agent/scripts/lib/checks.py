@@ -5,14 +5,18 @@ check it proved can fail:
 
     - `<command>`: proven to fail on <YYYY-MM-DD>, breaking: <the break>
 
+and, for a check that can't run on every machine (#194), ends the line with
+" (runs_locally: mac)" or " (runs_locally: never)"; without it a check is
+"always".
+
 Usage: python3 -I checks.py <CODING_STANDARDS.md path>
 
 Prints JSON on stdout, always exit 0 for a readable or missing file:
-    {"recorded": true,  "file": ..., "checks": [{"command", "proven_on", "break"}]}
+    {"recorded": true,  "file": ..., "checks": [{"command", "proven_on", "break", "runs_locally"}]}
     {"recorded": false, "file": ..., "checks": [], "reason": "..."}
 A line in the section that isn't a "- `command`" bullet is ignored, as are
 lines inside a fenced code block or an HTML comment. A command listed twice
-counts once.
+counts once. A runs_locally other than always, mac or never: exit 1.
 """
 
 import json
@@ -23,6 +27,8 @@ import sys
 SETUP_LINE = re.compile(r"^[-*]\s+`(.+?)`:\s*proven to fail on\s+(\S+?),?\s+breaking:\s*(.*)$")
 ANY_LINE = re.compile(r"^[-*]\s+`([^`]+)`(?::\s*(.*))?$")
 HEADING = re.compile(r"^#{1,2}\s")
+RUNS_LOCALLY = re.compile(r"\s*\(runs_locally:\s*([^)]*?)\s*\)\s*$")
+RUNS_LOCALLY_VALUES = ("always", "mac", "never")
 
 
 def section(lines, heading):
@@ -63,6 +69,13 @@ def read(path):
             continue
         if fenced:
             continue
+        runs_locally = "always"
+        r = RUNS_LOCALLY.search(line)
+        if r:
+            runs_locally = r.group(1)
+            if runs_locally not in RUNS_LOCALLY_VALUES:
+                raise ValueError("runs_locally must be always, mac or never, not %r: %s" % (runs_locally, line))
+            line = line[:r.start()]
         m = SETUP_LINE.match(line)
         if m:
             check = {"command": m.group(1), "proven_on": m.group(2), "break": m.group(3)}
@@ -71,6 +84,7 @@ def read(path):
             if not m:
                 continue
             check = {"command": m.group(1), "proven_on": None, "break": None}
+        check["runs_locally"] = runs_locally
         if check["command"].strip() and check["command"] not in seen:
             seen.add(check["command"])
             out["checks"].append(check)
@@ -85,7 +99,12 @@ def main(argv):
     if len(argv) != 2:
         sys.stderr.write("usage: checks.py <CODING_STANDARDS.md>\n")
         return 2
-    json.dump(read(argv[1]), sys.stdout)
+    try:
+        out = read(argv[1])
+    except ValueError as e:
+        sys.stderr.write("checks.py: %s\n" % e)
+        return 1
+    json.dump(out, sys.stdout)
     sys.stdout.write("\n")
     return 0
 
