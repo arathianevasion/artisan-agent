@@ -5,7 +5,7 @@ How an orchestrator starts a worker, waits on it and judges it. Files are the tr
 | Script | Does | Returns |
 |---|---|---|
 | `run-ticket.sh` | Launches one capped headless worker (or, with `--role orchestrator`, a wave's orchestrator; with `--role verifier`, a ticket's verifier) detached; always leaves an exit record. Refuses to launch into a run folder with no state file (exit 4) | the runner's PID, at once |
-| `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
+| `wait-any.sh` | Blocks in the foreground until a run's files change, or a timeout (`--timeout`, default 110, at most 590 seconds: one orchestrator turn waits on every worker, verifier and merge gate at once) | `new`, `grew` or `changed <path>` lines; 124 on timeout, 2 on bad usage |
 | `classify-worker.sh` | Judges one attempt from its files | `<status> <reason>` |
 | `sweep.sh repair <run-dir> [--dry-run]` | Mends a run hit by the stream-json miscount (#151), where every finished worker was judged crashed: rebuilds an empty `output.json` from the saved `stream.jsonl`, takes back each failed attempt that now classifies as completed (the failure moves to `tickets.<t>.repaired`, the attempt is given back, its cost recorded, the ticket returned with its result), decides a queued exception "resolved by repair", and names the command that closes an open exception gate (`gate-action.sh repaired`). Running it again changes nothing; it never runs the guard. `--dry-run` (#154) takes no lock and writes nothing (it repairs a scratch copy), prints the lines the real repair would, ends "dry run: nothing written": run it first, then repair | lines; 0 ok, 1 error, 2 usage, 3 the lock is held |
 | `lever.sh` | The levers on a running run (#76): `steer` (stop a worker and redispatch it with the Artisan's notes, recorded as steering, not a failed attempt), `add` (a ticket joins the run after a one-line approval of model, estimate and new budget, ahead of lower-priority work) and `urgent` (its own approval; one extra slot above Max Agents, from `main`, its own end gate and PR through `end-gate.sh urgent-*`) ([`references/run-levers.md`](../references/run-levers.md); `tests/levers.test.sh`) | lines; 3 the state lock is held (the request is kept for the sweep), 6 refused |
@@ -127,6 +127,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | deferral review | `deferral_review_days` | 30 |
 | evidence threshold | `evidence_threshold` | 3 |
 | hands-on nudge | `hands_on_nudge_runs` | 5 |
+| orchestrator turn budget (#175) | `orchestrator_turns.base`, `orchestrator_turns.per_ticket`, `orchestrator_turns.per_ci_gate` | 20, 12, 10: `wave.sh launch` gives each wave's orchestrator `--max-turns` base + per_ticket x T + per_ci_gate x G, T the scope's tickets not merged or blocked (at most Max Agents, at least 1), G = T when the merge gate runs on CI, else 0 (source in `templates/config.yml`) |
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |

@@ -208,3 +208,11 @@ test_ot_an_orchestrator_out_of_turns_is_an_orchestrator_exit_decision() {
   assert_eq "error_max_turns waiting" \
     "$(state_get '[.decisions[] | select(.kind == "orchestrator-exit")] | last | "\(.cause) \(.status)"')"
 }
+
+test_ot_the_brief_waits_in_one_long_call_and_merges_again_only_on_the_gates_result() {
+  local brief=
+  brief=$(cat "$PLUGIN_ROOT/skills/implement-plan/references/orchestrator.md")
+  assert_contains "$brief" '`$S/wait-any.sh $RUN --timeout 570`, with the Bash tool'"'"'s `timeout` at 600000'
+  assert_contains "$brief" 'only once `wait-any.sh` names the gate'"'"'s result (`new results/merge-'
+  assert_not_contains "$brief" "within 110 seconds"
+}

@@ -12,6 +12,8 @@
 #   wave.sh launch <run-dir> [--resume] [--handoff] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
+#       Its --max-turns scales with the wave (#175): orchestrator_turns.base
+#       + per_ticket x T + per_ci_gate x G (orchestrator_max_turns, below).
 #       The state lock passes to the orchestrator's runner for the wave.
 #       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
