@@ -204,3 +204,15 @@ test_health_shows_the_scope_floor_as_fired_after_a_scope_question() {
   cd "$PROJECT"
   assert_eq fired "$("$SCRIPTS/guardrail-health.sh" health --runs "$RUN_DIR" | jq -r '.guardrails[] | select(.key == "scope-floor") | .status')"
 }
+
+test_a_blocking_scope_question_filed_by_questions_sh_logs_it_for_a_ticket_with_no_areas() {
+  init_run
+  mkdir -p "$TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho https://github.com/owner/repo/issues/91\n' >"$TEST_TMPDIR/bin/gh"
+  chmod +x "$TEST_TMPDIR/bin/gh"
+  PATH="$TEST_TMPDIR/bin:$PATH" ARTISAN_FINDINGS_FILE="$RUN_DIR/results/findings/10.jsonl" \
+    "$SCRIPTS/questions.sh" file --ticket 10 --criterion 2 --question "add export?" --option a --option b \
+    --recommendation a --blocking >/dev/null
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq "scope-floor 10 0 91" "$(state_get '.events[] | select(.event == "guardrail-fired") | [.guardrail, .ticket, (.areas | length), .question] | join(" ")')"
+}
