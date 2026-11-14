@@ -163,7 +163,7 @@ When `status` says `done`, or the run halts, report:
 | #12 (retry failed uploads) | 1 | claude-sonnet-5-5 | merged, closed |
 | #14 (export CSV) | 2 | claude-sonnet-5-5 | blocked: merge conflict in `export.py`; branch `agent/14` kept |
 
-Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
+Blocked tickets and unmerged branches go at the top of the table, not buried: the value of an unattended run is knowing exactly where it stopped. Below the table: findings filed for triage (a second table: finding, from ticket, triage outcome), review remarks not acted on (count, by ticket), cost against the budget, the merge gate table `end-gate.sh finish` printed (what the merge gates cost and how long gates waited on the Artisan), and the integration branch ready for its PR to `main`. Release the state lock (`state.sh unlock <run folder> "$ARTISAN_WRITER_PID"`) once the run has ended.
 
 Before the summary, when `status` says `done`, run the end gate and cut the PRs to `main` (`${CLAUDE_PLUGIN_ROOT}/scripts/end-gate.sh`; `${CLAUDE_PLUGIN_ROOT}/references/end-gate.md`): it lists every deferred gate and carried card, the PRs follow the `pr-boundaries` guardrail, and `end-gate.sh finish` takes the `in-run` labels off.
 

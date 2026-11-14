@@ -9,12 +9,20 @@
 # Usage:
 #   checks.sh json  [--file F | --dir D]
 #       the recorded checks as JSON: {recorded, file, checks: [{command,
-#       proven_on, break}], reason (when none)}. Always exit 0.
+#       proven_on, break, runs_locally}], reason (when none)}. runs_locally
+#       is always, mac or never (#194; always when the line doesn't say).
+#       Exit 0, or 1 for a runs_locally not one of those.
 #   checks.sh list  [--file F | --dir D]
 #       one recorded command per line. 16 when none (the reason on stderr).
 #   checks.sh suite [--file F | --dir D]
 #       one command for `sh -c` that runs every recorded check in order and
 #       fails if any fails: the plan's suite_command. 16 when none.
+#   checks.sh ci-only [--file F | --dir D]
+#       one line per recorded check this machine leaves to CI (#194): only
+#       when its merge gate runs on CI (merge-gate.sh mode), a check whose
+#       runs_locally is never, or mac on a machine that isn't macOS. Prints
+#       nothing when there is none, on a local merge gate, or with none
+#       recorded. Exit 0.
 #   checks.sh run   [--file F | --dir D] [--in DIR] [--out FILE] [--worker [--suite CMD]] [-- FOUND...]
 #       runs every recorded check (sh -c, in DIR), all of them, in order, and
 #       prints the results as JSON (the evidence record's "checks"):
@@ -28,7 +36,11 @@
 #       run's suite command (the command `checks.sh suite` prints, or --suite
 #       CMD when the plan's suite_command differs) is not run: it stays for the
 #       merge gate and is listed in not_run, "<command>: left to the merge
-#       gate (it is the run's suite command)". The merge gate never passes
+#       gate (it is the run's suite command)". A check ci-only lists is not
+#       run either: it is listed in not_run, "<command>: runs on CI on the
+#       branch (runs_locally: <value>)", and in ci_only (present only when
+#       there is one), for the worker's CI run on its branch (worker-ci.sh).
+#       The merge gate never passes
 #       --worker; the verifier passes it (with --suite) only on a machine whose
 #       merge gate runs on CI (merge-gate.sh), otherwise it runs the suite
 #       too. A check is the suite when its command equals that command exactly.
@@ -101,8 +113,27 @@ cmd_suite() {
     | if length == 1 then .[0] else map("( " + . + " )") | join(" && ") end'
 }
 
+# ci_only_json json: the recorded checks this machine leaves to CI, as
+# [{command, runs_locally}]: none unless the merge gate runs on CI.
+ci_only_json() {
+  local show="" mode="" os=""
+  if [ "$(printf '%s' "$1" | jq -r .recorded)" != true ]; then echo '[]'; return 0; fi
+  show=$("$SCRIPT_DIR/merge-gate.sh" show) || die "could not tell this machine's merge gate mode (merge-gate.sh show)"
+  mode=$(printf '%s' "$show" | jq -r .mode) os=$(printf '%s' "$show" | jq -r .os)
+  printf '%s' "$1" | jq -c --arg mode "$mode" --arg os "$os" '
+    if $mode != "ci" then [] else
+      [.checks[] | select(.runs_locally == "never" or (.runs_locally == "mac" and $os != "macos"))
+       | {command, runs_locally}] end'
+}
+
+cmd_ci_only() {
+  local json=""
+  json=$(recorded_json)
+  ci_only_json "$json" | jq -r '.[].command'
+}
+
 cmd_run() {
-  local json= recorded= logs= i=0 rc= cmd= last= results='[]' out= suite= skipped='[]'
+  local json= recorded= logs= i=0 rc= cmd= last= results='[]' out= suite= skipped='[]' ci='[]'
   json=$(recorded_json)
   recorded=$(printf '%s' "$json" | jq -r .recorded)
   local run=()
@@ -115,6 +146,7 @@ EOF
   fi
   if [ "$WORKER" = 1 ] && [ "$recorded" = true ]; then
     suite=${SUITE:-$(cmd_suite)}
+    ci=$(ci_only_json "$json")
   fi
   if [ -n "$OUT" ]; then
     logs="${OUT%.json}.logs"
@@ -127,6 +159,12 @@ EOF
       skipped=$(printf '%s' "$skipped" | jq -c --arg c "$cmd" '. + [$c + ": left to the merge gate (it is the run'"'"'s suite command)"]')
       continue
     fi
+    local where=""
+    where=$(printf '%s' "$ci" | jq -r --arg c "$cmd" '.[] | select(.command == $c) | .runs_locally')
+    if [ -n "$where" ]; then
+      skipped=$(printf '%s' "$skipped" | jq -c --arg c "$cmd" --arg w "$where" '. + ["\($c): runs on CI on the branch (runs_locally: \($w))"]')
+      continue
+    fi
     i=$((i + 1))
     rc=0
     (cd "$IN" && sh -c "$cmd") >"$tmp" 2>&1 </dev/null || rc=$?
@@ -137,11 +175,12 @@ EOF
       '. + [{command: $c, passed: ($rc == 0), exit_code: $rc, result: $r} + (if $log != "" then {log: $log} else {} end)]')
   done
   rm -f "$tmp"
-  out=$(jq -n --argjson j "$json" --argjson res "$results" --argjson skipped "$skipped" --args '
+  out=$(jq -n --argjson j "$json" --argjson res "$results" --argjson skipped "$skipped" --argjson ci "$ci" --args '
     $ARGS.positional as $found
     | if $j.recorded then
         {recorded: true, file: $j.file, results: $res,
          not_run: ($skipped + [$found[] | select(. as $f | [$j.checks[].command] | index($f) | not)])}
+        + (if $ci == [] then {} else {ci_only: [$ci[].command]} end)
       else
         {recorded: false, file: $j.file, reason: $j.reason,
          fallback: ("no recorded checks (\($j.reason)): found "
@@ -165,5 +204,6 @@ case "$cmd" in
   list) commands_or_16 "$(recorded_json)" ;;
   suite) cmd_suite ;;
   run) cmd_run ;;
+  ci-only) cmd_ci_only ;;
   *) usage ;;
 esac

@@ -750,3 +750,159 @@ test_mg_on_a_ci_machine_the_plan_step_shows_expected_ci_minutes_per_merge() {
   assert_eq null "$(jq -c .merge_gate "$TEST_TMPDIR/plan3.json")"
   assert_not_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan3.json")" "Merge gate"
 }
+
+# Reuse (#194): a worker's green run on its branch, for a commit whose tree
+# is the merge commit's tree, is the merge gate's run: nothing is dispatched.
+# Sets RU_W (the worker's commit, green in run 9100) and SK_SHA (the --no-ff
+# merge of it). With "moved", main gains a commit first, so the trees differ.
+setup_reuse() { # [moved] [conclusion]
+  setup_skip
+  local main=""
+  main=$(git -C "$SK_DIR" symbolic-ref --short HEAD)
+  git_quiet -C "$SK_DIR" checkout -b agent/1
+  echo work >"$SK_DIR/plugins/p/work.sh"
+  git_quiet -C "$SK_DIR" add -A
+  git_quiet -C "$SK_DIR" commit -m "the ticket"
+  RU_W=$(git -C "$SK_DIR" rev-parse HEAD)
+  jq -n --arg sha "$RU_W" --arg c "${2:-success}" '{databaseId: 9100, workflowName: "ci.yml", headBranch: "agent/1",
+    headSha: $sha, event: "workflow_dispatch", status: "completed", conclusion: $c,
+    url: "https://github.com/local/sample/actions/runs/9100", jobs: [{name: "e2e", conclusion: $c}]}' >"$FAKE_GH_DIR/run-9100.json"
+  git_quiet -C "$SK_DIR" checkout "$main"
+  if [ "${1:-}" = moved ]; then echo other >"$SK_DIR/plugins/p/other.sh"; git_quiet -C "$SK_DIR" add -A; git_quiet -C "$SK_DIR" commit -m other; fi
+  git_quiet -C "$SK_DIR" merge --no-ff --no-edit agent/1
+  SK_SHA=$(git -C "$SK_DIR" rev-parse HEAD)
+}
+
+test_mg_reuse_a_no_ff_merge_with_the_tree_the_workers_green_run_tested_dispatches_nothing() {
+  setup_reuse
+  [ "$SK_SHA" != "$RU_W" ] || fail "the merge commit is the worker's commit"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  assert_eq "9100 success $SK_SHA 9100 $RU_W" "$(jq -r '"\(.reused) \(.conclusion) \(.sha) \(.relied_on.run_id) \(.relied_on.sha)"' <<<"$SK_OUT")"
+  assert_eq "https://github.com/local/sample/actions/runs/9100" "$(jq -r .url <<<"$SK_OUT")"
+  assert_contains "$(jq -r .why <<<"$SK_OUT")" "run 9100"
+  if dispatched; then fail "CI was dispatched for a tree the worker's run already tested"; fi
+  assert_eq "" "$(git -C "$ORIGIN" for-each-ref 'refs/heads/ci/')" "nothing was pushed"
+}
+
+test_mg_reuse_a_merge_whose_tree_differs_runs_the_gate() {
+  setup_reuse moved
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "CI was not dispatched for a new tree"
+  assert_eq "null 9001" "$(jq -r '"\(.reused // null) \(.run_id)"' <<<"$SK_OUT")"
+}
+
+test_mg_reuse_never_counts_a_run_that_was_not_green_for_that_commit() {
+  setup_reuse "" failure
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a red run was reused"
+  assert_eq null "$(jq -r '.reused // null' <<<"$SK_OUT")"
+  # A green run for another commit than the one named is not reused either.
+  rm -rf "$TEST_TMPDIR/tracker" "$TEST_TMPDIR/skip" "$TEST_TMPDIR/skip-origin.git"
+  setup_reuse
+  jq --arg a "$SK_A" '.headSha = $a' "$FAKE_GH_DIR/run-9100.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9100.json"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a run for another commit was reused"
+}
+
+# ---- a worker's CI run on its branch (#194)
+
+# A CI machine whose project has an e2e check that never runs here, a gate
+# workflow in the project config the worker reads, and a worker that runs
+# CI on its branch (WORKER_CI=1). [config-extra] goes under ci_gate.
+setup_worker_ci() { # [config-extra]
+  setup_ci
+  printf '#!/bin/sh\ntouch %s/e2e-ran-here\n' "$TEST_TMPDIR" >"$PROJECT/e2e.sh"
+  printf '# Coding standards\n\n## Checks\n\n- `true`: proven to fail on 2026-11-13, breaking: x\n- `sh e2e.sh`: proven to fail on 2026-11-13, breaking: y (runs_locally: never)\n' >"$PROJECT/CODING_STANDARDS.md"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m standards
+  git_quiet -C "$PROJECT" branch -f run/r1 main
+  git_quiet -C "$PROJECT" push -q origin main
+  mkdir -p "$PROJECT/.artisan-agent"
+  printf 'ci_gate:\n  workflow: ci.yml\n%s' "${1:-}" >"$PROJECT/.artisan-agent/config.yml"
+  export WORKER_CI=1 VERIFIER_RUN_CHECKS=1
+}
+
+dispatches() { grep -c '^workflow run' "$FAKE_GH_DIR/calls" 2>/dev/null || true; }
+
+# verified_ticket, but judged whatever the verdict (fail exits 6).
+judged_ticket() {
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >"$TEST_TMPDIR/judge.out" 2>"$TEST_TMPDIR/judge.err" || true
+}
+
+test_mg_worker_ci_the_verifier_passes_a_green_branch_run_and_the_merge_gate_reuses_it() {
+  setup_worker_ci
+  judged_ticket
+  local commit=
+  commit=$(state_get '.tickets["1"].evidence.commit')
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')" "$(cat "$TEST_TMPDIR/judge.out" "$TEST_TMPDIR/judge.err")"
+  assert_eq "9001 $commit true" "$(state_get '.tickets["1"].evidence.checks.ci_run | "\(.run_id) \(.sha) \(.full)"')"
+  # The verifier didn't run the e2e check here: it was left to the worker's CI run.
+  assert_eq '["true"]' "$(state_get '.tickets["1"].verifications[0].checks.commands | tojson')"
+  assert_eq '["sh e2e.sh"]' "$(state_get '.tickets["1"].verifications[0].checks.ci_only | tojson')"
+  assert_contains "$(cat "$RUN_DIR/prompts/verify-1.1.md")" '- `sh e2e.sh`: runs on CI'
+  [ ! -e "$TEST_TMPDIR/e2e-ran-here" ] || fail "the e2e check ran on this machine"
+  assert_eq 1 "$(dispatches)" "only the worker's run"
+  assert_eq 1 "$(state_get '.tickets["1"].evidence.checks.ci_cost.runs')" "the branch run's cost is on the evidence"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "9001 true" "$(state_get '.tickets["1"].suite | "\(.reused) \(.passed)"')"
+  assert_eq 1 "$(dispatches)" "the merge gate dispatched nothing"
+  assert_eq 9001 "$(state_get '[.events[] | select(.event == "merge-gate-reused")] | last | .run_id')"
+}
+
+test_mg_worker_ci_the_verifier_fails_a_commit_with_no_green_run_for_a_ci_only_check() {
+  setup_worker_ci
+  unset WORKER_CI
+  judged_ticket
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(state_get '.tickets["1"].evidence.acceptance[0].evidence.why')" "no green CI run"
+  assert_eq '["sh e2e.sh:false"]' "$(state_get '[.tickets["1"].evidence.checks.results[] | select(.ci) | "\(.command):\(.passed)"] | tojson')"
+}
+
+test_mg_worker_ci_a_red_branch_run_fails_the_verifier_too() {
+  setup_worker_ci
+  echo failure >"$FAKE_GH_DIR/ci-outcome"
+  judged_ticket
+  rm "$FAKE_GH_DIR/ci-outcome"
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+}
+
+test_mg_worker_ci_with_worker_inputs_the_run_passes_them_and_the_merge_gate_runs_in_full() {
+  setup_worker_ci '  worker_inputs:
+    macos: false
+'
+  judged_ticket
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "-f macos=false"
+  assert_eq false "$(state_get '.tickets["1"].evidence.checks.ci_run.full')"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "null 9002" "$(state_get '.tickets["1"].suite | "\(.reused // null) \(.run_id)"')"
+  assert_eq 2 "$(dispatches)" "the merge gate ran CI in full"
+}
+
+test_mg_worker_ci_a_later_red_run_for_the_same_commit_fails_the_verifier() {
+  setup_worker_ci
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  local res=
+  res="$RUN_DIR/results/1.1.result.json"
+  jq '.ci_runs += [.ci_runs[0] + {run_id: 9002, conclusion: "failure"}]' "$res" >"$res.tmp" && mv "$res.tmp" "$res"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >/dev/null 2>&1 || true
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(state_get '.tickets["1"].evidence.acceptance[0].evidence.why')" "concluded failure"
+  assert_eq "2" "$(state_get '.tickets["1"].evidence.checks.ci_cost.runs')"
+}
