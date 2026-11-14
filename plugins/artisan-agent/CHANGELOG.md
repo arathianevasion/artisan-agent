@@ -2,6 +2,23 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.5.0 (2026-11-14)
+
+Wave 5: review gates, budgets and guardrail health, steering a running run, and a merge gate that can wait on CI.
+
+- Review gates (#65, #70, #71): a slice gate is a `review-gate` issue with a decisions-first packet; gate actions (approve, redirect, bypass, defer) and the exception gate for a run giving up; risk gates, gate placement, the end gate and PRs to `main`. The 50% context risk gate opens a real review issue (#132); the end gate lists and waits on deferred overrun gates (#131); a deferred gate closed by hand is picked up at the next sync (#117).
+- Budget and usage (#72): run budget, the overrun gate, the usage guard and status-line capture. `wave.sh status` only reads, and `park raise` is one write (#120). Model prices for estimates are kept current (#91); a small plan estimate no longer starves workers (#95).
+- Steering (#76): add work to a running run, steer a worker, and urgent tickets, which ship through their own end gate and PR. An urgent ticket's end gate packet names the escalation tests it meets (#144); a conflict in `urgent-finish` gets one resolve try, then a decision (#143).
+- Areas (#77): a ticket's expected files place it in areas, which set its gates. The plan step asks for expected files (#100) and records `blocked_by` (#113).
+- Hands-on tickets (#66), plan approval's ADR and guardrail check (#67), and two chats working through the tracker (#73).
+- Retro (#68, #74): lessons into their homes, the satisfaction record, and guardrail health, moves and audits. Guardrails now emit `guardrail-fired`, `guardrail-bypassed`, `gate-decision` (outcome, redirect, areas) and `bug-found`: a bug the Artisan catches at any review gate counts as tighten evidence, the same as a shipped one (#122). The scope floor fires on a worker's scope question (#148); "keep all" logs one decision per gate (#149).
+- Host mode (#69): the login-expiry check and moving a run between machines. `move.sh out` is crash-safe (#107) and waits for a running merge gate (#150); a host is detected by `host.json` alone (#108).
+- Merge gate on CI (#139): on a CI machine a merge waits for the CI run on that exact commit instead of the local suite; red blocks the ticket, no verdict parks the run. The gate runs detached, so no call outlives the orchestrator's time cap, and a cut-off gate resumes on the same CI run (#142).
+- Wave start asks before merging `main` into a run whose base `main` lacks: merge, keep the base's guardrails, or halt (#152).
+- Upstream-updates check (#75).
+- Fixes: evidence records quote acceptance criteria exactly (#94); setup's checks and PR-boundary guardrail are read (#98); hook commands are escaped (#99) and quote the plugin path, so a path with a space works (#147); conflicted paths with spaces (#101); `gh api` failures surface (#102, #103); the Engineering chat's drain no longer asks the Artisan to type `/compact` (#104); a worker that waits on a background command (#111); a finished worker reported as vanished (#114); a dropped ticket's dependents say why they wait (#116).
+- Tests and CI: tests get no `ARTISAN_*` variable from the caller (#121); the fake `gh` handles an empty tracker (#125); every `local` is declared with a value (#127); `state_is_uint` everywhere (#128); duplicated gate tables and filters have one definition (#118); setup cleanups (#133); tests cannot reach the main checkout's scripts or leave processes behind (#137, #145); live tests run with plugin hooks (#105); CI runs on pull requests and on demand (#141). Schema rule for additive state fields (#96).
+
 ## 0.4.1 (2026-11-14)
 
 Pilot fix: workers were all counted as crashed, because stream-json events were found by line prefix.
