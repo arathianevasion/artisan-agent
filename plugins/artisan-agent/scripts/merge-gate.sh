@@ -18,7 +18,7 @@
 #       batch_source}.
 #   merge-gate.sh batch
 #       on or off: whether wave.sh merge gates tickets ready together as one
-#       batch (#167). host.json's merge_batch (on | off), default on.
+#       merge batch (#167). host.json's merge_batch (on | off), default on.
 #   merge-gate.sh start --result FILE --pid-file FILE --log FILE -- local|ci ARGS...
 #       run the gate (merge-gate.sh local or ci with ARGS) detached, the way
 #       run-ticket.sh starts a worker (lib/detach-lib.sh), so it outlives its

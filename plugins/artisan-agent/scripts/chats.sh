@@ -33,7 +33,10 @@
 #       when the run lock is free. Prints Markdown, then `ACTION <verb> ...`
 #       lines for the chat to act on, then `notify: <text>` when --idle (the
 #       terminal is idle) and a decision is waiting that no earlier sweep
-#       notified. A chat sends `notify:` as a push notification.
+#       notified, or at once, idle or not, when an orchestrator exited
+#       without finishing its wave (an `orchestrator-exit` decision: the
+#       line names its cause and tickets). A chat sends `notify:` as a push
+#       notification.
 #   chats.sh due [--chat C] [--project DIR]
 #       exit 0 if the chat's last sweep was at least sweep_minutes ago (or
 #       never), else 1.
@@ -477,15 +480,32 @@ sweep_decisions() { # Engineering chat only: decisions waiting in a live run's s
     echo "- Run $run has $n decision(s) waiting for the Artisan (\`wave.sh status\`)."
     WAITING_KEYS="$WAITING_KEYS""decisions-$run-$n "
     WAITING_TEXT="$WAITING_TEXT""$n decision(s) waiting in run $run; "
+    sweep_orchestrator_exits "$f" "$run"
   done
+}
+
+# An orchestrator that exited without finishing its wave (#171) is never left
+# for an idle terminal: it notifies at once, naming the cause and the tickets.
+sweep_orchestrator_exits() { # state-file run-id
+  local id="" text="" lines=""
+  lines=$(jq -r '(.decisions // [])[] | select(.kind == "orchestrator-exit" and .status == "waiting")
+    | "\(.id)\t" + "the orchestrator for wave \(.wave) exited without finishing it (\(.cause)"
+      + (if (.tickets | length) > 0 then ": " + (.tickets | map("#" + .) | join(", ")) else "" end) + ")"' "$1" 2>/dev/null) || return 0
+  while IFS="$(printf '\t')" read -r id text; do
+    [ -n "$id" ] || continue
+    echo "- Run $2: $text."
+    WAITING_KEYS="$WAITING_KEYS""orchestrator-exit-$2-$id "
+    URGENT_KEYS="$URGENT_KEYS""orchestrator-exit-$2-$id "
+    WAITING_TEXT="$WAITING_TEXT""run $2: $text; "
+  done <<<"$lines"
 }
 
 cmd_sweep() {
   need_repo
   ACTIONS=$(mktemp "${TMPDIR:-/tmp}/chats-actions.XXXXXX")
-  WAITING_KEYS="" WAITING_TEXT=""
+  WAITING_KEYS="" WAITING_TEXT="" URGENT_KEYS=""
   trap 'rm -f "$ACTIONS"' EXIT
-  local key= fresh="" notified=
+  local key= fresh="" notified= urgent=0
   echo "# Sweep ($CHAT chat)"
   echo
   sweep_gates
@@ -500,9 +520,14 @@ cmd_sweep() {
   # A push notification, once per waiting decision, when the terminal is idle.
   notified=$(mem_get '(.notified // []) | join(" ")')
   for key in $WAITING_KEYS; do
-    case " $notified " in *" $key "*) ;; *) fresh="$fresh $key" ;; esac
+    case " $notified " in
+      *" $key "*) ;;
+      *) fresh="$fresh $key"
+         case " $URGENT_KEYS " in *" $key "*) urgent=1 ;; esac ;;
+    esac
   done
-  if [ "$IDLE" = 1 ] && [ -n "$fresh" ]; then
+  # An orchestrator's unclean exit notifies at once, idle or not (#171).
+  if { [ "$IDLE" = 1 ] || [ "$urgent" = 1 ]; } && [ -n "$fresh" ]; then
     echo "notify: Artisan Agent: ${WAITING_TEXT%; }"
     mem_set --arg add "$fresh" '.notified = (((.notified // []) + ($add | split(" ") | map(select(. != "")))) | unique)'
   fi

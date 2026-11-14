@@ -229,6 +229,10 @@ build_branch() { # pr-json: points pr/<run>/<n> at the group's work
   tmp="$WT_ROOT/$RUN_ID-pr-$(jq -r .n <<<"$pr")"
   rm -rf "$tmp"; git -C "$MAIN" worktree prune
   git -C "$MAIN" worktree add -q --detach "$tmp" "$base" || die "could not make a worktree for $branch"
+  if ! worktree_setup "$tmp"; then
+    git -C "$MAIN" worktree remove --force "$tmp" >/dev/null 2>&1 || true
+    die "$SETUP_ERR"
+  fi
   ident=$(git_id)
   for c in $(jq -r '.commits[]' <<<"$pr"); do
     # shellcheck disable=SC2086
