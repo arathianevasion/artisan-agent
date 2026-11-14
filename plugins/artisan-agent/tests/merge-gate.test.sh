@@ -71,9 +71,11 @@ test_mg_a_green_ci_run_for_the_merge_commit_records_the_merge_and_no_suite_runs_
 }
 
 # A red CI run whose failed jobs' log is the canned Playwright and run.sh
-# output in fixtures/ci-logs (gh run view --log-failed).
+# output in fixtures/ci-logs (gh run view --log-failed). Red because of the
+# ticket's hello.txt, so the base (#195) stays green and the rerun red.
 red_ci_with_log() { # conclusion
-  echo "${1:-failure}" >"$FAKE_GH_DIR/ci-outcome"
+  echo hello.txt >"$FAKE_GH_DIR/ci-red-if-file"
+  echo "${1:-failure}" >"$FAKE_GH_DIR/ci-red-outcome"
   cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
 }
 
@@ -103,6 +105,24 @@ test_mg_failed_tests_reads_the_job_test_place_and_assertion_from_the_failed_log(
   rm -f "$FAKE_GH_DIR/ci-log-failed"
   out=$("$MG" failed-tests --repo local/sample --run-id 9001)
   assert_eq "0 true" "$(jq -r '"\(.tests | length) \(.why != null)"' <<<"$out")"
+}
+
+test_mg_failed_tests_never_names_a_flaky_or_quarantined_test_or_takes_its_output() {
+  # run.sh --rerun-failed and the quarantine (#198): FLAKY and QUARANTINED
+  # lines, with output indented below, after a FAIL that printed none.
+  setup_ci
+  red_ci_with_log
+  echo '{"databaseId": 9001, "status": "completed", "conclusion": "failure"}' >"$FAKE_GH_DIR/run-9001.json"
+  local ts='2026-11-14T10:00:00.0000000Z' out=
+  {
+    printf 'unit\tRun\t%s %s\n' "$ts" "FAIL sample: test_real"
+    printf 'unit\tRun\t%s %s\n' "$ts" "FLAKY sample: test_flaky"
+    printf 'unit\tRun\t%s %s\n' "$ts" "     assert_eq: the flaky one's message"
+    printf 'unit\tRun\t%s %s\n' "$ts" "QUARANTINED sample: test_q #190: failed"
+    printf 'unit\tRun\t%s %s\n' "$ts" "     assert_eq: the quarantined one's message"
+  } >"$FAKE_GH_DIR/ci-log-failed"
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001)
+  assert_eq '[{"job":"unit","name":"sample: test_real","where":null,"message":null}]' "$(jq -c '.tests' <<<"$out")"
 }
 
 test_mg_a_red_ci_run_with_attempts_left_is_a_failed_attempt_requeued_with_the_failing_tests() {

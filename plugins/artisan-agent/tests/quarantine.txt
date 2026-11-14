@@ -1,0 +1,7 @@
+# Known flaky tests: run.sh runs them but they can't fail the suite (see its
+# header). One per line, each tied to the open issue that will fix it:
+#
+#   <file>: <test> #<issue> <why>
+#
+# e.g. "harness: test_parallel_jobs_really_overlap #123 slow runners take 9s".
+# CI's quarantine job fails once the issue is closed: then take the line out.

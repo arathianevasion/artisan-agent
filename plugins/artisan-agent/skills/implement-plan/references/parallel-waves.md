@@ -33,6 +33,7 @@ Only verified work merges: a fresh verifier's `pass` for the ticket's current at
 | 8 | its worker is still ending | wait, then merge again |
 | 13 | not verified: no passing verdict for this attempt at this commit | `verify.sh start`, then `judge` (`references/evidence-contract.md`); nothing changed |
 | 19 | parked on CI: CI gave no verdict | merge and dispatch nothing new until the Artisan clears it (`wave.sh unpark-ci`) |
+| 19, "the base is red" | the red gate's tests fail on the base too (#195): nobody is charged | merge nothing until the Artisan fixes the base and clears it (`wave.sh unpark-base`); dispatch carries on |
 | 20 | the merge gate is still running (it runs detached; `merge` waits at most a minute) | `wait-any.sh --timeout 570` (one turn), then `wave.sh merge` again once it names the gate's `results/merge-…` or times out: it finishes the same gate, never a second one |
 
 ## A conflict: one try, then the Artisan

@@ -120,7 +120,7 @@ init_write() {
         orchestrators: [],
         review_gates: [],
         overrun_gates: [],
-        usage_park: null, ci_park: null, merge_gate: null, merge_batch: null,
+        usage_park: null, ci_park: null, base_park: null, merge_gate: null, merge_batch: null,
         usage_verdict: null,
         exception_gates: [],
         halted: null,

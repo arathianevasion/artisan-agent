@@ -494,7 +494,17 @@ STATE_JQ_DEFS='
       end;
   def waiting_non_gate_decisions:
     [.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate"
+                           and .kind != "base-red"
                            and (.kind != "exception" or .issue == null))];
+  # The minutes each merge waited on CI (ci-wait events, #195): per merge
+  # (a ticket, or a merge batch with every gate it ran) and in total.
+  def ci_wait:
+    [(.events // [])[] | select(.event == "ci-wait")] as $w
+    | {merges: ($w | group_by(if .batch then "b\(.batch)" else "t\(.ticket)" end)
+        | map({ticket: (if .[0].batch then null else .[0].ticket end), batch: (.[0].batch // null),
+               tickets: (if .[0].batch then (map(.tickets) | add | unique) else [.[0].ticket] end),
+               gates: length, minutes: ((map(.minutes) | add) * 10 | round / 10)})),
+       total_minutes: (($w | map(.minutes) | add // 0) * 10 | round / 10)};
   def gate_answered($g):
     any((.review_gates // [])[]; .id == $g.id and .status != "open");
   def gate_pending($g):

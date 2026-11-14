@@ -9,6 +9,12 @@ name: Script tests
 # test exactly once and the macOS job no longer sets the wait. fail-fast is off so every
 # failing shard reports. A run's overall conclusion is red if any shard is red, and that
 # is all scripts/merge-gate.sh reads.
+#
+# Every test job passes --rerun-failed: a failed test runs once more on its own, and
+# one that then passes is reported FLAKY and doesn't turn the run red. Tests listed in
+# tests/quarantine.txt run but can't fail it; the quarantine job checks, once per run,
+# that each entry's issue is still open. Flaky and quarantined tests go to the run's
+# step summary.
 on:
   pull_request:
     # Documentation outside the plugin isn't read by any test.
@@ -54,7 +60,13 @@ jobs:
       - name: Run the script test harness (as a non-root user)
         run: |
           chown -R tester "$GITHUB_WORKSPACE"
-          sudo -u tester -H bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)"'
+          # The tester user can't write the runner's step summary file, so run.sh
+          # writes one it can and the next step appends it.
+          sudo -u tester -H env GITHUB_STEP_SUMMARY=/tmp/run-sh-summary.md bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --rerun-failed'
+      - name: List flaky and quarantined tests in the step summary
+        if: always()
+        run: |
+          if [ -f /tmp/run-sh-summary.md ]; then cat /tmp/run-sh-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
 
   script-tests-macos:
     name: Script tests (macOS, Apple bash 3.2, ${{ matrix.shard }}/3)
@@ -76,4 +88,21 @@ jobs:
           git config --global user.name CI
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
-          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --shard ${{ matrix.shard }}/3
+          /bin/bash plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --rerun-failed --shard ${{ matrix.shard }}/3
+
+  quarantine:
+    name: Quarantined tests' issues are open
+    # Once per run, not per shard: every entry in tests/quarantine.txt must name an
+    # open issue. ubuntu-latest has gh; the token only reads this repo's issues.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the quarantine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash plugins/artisan-agent/tests/run.sh --check-quarantine
