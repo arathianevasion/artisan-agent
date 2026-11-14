@@ -347,3 +347,107 @@ test_resuming_the_open_run_passes_the_run_lock() {
     '{hook_event_name:"UserPromptExpansion",command_name:"implement-plan",command_args:"resume r2",cwd:$c}' \
     | "$PROTECT" run-start)" '"decision":"block"'
 }
+
+# #153: the chat that holds the run is never refused. Its Claude process
+# holds the lock (implement-plan, "Hold the run") and runs the hook, so the
+# lock's pid is an ancestor of the hook's process. hold_lock_as_ancestor
+# writes a script that takes the lock with its own pid and runs the hook from
+# inside it: directly (the holder is the hook's parent) or through `sh -c`
+# (its grandparent, as a host that runs hooks through a shell would).
+hold_lock_as_ancestor() { # shape: direct|shell
+  mkdir -p "$REPO/.artisan-agent/runs/r1"
+  local run="" lock="$REPO/.artisan-agent/runs/r1/state.lock"
+  # "; exit $?" keeps sh from exec-ing the hook in its own place, so the
+  # shell really sits between the holder and the hook.
+  run='"$PROTECT" run-start'
+  [ "$1" = direct ] || run='sh -c '"'"'"$1" run-start; exit $?'"'"' sh "$PROTECT"'
+  HOLDER_SCRIPT="$TEST_TMPDIR/holder-$1.sh"
+  cat >"$HOLDER_SCRIPT" <<HOLDER
+#!/bin/bash
+PROTECT='$PROTECT'
+ln -s "\$\$" '$lock'
+$run
+rc=\$?
+rm -f '$lock'
+exit \$rc
+HOLDER
+  chmod +x "$HOLDER_SCRIPT"
+}
+
+test_the_holding_chat_passes_whatever_it_asks_in_both_process_tree_shapes() {
+  make_repo; stub_gh
+  local shape="" a=""
+  for shape in direct shell; do
+    hold_lock_as_ancestor "$shape"
+    for a in "Carry on run r1 after the #151 repair" "plan the login page" "build the retry plan"; do
+      assert_eq "" "$(run_start_args "$a" | "$HOLDER_SCRIPT")" "$shape, typed: $a"
+      assert_eq "" "$(run_start_args "$a" tool | "$HOLDER_SCRIPT")" "$shape, called: $a"
+    done
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+}
+
+# While a wave runs, the orchestrator's detached runner holds the lock, taken
+# over from the chat (`run-ticket.sh --lock-from <chat pid>`): the chat that
+# launched it still counts as the holding chat; another chat's does not.
+fake_runner() { # lock-from pid: start a process whose command line is a runner's; sets RUNNER_PID
+  mkdir -p "$TEST_TMPDIR/runner"
+  printf '#!/bin/bash\ntrap "kill \\$c 2>/dev/null; exit 0" TERM\nsleep 60 & c=$!\nwait $c\n' >"$TEST_TMPDIR/runner/run-ticket.sh"
+  chmod +x "$TEST_TMPDIR/runner/run-ticket.sh"
+  "$TEST_TMPDIR/runner/run-ticket.sh" --role orchestrator --lock-from "$1" --run-dir x --ticket orchestrator-w1 >/dev/null 2>&1 &
+  RUNNER_PID=$!
+}
+
+test_the_holding_chat_passes_while_its_wave_runner_holds_the_lock() {
+  make_repo; stub_gh
+  mkdir -p "$REPO/.artisan-agent/runs/r1"
+  local lock="$REPO/.artisan-agent/runs/r1/state.lock" out=""
+  # The chat (this test's shell, an ancestor of the hook) handed the lock on.
+  fake_runner "$$"
+  trap 'kill $RUNNER_PID 2>/dev/null || true' EXIT
+  ln -s "$RUNNER_PID" "$lock"
+  assert_eq "" "$(run_start_args "plan the login page" | "$PROTECT" run-start)" "the launching chat"
+  # A runner launched by another chat.
+  kill "$RUNNER_PID"; wait "$RUNNER_PID" 2>/dev/null || true; rm -f "$lock"
+  sleep 60 >/dev/null 2>&1 &
+  OTHER_PID=$!
+  fake_runner "$OTHER_PID"
+  trap 'kill $RUNNER_PID $OTHER_PID 2>/dev/null || true' EXIT
+  ln -s "$RUNNER_PID" "$lock"
+  out=$(run_start_args "plan the login page" | "$PROTECT" run-start)
+  assert_contains "$out" '"decision":"block"'
+  assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: plan the login page"
+}
+
+# #153: from another chat, "continue", "carry on", "resume" or "pick up",
+# with or without "run" and the run's id (extra words after the id allowed),
+# is a resume. A refused request naming the running run is never filed as a
+# plan; it says how to resume instead. A new plan is still refused and queued.
+test_resume_phrasings_from_another_chat_pass_as_a_resume() {
+  make_repo; stub_gh; hold_lock
+  local a=""
+  for a in "continue" "Carry on" "carry  on run" "pick up" "Resume run" "continue r1" "Carry on run r1" \
+           "carry on run r1 after the #151 repair" "PICK UP run r1" "continue #r1" "run r1" "resume run r1 please" \
+           "continue r1." "Continue." "carry on run r1, then report" "Carry on run r1: after the repair" "continue run r1!"; do
+    assert_eq "" "$(run_start_args "$a" | "$PROTECT" run-start)" "typed: $a"
+    assert_eq "" "$(run_start_args "$a" tool | "$PROTECT" run-start)" "called: $a"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+  assert_contains "$(run_start_args "continue with the login page" | "$PROTECT" run-start)" '"decision":"block"'
+  assert_contains "$(run_start_args "run" | "$PROTECT" run-start)" '"decision":"block"'
+}
+
+test_a_refused_request_naming_the_running_run_is_not_filed_as_a_plan() {
+  make_repo; stub_gh; hold_lock
+  local a="" out=""
+  for a in "please carry on run r1" "restart run r1" "look at #r1 again"; do
+    out=$(run_start_args "$a" | "$PROTECT" run-start)
+    assert_contains "$out" '"decision":"block"' "$a"
+    assert_contains "$out" "resume r1" "$a"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+  # A new plan is still refused and queued.
+  out=$(run_start_args "plan the login page" | "$PROTECT" run-start)
+  assert_contains "$out" '"decision":"block"'
+  assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: plan the login page"
+}
