@@ -54,6 +54,12 @@ state_require_jq
 
 usage() { state_usage "$0"; }
 
+# Run files grow with the run: the states, misses, bugs and tracker lists
+# reach jq as files (--slurpfile), never as arguments (#203: Linux refuses one
+# over 128 KiB, macOS all of them together over 1 MiB).
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/guardrail-health.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+
 RUNS=()
 TABLE=0
 RECORD=0
@@ -173,19 +179,20 @@ health_table() {
 cmd_health() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
-  local states= misses= bugs= resolved= out=
-  states=$(states_json)
-  misses=$(misses_json)
-  bugs=$(bugs_json)
-  resolved=$("$SCRIPT_DIR/guardrails.sh" resolve)
-  out=$(jq -n --argjson states "$states" --argjson misses "$misses" --argjson bugs "$bugs" --argjson resolved "$resolved" --argjson th "$THRESHOLD" \
-    '{states: $states, misses: $misses, bugs: $bugs, resolved: $resolved} | '"$HEALTH_JQ")
+  local out=
+  states_json >"$WORK/states.json"
+  misses_json >"$WORK/misses.json"
+  bugs_json >"$WORK/bugs.json"
+  "$SCRIPT_DIR/guardrails.sh" resolve >"$WORK/resolved.json"
+  out=$(jq -n --slurpfile states "$WORK/states.json" --slurpfile misses "$WORK/misses.json" --slurpfile bugs "$WORK/bugs.json" \
+    --slurpfile resolved "$WORK/resolved.json" --argjson th "$THRESHOLD" \
+    '{states: $states[0], misses: $misses[0], bugs: $bugs[0], resolved: $resolved[0]} | '"$HEALTH_JQ")
   if [ "$RECORD" = 1 ]; then
     local dir=${ARTISAN_HEALTH_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health} now=
     now=$(state_now)
     mkdir -p "$dir"
-    jq -n --argjson now "$now" --argjson out "$out" \
-      '{id: "health-\($now)", date: ($now | todate), runs: $out.runs, threshold: $out.threshold, proposals: $out.proposals}' >"$dir/latest.json.tmp.$$"
+    jq --argjson now "$now" \
+      '{id: "health-\($now)", date: ($now | todate), runs, threshold, proposals}' <<<"$out" >"$dir/latest.json.tmp.$$"
     mv "$dir/latest.json.tmp.$$" "$dir/latest.json"
   fi
   if [ "$TABLE" = 1 ]; then health_table "$out"; else printf '%s\n' "$out"; fi
@@ -248,8 +255,10 @@ cmd_audit() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
   local out=
-  out=$(jq -n --argjson states "$(states_json)" --argjson misses "$(misses_json)" --argjson th "$THRESHOLD" \
-    '{states: $states, misses: $misses} | '"$AUDIT_JQ")
+  states_json >"$WORK/states.json"
+  misses_json >"$WORK/misses.json"
+  out=$(jq -n --slurpfile states "$WORK/states.json" --slurpfile misses "$WORK/misses.json" --argjson th "$THRESHOLD" \
+    '{states: $states[0], misses: $misses[0]} | '"$AUDIT_JQ")
   if [ "$TABLE" = 1 ]; then
     jq -r "$(state_jq_row_def)"'
       "| Triage miss | Criterion | Suggestion |", "|---|---|---|",
@@ -285,22 +294,23 @@ cmd_backstop() {
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
   local repo_dir=${OPT_repo_dir:-.} main=${OPT_main:-main} since=${OPT_since:-} prs=${OPT_prs:-} closed=${OPT_closed:-}
-  local states= repo= prs_json= closed_json= commits=""
-  states=$(states_json)
-  repo=$(jq -r '.[0].repo // ""' <<<"$states")
-  if [ -n "$prs" ]; then prs_json=$(cat "$prs")
-  else prs_json=$(gh pr list -R "$repo" --state merged --limit 200 --json number,headRefName,mergeCommit,mergedAt) \
+  local repo=
+  states_json >"$WORK/states.json"
+  repo=$(jq -r '.[0].repo // ""' "$WORK/states.json")
+  if [ -z "$prs" ]; then prs="$WORK/prs.json"
+    gh pr list -R "$repo" --state merged --limit 200 --json number,headRefName,mergeCommit,mergedAt >"$prs" \
     || state_die 1 "guardrail-health.sh: could not list merged PRs; pass --prs FILE"; fi
-  if [ -n "$closed" ]; then closed_json=$(cat "$closed")
-  else closed_json=$(gh issue list -R "$repo" --state closed --limit 200 --json number,closedAt) \
+  if [ -z "$closed" ]; then closed="$WORK/closed.json"
+    gh issue list -R "$repo" --state closed --limit 200 --json number,closedAt >"$closed" \
     || state_die 1 "guardrail-health.sh: could not list closed tickets; pass --closed FILE"; fi
   # first-parent commits on main: "<sha> <parent count>"
-  commits=$(git -C "$repo_dir" log --first-parent ${since:+--since="$since"} --format='%H %P' "$main" \
-    | jq -R -s -c 'split("\n") | map(select(length > 0) | split(" ") | {sha: .[0], parents: (length - 1)})')
+  git -C "$repo_dir" log --first-parent ${since:+--since="$since"} --format='%H %P' "$main" \
+    | jq -R -s -c 'split("\n") | map(select(length > 0) | split(" ") | {sha: .[0], parents: (length - 1)})' >"$WORK/commits.json"
   local out=
-  out=$(jq -n --argjson states "$states" --argjson prs "$prs_json" --argjson closed "$closed_json" \
-    --argjson commits "$commits" --arg since "$since" '
-    ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits
+  out=$(jq -n --slurpfile states "$WORK/states.json" --slurpfile prs "$prs" --slurpfile closed "$closed" \
+    --slurpfile commits "$WORK/commits.json" --arg since "$since" '
+    $states[0] as $states | $prs[0] as $prs | $closed[0] as $closed | $commits[0] as $commits
+    | ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits
     | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]) as $branches
     | ([$prs[] | .mergeCommit.oid // .mergeCommit // empty]) as $prcommits
     | ([$states[] | (.tickets // {}) | to_entries[] | select(.value.status == "merged" or .value.status == "closed") | .key]
@@ -334,17 +344,20 @@ cmd_bugs() {
   VALUE_OPTS="--since --issues"
   parse_common "$@"
   [ ${#REST[@]} -eq 0 ] || usage
-  local since=${OPT_since:-} issues=${OPT_issues:-} closed= issues_json= repo= out=
-  closed=$(states_json | jq -c "$CLOSED_JQ")
-  if [ -n "$issues" ]; then issues_json=$(cat "$issues")
-  else
-    repo=$(states_json | jq -r '.[0].repo // ""')
-    issues_json=$(gh issue list -R "$repo" --label bug --state all --limit 200 \
-      ${since:+--search "created:>=$since"} --json number,title,body,createdAt,url) \
+  local since=${OPT_since:-} issues=${OPT_issues:-} repo= out=
+  states_json >"$WORK/states.json"
+  jq -c "$CLOSED_JQ" "$WORK/states.json" >"$WORK/closed.json"
+  if [ -z "$issues" ]; then
+    issues="$WORK/issues.json"
+    repo=$(jq -r '.[0].repo // ""' "$WORK/states.json")
+    gh issue list -R "$repo" --label bug --state all --limit 200 \
+      ${since:+--search "created:>=$since"} --json number,title,body,createdAt,url >"$issues" \
       || state_die 1 "guardrail-health.sh: could not list bug issues; pass --issues FILE"
   fi
-  out=$(jq -n --argjson closed "$closed" --argjson issues "$issues_json" --argjson confirmed "$(bugs_json)" --arg since "$since" '
-    {candidates: [$issues[] | select($since == "" or (.createdAt // "") >= $since) | . as $i
+  bugs_json >"$WORK/bugs.json"
+  out=$(jq -n --slurpfile closed "$WORK/closed.json" --slurpfile issues "$issues" --slurpfile confirmed "$WORK/bugs.json" --arg since "$since" '
+    $closed[0] as $closed | $issues[0] as $issues | $confirmed[0] as $confirmed
+    | {candidates: [$issues[] | select($since == "" or (.createdAt // "") >= $since) | . as $i
       | ((.title // "") + " " + (.body // "")) as $text
       | $closed[] | . as $c | select($text | test("#" + $c.ticket + "(?![0-9])"))
       | select(.ticket as $t | any($confirmed[]; (.issue | tostring) == ($i.number | tostring) and (.ticket | tostring) == $t) | not)
