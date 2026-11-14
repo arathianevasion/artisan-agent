@@ -175,6 +175,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/config-lib.sh
+. "$SCRIPT_DIR/lib/config-lib.sh"   # the template's defaults (orchestrator_turns)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -185,6 +187,25 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "wave.sh: $*"; }
 
 # ----------------------------------------------------------------- helpers
+
+# orchestrator_max_turns: the --max-turns launch gives a wave's orchestrator
+# (#175): base + per_ticket x T + per_ci_gate x G. T is the tickets the wave
+# can take: the scope's tickets not merged or blocked, at most Max Agents, at
+# least 1. G is T when this machine's merge gate runs on CI, else 0. The three
+# numbers are the plan's config orchestrator_turns, else templates/config.yml's.
+orchestrator_max_turns() {
+  local defaults="" mode="" ci=0
+  defaults=$(config_yaml_json "$CONFIG_TEMPLATE" | jq -c '.orchestrator_turns') \
+    || die "unreadable defaults: $CONFIG_TEMPLATE"
+  mode=$("$SCRIPT_DIR/merge-gate.sh" mode 2>/dev/null) || mode=local
+  [ "$mode" != ci ] || ci=1
+  get --argjson d "$defaults" --argjson ci "$ci" '
+    ($d + (.plan.config.orchestrator_turns // {})) as $k
+    | ([.plan.scope[] as $t | .tickets[$t].status // "queued"
+        | select(. != "merged" and . != "blocked")] | length) as $open
+    | ([[$open, (.plan.max_agents // 5)] | min, 1] | max) as $t
+    | $k.base + $k.per_ticket * $t + $k.per_ci_gate * $t * $ci | ceil'
+}
 
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
 # returned or waiting to retry, and every ticket dispatched in it (two or
@@ -414,7 +435,7 @@ cmd_launch() {
       *) usage ;;
     esac
   done
-  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner=
+  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner= turns=
   local -a ended=("" "" "")
   wave=1 attempt=1
   last=$(last_orchestrator)
@@ -492,6 +513,7 @@ cmd_launch() {
   # longest worker deadline plus half an hour.
   deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
+  turns=$(orchestrator_max_turns)
 
   mkdir -p "$RUN_DIR/prompts"
   prompt="$RUN_DIR/prompts/$id.$attempt.md"
@@ -534,6 +556,7 @@ EOF
   runner=$("$SCRIPT_DIR/run-ticket.sh" --role orchestrator --lock-from "$me" --run-dir "$RUN_DIR" --ticket "$id" \
     --attempt "$attempt" --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$deadline" \
+    --max-turns "$turns" \
     -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" \
     --add-dir "$MAIN" --add-dir "$WT_ROOT" \
     ${EXTRA[@]+"${EXTRA[@]}"} ${args[@]+"${args[@]}"}) || die "could not launch $id"
