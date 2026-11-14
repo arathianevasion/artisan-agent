@@ -220,6 +220,8 @@ A failed attempt appends to `failures` and sends the ticket back to `queued`, or
 
 An exception gate the miscount already opened is printed with the command that closes it: `gate-action.sh repaired <run-dir> <issue>` (`references/gate-actions.md`). Running the repair again changes nothing.
 
+**Dry-run first (#154).** `sweep.sh repair <run-dir> --dry-run` takes no lock and writes nothing (no `output.json`, no state, no tracker call; it repairs a scratch copy, so a live run's lock doesn't stop it, and copying the run folder yourself carries that lock). Per attempt it prints the ticket, attempt, the rebuilt result status and cost, the failure that moves to `repaired`, the attempt given back, and the `gate-action.sh repaired` line for each exception gate it would make closable, then `dry run: nothing written`. The real repair afterwards prints exactly those lines. Check the dry-run, then repair.
+
 ## The reconciler
 
 `reconcile.sh <run-dir>` is the first thing a new orchestrator runs, crashed predecessor or not. Under one lock:
