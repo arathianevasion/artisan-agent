@@ -2,6 +2,16 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.7.1 (2026-11-14)
+
+Fixes from riley's run p266-1114, and CI work: faster tests, flaky-test handling, smarter red merge gates and cheaper worker CI.
+
+- **Fixes from riley's run:** a review gate is recorded however large the run state is; it was passed to jq as one argument, which Linux refuses over 128 KiB. `gate.sh sync` records a gate whose issue is already open without opening another (#203). `findings.sh pending` and `mark` skip a finding with no `blocks` list instead of failing for every finding (#204). An urgent ticket is dispatched when nothing else is in flight (#205), and reconcile no longer records it merged as soon as it is dispatched (#206).
+- **Red merge gate:** reruns the failed jobs and runs the base. A rerun that passes merges and files a flaky finding; a base that fails the same tests parks the run (`base-red`, `wave.sh unpark-base`); only new failures cost an attempt. Each gate logs its CI wait (#195).
+- **Worker CI:** each check says whether workers can run it (`runs_locally`: `always`, `mac`, `never`). A worker gets CI green on its branch for a check it can't run, and the merge gate reuses that run when the merged tree is the same (#194). The workflow has a `macos` input, so a worker's branch run can be Linux only (#197).
+- **Costs and limits:** the retro and run summary show what the merge gates cost: gates per merged ticket, CI minutes, reds by cause, and time waiting on the Artisan (#199). A `merge_gate_minutes_limit` (default 6) adds a line to the plan approval and the retro when gates run over it (#200). Setup offers a read-only CI checklist, with each item's trade-off in `references/ci.md` (#196).
+- **Tests:** settable poll intervals make the script tests 37% faster (CI Linux 6.3 to 3.2 minutes; #169). `tests/run.sh --rerun-failed` reports a test that passes on rerun as `FLAKY`, and `tests/quarantine.txt` lists tests that can't fail the suite while their issue is open (#198). The macOS deadline test no longer races a whole-second clock, and a deadline never fires early (#190).
+
 ## 0.7.0 (2026-11-14)
 
 Fixes from riley's run on 0.5.0, merge batches, faster CI, and Human check and gate follow-ups.
