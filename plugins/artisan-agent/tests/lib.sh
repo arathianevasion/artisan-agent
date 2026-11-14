@@ -70,3 +70,11 @@ merge_gate_local() { # individual-home-dir: its host.json gets merge_gate local
 }
 export CLAUDE_CONFIG_DIR="$TEST_TMPDIR.claude"
 merge_gate_local "$CLAUDE_CONFIG_DIR/artisan-agent"
+
+# The pipeline's poll intervals, short (#169): a test waits on a runner, the
+# orchestrator's wait-any and a merge gate many times, and at the production
+# intervals (1s, 1s, 0.5s) most of a run test's time is spent asleep. Each
+# script's header documents its variable; the defaults are unchanged.
+export ARTISAN_RUNNER_POLL_SECONDS=0.1
+export ARTISAN_WAIT_ANY_POLL_SECONDS=0.1
+export ARTISAN_MERGE_POLL_SECONDS=0.1
