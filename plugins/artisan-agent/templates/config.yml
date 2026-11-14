@@ -13,7 +13,8 @@
 # Workers in flight at once. Review capacity comes from this and the gates.
 max_agents: 5
 
-# How often the orchestrator sweeps the run folder, in minutes.
+# How often the chats sweep, in minutes. The orchestrator sweeps on every
+# wake, at least every ten minutes (one wait-any.sh call, #175).
 sweep_minutes: 5
 
 # Context drain rules, as a percentage of the context window.
