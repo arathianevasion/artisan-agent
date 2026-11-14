@@ -137,7 +137,13 @@ reconcile() {
                  and ((.number | tostring) as $b | $s | gate_holds($b; $t) | not)
             else .state == "closed" end))
         | $t
-      ] | .frontier |= sort_by([-($s.plan.tickets[.].priority // 0), (tonumber? // .)])' --argjson tr "$tracker"
+      ] | .frontier |= sort_by([-($s.plan.tickets[.].priority // 0), (tonumber? // .)])
+    # The gates a queued ticket waits on through a merged blocker (#170), for
+    # wave.sh status: "waiting on slice gate <slice>".
+    | .tickets |= with_entries(.key as $t
+        | ([$tr[$t].blocked_by[]? | .number | select($s.tickets[.].status? == "merged")]) as $bs
+        | (if .value.status == "queued" and $bs != [] then $s | gate_waits($t; $bs) else [] end) as $w
+        | if $w == [] then .value |= del(.gate_waits) else .value.gate_waits = $w end)' --argjson tr "$tracker"
 
   state_commit "$RUN_DIR" "$tmp"
 }

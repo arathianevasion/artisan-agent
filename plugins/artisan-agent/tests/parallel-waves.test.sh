@@ -479,6 +479,79 @@ test_an_attempt_that_did_not_complete_is_a_failed_attempt_at_merge() {
   assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "did not complete (not-completed"
 }
 
+# ------------------------------------------------------------- slice gates
+
+# #170: slice "greeting" is {1, 2}; 2 depends on 1, and 3 (outside the slice)
+# depends on 1 too. From plan approval, 3 waits for the slice gate's answer;
+# 2, inside the slice, runs as soon as 1 merges.
+setup_slice() {
+  setup_waves 3 1 2 3
+  echo '[1]' >"$FAKE_GH_DIR/blocked_by-2.json"
+  echo '[1]' >"$FAKE_GH_DIR/blocked_by-3.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "slice", slice: "greeting", tickets: ["1", "2"],
+    problem: "Nobody is greeted.", solution: "t1.txt and t2.txt say hi."}]'
+}
+
+review_gate_issue() { state_get '(.review_gates // [])[] | select(.id == "slice-1") | .issue'; }
+
+test_a_slice_gate_holds_its_outside_dependent_until_it_is_answered() {
+  setup_slice
+  run_wave 1
+  assert_eq "merged queued queued" "$(status_of 1) $(status_of 2) $(status_of 3)"
+  local out=
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: launch"
+  assert_contains "$out" "| #3 (Ticket 3) | 1 | claude-sonnet-5-5 | queued: waiting on slice gate greeting |"
+  assert_contains "$out" "| #2 (Ticket 2) | 1 | claude-sonnet-5-5 | queued |"
+  assert_eq 2 "$(state_get '.frontier | join(" ")')" "2 is in the slice; 3 is held"
+  assert_status 5 "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 3
+  run_wave 2
+  assert_eq "merged queued" "$(status_of 2) $(status_of 3)"
+  assert_eq null "$(wave_of 3)" "3 was never dispatched"
+  # The slice merged: its gate opens with the native blocker, and with
+  # nothing else to run the run parks on it.
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  local num=
+  num=$(review_gate_issue)
+  [ -n "$num" ] || fail "the slice gate did not open"
+  assert_eq "[1,$num]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-3.json")"
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "parked: waiting on 1 review: Slice gate: greeting (run r1) #$num; 1 ticket waits behind it: #3"
+  "$SCRIPTS/gate.sh" approve "$RUN_DIR" "$num" >/dev/null
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: launch"
+  assert_contains "$out" "| #3 (Ticket 3) | 1 | claude-sonnet-5-5 | queued |"
+  run_wave 3
+  assert_eq merged "$(status_of 3)"
+}
+
+test_with_its_slice_partner_dropped_the_gate_comes_due_and_the_dependent_waits_for_it() {
+  setup_slice
+  printf 'FAIL="1 2"\n' >"$WAVES/ticket-2"
+  run_wave 1
+  run_wave 2
+  assert_eq "merged blocked queued" "$(status_of 1) $(status_of 2) $(status_of 3)"
+  # 2's exception gate and the slice gate, not open yet, both hold the run.
+  local out= ex= num=
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "slice gate greeting (not open yet)"
+  assert_contains "$out" "| #3 (Ticket 3) | 1 | claude-sonnet-5-5 | queued: waiting on slice gate greeting |"
+  ex=$(state_get '.exception_gates[] | select(.ticket == "2") | .issue')
+  "$SCRIPTS/gate-action.sh" drop "$RUN_DIR" "$ex" >/dev/null
+  # 2 left the run: the slice comes due with what merged, and 3 waits for it.
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  num=$(review_gate_issue)
+  [ -n "$num" ] || fail "the slice gate did not open once 2 was dropped"
+  assert_eq queued "$(status_of 3)"
+  assert_eq "" "$(state_get '.frontier | join(" ")')"
+  assert_contains "$out" "next: parked"
+  assert_contains "$out" "Slice gate: greeting (run r1) #$num"
+  "$SCRIPTS/gate.sh" approve "$RUN_DIR" "$num" >/dev/null
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
+  assert_eq 3 "$(state_get '.frontier | join(" ")')"
+}
+
 # ------------------------------------------------------------------- halt
 
 test_a_one_ticket_wave_or_a_design_question_does_not_halt_the_run() {

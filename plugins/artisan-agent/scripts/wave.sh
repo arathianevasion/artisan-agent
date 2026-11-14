@@ -374,6 +374,8 @@ ticket_table() {
                 + (if $k.tracker_closed then ", closed" else ", not closed yet" end)
              elif $k.status == "blocked" then ": \($k.blocked_reason // ($k.failures | last | .reason) // "see decisions")"
              elif $k.status == "in_flight" then " (attempt \($k.attempts))"
+             elif $k.status == "queued" and ($k.gate_waits // []) != [] then
+               ": waiting on " + ($k.gate_waits | map("\(.kind) gate \(.slice)") | join(", "))
              else "" end) + " |" )' "$FILE"
 }
 
