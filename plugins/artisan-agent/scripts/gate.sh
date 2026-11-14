@@ -73,7 +73,8 @@
 #
 # Every gate-decision event carries outcome (keep or change), redirect
 # (false here; gate-action.sh logs a redirect's) and areas (the card's
-# ticket's), for guardrail health (references/guardrail-health.md). A gate a
+# ticket's; approve logs one keep event for the whole gate, its areas the
+# union over the kept cards, card null, cards the number kept), for guardrail health (references/guardrail-health.md). A gate a
 # guardrail opened (an area's risk gate) records it under `guardrails` and
 # logs guardrail-fired when it opens.
 #
@@ -282,6 +283,15 @@ ACTION_FILTER='
     | event({event: "gate-decision", gate: $a.gate, card: $d.card, by: $a.by,
              outcome: $d.outcome, redirect: false, areas: ticket_areas([$d.ticket])}; $now)
     | if $d.bug == true then bug_found($d.ticket; $a.gate; $a.by; ($d.why // ""); $now) else . end;
+  # "Keep all" logs one gate-decision for the gate, not one per kept card
+  # (#149): the cards at a gate aren'"'"'t independent judgements. Its areas are
+  # the union of the kept cards'"'"' tickets'"'"'; a gate with no card left to keep
+  # (every card was changed first) logs none.
+  def keep_event($a):
+    ([$a.decisions[] | select(.outcome == "keep")]) as $k
+    | if ($k | length) == 0 then .
+      else event({event: "gate-decision", gate: $a.gate, card: null, by: $a.by, outcome: "keep",
+                  redirect: false, areas: ticket_areas([$k[].ticket]), cards: ($k | length)}; $now) end;
   . as $s0
   | ((.review_gates // []) | map(.id) | index($a.gate)) as $i
   | if $i == null or any(.review_gates[$i].decisions[]; .action == $a.key) then .
@@ -308,6 +318,7 @@ ACTION_FILTER='
           | (if $a.closed_on_tracker then
                .review_gates[$i].closed_on_tracker = true | .review_gates[$i].carried = $a.carried
              else . end)
+          | keep_event($a)
           | event({event: "gate-approved", gate: $a.gate, issue: .review_gates[$i].issue, by: $a.by}
                   + (if $a.closed_on_tracker then {closed_on_tracker: true, carried: $a.carried} else {} end); $now)
         else decision_events($a)

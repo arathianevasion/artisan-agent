@@ -291,6 +291,15 @@ test_a_gate_decision_reads_its_areas_as_a_list_and_a_change_is_not_approved_unch
   assert_eq 2 "$(jq '.guardrails[0].tighten.count' <<<"$out")"
 }
 
+test_a_keep_all_gate_counts_once_whatever_the_number_of_cards_it_kept() {
+  setup "$(g up ku 1 '{"area":"uploads"}')" "$(g bill kb 1 '{"area":"billing"}')"
+  run r1 '[{"event":"gate-decision","gate":"slice-1","card":null,"by":"Andrew","outcome":"keep","redirect":false,"areas":["uploads"],"cards":3}]'
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "1 0" "$(jq -r '.guardrails[] | select(.id == "up") | "\(.loosen.count) \(.tighten.count)"' <<<"$out")"
+  assert_eq none "$(proposal "$out" up)"
+  assert_eq "0" "$(jq -r '.guardrails[] | select(.id == "bill") | .loosen.count' <<<"$out")"
+}
+
 test_the_scope_floor_and_defer_only_events_belong_to_their_ledger_guardrails_whatever_their_ids() {
   setup "$(g floor-1 scope-floor 9)" "$(g overrun-1 budget 9 '{"defer_only":true}')" "$(g quiet kq 1)"
   run r1 '[{"event":"guardrail-fired","guardrail":"scope-floor","gate":"exception-3"},

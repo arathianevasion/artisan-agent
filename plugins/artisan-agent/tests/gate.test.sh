@@ -399,7 +399,7 @@ test_a_run_holds_the_dependent_at_the_gate_and_releases_it_on_keep_all() {
   assert_contains "$out" "next: launch"
   run_wave 3
   assert_eq merged "$(state_get '.tickets["2"].status')"
-  assert_eq "gate-opened gate-approved" "$(state_get '[.events[].event | select(startswith("gate-"))] | join(" ")')"
+  assert_eq "gate-opened gate-decision gate-approved" "$(state_get '[.events[].event | select(startswith("gate-"))] | join(" ")')"
 }
 
 # ------------------------------------------- guardrail health events (#122)
@@ -415,6 +415,46 @@ test_a_gate_decision_carries_its_outcome_redirect_and_the_tickets_areas() {
   assert_eq '[{"card":2,"outcome":"keep","redirect":false,"areas":["billing","docs"]},{"card":1,"outcome":"change","redirect":false,"areas":["billing","docs"]}]' \
     "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, redirect, areas}]' | jq -c .)"
   assert_eq 0 "$(state_get '[.events[] | select(.event == "bug-found")] | length')"
+}
+
+test_keep_all_logs_one_gate_decision_for_the_gate_with_the_union_of_the_kept_cards_areas() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing", "docs"]'
+  local num= cards=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  cards=$(state_get '.review_gates[0].cards | length')
+  [ "$cards" -ge 2 ] || fail "the fixture should give the gate several cards, got $cards"
+  "$G" approve "$RUN_DIR" "$num" --by Andrew >/dev/null
+  assert_eq "[{\"card\":null,\"outcome\":\"keep\",\"redirect\":false,\"areas\":[\"billing\",\"docs\"],\"by\":\"Andrew\",\"cards\":$cards}]" \
+    "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, redirect, areas, by, cards}]' | jq -c .)"
+  # Only gate-decision, then gate-approved, in that order.
+  assert_eq "gate-decision gate-approved" "$(state_get '[.events[].event | select(. == "gate-decision" or . == "gate-approved")] | join(" ")')"
+}
+
+test_keep_all_after_one_change_logs_the_changes_own_event_plus_one_keep_event_for_the_rest() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"]'
+  local num= cards=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  cards=$(state_get '.review_gates[0].cards | length')
+  "$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --by Andrew >/dev/null
+  "$G" approve "$RUN_DIR" "$num" --by Andrew >/dev/null
+  assert_eq "[{\"card\":1,\"outcome\":\"change\",\"cards\":null},{\"card\":null,\"outcome\":\"keep\",\"cards\":$((cards - 1))}]" \
+    "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, cards}]' | jq -c .)"
+}
+
+test_keep_all_logs_no_keep_event_when_every_card_was_changed_first() {
+  setup_gate
+  merged_with_evidence 1
+  local num= c=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  for c in $(state_get '.review_gates[0].cards[].card'); do
+    "$G" change "$RUN_DIR" "$num" "$c" "Other $c" >/dev/null
+  done
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "gate-decision" and .outcome == "keep")] | length')"
 }
 
 test_flagging_a_change_as_a_bug_logs_bug_found_at_the_gate_in_the_same_write() {
