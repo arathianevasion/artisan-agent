@@ -2,6 +2,14 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.6.0 (2026-11-14)
+
+Human checks: an acceptance criterion only a person can confirm no longer fails an agent's attempts.
+
+- The plan step flags agent criteria that need a person; `split-human-check` moves them into a Human check ticket (ready-for-human) linked to its agent ticket, and an override with a reason keeps one on the agent ticket. Human check is in the glossary (#156).
+- A run never dispatches or waits on a Human check. Slice gates list the open ones; answer with `gate.sh check <run> <n|all> pass|fail|later`. The end gate will not approve while one is open, and `defer-check` defers one there (#157).
+- The verifier has a third state, "human", for a criterion only a person can verify: the judge passes the ticket on the rest and splits those criteria into one Human check in the run, and a retry worker is told which criteria are not its to meet. A hands-on ticket's verdict names its Human check, which it never waits on (#158).
+
 ## 0.5.1 (2026-11-14)
 
 Pilot fixes for a run in progress.
