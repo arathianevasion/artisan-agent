@@ -39,7 +39,7 @@
 #       no CI run to wait on.
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
-#                    [--skip-path PATTERN]...
+#                    [--skip-path PATTERN]... [--base SHA]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -66,6 +66,21 @@
 #       With no green ancestor, or any other path changed, CI runs as usual.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
+#       --base (#195) is the integration tip before the merge (a merge
+#       batch's base). With it, a red run is checked before it counts: the
+#       failed jobs are rerun on the merge commit (gh run rerun --failed)
+#       while FILE runs on the base (pushed to B-base), both within a fresh
+#       M minutes (the --deadline's span). The record gains base_check:
+#       {verdict, rerun: {attempt, conclusion}, base: {sha, branch, run_id,
+#       url, conclusion, failing_tests}}, and the verdict decides:
+#         flaky      the rerun passed: exit 0, conclusion success (the first
+#                    try's failing_tests kept, to name in a finding)
+#         base-red   the base failed too, and every test the merge commit
+#                    failed (or none could be named) failed there: exit 7
+#         new        some failures are new against the base: exit 7, with
+#                    failing_tests only the new ones when the base was red
+#         unchecked  neither gave a verdict in time: exit 7, as before
+#       Both branches are deleted after.
 #   merge-gate.sh failed-tests --repo O/N --run-id ID [--max N]
 #       the tests a red run failed, read from its failed jobs' log (gh run
 #       view --log-failed), as JSON: {tests: [{job, name, where, message}],
@@ -177,17 +192,19 @@ record() { # run-json why
     + (if $why == "" then {} else {why: $why} end)'
 }
 
-delete_branch() {
-  git -C "$CI_DIR" push -q "$CI_REMOTE" --delete "$CI_BRANCH" >/dev/null 2>&1 \
-    || echo "merge-gate.sh: could not delete $CI_BRANCH on $CI_REMOTE; the next gate's sweep will" >&2
+delete_branch() { # [branch], default the gate's
+  local b="${1:-$CI_BRANCH}"
+  git -C "$CI_DIR" push -q "$CI_REMOTE" --delete "$b" >/dev/null 2>&1 \
+    || echo "merge-gate.sh: could not delete $b on $CI_REMOTE; the next gate's sweep will" >&2
 }
 
 # The dispatched run for exactly this commit: the newest workflow_dispatch run
 # on the branch whose head SHA is ours. Empty while none is listed yet.
-find_run() {
-  gh run list -R "$CI_REPO" --workflow "$CI_WF" --branch "$CI_BRANCH" --event workflow_dispatch \
+find_run() { find_run_on "$CI_BRANCH" "$CI_SHA"; }
+find_run_on() { # branch sha
+  gh run list -R "$CI_REPO" --workflow "$CI_WF" --branch "$1" --event workflow_dispatch \
     --limit 20 --json databaseId,headSha,status,conclusion,url 2>/dev/null \
-    | jq -c --arg sha "$CI_SHA" '[.[] | select(.headSha == $sha)] | first // empty' 2>/dev/null || true
+    | jq -c --arg sha "$2" '[.[] | select(.headSha == $sha)] | first // empty' 2>/dev/null || true
 }
 
 # skippable PATH PATTERN...: 0 when the allowlist lets a change to PATH go
@@ -239,8 +256,10 @@ try_skip() {
      why: "CI not dispatched: only release paths changed (\($n) file\(if $n == 1 then "" else "s" end)) since \($g.headSha[0:12]), which run \($g.databaseId) passed"}'
 }
 
+CI_BASE=
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
+  local window=0 red=""
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -253,6 +272,7 @@ cmd_ci() {
       --timeout-minutes) [ $# -ge 2 ] || usage; timeout=$2; shift 2 ;;
       --deadline) [ $# -ge 2 ] || usage; deadline=$2; shift 2 ;;
       --skip-path) [ $# -ge 2 ] || usage; skip+=("$2"); shift 2 ;;
+      --base) [ $# -ge 2 ] || usage; CI_BASE=$2; shift 2 ;;
       --resume) resume=1; shift ;;
       *) usage ;;
     esac
@@ -276,6 +296,9 @@ cmd_ci() {
   fi
   allowed="$timeout minutes"
   if [ "$deadline" -gt 0 ]; then allowed="the gate's deadline"; else deadline=$(($(date +%s) + timeout * 60)); fi
+  # The base check's own span: as long as the gate itself was given.
+  window=$((deadline - $(date +%s)))
+  [ "$window" -ge 60 ] || window=60
   while :; do
     run=$(find_run)
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
@@ -291,19 +314,87 @@ cmd_ci() {
   # The jobs, and the head SHA once more, from the run itself.
   view=$(gh run view "$id" -R "$CI_REPO" --json databaseId,headSha,status,conclusion,url,jobs 2>/dev/null) || view=$run
   jq -e --arg sha "$CI_SHA" '.headSha == $sha' <<<"$view" >/dev/null 2>&1 || view=$run
-  delete_branch
   conclusion=$(jq -r '.conclusion // ""' <<<"$view")
   # Only a failed or hung suite is red; any other conclusion means CI never
   # judged the commit, which is not the ticket's fault.
   case "$conclusion" in
-    success) record "$view" "" ;;
+    success) delete_branch; record "$view" "" ;;
     failure | timed_out)
-      record "$view" "" | jq -c --argjson f "$(failed_tests "$id" 20)" '. + {failing_tests: $f}'
-      return 7 ;;
+      red=$(record "$view" "" | jq -c --argjson f "$(failed_tests "$id" 20)" '. + {failing_tests: $f}')
+      if [ -z "$CI_BASE" ]; then
+        delete_branch
+        printf '%s\n' "$red"
+        return 7
+      fi
+      base_check "$id" "$red" "$window" ;;
     *)
+      delete_branch
       record "$view" "$CI_WF concluded ${conclusion:-nothing} for $CI_SHA, so CI did not judge it"
       return 19 ;;
   esac
+}
+
+# base_check run-id red-record window: a red run, checked before it counts
+# (#195). At once: its failed jobs rerun on the merge commit, and the gate
+# workflow on the base. Waits up to `window` seconds (a green rerun decides
+# at once), deletes both branches, and prints the record with base_check
+# (above). Returns 0 flaky, 7 otherwise.
+base_check() {
+  local id="$1" red="$2" window="$3" att0="" end=0 rr="" brun="" bview="" btests='null' bbranch="$CI_BRANCH-base"
+  local rdone=0 bdone=0 rconc="" bconc="" verdict="" out="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  att0=$(gh run view "$id" -R "$CI_REPO" --json attempt -q '.attempt // 1' 2>/dev/null) || att0=1
+  case "$att0" in '' | *[!0-9]*) att0=1 ;; esac
+  # done: 0 waiting, 1 nothing to wait on (it never started), 2 concluded.
+  gh run rerun "$id" -R "$CI_REPO" --failed >/dev/null 2>&1 || rdone=1
+  if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_BASE:refs/heads/$bbranch" >/dev/null 2>&1; then bdone=1
+  elif ! gh workflow run "$CI_WF" -R "$CI_REPO" --ref "$bbranch" >/dev/null 2>&1; then bdone=1
+  fi
+  end=$(($(date +%s) + window))
+  while :; do
+    if [ "$rdone" -eq 0 ]; then
+      rr=$(gh run view "$id" -R "$CI_REPO" --json databaseId,attempt,status,conclusion,url,jobs 2>/dev/null) || rr=""
+      if [ -n "$rr" ] && jq -e --argjson a "$att0" '(.attempt // 0) > $a and .status == "completed"' <<<"$rr" >/dev/null 2>&1; then
+        rdone=2 rconc=$(jq -r '.conclusion // ""' <<<"$rr")
+      fi
+    fi
+    if [ "$bdone" -eq 0 ]; then
+      brun=$(find_run_on "$bbranch" "$CI_BASE")
+      if [ -n "$brun" ] && [ "$(jq -r .status <<<"$brun")" = completed ]; then
+        bdone=2 bconc=$(jq -r '.conclusion // ""' <<<"$brun")
+      fi
+    fi
+    [ "$rconc" != success ] || break
+    if [ "$rdone" -ne 0 ] && [ "$bdone" -ne 0 ]; then break; fi
+    [ "$(date +%s)" -lt "$end" ] || break
+    sleep "$poll"
+  done
+  delete_branch
+  delete_branch "$bbranch"
+  [ -n "$brun" ] || brun='{}'
+  case "$bconc" in
+    failure | timed_out) btests=$(failed_tests "$(jq -r .databaseId <<<"$brun")" 50) ;;
+  esac
+  # The same test: the same job and name (its line may move with the change).
+  out=$(jq -c --arg rc "$rconc" --arg bc "$bconc" --argjson ra "$((att0 + 1))" --argjson rr "${rr:-null}" \
+      --argjson b "$brun" --argjson bt "$btests" --arg bsha "$CI_BASE" --arg bb "$bbranch" '
+    (.failing_tests.tests // []) as $mine | ($bt.tests // []) as $theirs
+    | ($bc == "failure" or $bc == "timed_out") as $bred
+    | [$mine[] | . as $x | select(any($theirs[]; .job == $x.job and .name == $x.name) | not)] as $new
+    | (if $rc == "success" then "flaky"
+       elif $bred and ($new == [] or $theirs == []) then "base-red"
+       elif $bred or $bc == "success" then "new"
+       else "unchecked" end) as $v
+    | . + {base_check: {verdict: $v,
+            rerun: {attempt: (if $rc == "" then null else $ra end), conclusion: (if $rc == "" then null else $rc end)},
+            base: {sha: $bsha, branch: $bb, run_id: ($b.databaseId // null), url: ($b.url // null),
+                   conclusion: (if $bc == "" then null else $bc end), failing_tests: $bt}}}
+    | if $v == "flaky" then .conclusion = "success" | .jobs = [($rr.jobs // [])[] | {name, conclusion}]
+      elif $v == "new" and $bred and $theirs != [] then
+        .failing_tests = {tests: $new, total: ($new | length), truncated: false, also_on_base: (($mine | length) - ($new | length))}
+      else . end' <<<"$red")
+  printf '%s\n' "$out"
+  verdict=$(jq -r .base_check.verdict <<<"$out")
+  [ "$verdict" = flaky ] || return 7
 }
 
 cmd_find() {

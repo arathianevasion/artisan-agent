@@ -282,12 +282,13 @@ check_orchestrator_exit() { # id attempt wave classification
   code=$(jq -r '.exit_code // "none"' "$RUN_DIR/results/$1.$2.exit.json" 2>/dev/null || echo none)
   cause=$(exit_cause "$4")
   apply '
-    [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
+    . as $s
+    | [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
      | ($k | verified_pass) as $passed
      | if $k.status == "in_flight" then {ticket: $t, why: "in flight, no verdict", cause: "no-verdict"}
        elif $k.status != "returned" then empty
        elif ($passed | not) then {ticket: $t, why: "returned, no verdict", cause: "no-verdict"}
-       elif .ci_park == null then {ticket: $t, why: "verified, not merged", cause: "unmerged"}
+       elif $s.ci_park == null and $s.base_park == null then {ticket: $t, why: "verified, not merged", cause: "unmerged"}
        else empty end] as $u
     | (if $cause != "" then $cause
        elif any($u[]; .cause == "no-verdict") then "no-verdict"
@@ -714,6 +715,9 @@ cmd_status() {
 $reviews"
         fi
       elif [ "$reconciled" -eq 1 ] && parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
+      # A red base pauses merging only: parked once nothing else can run.
+      elif [ "$(get '.base_park != null')" = true ] && [ "$(get '.frontier | length')" -eq 0 ]; then next=parked
+        parked="parked base: $(base_red_line); clear it with wave.sh unpark-base once the base is fixed"
       elif [ "$waiting" -gt 0 ]; then next=decide
       elif [ "$reconciled" -eq 0 ]; then next=blocked
       elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
@@ -739,6 +743,8 @@ $reviews"
   echo "next: $next"
   [ "$next" != decide ] || exit_decision_lines
   [ "$next" != parked ] || echo "$parked"
+  [ "$next" = parked ] || [ "$(get '.base_park != null')" != true ] \
+    || echo "parked base: $(base_red_line); merging waits, other work carries on; clear it with wave.sh unpark-base once the base is fixed"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
   human_checks_line
   [ "$next" != stranded ] || echo "$stranded"
@@ -1159,6 +1165,8 @@ merge_one() {
   ib=$(integration_branch)
   [ "$(get '.ci_park != null')" = false ] \
     || state_die 19 "wave.sh: #$t not merged: the run is parked on CI ($(get -r '.ci_park.why')); nothing merges until the park is cleared (wave.sh unpark-ci)"
+  [ "$(get '.base_park != null')" = false ] \
+    || state_die 19 "wave.sh: #$t not merged: merging is parked: $(base_red_line); clear it once the base is fixed (wave.sh unpark-base)"
   abandon_pending_resolution "$wt"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   pre=$(git -C "$wt" rev-parse HEAD)
@@ -1241,7 +1249,8 @@ launch_gate() {
   mode=$(jq -r .mode <<<"$g")
   if [ "$mode" = ci ]; then
     args=(ci --repo "$(get '.repo')" --workflow "$(jq -r .workflow <<<"$g")" --branch "$(jq -r .branch <<<"$g")"
-          --sha "$(jq -r .sha <<<"$g")" --dir "$(integration_worktree)" --deadline "$(jq -r .deadline <<<"$g")")
+          --sha "$(jq -r .sha <<<"$g")" --dir "$(integration_worktree)" --deadline "$(jq -r .deadline <<<"$g")"
+          --base "$(jq -r .pre <<<"$g")")
     # The release allowlist (#168): a merge that only changes these paths over
     # a green commit is recorded green without a dispatch.
     while IFS= read -r p; do args+=(--skip-path "$p"); done < <(skip_paths)
@@ -1363,13 +1372,20 @@ finish_gate() {
     GATE_JSON=$(jq -c '.record' "$result")
     jq -e 'type == "object"' <<<"$GATE_JSON" >/dev/null 2>&1 \
       || GATE_JSON=$(get -c '.merge_gate | {mode: "ci", workflow, branch, sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
+    note_ci_wait "$rc" "$(jq -nc --arg t "$t" '{ticket: $t}')"
     if [ "$rc" -ne 0 ]; then
       git -C "$wt" reset -q --hard "$pre"
       apply '.merge_gate = null'
       url=$(jq -r '.url // "no run"' <<<"$GATE_JSON")
+      # The base failed the same tests (#195): park, charge no one.
+      if [ "$rc" -eq 7 ] && [ "$(jq -r '.base_check.verdict // ""' <<<"$GATE_JSON")" = base-red ] && ! is_urgent_sync "$t"; then
+        base_park "$(jq -nc --arg t "$t" --argjson n "$n" '{ticket: $t, attempt: $n}')" "#$t" "$pre" "$sha"
+        state_die 19 "wave.sh: #$t not merged: $(base_red_line); it stays verified and uses no attempt, and nothing merges until the base is fixed (wave.sh unpark-base)"
+      fi
       if [ "$rc" -eq 7 ]; then
         apply '.tickets[$t].suite = ({command: $c, passed: false}
-            + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
+            + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs})
+            + (if $g.base_check then {base_check: $g.base_check} else {} end))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
         why="CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
         if is_urgent_sync "$t"; then
@@ -1393,7 +1409,8 @@ finish_gate() {
     fi
     record=$(jq -c --arg c "$suite" '{command: $c, passed: true}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
-      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
+      + (if .skipped then {skipped, relied_on, why} else {} end)
+      + (if .base_check then {base_check, failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
     apply '.merge_gate = null'
@@ -1405,6 +1422,7 @@ finish_gate() {
   record_session_cost "$t" "$n"
   apply '.tickets[$t].suite = $r | .merge_gate = null' --arg t "$t" --argjson r "$record"
   note_skipped_gate "$record" "$(jq -nc --arg t "$t" '{ticket: $t}')"
+  note_flaky "$record" "$t" "#$t"
   worker_wt=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   if [ -n "$worker_wt" ] && [ -d "$worker_wt" ]; then
     git -C "$MAIN" worktree remove "$worker_wt" 2>/dev/null \
@@ -1442,6 +1460,8 @@ batch_start() {
   fi
   [ "$(get '.ci_park != null')" = false ] \
     || state_die 19 "wave.sh: not merged: the run is parked on CI ($(get -r '.ci_park.why')); nothing merges until the park is cleared (wave.sh unpark-ci)"
+  [ "$(get '.base_park != null')" = false ] \
+    || state_die 19 "wave.sh: not merged: merging is parked: $(base_red_line); clear it once the base is fixed (wave.sh unpark-base)"
   [ -n "$(get '.plan.suite_command // ""')" ] || die "the plan has no suite_command; the full suite must run after every merge"
   for t in $(jq -r '.[]' <<<"$list"); do
     [ "$(get --arg t "$t" '.tickets[$t].urgent // false')" != true ] \
@@ -1605,16 +1625,23 @@ batch_outcome() {
     record=$(jq -c --arg c "$suite" --argjson p "$([ "$rc" -eq 0 ] && echo true || echo false)" '{command: $c, passed: $p}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
       + (if .skipped then {skipped, relied_on, why} else {} end)
-      + (if .failing_tests then {failing_tests} else {} end)' <<<"$GATE_JSON")
+      + (if .failing_tests then {failing_tests} else {} end)
+      + (if .base_check then {base_check} else {} end)' <<<"$GATE_JSON")
+    note_ci_wait "$rc" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')"
   fi
   record=$(jq -c --argjson b "$(get '.merge_batch.id')" --argjson ts "$(get -c '.merge_gate.tickets')" \
     '. + {batch: $b, batch_tickets: $ts}' <<<"$record")
   case "$rc" in
     0) who=$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')
        batch_merge_prefix "$p" "$record"
-       note_skipped_gate "$record" "$who" ;;
+       note_skipped_gate "$record" "$who"
+       note_flaky "$record" "$(jq -r '.[0]' <<<"$(jq -c .tickets <<<"$who")")" \
+         "merge batch $(jq -r .batch <<<"$who") ($(jq -r '.tickets | map("#" + .) | join(", ")' <<<"$who"))" ;;
     7)
       git -C "$wt" reset -q --hard "$pre"
+      if [ "$(jq -r '.base_check.verdict // ""' <<<"$record")" = base-red ]; then
+        batch_base_park
+      fi
       apply '.merge_batch |= (.red = $p | .red_record = $r) | .merge_gate = null' --argjson p "$p" --argjson r "$record" ;;
     *)
       git -C "$wt" reset -q --hard "$pre"
@@ -1695,6 +1722,21 @@ batch_park() {
   state_die 19 "wave.sh: merge batch not merged: $(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON"); the run is parked on CI (wave.sh unpark-ci, then merge them again)"
 }
 
+# batch_base_park: the merge batch's gate failed tests its base fails too
+# (#195). The tickets not yet merged stay returned and verified, the batch
+# ends, and merging parks on the red base; after unpark-base they are merged
+# afresh.
+batch_base_park() {
+  local who= label=
+  who=$(get -c '.merge_batch as $b | {ticket: $b.order[0], tickets: $b.order, batch: $b.id, attempt: $b.attempts[$b.order[0]]}')
+  label="merge batch $(jq -r .batch <<<"$who") ($(jq -r '.tickets | map("#" + .) | join(", ")' <<<"$who"))"
+  base_park "$who" "$label" "$(get '.merge_gate.pre')" "$(get '.merge_gate.sha')"
+  apply '.merge_gate = null'
+  batch_report
+  batch_close
+  state_die 19 "wave.sh: merge batch not merged: $(base_red_line); its tickets stay verified and use no attempt, and nothing merges until the base is fixed (wave.sh unpark-base, then merge them again)"
+}
+
 # batch_end: every ticket settled. One line per ticket, the merge batch cleared.
 # 0 all merged (or left out for their own merge); 7 a ticket went red.
 batch_end() {
@@ -1733,6 +1775,70 @@ batch_close() {
 # ------------------------------------------------------------ CI merge gate
 
 NO_GATE_WORKFLOW="this machine gates merges on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set this machine's merge_gate to local (machine-setup.sh merge-gate local)"
+
+# ------------------------------------------------- the base check (#195)
+
+# test_names failing-tests-json: "where name, ..." for the first three, and
+# how many more.
+test_names() {
+  jq -r '(.tests // []) as $ts | (.total // ($ts | length)) as $n
+    | [$ts[:3][] | [.where, .name] | map(select(. != null)) | join(" ")] | join(", ")
+      + (if $n > 3 then ", and \($n - 3) more" else "" end)' <<<"$1"
+}
+
+# base_park who-json label pre sha: a red gate whose tests the base fails too
+# (GATE_JSON's base_check verdict base-red). Nobody is charged: the tickets
+# stay returned and verified, merging pauses (dispatch carries on) and one
+# base-red decision waits for the Artisan, who fixes the base and clears it
+# with unpark-base.
+base_park() {
+  local who="$1" label="$2" pre="$3" sha="$4" names=
+  names=$(test_names "$(jq -c '.base_check.base.failing_tests // {}' <<<"$GATE_JSON")")
+  [ -n "$names" ] || names=$(test_names "$(jq -c '.failing_tests // {}' <<<"$GATE_JSON")")
+  [ -n "$names" ] || names="no test named in its log"
+  apply '($g.base_check.base) as $b
+    | .base_park = ($who + {pre: $pre, sha: $sha, at: $now, label: $l, tests: $names,
+          workflow: $g.workflow, run_id: $b.run_id, url: $b.url, conclusion: $b.conclusion,
+          base_sha: $b.sha, merge_run: {run_id: $g.run_id, url: $g.url, conclusion: $g.conclusion}})
+    | .decisions += [{id: ((.decisions | length) + 1), kind: "base-red", ticket: $who.ticket,
+        question: "Merging \($l) is parked: the base is red: \($names), run \($b.run_id)\(if $b.url then " (\($b.url))" else "" end). The merge gate (run \($g.run_id)) failed the same tests on the merge, and the integration tip before it (\($b.sha[0:12])) fails them too, so \($l) is not at fault: it stays verified and uses no attempt. Nothing merges until the base is fixed; other work carries on. Recommended: fix the base, then clear the park (wave.sh unpark-base) and merge again?",
+        status: "waiting", at: $now}]
+    | event({event: "parked", reason: "base", detail: "the base is red: \($names), run \($b.run_id)"} + $who; $now)' \
+    --argjson who "$who" --arg l "$label" --arg pre "$pre" --arg sha "$sha" --arg names "$names" --argjson g "$GATE_JSON"
+}
+
+# base_red_line: the park, for a message.
+base_red_line() {
+  get -r '.base_park | "\(.label // "#\(.ticket)")'"'"'s merge gate failed tests the base fails too: the base is red: \(.tests), run \(.run_id)\(if .url then " (\(.url))" else "" end)"'
+}
+
+# note_flaky record from label: a gate that went red and passed on its
+# rerun merged as flaky (#195): a finding for triage names the tests and runs.
+note_flaky() {
+  local r="$1" from="$2" label="$3" names= title= why=
+  [ "$(jq -r '.base_check.verdict // ""' <<<"$r")" = flaky ] || return 0
+  names=$(test_names "$(jq -c '.failing_tests // {}' <<<"$r")")
+  if [ -n "$names" ]; then title="Flaky test: $names"
+  else title="Flaky merge gate: $(jq -r '"\(.workflow) run \(.run_id)"' <<<"$r")"; fi
+  why=$(jq -r --arg l "$label" --arg n "${names:-no test named in its log}" '
+    "The merge gate for \($l) went red on run \(.run_id) (\(.url)) and passed when its failed jobs were rerun (attempt \(.base_check.rerun.attempt)), so it merged and was charged nothing. Failing on the first try: \($n). The base ran as run \(.base_check.base.run_id // "none") (\(.base_check.base.url // "no url")): \(.base_check.base.conclusion // "no verdict"). A test that fails and passes on the same commit is flaky; make it reliable or retry it in the job."' <<<"$r")
+  "$SCRIPT_DIR/findings.sh" add "$RUN_DIR" "$from" "$title" "$why" >/dev/null 2>&1 \
+    || echo "wave.sh: could not log the flaky-test finding ($title); file it by hand" >&2
+}
+
+# note_ci_wait exit-code who-json: how long the merge gate waited on CI,
+# from its start to its outcome (the base check included), as a ci-wait
+# event; the wave report and the run digest add them up per merge.
+note_ci_wait() {
+  local fin=
+  fin=$(jq -r '.finished_at // ""' "$(gate_result)" 2>/dev/null) || fin=
+  apply '.merge_gate as $g
+    | ((if $fin == "" then $now else ($fin | fromdateiso8601) end) - ($g.at // $now)) as $s
+    | event({event: "ci-wait", gate: $g.gate, sha: $g.sha,
+             minutes: (if $s < 0 then 0 else ($s / 6 | round) / 10 end),
+             outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" else "no-verdict" end)} + $who; $now)' \
+    --arg fin "$fin" --argjson rc "$1" --argjson who "$2"
+}
 
 # skip_paths: the release allowlist (merge_gate_skip_paths), one pattern per
 # line: the plan's snapshot of the config, else the project's.
@@ -1920,6 +2026,31 @@ cmd_unpark_ci() {
       else "unparked: #\(.ticket) merges next with the gate retried" end'
 }
 
+# ------------------------------------------------------------ unpark-base
+
+# The Artisan has fixed the base: merging carries on, and the parked tickets
+# (still returned and verified) are merged afresh on the integration tip.
+cmd_unpark_base() {
+  open_run "${1:-}"
+  shift
+  local by=Artisan
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --by) [ $# -ge 2 ] || usage; by=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ "$(get '.base_park != null')" = true ] || state_die 6 "wave.sh: run $RUN_ID is not parked on a red base"
+  apply '.base_park as $p
+    | .decisions |= map(if .kind == "base-red" and .status == "waiting"
+                        then .status = "decided" | .choice = "base fixed" | .by = $by | .decided_at = $now else . end)
+    | event({event: "unparked", reason: "base", ticket: $p.ticket, how: "merge", by: $by}
+            + (if $p.batch then {tickets: $p.tickets, batch: $p.batch} else {} end); $now)
+    | .base_park = null' --arg by "$by"
+  get -r '[.events[] | select(.event == "unparked" and .reason == "base")] | last
+    | "unparked: merge \(if .tickets then .tickets | map("#" + .) | join(", ") else "#\(.ticket)" end) again (merged afresh on the integration tip)"'
+}
+
 # ------------------------------------------------------------------- close
 
 cmd_close() {
@@ -1958,7 +2089,7 @@ cmd_close() {
 cmd_report() {
   open_run "${1:-}"
   halt_if_wave_failed
-  jq '{
+  jq "$STATE_JQ_DEFS"'{
     run_id, wave: ((.orchestrators // []) | last | .wave // null),
     integration: .integration,
     tickets: [.plan.scope[] as $t | .tickets[$t] as $k | {
@@ -1970,6 +2101,7 @@ cmd_report() {
     decisions_waiting: [.decisions[] | select(.status == "waiting")],
     halted: (.halted // null),
     findings: (.findings | length),
+    ci_wait: ci_wait,
     costs: .costs,
     events: (.events // [] | length)
   }' "$FILE"
@@ -1987,6 +2119,7 @@ case "$cmd" in
   merge) cmd_merge "$@" ;;
   resolved) cmd_resolved "$@" ;;
   unpark-ci) cmd_unpark_ci "$@" ;;
+  unpark-base) cmd_unpark_base "$@" ;;
   close) cmd_close "$@" ;;
   block)
     [ $# -eq 3 ] || usage

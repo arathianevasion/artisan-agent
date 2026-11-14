@@ -103,6 +103,10 @@ echo
 echo "Where it is: $orch; $summary. Run folder: \`$run_dir\`."
 [ "$(get '.halted != null')" != true ] \
   || get '"**Halted:** \(.halted.reason). Nothing launches until the Artisan decides."'
+ci_wait=$(jq -r "$STATE_JQ_DEFS"'ci_wait | select(.merges != [])
+  | "CI wait: \(.total_minutes) min in total; "
+    + ([.merges[] | "\(if .batch then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end) \(.minutes) min"] | join(", "))' "$FILE")
+[ -z "$ci_wait" ] || echo "$ci_wait"
 echo
 get '
   . as $s

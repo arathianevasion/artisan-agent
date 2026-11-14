@@ -151,7 +151,7 @@ test_bc_a_flaky_gate_in_a_merge_batch_merges_the_batch_without_a_split() {
 }
 
 test_bc_each_merge_logs_its_ci_wait_and_the_reports_show_it_per_merge_and_in_total() {
-  setup_ci
+  setup_ci 30 '["1","2"]'   # two tickets: the run is still open for its digest
   verified_ticket
   merge_1
   assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
