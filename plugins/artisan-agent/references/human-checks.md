@@ -45,7 +45,7 @@ Each event names `ticket`, `agent_ticket`, `gate` and `by`. The state: `tickets.
 
 ## The plan check
 
-`to-plan.sh check` and `render` flag each agent ticket's criterion that contains one of the phrases below (case-insensitive, whole words), under "Needs your attention", with the offer to split it into a Human check. `plan.sh build` flags the same in a draft's `acceptance` lists. A Human check ticket's own criteria are never flagged.
+`to-plan.sh check` and `render` flag each agent ticket's criterion that contains one of the phrases below (case-insensitive, whole words), under "Needs your attention", with the offer to split it into a Human check. `plan.sh build` flags the same: in a draft ticket's `acceptance` list when it has one (the issue is then not read), otherwise in the criteria of the ticket's issue body (`scripts/lib/criteria.py extract`). When an issue can't be read (no gh, offline) the build still succeeds and names those tickets on stderr as unchecked. A Human check ticket's own criteria are never flagged.
 
 While a flag stands, the plan can't be approved: `check` exits 1, so `publish` refuses, and `state.sh init` refuses a plan with an open flag. Each flag is cleared one of two ways:
 
