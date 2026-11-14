@@ -12,8 +12,8 @@ Usage:
       such heading gives every checkbox line in it. Text is kept verbatim.
   python3 -I criteria.py align <criteria.json> <verdict.json> <record.json>
       one entry per ticket criterion, in order, as JSON: {criterion, met,
-      evidence, claimed}, plus "human": true where the verdict's "met" is
-      "human" (only a person can verify it; met stays false). Each takes the verdict entry with the same text,
+      evidence, claimed}, plus "human": true where the verdict's "met"
+      is "human" (only a person can verify it; met stays false). Each takes the verdict entry with the same text,
       else the verdict entry in its position when the counts agree; with
       none it is unmet. "claimed" is the worker record's "met" by the same
       rule (the same text, else the entry in its position when the record's

@@ -22,6 +22,7 @@ A ticket that misses a criterion is never merged; it is a failed attempt like an
 |---|---|---|
 | `pass <met>/<total>` | 0 | every criterion met: merge it |
 | `pass <met>/<total>, <k> to Human check #<n>` | 0 | every criterion met but `k` that need a human check, which moved to Human check `#<n>`: merge it (below) |
+| `pass <met>/<total>, <k> need a human check (no tracker ticket to split them into)` | 0 | the same, for a ticket with a `ticket_path`: nothing is split, and its contract's `unsure` says to move them into a Human check by hand |
 | `fail <met>/<total> retry: <first unmet>` | 6 | a failed attempt with attempts left: the ticket is `queued`; dispatch it again and the fresh worker's failure evidence lists what the verifier found unmet |
 | `fail <met>/<total> blocked: <first unmet>` | 6 | a failed attempt, the last: blocked, with an exception decision for the Artisan |
 | `error <reason>` | 14 | the verifier failed (crashed, ran out of budget, wrote no verdict): start it again; no attempt is used up |

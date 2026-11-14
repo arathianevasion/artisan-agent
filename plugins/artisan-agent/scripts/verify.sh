@@ -39,6 +39,10 @@
 #                                               split-human-check), in the
 #                                               run's scope, for the next slice
 #                                               gate. Never a failed attempt
+#         pass <met>/<total>, <k> need a human check (no tracker ticket to split them into)
+#                                               the same, for a ticket with a
+#                                               ticket_path: its contract's
+#                                               unsure says to move them by hand
 #         fail <met>/<total> retry: <first unmet>   a failed attempt: queued
 #                                               for a fresh worker given the
 #                                               verifier's findings
@@ -488,8 +492,9 @@ cmd_judge() {
 
   # A pass with criteria only a person can verify: they move to the agent
   # ticket's Human check first (to-plan.sh split-human-check: created, or the
-  # open one added to; a repeat changes nothing), then the verdict is
-  # recorded with it. A split that fails records nothing: judge again.
+  # open one added to; a repeat changes nothing) and the agent ticket says
+  # so, then the verdict is recorded with it. A split or comment that fails
+  # records nothing: judge again (a crash just after the comment repeats it).
   local hc="" hcrit=""
   hcrit=$(jq -c '[.acceptance[] | select(.human == true) | .criterion]' "$contract")
   if [ "$(jq -r .verdict "$contract")" = pass ] && [ "$hcrit" != "[]" ]; then
@@ -500,6 +505,16 @@ cmd_judge() {
       hc=$(split_human_check "$t" "$hcrit") || exit 1
       jq --arg hc "$hc" '.human_check = $hc' "$contract" >"$contract.tmp" && mv "$contract.tmp" "$contract"
     fi
+  fi
+
+  if [ -n "$hc" ]; then
+    # Said on the agent ticket before the verdict is recorded, so a comment
+    # that fails stops here and judging again posts it. Nothing is ticked for
+    # them: they are the Human check's now.
+    gh issue comment "$t" -R "$(get .repo)" --body "$(jq -r --arg hc "$hc" '
+      "The verifier marked \(.criteria_human) of this ticket'"'"'s criteria as needing a human check (only a person can verify them), so they moved to Human check #\($hc), for the next slice gate:",
+      "", (.acceptance[] | select(.human == true) | "- \(.criterion): \(.evidence.why // "no reason given")")' "$contract")" >/dev/null 2>&1 \
+      || die "could not comment on #$t that its criteria moved to Human check #$hc; nothing recorded, judge again"
   fi
 
   apply '.tickets[$t].evidence = $ev[0]
@@ -521,13 +536,6 @@ cmd_judge() {
     --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract" \
     --arg title "Human check: $(get --arg t "$t" '.plan.tickets[$t].title // "#\($t)"') (#$t)"
   remove_worktree "$wt"
-  if [ -n "$hc" ]; then
-    # Nothing is ticked for them here: they are the Human check's now.
-    gh issue comment "$t" -R "$(get .repo)" --body "$(jq -r --arg hc "$hc" '
-      "The verifier marked \(.criteria_human) of this ticket'"'"'s criteria as needing a human check (only a person can verify them), so they moved to Human check #\($hc), for the next slice gate:",
-      "", (.acceptance[] | select(.human == true) | "- \(.criterion): \(.evidence.why // "no reason given")")' "$contract")" >/dev/null 2>&1 \
-      || echo "verify.sh: could not comment on #$t that its criteria moved to Human check #$hc" >&2
-  fi
 
   if [ "$(jq -r .verdict "$contract")" = fail ]; then
     # A criterion missed is a failed attempt: a fresh worker gets the

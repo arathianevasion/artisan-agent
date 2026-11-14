@@ -148,3 +148,26 @@ test_h_a_judge_that_split_but_crashed_before_recording_splits_nothing_more() {
   [ ! -f "$FAKE_GH_DIR/issue-4.json" ] || fail "a second Human check was created"
   assert_eq 1 "$(jq -r .body "$FAKE_GH_DIR/issue-3.json" | grep -c 'It says hi')" "the criterion is on the Human check once"
 }
+
+test_h_the_all_human_note_is_on_the_ticket_comment() {
+  judge_human "hello.txt exists|It says hi"
+  assert_contains "$("$SCRIPTS/evidence.sh" comment "$RUN_DIR" 1)" "- **Note:** Every criterion needs a human check"
+}
+
+test_h_a_moved_comment_that_could_not_be_posted_records_nothing_and_judging_again_posts_it() {
+  setup_wave
+  returned_ticket
+  export VERIFIER_HUMAN="It says hi"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  : >"$FAKE_GH_DIR/comments-1.md"
+  chmod a-w "$FAKE_GH_DIR/comments-1.md"   # the comment can't be posted
+  local rc=0
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >/dev/null 2>&1 || rc=$?
+  chmod u+w "$FAKE_GH_DIR/comments-1.md"
+  [ "$rc" -ne 0 ] || fail "a judge that could not comment said it was done"
+  assert_eq '"-"' "$(state_get '.tickets["1"].verifications[-1].verdict // "-" | tojson')"
+  judge_verifier 1
+  assert_eq "pass 1/2, 1 to Human check #3" "$JUDGE_OUT"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "moved to Human check #3"
+}

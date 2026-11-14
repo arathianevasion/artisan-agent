@@ -338,10 +338,11 @@ cmd_verdict() {
       "",
       "| Criterion | Met | Evidence |",
       "|---|---|---|",
-      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .human == true then "needs a human check" else "no" end) | \(
+      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(
          if .met then ([(.evidence.checks // [])[] | "\(.command): \(.result)"] + (.evidence.tests // []) | join("; "))
          else (.evidence.why // "not shown") end) |"),
       "",
+      (if $e.note then "Note: \($e.note)" else empty end),
       (if $e.verifier.notes then "Verifier notes: \($e.verifier.notes)" else empty end),
       (if ($e.verifier.unsure | length) > 0 then "Verifier unsure: \($e.verifier.unsure | join("; "))" else empty end),
       (if $e.verdict == "pass" then "Next: it merges, behind the suite, in the orchestrator'"'"'s next step."
