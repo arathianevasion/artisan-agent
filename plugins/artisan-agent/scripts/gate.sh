@@ -274,8 +274,11 @@ cmd_open() {
   for d in $(jq -r '.gate.dependents[].number' "$view"); do
     add_blocker "$d" "$num" "$gid"
   done
+  # The view holds the whole state, so it reaches jq as a file, never as an
+  # argument (#203: Linux refuses one over 128 KiB).
   apply '
-    if any((.review_gates // [])[]; .id == $v.gate.id) then .
+    $view[0] as $v
+    | if any((.review_gates // [])[]; .id == $v.gate.id) then .
     else
       ($v.gate.cards | length) as $n
       | ([$v.gate.tickets[] as $t | $v.state.tickets[$t].evidence.unsure[]?] | length) as $u
@@ -299,7 +302,7 @@ cmd_open() {
           .tickets[$h.ticket].human_check = ((.tickets[$h.ticket].human_check // {state: "open", for: $h.for})
             | .gate = $v.gate.id | .shown = ((.shown // []) + [$v.gate.id])))
       | guardrails_fired($v.gate; $now)
-    end' --argjson num "$num" --argjson v "$(cat "$view")"
+    end' --argjson num "$num" --slurpfile view "$view"
   echo "$num"
 }
 
@@ -425,7 +428,7 @@ ACTION_FILTER='
 # once it is in. Returns the write's status (3: the lock is held).
 fold() {
   local f="$1" st=0
-  ( apply "$ACTION_FILTER" --argjson a "$(cat "$f")" ) 2>"$f.err" || st=$?
+  ( apply '$action[0] as $a | '"$ACTION_FILTER" --slurpfile action "$f" ) 2>"$f.err" || st=$?
   if [ "$st" -eq 0 ]; then rm -f "$f" "$f.err"; fi
   return "$st"
 }
