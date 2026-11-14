@@ -4,8 +4,9 @@
 # (without it the hook says so on stderr and lets the call through).
 #   protect.sh main-edit   PreToolUse on Edit|Write|MultiEdit|NotebookEdit
 #   protect.sh run-start   UserPromptExpansion and PreToolUse(Skill) for implement-plan
-#                          (while a run holds the lock only a resume, "add <tickets>"
-#                          or "urgent <ticket>" passes: the last two are the add-work flow)
+#                          (while a run holds the lock only the holding session, a
+#                          resume, "add <tickets>" or "urgent <ticket>" passes: the
+#                          last two are the add-work flow)
 # Both refuse by printing the host's deny/block JSON and exit 0.
 # Details: guard/README.md, "Main-checkout protection and the run lock".
 set -uo pipefail
