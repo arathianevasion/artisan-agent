@@ -822,3 +822,75 @@ test_a_stranded_human_check_is_reported_and_sent_back() {
   assert_contains "$(cat "$FAKE_GH_DIR/comments-11.md")" "it is the Human check for #3, which was dropped"
   assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: done"
 }
+
+# ------------------------------- a slice gate with a ticket that left the run (#164)
+
+# The slice gate holds $1 (tickets, JSON); #1 merged with a card; the run gave
+# up on #3 (4 depends on 3, 2 on 1) and the Artisan answers its exception gate
+# with $2 (drop or reslice), so #3 leaves the run and #4 is sent back with it.
+left_slice_run() { # tickets choice
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = [{kind: "slice", slice: "greeting", tickets: $ts}]' --argjson ts "$1"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .tickets["1"] |= (.status = "merged" | .merge_commit = "abcdef1234567" | .attempts = 1
+      | .evidence = {ticket: "1", verdict: "pass",
+          acceptance: [{criterion: "t1.txt exists", met: true, evidence: {tests: ["check.sh"]}}],
+          unsure: [], decisions: []})'
+  gave_up_on_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  "$A" "$2" "$RUN_DIR" "$(state_get '.exception_gates[0].issue')" --by Andrew >/dev/null
+}
+
+test_a_slice_gate_with_a_dropped_or_resliced_ticket_comes_due_and_names_it() {
+  local choice="" num="" body="" st=""
+  for choice in drop reslice; do
+    [ "$choice" = drop ] || { kill_workers; rm -rf "$TEST_TMPDIR/project" "$TEST_TMPDIR/tracker"; }
+    left_slice_run '["1","3"]' "$choice"
+    st=$(state_get '.tickets["3"].status')
+    assert_eq slice-1 "$("$G" due "$RUN_DIR")" "$choice: #3 $st counts as done"
+    # Due, so it holds #2, which waits on the merged #1.
+    assert_eq held "$("$G" holds "$RUN_DIR" 1)" "$choice"
+    assert_eq "" "$(frontier)" "$choice: #2 waits on the gate"
+    num=$("$G" open "$RUN_DIR" slice-1)
+    body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
+    assert_contains "$body" "Left the run: #3 (Ticket 3, $st). This slice can't be reviewed end to end" "$choice"
+    assert_contains "$body" "| slice | Engineering (QA) | #1 (Ticket 1) | #2 (Ticket 2) |" "$choice: only what merged is reviewed"
+    assert_eq "[3]" "$(jq -c . "$FAKE_GH_DIR/blocked_by-4.json")" "$choice: #4 left the run, so the gate does not block it"
+    assert_eq '["3"]' "$(state_get '.review_gates[0].left_run | map(.number) | tojson')" "$choice"
+    assert_contains "$("$G" chat "$RUN_DIR")" "Left the run: #3 (Ticket 3, $st)."
+    # Approving it releases #2: it is not held forever.
+    "$A" approve "$RUN_DIR" "$num" >/dev/null
+    assert_eq free "$("$G" holds "$RUN_DIR" 1)" "$choice"
+    assert_eq 2 "$(frontier)" "$choice: #2 can start"
+  done
+}
+
+test_a_slice_gate_with_a_sent_back_ticket_comes_due_and_names_it() {
+  left_slice_run '["1","4"]' drop
+  local num=""
+  assert_eq sent_back "$(state_get '.tickets["4"].status')"
+  assert_eq slice-1 "$("$G" due "$RUN_DIR")"
+  num=$(echo "$("$G" sync "$RUN_DIR")" | sed -n 's/^opened #\([0-9]*\) slice-1$/\1/p')
+  [ -n "$num" ] || fail "sync did not open slice-1"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")" "Left the run: #4 (Ticket 4, sent back)."
+}
+
+test_a_slice_gate_whose_tickets_all_left_the_run_closes_with_nothing_to_review() {
+  left_slice_run '["3","4"]' drop
+  local out="" issues=""
+  issues=$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')
+  assert_eq "" "$("$G" due "$RUN_DIR")" "nothing merged: nothing to open"
+  out=$("$G" sync "$RUN_DIR")
+  assert_eq "closed slice-1: every ticket of it left the run (#3 dropped, #4 sent back): nothing to review" "$out"
+  assert_eq "$issues" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "no review-gate issue"
+  assert_eq "empty null run" "$(state_get '.review_gates[0] | "\(.status) \(.issue) \(.empty.by)"')"
+  assert_eq '["3","4"]' "$(state_get '.review_gates[0].left_run | map(.number) | tojson')"
+  assert_eq "gate-empty slice-1 nothing to review" \
+    "$(state_get '[.events[] | select(.event == "gate-empty")] | .[0] | "\(.event) \(.gate) \(.choice)"')"
+  # Once only, and it holds nothing.
+  assert_eq "" "$("$G" sync "$RUN_DIR")"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "gate-empty")] | length')"
+  assert_eq free "$("$G" holds "$RUN_DIR" 3)"
+  assert_eq 2 "$(frontier)" "the rest of the run carries on"
+  assert_contains "$("$A" list "$RUN_DIR")" "| Slice gate: greeting (run r1) | - | slice | - | empty | - |"
+}

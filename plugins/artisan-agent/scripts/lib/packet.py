@@ -27,7 +27,8 @@ Usage:
 
 view.json is what gate.sh assembles:
   {"gate": {kind, slice, title, issue?, role, tickets: [t...],
-            dependents: [{number, title}], problem?, solution?, cards?},
+            dependents: [{number, title}], problem?, solution?, cards?,
+            left_run?: [{number, status, title}]},
    "state": <the state file>,
    "guardrails": "<guardrails.sh table output, or an empty string>",
    "provisional": "<questions.sh provisional output, or an empty string>",
@@ -128,6 +129,16 @@ def blocked_list(gate):
     return ", ".join(
         "#%s (%s)" % (d["number"], d["title"]) if d.get("title") else "#%s" % d["number"] for d in deps
     )
+
+
+def left_run_line(gate):
+    """The tickets of the gate that left the run (#164), or None."""
+    left = gate.get("left_run") or []
+    if not left:
+        return None
+    return "Left the run: %s. This slice can't be reviewed end to end; only what merged is here." % ", ".join(
+        "#%s (%s, %s)" % (x["number"], x["title"], x["status"]) if x.get("title") else "#%s (%s)" % (x["number"], x["status"])
+        for x in left)
 
 
 def summary_lines(view):
@@ -314,6 +325,10 @@ def body(view):
         "",
         "**%s.**" % headline(view, the_cards, unsure).capitalize(),
         "",
+    ]
+    if left_run_line(gate):
+        out += ["**%s**" % left_run_line(gate), ""]
+    out += [
         "- **Problem:** %s" % cell(problem),
         "- **Solution:** %s" % cell(solution),
         "- **Verification:** %s" % cell(verification),
@@ -415,6 +430,8 @@ def chat(view):
     unsure = uncertainties(view)
     ref = "#%s" % gate["issue"] if gate.get("issue") else "(not opened)"
     out = ["%s %s: %s. Blocks %s." % (gate["title"], ref, headline(view, the_cards, unsure), blocked_list(gate)), ""]
+    if left_run_line(gate):
+        out += [left_run_line(gate), ""]
     if the_cards:
         out += ["| Card | Ticket | Decision | Confidence |", "|---|---|---|---|"]
         for c in the_cards:

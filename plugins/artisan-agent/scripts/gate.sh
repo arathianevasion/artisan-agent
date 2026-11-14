@@ -193,7 +193,8 @@ dependents() { # def
   repo=$(get '.repo')
   for t in $(get '.plan.scope[]'); do
     jq -e --arg t "$t" '.tickets | index($t)' <<<"$def" >/dev/null && continue
-    case "$(get --arg t "$t" '.tickets[$t].status // ""')" in merged|closed|deferred) continue ;; esac
+    # Merged, closed or out of the run (#164): nothing to hold.
+    case "$(get --arg t "$t" '.tickets[$t].status // ""')" in merged|closed|deferred|dropped|resliced|bypassed|sent_back) continue ;; esac
     # A Human check is no dependent: it verifies the slice, never waits on it.
     [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] || continue
     blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
@@ -218,6 +219,13 @@ add_blocker() { # ticket blocker-issue blocker-id
     || die "could not make #$2 a blocker of #$1"
 }
 
+# A ticket that left the run (#164) is no ticket of the review: the gate's
+# left_run names it ({number, status, title}), so the packet can say the slice
+# can't be reviewed end to end.
+without_left() { # def
+  jget 'gate_left($g) as $l | gate_left_run($g) as $r | $g | .tickets -= $l | .left_run = $r' --argjson g "$1" -c
+}
+
 cmd_open() {
   [ $# -eq 2 ] || usage
   open_run "$1"
@@ -228,6 +236,7 @@ cmd_open() {
   [ -n "$def" ] || state_die 6 "gate.sh: no slice gate $id in the plan"
   [ "$(jget 'gate_due($g)' --argjson g "$def")" = true ] \
     || state_die 6 "gate.sh: $id is not due: not every ticket of its slice has merged"
+  def=$(without_left "$def")
   dir=$(gates_dir)
   repo=$(get '.repo')
   # Built once and kept, so a call that crashed after opening the issue
@@ -265,6 +274,7 @@ cmd_open() {
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
           human_checks: [($v.human_checks // [])[].ticket],
+          left_run: ($v.gate.left_run // []),
           status: "open", opened_at: $now, decisions: [], reworks: []}
           + (if $v.gate.guardrails then {guardrails: $v.gate.guardrails} else {} end)])
       | .provisional_shown = (((.provisional_shown // []) + $v.gate.tickets + $other) | unique)
@@ -777,6 +787,31 @@ cmd_sync() {
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
     echo "opened #$num $id"
   done
+  close_empty
+}
+
+# A gate whose tickets all left the run (#164) has nothing to review: it is
+# recorded as answered ("empty", with the reason and a gate-empty event),
+# never opened on the tracker, and holds nothing. One line per gate closed.
+close_empty() {
+  local ids=""
+  ids=$(jget '. as $s | slice_gates[] | select(. as $g | $s | gate_empty($g)) | .id')
+  [ -n "$ids" ] || return 0
+  apply '. as $s
+    | reduce (slice_gates[] | select(. as $g | $s | gate_empty($g))) as $g (.;
+        ($s | gate_left_run($g)) as $left
+        | ($left | map("#\(.number) \(.status)") | join(", ")) as $who
+        | {by: "run", at: $now, why: ("every ticket of it left the run (" + $who + "): nothing to review")} as $r
+        | .review_gates = ((.review_gates // []) + [{
+            id: $g.id, kind: $g.kind, slice: $g.slice,
+            title: (if $g.kind == "risk" then "Risk gate: \($g.slice) (run \($run))" else "Slice gate: \($g.slice) (run \($run))" end),
+            role: $g.role, issue: null, tickets: [], left_run: $left, dependents: [], cards: [],
+            human_checks: [], status: "empty", opened_at: null, decisions: [], reworks: [],
+            empty: $r, answered: [$r + {action: "nothing to review"}]}])
+        | event({event: "gate-empty", gate: $g.id, issue: null, kind: $g.kind, choice: "nothing to review",
+                 by: "run", left_run: $g.tickets, why: $r.why}; $now))' --arg run "$RUN_ID"
+  jget '(.review_gates // [])[] | select(.status == "empty" and (.id as $id | $ids | index($id)))
+    | "closed \(.id): \(.empty.why)"' --argjson ids "$(printf '%s\n' "$ids" | jq -R . | jq -sc .)"
 }
 
 # ------------------------------------------------------------- list/chat/packet
@@ -840,6 +875,7 @@ cmd_packet() {
   fi
   def=$(gate_def "$2")
   [ -n "$def" ] || state_die 6 "gate.sh: no gate $2"
+  def=$(without_left "$def")
   build_view "$def" "$(dependents "$def")" | PACKET body
 }
 

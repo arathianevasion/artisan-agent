@@ -912,7 +912,7 @@ cmd_list() {
   echo "| Gate | Issue | Kind | Tickets | Status | Holds |"
   echo "|---|---|---|---|---|---|"
   get '[(.review_gates // [])[], (.exception_gates // [])[]] | sort_by(.opened_at // 0)[]
-    | "| \(.title) | #\(.issue) | \(.kind // "slice") | \(.tickets | map("#" + .) | join(", ")) | \(.status) | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
+    | "| \(.title) | \(if .issue == null then "-" else "#\(.issue)" end) | \(.kind // "slice") | \(if (.tickets // []) == [] then "-" else .tickets | map("#" + .) | join(", ") end) | \(.status) | \(if (.dependents // []) == [] then "-" else (.dependents | map("#" + .number) | join(", ")) end) |"'
 }
 
 cmd_deferred() {
