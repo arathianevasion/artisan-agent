@@ -82,6 +82,48 @@ test_edit_outside_a_repo_or_of_ignored_runtime_files_or_in_unadopted_repo_is_all
   assert_eq "" "$(edit_event "$REPO/doc.md" | "$PROTECT" main-edit)"
 }
 
+# list_runtime: the project config lists .claude/orchestrator/ (#191).
+list_runtime() {
+  printf 'max_agents: 5\nmain_checkout_runtime: [.claude/orchestrator/]\n' >"$REPO/.artisan-agent/config.yml"
+}
+
+test_a_listed_runtime_folder_can_be_written_in_the_main_checkout() {
+  make_repo
+  list_runtime
+  assert_eq "" "$(edit_event "$REPO/.claude/orchestrator/results/x.json" | "$PROTECT" main-edit)"
+  mkdir -p "$REPO/.claude/orchestrator/results"
+  assert_eq "" "$(edit_event "$REPO/.claude/orchestrator/results/x.json" | "$PROTECT" main-edit)"
+  assert_eq "" "$(edit_event ".claude/orchestrator/results/y.json" | "$PROTECT" main-edit)"
+}
+
+test_an_untracked_path_that_is_not_listed_is_still_refused() {
+  make_repo
+  list_runtime
+  mkdir -p "$REPO/.claude/other"
+  assert_contains "$(edit_event "$REPO/.claude/other/x.json" | "$PROTECT" main-edit)" '"deny"'
+  assert_contains "$(edit_event "$REPO/.claude/orchestratorx/x.json" | "$PROTECT" main-edit)" '"deny"'
+  assert_contains "$(edit_event "$REPO/.claude/orchestrator" | "$PROTECT" main-edit)" '"deny"'
+  assert_contains "$(edit_event "$REPO/doc.md" | "$PROTECT" main-edit)" '"deny"'
+}
+
+test_a_path_escaping_the_listed_folder_by_dotdot_or_symlink_is_refused() {
+  make_repo
+  list_runtime
+  mkdir -p "$REPO/.claude/orchestrator/results" "$REPO/src"
+  assert_contains "$(edit_event "$REPO/.claude/orchestrator/../../src/x" | "$PROTECT" main-edit)" '"deny"'
+  assert_contains "$(edit_event "$REPO/.claude/orchestrator/new/../../../doc.md" | "$PROTECT" main-edit)" '"deny"'
+  ln -s ../../../src "$REPO/.claude/orchestrator/results/out"
+  assert_contains "$(edit_event "$REPO/.claude/orchestrator/results/out/x" | "$PROTECT" main-edit)" '"deny"'
+  ln -s ../../../doc.md "$REPO/.claude/orchestrator/results/doc-link"
+  assert_contains "$(edit_event "$REPO/.claude/orchestrator/results/doc-link" | "$PROTECT" main-edit)" '"deny"'
+}
+
+test_a_listed_entry_that_is_the_repo_root_or_outside_it_allows_nothing() {
+  make_repo
+  printf 'main_checkout_runtime: [./, ../, /tmp/, ""]\n' >"$REPO/.artisan-agent/config.yml"
+  assert_contains "$(edit_event "$REPO/doc.md" | "$PROTECT" main-edit)" '"deny"'
+}
+
 test_relative_path_resolves_against_cwd() {
   make_repo
   assert_contains "$(edit_event "doc.md" | "$PROTECT" main-edit)" '"deny"'

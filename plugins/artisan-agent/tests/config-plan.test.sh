@@ -67,6 +67,7 @@ test_defaults_hold_every_setting_from_the_ticket_table() {
   assert_eq null "$(jq .team_guardrails_repo <<<"$d")" "team guardrails repo"
   assert_eq '{}' "$(jq -c .estimate_multipliers <<<"$d")" "estimate multipliers"
   assert_eq false "$(jq .host_configured <<<"$d")" "host configured"
+  assert_eq '[]' "$(jq -c .main_checkout_runtime <<<"$d")" "main-checkout runtime folders"
 }
 
 test_a_project_with_no_config_file_gets_every_default() {
@@ -123,6 +124,16 @@ test_the_committed_project_config_is_valid() {
   local repo_config="$PLUGIN_ROOT/../../.artisan-agent/config.yml"
   [ -f "$repo_config" ] || fail "no committed .artisan-agent/config.yml at the repo root"
   config show --file "$repo_config" >/dev/null
+  assert_eq '[".claude/orchestrator/"]' "$(config get main_checkout_runtime --file "$repo_config" | jq -c .)" \
+    "this repo's workers write results to .claude/orchestrator/ in the main checkout (#191)"
+}
+
+test_main_checkout_runtime_is_read_as_a_list_and_must_be_one() {
+  make_project
+  printf 'main_checkout_runtime:\n  - .claude/orchestrator/\n  - tmp/out/\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_eq '[".claude/orchestrator/","tmp/out/"]' "$(cd "$PROJECT" && config get main_checkout_runtime | jq -c .)"
+  printf 'main_checkout_runtime: .claude/orchestrator/\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_status 1 config show --file "$PROJECT/.artisan-agent/config.yml"
 }
 
 # --------------------------------------------------------------- estimates
