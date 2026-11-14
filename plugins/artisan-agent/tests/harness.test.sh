@@ -291,3 +291,157 @@ test_rerun_failed_works_with_j_and_shard() {
   assert_eq 0 "$status" "--shard 2/3 exit status: $out"
   assert_eq "FLAKY sample: test_b_fails_once" "$(printf '%s\n' "$out" | grep -E '^(ok|FAIL|FLAKY) ')"
 }
+
+# quarantine_suite: a copy of the failing fixture with the quarantine.txt given on stdin.
+quarantine_suite() {
+  mkdir "$TEST_TMPDIR/q"
+  cp "$FIXTURES/failing/sample.test.sh" "$TEST_TMPDIR/q/"
+  cat >"$TEST_TMPDIR/q/quarantine.txt"
+}
+
+test_a_quarantined_test_runs_is_listed_and_cannot_fail_the_suite() {
+  local out= status=0
+  quarantine_suite <<'Q'
+# Known flaky tests.
+
+sample: test_stops_at_first_failed_command #190 dies on a slow runner
+sample.test.sh: test_fails_an_assertion #191 the assertion is racy
+sample: test_passes #192 sometimes
+Q
+  out=$("$TESTS_DIR/run.sh" "$TEST_TMPDIR/q" 2>&1) || status=$?
+  assert_eq 0 "$status" "exit status: $out"
+  assert_contains "$out" "QUARANTINED sample: test_stops_at_first_failed_command #190: failed"
+  assert_contains "$out" "QUARANTINED sample: test_fails_an_assertion #191: failed"
+  assert_contains "$out" "the fixture's assertion: expected [expected], got [actual]"
+  assert_contains "$out" "QUARANTINED sample: test_passes #192: passed"
+  assert_not_contains "$out" "FAIL "
+  assert_contains "$out" "0 passed, 0 failed, 3 quarantined"
+}
+
+test_a_quarantined_test_is_not_rerun_and_others_still_fail() {
+  local out= status=0
+  quarantine_suite <<'Q'
+sample: test_fails_an_assertion #191 racy
+Q
+  out=$("$TESTS_DIR/run.sh" -j 2 --rerun-failed "$TEST_TMPDIR/q" 2>&1) || status=$?
+  assert_eq 1 "$status" "exit status: $out"
+  assert_contains "$out" "QUARANTINED sample: test_fails_an_assertion #191: failed"
+  assert_contains "$out" "FAIL sample: test_stops_at_first_failed_command"
+  assert_contains "$out" "1 passed, 1 failed, 0 flaky, 1 quarantined"
+}
+
+test_a_quarantine_entry_that_names_no_test_fails_the_suite() {
+  local out= status=0
+  quarantine_suite <<'Q'
+sample: test_no_such_test #190 gone
+sample: test_passes without an issue
+Q
+  out=$("$TESTS_DIR/run.sh" "$TEST_TMPDIR/q" 2>&1) || status=$?
+  assert_eq 1 "$status" "exit status: $out"
+  assert_contains "$out" "FAIL quarantine.txt: line 1 names no test: sample: test_no_such_test #190 gone"
+  assert_contains "$out" "FAIL quarantine.txt: line 2 is not '<file>: <test> #<issue> <why>': sample: test_passes without an issue"
+}
+
+test_a_quarantine_entry_for_another_shards_test_is_valid() {
+  local out= status=0
+  quarantine_suite <<'Q'
+sample: test_stops_at_first_failed_command #190 slow runner
+Q
+  # Full order: test_fails_an_assertion, test_passes, test_stops_at_first_failed_command.
+  out=$("$TESTS_DIR/run.sh" --shard 2/3 "$TEST_TMPDIR/q" 2>&1) || status=$?
+  assert_eq 0 "$status" "--shard 2/3: $out"
+  assert_eq "ok   sample: test_passes
+
+1 passed, 0 failed" "$out"
+  status=0
+  out=$("$TESTS_DIR/run.sh" -j 2 --shard 3/3 "$TEST_TMPDIR/q" 2>&1) || status=$?
+  assert_eq 0 "$status" "--shard 3/3: $out"
+  assert_contains "$out" "QUARANTINED sample: test_stops_at_first_failed_command #190: failed"
+}
+
+test_flaky_and_quarantined_tests_go_to_the_github_step_summary() {
+  local out= status=0 summary="$TEST_TMPDIR.summary"
+  quarantine_suite <<'Q'
+sample: test_fails_an_assertion #191 racy
+Q
+  printf 'test_once() {\n  [ -e "$FLAKY_STATE" ] || { : >"$FLAKY_STATE"; fail "first run fails"; }\n}\n' \
+    >"$TEST_TMPDIR/q/other.test.sh"
+  rm -f "$TEST_TMPDIR/q/sample.test.sh"
+  sed '/test_stops_at_first_failed_command/,/^}/d' "$FIXTURES/failing/sample.test.sh" >"$TEST_TMPDIR/q/sample.test.sh"
+  : >"$summary"
+  out=$(GITHUB_STEP_SUMMARY="$summary" FLAKY_STATE="$TEST_TMPDIR.flaky" \
+    "$TESTS_DIR/run.sh" --rerun-failed "$TEST_TMPDIR/q" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.flaky"
+  assert_eq 0 "$status" "exit status: $out"
+  out=$(cat "$summary"); rm -f "$summary"
+  assert_contains "$out" "Flaky tests"
+  assert_contains "$out" "other: test_once"
+  assert_contains "$out" "Quarantined tests"
+  assert_contains "$out" "sample: test_fails_an_assertion (#191): failed"
+}
+
+test_tests_never_see_github_step_summary() {
+  local out= status=0
+  mkdir "$TEST_TMPDIR/probe"
+  printf 'test_p() { [ -z "${GITHUB_STEP_SUMMARY:-}" ] || fail "GITHUB_STEP_SUMMARY reached the test"; }\n' \
+    >"$TEST_TMPDIR/probe/p.test.sh"
+  out=$(GITHUB_STEP_SUMMARY="$TEST_TMPDIR.summary" "$TESTS_DIR/run.sh" "$TEST_TMPDIR/probe" 2>&1) || status=$?
+  rm -f "$TEST_TMPDIR.summary"
+  assert_eq 0 "$status" "$out"
+}
+
+# fake_tracker n state...: the fake gh on PATH, with issue n in each given state, in turn.
+fake_tracker() {
+  export FAKE_GH_DIR="$TEST_TMPDIR.tracker"
+  mkdir -p "$FAKE_GH_DIR"
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
+  export PATH
+  while [ $# -ge 2 ]; do
+    printf '{"number": %s, "title": "t", "body": "", "state": "%s", "labels": []}\n' "$1" "$2" \
+      >"$FAKE_GH_DIR/issue-$1.json"
+    shift 2
+  done
+}
+
+test_check_quarantine_passes_while_every_issue_is_open() {
+  local out= status=0
+  fake_tracker 190 open 191 open
+  quarantine_suite <<'Q'
+sample: test_passes #190 x
+sample: test_fails_an_assertion #191 y
+Q
+  out=$("$TESTS_DIR/run.sh" --check-quarantine "$TEST_TMPDIR/q" 2>&1) || status=$?
+  rm -rf "$FAKE_GH_DIR"
+  assert_eq 0 "$status" "$out"
+  assert_not_contains "$out" "sample: test_passes"   # it checks, it doesn't run tests
+}
+
+test_check_quarantine_fails_on_a_closed_issue() {
+  local out= status=0
+  fake_tracker 190 open 191 closed
+  quarantine_suite <<'Q'
+sample: test_passes #190 x
+sample: test_fails_an_assertion #191 y
+Q
+  out=$("$TESTS_DIR/run.sh" --check-quarantine "$TEST_TMPDIR/q" 2>&1) || status=$?
+  rm -rf "$FAKE_GH_DIR"
+  assert_eq 1 "$status" "$out"
+  assert_contains "$out" "sample: test_fails_an_assertion #191: the issue is closed"
+  assert_not_contains "$out" "#190: the issue is closed"
+}
+
+test_check_quarantine_fails_when_an_issue_cannot_be_read() {
+  local out= status=0
+  fake_tracker 190 open
+  quarantine_suite <<'Q'
+sample: test_passes #404 x
+Q
+  out=$("$TESTS_DIR/run.sh" --check-quarantine "$TEST_TMPDIR/q" 2>&1) || status=$?
+  rm -rf "$FAKE_GH_DIR"
+  assert_eq 1 "$status" "$out"
+  assert_contains "$out" "#404: could not read the issue"
+}
+
+test_check_quarantine_without_a_quarantine_file_passes() {
+  assert_status 0 "$TESTS_DIR/run.sh" --check-quarantine "$FIXTURES/passing"
+}

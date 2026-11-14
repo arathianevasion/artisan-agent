@@ -175,6 +175,36 @@ print_output() {
   [ -z "$output" ] || printf '%s\n' "$output" | sed 's/^/     /'
 }
 
+# read_quarantine: parse $suite_dir/quarantine.txt into $resdir/quarantine,
+# one "<label>\t<issue>\t<line number>" line per entry, and print a FAIL line
+# for each line that isn't an entry, counting them in $resdir/quarantine.bad.
+# Blank lines and # comments are skipped. <file> may keep its .test.sh.
+read_quarantine() {
+  local qfile="$suite_dir/quarantine.txt" line="" lineno=0 bad=0
+  local re='^([^:]+): ([^ ]+) #([0-9]+)( .*)?$'
+  : >"$resdir/quarantine"
+  if [ -f "$qfile" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineno=$((lineno + 1))
+      case "$line" in ''|'#'*) continue ;; esac
+      if [[ $line =~ $re ]]; then
+        printf '%s: %s\t%s\t%s\n' "${BASH_REMATCH[1]%.test.sh}" "${BASH_REMATCH[2]}" \
+          "${BASH_REMATCH[3]}" "$lineno" >>"$resdir/quarantine"
+      else
+        echo "FAIL quarantine.txt: line $lineno is not '<file>: <test> #<issue> <why>': $line"
+        bad=$((bad + 1))
+      fi
+    done <"$qfile"
+  fi
+  echo "$bad" >"$resdir/quarantine.bad"
+}
+
+# quarantined label: the issue that quarantines this test, or nothing.
+quarantined() {
+  [ -s "$resdir/quarantine" ] || return 0
+  awk -F '\t' -v l="$1" '$1 == l { print $2; exit }' "$resdir/quarantine"
+}
+
 resdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-results.XXXXXX")
 xpid=
 cleanup() {
@@ -183,6 +213,23 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# --check-quarantine: every entry's issue must be open. Runs no test.
+if [ -n "$check_quarantine" ]; then
+  read_quarantine
+  qstatus=0
+  [ "$(cat "$resdir/quarantine.bad")" = 0 ] || qstatus=1
+  while IFS="$(printf '\t')" read -r label issue lineno; do
+    state=$(gh issue view "$issue" --json state -q .state 2>/dev/null) || state=
+    state=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
+    case "$state" in
+      OPEN) ;;
+      CLOSED) echo "run.sh: quarantine.txt line $lineno: $label #$issue: the issue is closed; take the test out of quarantine" >&2; qstatus=1 ;;
+      *) echo "run.sh: quarantine.txt line $lineno: $label #$issue: could not read the issue (gh issue view $issue)" >&2; qstatus=1 ;;
+    esac
+  done <"$resdir/quarantine"
+  exit "$qstatus"
+fi
 
 # The full ordered list: entry k is the k-th test (or the k-th file with no
 # test), across files in name order. The shard picks from this list.
@@ -194,6 +241,7 @@ for file in "$suite_dir"/*.test.sh; do
   names=$("$BASH" -c 'source "$1" >/dev/null 2>&1; declare -F' _ "$file" | awk '$3 ~ /^test_/ {print $3}')
   [ -n "$names" ] || names=-
   for name in $names; do
+    [ "$name" = - ] || echo "$(basename "$file" .test.sh): $name" >>"$resdir/all_labels"
     k=$((k + 1))
     [ $(((k - 1) % shard_n)) -eq $((shard_i - 1)) ] || continue
     n_run=$((n_run + 1))
@@ -209,13 +257,26 @@ for file in "$suite_dir"/*.test.sh; do
   done
 done
 
+# The quarantine: its bad lines, and entries naming no test in the whole
+# suite (not just this shard), fail the suite before any test result.
+read_quarantine
+failed=$(cat "$resdir/quarantine.bad")
+if [ -s "$resdir/quarantine" ]; then
+  touch "$resdir/all_labels"
+  while IFS="$(printf '\t')" read -r label issue lineno; do
+    grep -qxF -- "$label" "$resdir/all_labels" && continue
+    echo "FAIL quarantine.txt: line $lineno names no test: $(sed -n "${lineno}p" "$suite_dir/quarantine.txt")"
+    failed=$((failed + 1))
+  done <"$resdir/quarantine"
+fi
+
 if [ -s "$resdir/jobs" ]; then
   xargs -0 -n 3 -P "$jobs" "$BASH" "$0" --run-one "$resdir" <"$resdir/jobs" &
   xpid=$!
 fi
 
 passed=0
-failed=0
+quarantine=0
 i=0
 while [ "$i" -lt "$n_run" ]; do
   i=$((i + 1))
@@ -233,7 +294,16 @@ while [ "$i" -lt "$n_run" ]; do
     continue
   fi
   label=$(cat "$resdir/$i.label")
-  if [ "$(cat "$resdir/$i.status")" = 0 ]; then
+  issue=$(quarantined "$label")
+  if [ -n "$issue" ]; then
+    # Runs and is listed, but can't fail the suite.
+    result=passed
+    [ "$(cat "$resdir/$i.status")" = 0 ] || result=failed
+    echo "QUARANTINED $label #$issue: $result"
+    [ "$result" = passed ] || print_output "$resdir/$i.out"
+    printf '%s (#%s): %s\n' "$label" "$issue" "$result" >>"$resdir/quarantined"
+    quarantine=$((quarantine + 1))
+  elif [ "$(cat "$resdir/$i.status")" = 0 ]; then
     echo "ok   $label"
     passed=$((passed + 1))
   elif [ -n "$rerun_failed" ]; then
@@ -269,9 +339,32 @@ if [ -s "$resdir/rerun" ]; then
   done <"$resdir/rerun"
 fi
 
-total=$((passed + failed + flaky))
+total=$((passed + failed + flaky + quarantine))
+summary="$passed passed, $failed failed${rerun_failed:+, $flaky flaky}"
+[ "$quarantine" -eq 0 ] || summary="$summary, $quarantine quarantined"
 echo
-echo "$passed passed, $failed failed${rerun_failed:+, $flaky flaky}"
+echo "$summary"
+# On GitHub Actions, the flaky and quarantined tests go on the run's page too.
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { [ -s "$resdir/flaky" ] || [ -s "$resdir/quarantined" ]; }; then
+  {
+    if [ -s "$resdir/flaky" ]; then
+      echo "### Flaky tests"
+      echo
+      echo "Failed, then passed when rerun on its own:"
+      echo
+      sed 's/^/- /' "$resdir/flaky"
+      echo
+    fi
+    if [ -s "$resdir/quarantined" ]; then
+      echo "### Quarantined tests"
+      echo
+      echo "Listed in tests/quarantine.txt; they ran but can't fail the suite:"
+      echo
+      sed 's/^/- /' "$resdir/quarantined"
+      echo
+    fi
+  } >>"$GITHUB_STEP_SUMMARY"
+fi
 if [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
   echo "Seconds per test, slowest first:"
   i=0
