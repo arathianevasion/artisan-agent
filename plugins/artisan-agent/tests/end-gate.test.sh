@@ -317,6 +317,10 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
     assert_eq "ready-for-agent" "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$n.json")"
   done
   assert_contains "$out" "/artisan-agent:retro"
+  # The run summary's merge gate costs (#199): none ran here; the end gate waited on the Artisan.
+  assert_contains "$out" "| Merge gates | This run |"
+  assert_contains "$out" "| Merge gates run | - |"
+  assert_contains "$out" "min over 1 decision (longest"
   assert_eq ended "$("$E" status "$RUN_DIR")"
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
 }
@@ -355,4 +359,29 @@ test_opening_the_end_gate_deletes_the_runs_leftover_ci_branches() {
 test_the_end_gate_packet_offers_flagging_a_bug_by_ticket() {
   setup_end
   assert_contains "$("$E" packet "$RUN_DIR")" "**a bug in #<ticket>**"
+}
+
+# #203: the end gate that doubles as the slice gate carries every merged
+# ticket's cards; past 128 KiB (Linux) jq refused them as an argument.
+test_an_end_gate_doubling_as_the_slice_gate_shows_cards_over_128_kib() {
+  make_project
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
+  mkdir -p "$FAKE_GH_DIR"
+  jq -n '{run_id: "r1", repo: "local/sample", integration_branch: "run/r1", route: "bug", scope: ["7"],
+    waves: [["7"]], max_agents: 1, attempts_per_ticket: 2, estimate_usd: 1, budget_usd: 1.25,
+    gates: [{kind: "end", doubles_as_slice: true, bug: true}],
+    tickets: {"7": {title: "crash on empty cart", failing_test: "tests/cart.test.sh: test_empty_cart_does_not_crash",
+                    model: "claude-sonnet-5-5", caps: {max_budget_usd: 1, max_turns: 20, deadline_seconds: 60}}}}' >plan.json
+  "$SCRIPTS/state.sh" init "$RUN_DIR" plan.json
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["7"] += {status: "merged", merge_commit: "abcdef1234567",
+      evidence: {ticket: "7", verdict: "pass", acceptance: [], unsure: [],
+        decisions: [range(300) | {job: 3, question: "Question \(.): \("y" * 500)?", choice: "the model",
+          alternative: "the view", by: "worker 7", kind: "engineering", criterion: "4", confidence: "provisional"}]}}'
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"; export PATH
+  export ARTISAN_HOME="$TEST_TMPDIR/home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/tc" CLAUDE_CONFIG_DIR="$TEST_TMPDIR/cc"
+  CHAT=$(start_worker); export ARTISAN_WRITER_PID=$CHAT; trap cleanup EXIT
+  local body=
+  body=$("$E" packet "$RUN_DIR")
+  assert_contains "$body" "Question 0: y"
+  assert_contains "$body" "Question 299: y"
 }

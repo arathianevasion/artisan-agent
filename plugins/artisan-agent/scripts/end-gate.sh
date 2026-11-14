@@ -48,7 +48,8 @@
 #       wrote. Prints the PR's URL; again, the same URL. PR n-1 first (6).
 #   end-gate.sh finish <run-dir>
 #       once every PR is cut: removes the in-run label from every ticket in
-#       scope, records the run's end and prints the retro offer.
+#       scope, records the run's end and prints the merge gate costs
+#       (retro.py gate-costs) and the retro offer.
 #
 # An urgent ticket (lever.sh urgent, references/run-levers.md) ships through
 # its own end gate and PR, scoped to that one ticket and based on main, with
@@ -319,7 +320,8 @@ packet() {
               tickets: [$s[0].plan.scope[] | tostring | select($s[0].tickets[.].status? == "merged")],
               dependents: []},
        state: $s[0], guardrails: "", provisional: ""}')
-    gview=$(jq --argjson c "$(PACKET cards <<<"$gview")" '.gate.cards = $c' <<<"$gview")
+    # The view and its cards grow with the run: both reach jq on stdin (#203).
+    gview=$({ printf '%s\n' "$gview"; PACKET cards <<<"$gview"; } | jq -s '.[0].gate.cards = .[1] | .[0]')
     PACKET body <<<"$gview" | sed '1,2d' | sed '/^## Overall action/,$d'
   else
     echo "| Gate | Role needed | Tickets | PRs to |"
@@ -555,6 +557,11 @@ cmd_finish() {
   apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
     | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
   echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  # For the run summary: what the merge gates cost (#199).
+  echo
+  python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \
+    || echo "end-gate.sh: could not total the merge gates' costs" >&2
+  echo
   echo "Next: offer the retro, /artisan-agent:retro."
 }
 
