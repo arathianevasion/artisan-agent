@@ -18,7 +18,7 @@
 #       batch_source}.
 #   merge-gate.sh batch
 #       on or off: whether wave.sh merge gates tickets ready together as one
-#       batch (#167). host.json's merge_batch (on | off), default on.
+#       merge batch (#167). host.json's merge_batch (on | off), default on.
 #   merge-gate.sh start --result FILE --pid-file FILE --log FILE -- local|ci ARGS...
 #       run the gate (merge-gate.sh local or ci with ARGS) detached, the way
 #       run-ticket.sh starts a worker (lib/detach-lib.sh), so it outlives its
@@ -64,6 +64,20 @@
 #       shell globs ("*" crosses "/"); they are read in order and the last to
 #       match a path decides, a leading "!" meaning "never skip on this".
 #       With no green ancestor, or any other path changed, CI runs as usual.
+#       A red record (exit 7) also holds failing_tests: what failed-tests
+#       read from the run's failed jobs (#176).
+#   merge-gate.sh failed-tests --repo O/N --run-id ID [--max N]
+#       the tests a red run failed, read from its failed jobs' log (gh run
+#       view --log-failed), as JSON: {tests: [{job, name, where, message}],
+#       total, truncated} with at most N tests (default 20). where is
+#       file:line, or null where the log gives none; message is the first
+#       assertion or error line. Reads Playwright's failure headers, the
+#       FAIL lines of this plugin's tests/run.sh, pytest's FAILED lines, Go's
+#       --- FAIL and TAP's not ok. With no test it can name, excerpt holds
+#       the log's last error lines instead; with no log to read, tests is
+#       empty and why says so. Never fails a gate: exit 0 whether or not
+#       it names a test (2 on bad arguments). A log not served yet is asked
+#       for again, three times in all, ARTISAN_CI_POLL_SECONDS apart.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -283,7 +297,9 @@ cmd_ci() {
   # judged the commit, which is not the ticket's fault.
   case "$conclusion" in
     success) record "$view" "" ;;
-    failure | timed_out) record "$view" ""; return 7 ;;
+    failure | timed_out)
+      record "$view" "" | jq -c --argjson f "$(failed_tests "$id" 20)" '. + {failing_tests: $f}'
+      return 7 ;;
     *)
       record "$view" "$CI_WF concluded ${conclusion:-nothing} for $CI_SHA, so CI did not judge it"
       return 19 ;;
@@ -305,6 +321,114 @@ cmd_find() {
   run=$(find_run)
   [ -n "$run" ] || return 1
   printf '%s\n' "$run"
+}
+
+# ------------------------------------------------------------ failed tests
+
+# The parser for gh run view --log-failed: each line "<job>\t<step>\t<ts>
+# <text>". Prints one "<job>\t<where>\t<name>\t<message>" line per failing
+# test, in the log's order, each once; where and message may be empty.
+FAILED_TESTS_AWK='
+function trim(x) { sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x); return x }
+function cut(x, n) { return length(x) > n ? substr(x, 1, n - 3) "..." : x }
+function add(w, nm,   k) {
+  k = job SUBSEP w SUBSEP nm
+  if (k in seen) { cur = 0; return }
+  seen[k] = 1; n++; J[n] = job; W[n] = w; N[n] = nm; M[n] = ""; cur = n; kind = ""
+}
+function noline(w) { sub(/:[0-9]+$/, "", w); return w }
+{
+  line = $0; job = ""
+  if ((i = index(line, "\t")) > 0) {
+    job = substr(line, 1, i - 1); line = substr(line, i + 1)
+    if ((i = index(line, "\t")) > 0) line = substr(line, i + 1)
+  }
+  sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z ?/, "", line)
+  t = trim(line)
+  if (cur && J[cur] != job) cur = 0
+  # Playwright: "  1) [project] › file:line:col › title ───"
+  if (t ~ /^[0-9]+\) /) {
+    r = substr(t, index(t, ") ") + 2)
+    if (substr(r, 1, 1) == "[" && (i = index(r, "] ")) > 0) r = substr(r, i + 2)
+    if (index(r, "› ") == 1) r = substr(r, length("› ") + 1)
+    if ((i = index(r, " › ")) > 0) {
+      w = substr(r, 1, i - 1); nm = substr(r, i + length(" › "))
+      if (w ~ /:[0-9]+:[0-9]+$/) w = noline(w)
+      if (w ~ /:[0-9]+$/) {
+        while (match(nm, /(─| )$/)) nm = substr(nm, 1, RSTART - 1)
+        add(w, trim(nm)); kind = "pw"; next
+      }
+    }
+  }
+  # This plugin'"'"'s tests/run.sh: "FAIL <file>: <test>", its output indented below.
+  if (t ~ /^FAIL [^ ]/ && line ~ /^FAIL /) { add("", substr(t, 6)); kind = "first"; next }
+  # pytest: "FAILED path::test - message"
+  if (t ~ /^FAILED [^ ]+::/) {
+    r = substr(t, 8); w = r; nm = r; m = ""
+    if ((i = index(r, " - ")) > 0) { m = substr(r, i + 3); w = substr(r, 1, i - 1) }
+    nm = w; sub(/::.*/, "", w); sub(/^[^:]*::/, "", nm)
+    add(w, nm); if (cur) M[cur] = m; cur = 0; next
+  }
+  # Go: "--- FAIL: TestName (0.00s)", then "    file.go:12: message"
+  if (t ~ /^--- FAIL: /) { nm = substr(t, 11); sub(/ \(.*$/, "", nm); add("", nm); kind = "go"; next }
+  # TAP: "not ok 3 - name"
+  if (t ~ /^not ok [0-9]+/) { nm = t; sub(/^not ok [0-9]+( - )?/, "", nm); add("", nm); kind = "first"; next }
+  if (!cur || M[cur] != "" || t == "") next
+  if (kind == "pw" && t ~ /^[A-Za-z]*Error[:]/) M[cur] = t
+  else if (kind == "first" && line ~ /^[ \t]/ && t != "---") M[cur] = t
+  else if (kind == "go" && t ~ /^[^ ]+\.go:[0-9]+: /) {
+    i = index(t, ": "); W[cur] = substr(t, 1, i - 1); M[cur] = substr(t, i + 2)
+  }
+}
+END { for (i = 1; i <= n; i++) printf "%s\t%s\t%s\t%s\n", J[i], W[i], cut(N[i], 200), cut(M[i], 300) }'
+
+# failed_tests run-id max: the failing tests of a red run, as JSON (above).
+failed_tests() {
+  local id="$1" max="$2" log="" esc="" parsed="" excerpt='[]' try=0
+  esc=$(printf '\033')
+  # GitHub can be slow to serve a run's log just after it concludes.
+  while [ "$try" -lt 3 ]; do
+    try=$((try + 1))
+    log=$(gh run view "$id" -R "$CI_REPO" --log-failed 2>/dev/null) || log=""
+    [ -z "$log" ] || break
+    [ "$try" -ge 3 ] || sleep "${ARTISAN_CI_POLL_SECONDS:-20}"
+  done
+  if [ -z "$log" ]; then
+    jq -nc --arg id "$id" '{tests: [], total: 0, truncated: false, why: "could not read the failed jobs'"'"' log of run \($id) (gh run view --log-failed)"}'
+    return 0
+  fi
+  # In the C locale: a log cut mid-character never stops BSD sed or awk.
+  log=$(printf '%s\n' "$log" | LC_ALL=C sed "s/${esc}\[[0-9;]*[A-Za-z]//g")
+  parsed=$(printf '%s\n' "$log" | LC_ALL=C awk "$FAILED_TESTS_AWK")
+  if [ -z "$parsed" ]; then
+    excerpt=$(printf '%s\n' "$log" | LC_ALL=C awk -F '\t' '{
+        l = $0; j = ""
+        if (NF >= 3) { j = $1; l = $3; for (i = 4; i <= NF; i++) l = l " " $i }
+        sub(/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z ?/, "", l)
+        if (l ~ /[Ee][Rr][Rr][Oo][Rr]|[Ff][Aa][Ii][Ll]|[Aa]ssert/) print (j == "" ? "" : j ": ") substr(l, 1, 300)
+      }' | tail -n 15 | jq -Rsc 'split("\n") | map(select(. != ""))')
+  fi
+  jq -Rsc --argjson max "$max" --argjson ex "$excerpt" '
+    [split("\n")[] | select(. != "") | split("\t")
+     | {job: .[0], name: .[2], where: (if .[1] == "" then null else .[1] end),
+        message: (if (.[3] // "") == "" then null else .[3] end)}] as $all
+    | {tests: $all[:$max], total: ($all | length), truncated: (($all | length) > $max)}
+      + (if $all == [] then {excerpt: $ex} else {} end)' <<<"$parsed"
+}
+
+cmd_failed_tests() {
+  local id="" max=20
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || usage; CI_REPO=$2; shift 2 ;;
+      --run-id) [ $# -ge 2 ] || usage; id=$2; shift 2 ;;
+      --max) [ $# -ge 2 ] || usage; max=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$CI_REPO" ] && [ -n "$id" ] || usage
+  case "$max" in '' | *[!0-9]*) die "--max must be a whole number" ;; esac
+  failed_tests "$id" "$max"
 }
 
 # -------------------------------------------------------------------- local
@@ -436,6 +560,7 @@ case "$cmd" in
   batch) [ $# -eq 0 ] || usage; cmd_batch ;;
   ci) cmd_ci "$@" ;;
   find) cmd_find "$@" ;;
+  failed-tests) cmd_failed_tests "$@" ;;
   local) cmd_local "$@" ;;
   start) cmd_start "$@" ;;
   run) cmd_run "$@" ;;

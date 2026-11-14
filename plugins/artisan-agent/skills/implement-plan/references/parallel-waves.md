@@ -27,13 +27,13 @@ Only verified work merges: a fresh verifier's `pass` for the ticket's current at
 | `wave.sh merge` exit | Means | Do |
 |---|---|---|
 | 0 | merged, suite green | `wave.sh close` |
-| 7 | the suite went red | nothing: the merge was undone and only this ticket is blocked; carry on merging the rest |
+| 7 | the suite went red | the merge was undone. A red local suite blocks only this ticket; a red CI gate is a failed attempt (#176): `queued` again (dispatch it, its notes list the failing tests) or blocked after its last. Carry on merging the rest |
 | 11 | a conflict, left in progress | the one resolution try, below |
 | 6 | refused, or a conflict whose try is used | nothing: blocked. If the ticket is `queued` again instead, its attempt didn't complete and it is retried (below) |
 | 8 | its worker is still ending | wait, then merge again |
 | 13 | not verified: no passing verdict for this attempt at this commit | `verify.sh start`, then `judge` (`references/evidence-contract.md`); nothing changed |
 | 19 | parked on CI: CI gave no verdict | merge and dispatch nothing new until the Artisan clears it (`wave.sh unpark-ci`) |
-| 20 | the merge gate is still running (it runs detached; `merge` waits at most a minute) | `wait-any.sh`, then `wave.sh merge` again: it finishes the same gate, never a second one |
+| 20 | the merge gate is still running (it runs detached; `merge` waits at most a minute) | `wait-any.sh --timeout 570` (one turn), then `wave.sh merge` again once it names the gate's `results/merge-…` or times out: it finishes the same gate, never a second one |
 
 ## A conflict: one try, then the Artisan
 
@@ -55,10 +55,10 @@ Each ticket gets at most `plan.attempts_per_ticket` attempts (2). An attempt fai
 - **First failure:** the ticket goes back to `queued`. Dispatch it again in the same wave with `wave.sh dispatch`. That is a **fresh worker**: a new session in a new worktree on the same branch, so the first attempt's commits are there to build on, and its prompt carries the failure evidence (`prompts/<t>.<n>.failure.md`): why the attempt counted as failed, how it ended, what its evidence record said (unmet criteria, what it was unsure of, its notes), what the verifier found unmet, if it got that far, its commits, and the end of its last reply and its stderr. Exit 8 means the failed session is still ending: wait and dispatch again.
 - **Second failure:** the ticket is blocked with an exception decision for the Artisan, and the next `wave.sh status` opens its exception gate (`${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`). Never dispatch it a third time unless the Artisan chooses "retry with notes" there, which grants one more attempt.
 
-A conflict the try couldn't resolve, a red suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan.
+A conflict the try couldn't resolve, a red local suite and a worker's `blocked` (a design question) are not failed attempts: they block at once and go to the Artisan. A red CI merge gate is a failed attempt (#176).
 
 ## A wave that fails whole halts the run
 
-When nothing in the wave is in flight, returned or waiting for its retry, and **every** ticket dispatched in it failed (two or more tickets; blocked after its attempts, a red suite, an unresolved conflict or a miss of its expected output; a worker's own design question doesn't count), the run halts: `wave.sh report` (or `wave.sh status`, if the orchestrator ended early) sets `halted`, logs a `halted` event and queues a `halt` decision. Something upstream is likely wrong (a bad spec, a broken base, a missing setup step), and the next wave would fail the same way.
+When nothing in the wave is in flight, returned or waiting for its retry, **every** ticket dispatched in it failed (two or more tickets; blocked after its attempts, a red suite, an unresolved conflict or a miss of its expected output; a worker's own design question doesn't count), and **none** of them passed verification, the run halts: `wave.sh report` (or `wave.sh status`, if the orchestrator ended early) sets `halted`, logs a `halted` event and queues a `halt` decision whose question lists each failed ticket with its reason. Something upstream is likely wrong (a bad spec, a broken base, a missing setup step), and the next wave would fail the same way.
 
-`wave.sh status` then says `next: halted` with the reason, and `wave.sh launch` refuses (exit 12) until the Artisan decides. If they choose to carry on, `wave.sh launch --resume` records their decision and launches. One ticket merging is enough for a wave not to have failed. A one-ticket wave whose ticket fails doesn't halt the run: that ticket's own exception decision already brings it to the Artisan, and its dependents can't dispatch anyway.
+`wave.sh status` then says `next: halted` with the reason, and `wave.sh launch` refuses (exit 12) until the Artisan decides. If they choose to carry on, `wave.sh launch --resume` records their decision and launches. One ticket passing verification, merged or not, is enough for a wave not to have failed whole: a verified ticket that a red suite or a CI gate then blocked shows the base and the spec work, so its blocked neighbours more likely failed on their own. Each failed ticket still gets its own handling (a retry, or its exception gate). A one-ticket wave whose ticket fails doesn't halt the run: that ticket's own exception decision already brings it to the Artisan, and its dependents can't dispatch anyway.

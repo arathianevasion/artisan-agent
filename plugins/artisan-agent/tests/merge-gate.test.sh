@@ -70,33 +70,95 @@ test_mg_a_green_ci_run_for_the_merge_commit_records_the_merge_and_no_suite_runs_
   assert_eq null "$(state_get '.ci_gate')" "no gate left in progress"
 }
 
-test_mg_a_red_ci_run_undoes_the_merge_and_blocks_the_ticket_naming_the_run() {
+# A red CI run whose failed jobs' log is the canned Playwright and run.sh
+# output in fixtures/ci-logs (gh run view --log-failed).
+red_ci_with_log() { # conclusion
+  echo "${1:-failure}" >"$FAKE_GH_DIR/ci-outcome"
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
+}
+
+test_mg_failed_tests_reads_the_job_test_place_and_assertion_from_the_failed_log() {
+  setup_ci
+  red_ci_with_log
+  echo '{"databaseId": 9001, "status": "completed", "conclusion": "failure"}' >"$FAKE_GH_DIR/run-9001.json"
+  local out=
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001)
+  assert_eq 3 "$(jq '.tests | length' <<<"$out")" "$out"
+  assert_eq '{"job":"e2e (chromium)","name":"Save v3 › loads a v2 save","where":"tests/save.spec.ts:48","message":"Error: expect(received).toEqual(expected) // deep equality"}' \
+    "$(jq -c '.tests[0]' <<<"$out")"
+  assert_eq '{"job":"e2e (chromium)","name":"Comic › shows the third panel","where":"tests/comic.spec.ts:115","message":"Error: Timed out 5000ms waiting for expect(locator).toBeVisible()"}' \
+    "$(jq -c '.tests[1]' <<<"$out")"
+  assert_eq '{"job":"unit (bash 5.2)","name":"merge-gate: test_mg_a_red_ci_run_requeues_the_ticket","where":null,"message":"assert_eq: expected [queued], got [blocked]"}' \
+    "$(jq -c '.tests[2]' <<<"$out")"
+  assert_eq "3 false" "$(jq -r '"\(.total) \(.truncated)"' <<<"$out")"
+  # Capped: --max keeps the first N and says how many there were.
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001 --max 1)
+  assert_eq "1 3 true" "$(jq -r '"\(.tests | length) \(.total) \(.truncated)"' <<<"$out")"
+  # A log with no test it can name: the end of the log's error lines instead.
+  printf 'build\tRun make\t2026-11-14T10:00:00.0000000Z make: *** [all] Error 2\nbuild\tRun make\t2026-11-14T10:00:01.0000000Z ##[error]Process completed with exit code 2.\n' >"$FAKE_GH_DIR/ci-log-failed"
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001)
+  assert_eq 0 "$(jq '.tests | length' <<<"$out")"
+  assert_eq '["build: make: *** [all] Error 2","build: ##[error]Process completed with exit code 2."]' "$(jq -c '.excerpt' <<<"$out")"
+  # No log to read: an empty list that says why, never an error.
+  rm -f "$FAKE_GH_DIR/ci-log-failed"
+  out=$("$MG" failed-tests --repo local/sample --run-id 9001)
+  assert_eq "0 true" "$(jq -r '"\(.tests | length) \(.why != null)"' <<<"$out")"
+}
+
+test_mg_a_red_ci_run_with_attempts_left_is_a_failed_attempt_requeued_with_the_failing_tests() {
   setup_ci
   verified_ticket
-  echo failure >"$FAKE_GH_DIR/ci-outcome"
+  red_ci_with_log
   merge_1
   assert_eq 7 "$MERGE_STATUS"
-  assert_eq blocked "$(state_get '.tickets["1"].status')"
-  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "https://github.com/local/sample/actions/runs/9001"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "queued for attempt 2"
+  assert_eq queued "$(state_get '.tickets["1"].status')" "requeued, not blocked"
   assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "the merge was undone"
   assert_eq "ci false failure" "$(state_get '.tickets["1"].suite | "\(.mode) \(.passed) \(.conclusion)"')"
   assert_eq "" "$(ci_branches)" "the ci branch is gone after a fail"
   [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran on this machine"
+  # One failed attempt, reason ci, naming the run and its failing tests.
+  assert_eq "1 1 ci" "$(state_get '.tickets["1"] | "\(.failures | length) \(.failures[0].attempt) \(.failures[0].kind)"')"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "https://github.com/local/sample/actions/runs/9001"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "tests/save.spec.ts:48"
+  assert_eq 3 "$(state_get '.tickets["1"].failures[0].ci.failing_tests.tests | length')"
+  assert_eq "ci queued" "$(state_get '[.events[] | select(.event == "failed")] | last | "\(.kind) \(.next)"')"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "exception")] | length')" "no exception gate yet"
+  # The fresh worker's notes list each failing test, and it may run them.
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  local prompt=
+  prompt=$(cat "$RUN_DIR/prompts/1.2.md")
+  assert_contains "$prompt" "attempt 2 of 2"
+  assert_contains "$prompt" "CI went red"
+  assert_contains "$prompt" "e2e (chromium): tests/save.spec.ts:48 Save v3 › loads a v2 save: Error: expect(received).toEqual(expected)"
+  assert_contains "$prompt" "e2e (chromium): tests/comic.spec.ts:115 Comic › shows the third panel"
+  assert_contains "$prompt" "unit (bash 5.2): merge-gate: test_mg_a_red_ci_run_requeues_the_ticket: assert_eq: expected [queued], got [blocked]"
+  assert_contains "$prompt" "run these failing tests"
+  wait_for "$RUN_DIR/results/1.2.exit.json" 30
 }
 
-test_mg_a_timed_out_ci_run_is_red_undoes_the_merge_and_blocks_the_ticket() {
+test_mg_a_timed_out_ci_run_on_the_last_attempt_blocks_the_ticket_with_an_exception_gate_listing_the_failing_tests() {
   setup_ci
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.attempts_per_ticket = 1'
   verified_ticket
-  echo timed_out >"$FAKE_GH_DIR/ci-outcome"
+  red_ci_with_log timed_out
   merge_1
   assert_eq 7 "$MERGE_STATUS"
   assert_eq blocked "$(state_get '.tickets["1"].status')"
-  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "timed_out"
-  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "https://github.com/local/sample/actions/runs/9001"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "blocked"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "timed_out"
   assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "the merge was undone"
-  assert_eq "ci false timed_out" "$(state_get '.tickets["1"].suite | "\(.mode) \(.passed) \(.conclusion)"')"
-  assert_eq null "$(state_get '.ci_park')" "red blocks, it does not park"
-  assert_eq "" "$(ci_branches)" "the ci branch is gone after a fail"
+  assert_eq null "$(state_get '.ci_park')" "red does not park"
+  assert_eq 1 "$(state_get '[.decisions[] | select(.kind == "exception" and .ticket == "1")] | length')"
+  # The exception gate lists the failing tests.
+  "$SCRIPTS/gate-action.sh" sync "$RUN_DIR" >/dev/null
+  local num= body=
+  num=$(state_get '.exception_gates[0].issue')
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
+  assert_contains "$body" "## Failing tests"
+  assert_contains "$body" "https://github.com/local/sample/actions/runs/9001"
+  assert_contains "$body" "| e2e (chromium) | tests/save.spec.ts:48 | Save v3 › loads a v2 save | Error: expect(received).toEqual(expected) // deep equality |"
+  assert_contains "$body" "| unit (bash 5.2) | - | merge-gate: test_mg_a_red_ci_run_requeues_the_ticket |"
 }
 
 test_mg_a_cancelled_ci_run_parks_the_run_unblocked_and_clearing_the_park_retries_the_gate() {

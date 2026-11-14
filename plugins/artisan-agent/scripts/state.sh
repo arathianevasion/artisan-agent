@@ -5,7 +5,7 @@
 # Usage:
 #   state.sh run-dir <run-id>                 print <main checkout>/.artisan-agent/runs/<run-id>
 #   state.sh init <run-dir> <plan.json>       create the state file from an approved plan
-#                                             (refused while the plan has human_check_flags)
+#                                             (refused while the plan has human_check_flags or criteria_missing)
 #   state.sh show <run-dir>                   print the state file
 #   state.sh lock <run-dir> [pid]             take the writer lock for pid (default: parent)
 #   state.sh unlock <run-dir> [pid]           release it
@@ -70,6 +70,8 @@ cmd_init() {
     || state_die 1 "plan must be an object with run_id, repo, integration_branch and scope"
   jq -e '(.human_check_flags // []) == []' "$plan" >/dev/null 2>&1 \
     || state_die 1 "the plan is not approvable: $(jq -r '.human_check_flags | length' "$plan") agent criteria need a person; split each into a Human check or override it (references/human-checks.md)"
+  jq -e '(.criteria_missing // []) == []' "$plan" >/dev/null 2>&1 \
+    || state_die 1 "the plan is not approvable: no acceptance criteria (body or triage Agent Brief comment) for $(jq -r '.criteria_missing | map("#" + .) | join(", ")' "$plan"); add a checklist under \"## Acceptance criteria\" to each, then rebuild the plan"
   [ ! -e "$(state_file "$run_dir")" ] || state_die 1 "state file already exists in $run_dir"
   mkdir -p "$run_dir/results/findings"
   (cd "$run_dir" && git rev-parse --show-toplevel >/dev/null 2>&1) \

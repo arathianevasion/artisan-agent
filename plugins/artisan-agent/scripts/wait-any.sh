@@ -20,7 +20,11 @@
 #
 # --timeout defaults to 110 seconds, under the Bash tool's 2-minute default
 # timeout. A caller passing a longer --timeout must pass the Bash tool a
-# longer timeout too.
+# longer timeout too. At most 590 seconds, under the Bash tool's 10-minute
+# ceiling (timeout 600000): one call is one orchestrator turn, however many
+# workers, verifiers and merge gates it waits on (#175). A merge gate's result
+# is results/merge-<ticket>.<attempt>.g<k>.json; a worker's or verifier's end
+# is its .exit.json.
 #
 # Exit status: 0 on a change, 124 on timeout, 2 on bad usage.
 #
@@ -58,6 +62,7 @@ while [ $# -gt 0 ]; do
 done
 
 printf '%s' "$timeout" | grep -Eq '^[0-9]+$' || bad_usage "--timeout must be whole seconds"
+[ "$timeout" -le 590 ] || bad_usage "--timeout must be at most 590 seconds (the Bash tool's 10-minute ceiling)"
 if [ -z "$interval" ]; then
   interval=${ARTISAN_WAIT_ANY_POLL_SECONDS:-1}
   printf '%s' "$interval" | grep -Eq '^[0-9]+(\.[0-9]+)?$' \

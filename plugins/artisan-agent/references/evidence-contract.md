@@ -37,12 +37,12 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 
 | Field | Required | Values |
 |---|---|---|
-| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met` (`true`, `false`, or `"human"`: needs a human check, below), `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health |
+| `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met` (`true`, `false`, `"human"`: needs a human check, or `"gate"`: checked by the merge gate, both below), `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health |
 | `verdict` | no | `pass` or `fail`; advisory, since the contract recomputes it |
 | `unsure` | no | what the verifier was unsure of, one sentence each |
 | `notes` | no | one paragraph |
 
-`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria, `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
+`judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria from a body, `ticket` from an issue: the body's, else the newest triage "Agent Brief" comment's, the source kept in the plan as `acceptance_source`; `plan.sh build` lists a ticket with none in `criteria_missing` and `state.sh init` refuses that plan; `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
 
 ## Needs a human check
 
@@ -52,6 +52,17 @@ A criterion only a person can verify (in game, by eye, on a real device, with ou
 - A red recorded check that no criterion cites leaves none to a human check either: they are unmet, so a broken build is never handed to the Artisan to try.
 - On a pass, `judge` first moves them into the agent ticket's Human check (`to-plan.sh split-human-check`: title, marker, `ready-for-human`, the criteria, blocked by the agent ticket), then records the verdict with the Human check in the run's scope (`tickets.<n>.human_check.for`) and logs `human-check-split` in the same write. Nothing is ticked for them on the agent ticket (they are no longer on it) and a comment there says where they went. The next slice gate lists the Human check (`references/human-checks.md`, "In a run"). A judge that stops part way records nothing and runs again; the split action finds the Human check it made, so there is never a second.
 
+## Checked by the merge gate
+
+A criterion about CI, the merge gate or the PR ("CI's `check` job is green on the PR", "the PR shows the review notes", "the run's merge gate is green") can't be judged inside a run: workers never open PRs (they come at the end gate) and the merge gate runs after the verifier. The verifier marks it `"met": "gate"` and doesn't judge it (#174).
+
+- `judge` reads one as `gate` whatever the verifier said when the whole criterion states the outcome (`scripts/lib/criteria.py`, `merge_gate_criterion`: "CI is green", "CI's `check` job is green on the PR", "the run's merge gate is green", "the PR shows / lists …"), so two verifiers on the same criterion give the same answer. One that names a script or a condition (when, if, blocks, fails) is about code that runs CI or a merge gate, and the verifier judges it ("wave.sh merge blocks the ticket when CI is not green"); a quoted criterion inside one is read as a single word, so a criterion about one is not one.
+- It is neither met nor unmet: it never fails an attempt, and the verdict passes when every other criterion is met (or needs a human check). The `verified` event lists them (`gate`), and the judge's line adds `, <g> to the merge gate`.
+- `wave.sh merge`'s gate (the suite here, or CI) is what satisfies it. Green: the ticket merges and `wave.sh close` ticks the criterion with the met ones. Red: the merge is undone and the ticket blocked, as for any red merge gate; nothing about it passes on the verifier's word.
+- A red recorded check that no criterion cites leaves none to the merge gate: they are unmet, as for a human check.
+- The slice gate's packet shows each one as "checked by the merge gate (run <id>)" with the gate's result (green, with the CI run when there is one; red; or not run yet), from `tickets.<t>.suite`; the ticket's comment says "checked by the merge gate" with it.
+- Ticket-writing guidance doesn't write them: a criterion a run can check says what the work leaves behind, such as "review notes committed at docs/review/<n>/" instead of "the PR shows the review notes", and there is no line about CI on the PR (`references/human-checks.md`, "Writing an agent ticket").
+
 ## The evidence contract
 
 `tickets.<t>.evidence` in the state file, and the JSON at the foot of the ticket's evidence comment: the same object.
@@ -59,11 +70,11 @@ A criterion only a person can verify (in game, by eye, on a real device, with ou
 | Field | Values |
 |---|---|
 | `ticket`, `title`, `attempt`, `commit`, `base` | which work was verified: the worker's attempt, its commit and the integration commit it branched from |
-| `verdict` | `pass` when every criterion is met or needs a human check, else `fail` |
-| `criteria_met`, `criteria_human`, `criteria_total` | the counts: met, needing a human check, all |
+| `verdict` | `pass` when every criterion is met, needs a human check or is checked by the merge gate, else `fail` |
+| `criteria_met`, `criteria_human`, `criteria_gate`, `criteria_total` | the counts: met, needing a human check, checked by the merge gate, all |
 | `human_check` | the Human check the `human` criteria moved to, when there are any (a ticket with a `ticket_path` has none: its `unsure` says to move them by hand) |
-| `note` | only when every criterion needs a human check: says the work passed on the Human check alone |
-| `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's; `false` for one needing a human check), `human` (`true` only on one needing a human check), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
+| `note` | only when no criterion is met and the verdict passes: says the work passed on the Human check, the merge gate, or both, alone |
+| `acceptance` | per criterion: `criterion` (the ticket's text), `met` (the verifier's; `false` for one needing a human check), `human` (`true` only on one needing a human check), `gate` (`true` only on one checked by the merge gate), `evidence` (the verifier's), `claimed` (the worker's `met`, or `null` if its record left the criterion out) |
 | `tests` | the worker's run of the test files covering its change: `{suite_passed, files, full_suite, command, summary}`; the full suite is left to the merge gate |
 | `checks` | the checks the verifier ran through `checks.sh run`: the recorded checks with their results, or `{recorded: false, fallback: "no recorded checks (…): found …"}`. With checks recorded, `worker_matches` says whether the worker's evidence listed exactly them (`worker_listed`), and the comment flags it when not. A red recorded check makes each criterion that cites it unmet (all of them when none does); `references/checks.md` |
 | `diff` | `summary` (`git diff --shortstat`) and `files` (`<path> +<added> -<deleted>`, comma-separated), base to commit |

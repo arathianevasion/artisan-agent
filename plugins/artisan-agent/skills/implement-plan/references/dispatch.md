@@ -17,7 +17,7 @@ A worktree gives each worker its own checkout and branch off the same repository
 | `<repo>/` | the main checkout: never edited, only fast-forwarded | |
 | `<repo>/.artisan-agent/runs/<run-id>/` | the run folder (git-ignored): `state.json`, `results/`, `workers/`, `prompts/`, `merges/` | `state.sh init` |
 | `<repo>-wt/run-<run-id>/` | the run's integration worktree, on the integration branch `run/<run-id>`; every merge happens here | `wave.sh start` |
-| `<repo>-wt/<run-id>-<ticket>.<attempt>/` | a worker's worktree, on `agent/<ticket>`, branched from the integration tip | `wave.sh dispatch` |
+| `<repo>-wt/<run-id>-<ticket>.<attempt>/` | a worker's worktree, on `agent/<ticket>`, branched from the integration tip; the project's `worktree_setup` (config) runs in it first, and a failing one fails the attempt with the reason `setup` | `wave.sh dispatch` |
 
 Worktrees sit beside the repo, never in it, so they never appear in a glob, a test run or a build in the main checkout.
 
@@ -74,7 +74,7 @@ Two launcher failures look like a worker that died instantly, which is why the r
 2. `git merge --no-ff` in the integration worktree. Always `--no-ff`: the reconciler finds merged tickets by merge commits on the integration branch's first-parent line, so a fast-forward looks as if nothing merged.
 3. Runs the plan's `suite_command` there; its output goes to `merges/<ticket>.<n>.suite.log`.
 4. Green: records the merge (an event in the state file) and removes the worker's worktree. The branch stays, so the reconciler can still find the merge.
-5. A conflict (11) gets one `/artisan-agent:resolve-conflicts` try before anything else (`parallel-waves.md`). A conflict it can't resolve (6) or a red suite (7): the merge is undone, the ticket is blocked with an exception decision for the Artisan, and the branch and worktree stay. Never hand-edit source to make a merge go through: that turns a reviewable ticket into an unreviewed one.
+5. A conflict (11) gets one `/artisan-agent:resolve-conflicts` try before anything else (`parallel-waves.md`). A conflict it can't resolve (6) or a red local suite (7): the merge is undone, the ticket is blocked with an exception decision for the Artisan, and the branch and worktree stay. A red CI merge gate (7) is a failed attempt instead (#176): requeued with the failing tests in its notes, or blocked once its attempts are used up. Never hand-edit source to make a merge go through: that turns a reviewable ticket into an unreviewed one.
 
 When several tickets returned in one wave, measure before choosing the order: list each branch's files against the integration tip (`git diff --name-only <tip>...<branch>`), and merge the branch with the widest blast radius first.
 

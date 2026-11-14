@@ -36,7 +36,7 @@ An exception gate covers what has no ticket to triage. It opens for every `excep
 
 The overrun gate, the third kind of exception, is #72's.
 
-`gate-action.sh sync`, run by `wave.sh status` before `gate.sh sync`, opens it: a `review-gate` issue (no per-kind label) with the ticket, why it stopped, its attempts, the suite log for a red check, its cost and the six choices; a native blocker of the in-run tickets the ticket blocks; recorded in `exception_gates` and on its `exception` decision (`issue`, `gate`). A repeat opens nothing new.
+`gate-action.sh sync`, run by `wave.sh status` before `gate.sh sync`, opens it: a `review-gate` issue (no per-kind label) with the ticket, why it stopped, its attempts, the suite log for a red check, the failing tests of a red CI merge gate (#176), its cost and the six choices; a native blocker of the in-run tickets the ticket blocks; recorded in `exception_gates` and on its `exception` decision (`issue`, `gate`). A repeat opens nothing new.
 
 **Exception gates can't be removed.** They are never in `plan.gates`, so no gate placement touches them, and `sync` opens one whatever the plan says.
 

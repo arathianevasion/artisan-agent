@@ -1,0 +1,27 @@
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:01.1234567Z Running 42 tests using 2 workers
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:02.1234567Z   ✘  12 [chromium] › tests/save.spec.ts:48:5 › Save v3 › loads a v2 save (3.1s)
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:03.1234567Z [31m  1) [chromium] › tests/save.spec.ts:48:5 › Save v3 › loads a v2 save ──────────[39m
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:04.1234567Z 
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:05.1234567Z     Error: expect(received).toEqual(expected) // deep equality
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:06.1234567Z 
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:07.1234567Z     Expected: 3
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:08.1234567Z     Received: 2
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:09.1234567Z       46 |   await page.goto('/');
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:10.1234567Z     > 48 |   expect(version).toEqual(3);
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:11.1234567Z         at /home/runner/work/riley/tests/save.spec.ts:48:21
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:12.1234567Z   2) [chromium] › tests/comic.spec.ts:115:3 › Comic › shows the third panel ───────
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:13.1234567Z 
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:14.1234567Z     Error: Timed out 5000ms waiting for expect(locator).toBeVisible()
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:15.1234567Z         at /home/runner/work/riley/tests/comic.spec.ts:117:40
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:16.1234567Z   2 failed
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:17.1234567Z     [chromium] › tests/save.spec.ts:48:5 › Save v3 › loads a v2 save
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:18.1234567Z     [chromium] › tests/comic.spec.ts:115:3 › Comic › shows the third panel
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:19.1234567Z   40 passed (1.2m)
+e2e (chromium)	Run npx playwright test	2026-11-14T10:00:20.1234567Z ##[error]Process completed with exit code 1.
+unit (bash 5.2)	Run tests	2026-11-14T10:00:21.1234567Z ok   wave: test_wave_dispatch_launches_a_worker
+unit (bash 5.2)	Run tests	2026-11-14T10:00:22.1234567Z FAIL merge-gate: test_mg_a_red_ci_run_requeues_the_ticket
+unit (bash 5.2)	Run tests	2026-11-14T10:00:23.1234567Z        assert_eq: expected [queued], got [blocked]
+unit (bash 5.2)	Run tests	2026-11-14T10:00:24.1234567Z ok   wave: test_wave_status_lists_tickets
+unit (bash 5.2)	Run tests	2026-11-14T10:00:25.1234567Z 
+unit (bash 5.2)	Run tests	2026-11-14T10:00:26.1234567Z 311 passed, 1 failed
+unit (bash 5.2)	Run tests	2026-11-14T10:00:27.1234567Z ##[error]Process completed with exit code 1.

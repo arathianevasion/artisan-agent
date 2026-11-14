@@ -12,6 +12,8 @@
 #   wave.sh launch <run-dir> [--resume] [--handoff] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
+#       Its --max-turns scales with the wave (#175): orchestrator_turns.base
+#       + per_ticket x T + per_ci_gate x G (orchestrator_max_turns, below).
 #       The state lock passes to the orchestrator's runner for the wave.
 #       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
@@ -22,6 +24,14 @@
 #       guard first (budget.sh guard), the guard's step between waves, when no
 #       orchestrator's sweep is running: 18 parked on plan usage, 17 the
 #       overrun gate; nothing launches. Not on --handoff (the sweep covers it).
+#       First it judges the last orchestrator's exit, as status does, and
+#       carries out the Artisan's answer to an orchestrator-exit decision
+#       (resume, retry, halt); 23 while one waits (--resume answers it
+#       "resume").
+#   wave.sh wait <run-dir> [--timeout SECONDS]
+#       block until the last orchestrator has ended (default at most 6600
+#       seconds, then 3: wait again), then print "orchestrator: <state>". The
+#       chat runs it as a background task so the orchestrator's exit wakes it.
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
@@ -47,6 +57,14 @@
 #       tracker for it: the guard runs in the orchestrator's sweep and in
 #       launch, and a "usage guard: <verdict>, since <time>" line says
 #       what it last found.
+#       The orchestrator never fails silently (#171): once it has ended, its
+#       exit is judged once. A clean end leaves every ticket its wave
+#       dispatched with a final status; anything else (a nonzero exit,
+#       error_max_turns, a budget or deadline limit, no completion line, a
+#       ticket with no verdict, or verified but not merged) queues an
+#       orchestrator-exit decision and event, and next is "decide" (after
+#       "halted" only), with an "orchestrator-exit: <cause> in wave <n>
+#       (<tickets>): <detail>" line.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -80,8 +98,8 @@
 #       conflict in <paths>; merge it alone (...)". 0 none red, 7 one red,
 #       19 parked on CI (the tickets not merged stay returned; merge them
 #       again after unpark-ci), 20 a gate still running: merge again naming
-#       any of the batch's tickets. With merge_batch off, only the first
-#       ticket merges, alone. One ticket is a batch of one:
+#       any of the merge batch's tickets. With merge_batch off, only the first
+#       ticket merges, alone. One ticket is a merge batch of one:
 #       merge a completed worker's branch --no-ff into the integration
 #       branch in the integration worktree, run the merge gate (the plan's
 #       suite command there, or on a machine whose merge gate runs on CI,
@@ -139,6 +157,7 @@
 #   ARTISAN_MERGE_POLL_SECONDS  how often merge and resolved look for the
 #                           merge gate's outcome while they wait (default 0.5;
 #                           tests set it shorter)
+#   ARTISAN_WAIT_INTERVAL   seconds between wave.sh wait's looks (default 5)
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 lock held or an orchestrator still
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
@@ -147,7 +166,8 @@
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
 # CI, 20 the merge gate is still running, 21 launch: main changed a product
-# guardrail but the run's base is not in it, a decision is waiting. One table of every code, with
+# guardrail but the run's base is not in it, a decision is waiting, 23 launch:
+# an orchestrator-exit decision is waiting. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -160,6 +180,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/config-lib.sh
+. "$SCRIPT_DIR/lib/config-lib.sh"   # the template's defaults (orchestrator_turns)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -177,26 +199,190 @@ esac
 
 # ----------------------------------------------------------------- helpers
 
+# orchestrator_max_turns: the --max-turns launch gives a wave's orchestrator
+# (#175): base + per_ticket x T + per_ci_gate x G. T is the tickets the wave
+# can take: the scope's tickets not merged or blocked, at most Max Agents, at
+# least 1. G is T when this machine's merge gate runs on CI, else 0. The three
+# numbers are the plan's config orchestrator_turns, else templates/config.yml's.
+orchestrator_max_turns() {
+  local defaults="" mode="" ci=0
+  defaults=$(config_yaml_json "$CONFIG_TEMPLATE" | jq -c '.orchestrator_turns') \
+    || die "unreadable defaults: $CONFIG_TEMPLATE"
+  mode=$("$SCRIPT_DIR/merge-gate.sh" mode 2>/dev/null) || mode=local
+  [ "$mode" != ci ] || ci=1
+  get --argjson d "$defaults" --argjson ci "$ci" '
+    ($d + (.plan.config.orchestrator_turns // {})) as $k
+    | ([.plan.scope[] as $t | .tickets[$t].status // "queued"
+        | select(. != "merged" and . != "blocked")] | length) as $open
+    | ([[$open, (.plan.max_agents // 5)] | min, 1] | max) as $t
+    | $k.base + $k.per_ticket * $t + $k.per_ci_gate * $t * $ci | ceil'
+}
+
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
-# returned or waiting to retry, and every ticket dispatched in it (two or
-# more) failed, the run halts: a decision for the Artisan, and no wave
-# launches until they resume it. A ticket failed when it is blocked for any
-# reason but its worker's own design question (result status "blocked"); a
-# one-ticket wave failing is that ticket's own exception decision. Idempotent.
+# returned or waiting to retry, every ticket dispatched in it (two or more)
+# failed, and none of them passed verification, the run halts: a decision for
+# the Artisan, and no wave launches until they resume it. A ticket failed when
+# it is blocked for any reason but its worker's own design question (result
+# status "blocked"). One verifier's pass for a ticket's current attempt
+# (a pass from an earlier attempt or wave doesn't count), merged or not (a red suite or CI gate
+# can block a verified ticket at its merge), means the wave did not fail
+# whole: something downstream of the workers works, and each failed ticket
+# keeps its own handling (retry, exception gate). A one-ticket wave failing
+# is that ticket's own exception decision. The decision lists each failed
+# ticket with its reason. Idempotent.
 halt_if_wave_failed() {
   apply '
     current_wave as $w
     | [.tickets | to_entries[] | select(.value.wave != null and .value.wave == $w)] as $d
     | if $w == 0 or .halted != null or ($d | length) < 2
-         or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0 then .
+         or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0
+         or any($d[]; .value | verified_pass) then .
       else ([$d[].key]) as $ts
+        | ($d | map("#\(.key): \(.value.blocked_reason // ((.value.failures // []) | last | .reason?) // "see its decision")") | join("; ")) as $why
         | .halted = {wave: $w, tickets: $ts, at: $now,
                      reason: "every ticket dispatched in wave \($w) failed"}
         | .decisions += [{id: ((.decisions | length) + 1), kind: "halt",
-            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))): something upstream is likely wrong. Recommended: look at the blocked tickets for a shared cause (a broken base, a missing setup step, a bad spec) and fix it before resuming; resume as is, reslice or end the run?",
+            question: "Wave \($w) failed whole (\($ts | map("#" + .) | join(", "))), and none of its tickets passed verification: \($why). Something upstream is likely wrong. Recommended: look at the blocked tickets for a shared cause (a broken base, a missing setup step, a bad spec) and fix it before resuming; resume as is, reslice or end the run?",
             status: "waiting", at: $now}]
         | event({event: "halted", wave: $w, tickets: $ts}; $now)
       end'
+}
+
+# ------------------------------------------------- the orchestrator's exit
+
+# The orchestrator never fails silently (#171). Once it has ended, its exit is
+# judged once: a clean end to its wave leaves every ticket the wave dispatched
+# with a final status (merged, blocked with a decision, parked, or requeued
+# with a reason); anything else queues an `orchestrator-exit` decision for the
+# Artisan (resume, retry the tickets, or halt) and logs the event.
+
+# exit_cause: classify-worker.sh's line for an ended orchestrator -> the cause
+# of an unclean exit, or nothing when the session itself ended cleanly.
+exit_cause() { # classification
+  case "$1" in
+    completed*) ;;
+    "failed turns") echo error_max_turns ;;
+    "failed budget") echo budget ;;
+    "failed deadline") echo deadline ;;
+    not-completed*) echo not-completed ;;
+    *) echo nonzero-exit ;;   # error, crashed, vanished, stopped
+  esac
+}
+
+# check_orchestrator_exit: judge the ended orchestrator's exit, once (it marks
+# the orchestrator's `exit`). A handed-off one is not judged: its wave carries
+# on in the next attempt. Unfinished: a ticket dispatched in its wave, or in
+# an earlier one and left over, still in flight,
+# returned with no passing verdict ("no-verdict"), or verified but not merged
+# ("unmerged"; not while the run is parked on CI, whose own decision holds it).
+check_orchestrator_exit() { # id attempt wave classification
+  local code="" cause=""
+  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
+        | last | . != null and .exit == null and .handoff == null')" = true ] || return 0
+  code=$(jq -r '.exit_code // "none"' "$RUN_DIR/results/$1.$2.exit.json" 2>/dev/null || echo none)
+  cause=$(exit_cause "$4")
+  apply '
+    [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
+     | ($k | verified_pass) as $passed
+     | if $k.status == "in_flight" then {ticket: $t, why: "in flight, no verdict", cause: "no-verdict"}
+       elif $k.status != "returned" then empty
+       elif ($passed | not) then {ticket: $t, why: "returned, no verdict", cause: "no-verdict"}
+       elif .ci_park == null then {ticket: $t, why: "verified, not merged", cause: "unmerged"}
+       else empty end] as $u
+    | (if $cause != "" then $cause
+       elif any($u[]; .cause == "no-verdict") then "no-verdict"
+       elif ($u | length) > 0 then "unmerged"
+       else "" end) as $c
+    | (.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+    | if $c == "" then .orchestrators[$i].exit = {clean: true, at: $now}
+      else
+        ((.decisions | length) + 1) as $d
+        | ($u | map(.ticket)) as $ts
+        | ("\($id) attempt \($a) ended \($cls) (exit code \($code))"
+           + (if ($u | length) > 0 then "; " + ($u | map("#\(.ticket) \(.why)") | join(", ")) else "" end)) as $detail
+        | .orchestrators[$i].exit = {clean: false, cause: $c, decision: $d, at: $now}
+        | .decisions += [{id: $d, kind: "orchestrator-exit", cause: $c, wave: $w, tickets: $ts,
+            detail: $detail, orchestrator: $id, attempt: $a, options: ["resume", "retry", "halt"],
+            question: "The orchestrator for wave \($w) exited without finishing its wave (\($c)): \($detail). Recommended: resume (the next orchestrator reconciles and carries the wave on, keeping the work already done); retry \(if ($ts | length) > 0 then ($ts | map("#" + .) | join(", ")) else "its tickets" end) with fresh workers only if that work looks wrong, as it throws it away; halt only if the cause looks shared and would fail the next orchestrator too. Resume, retry or halt?",
+            status: "waiting", at: $now}]
+        | event({event: "orchestrator-exit", id: $id, attempt: $a, wave: $w, cause: $c, tickets: $ts, detail: $detail}; $now)
+      end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+}
+
+# The waiting orchestrator-exit decision's id, or nothing.
+exit_decision_waiting() {
+  get '[.decisions[] | select(.kind == "orchestrator-exit" and .status == "waiting")] | last | .id // empty'
+}
+
+# "orchestrator-exit: <cause> in wave <w> (<tickets>): <detail>; decision <id>",
+# one line per waiting decision, for status.
+exit_decision_lines() {
+  get '.decisions[] | select(.kind == "orchestrator-exit" and .status == "waiting")
+       | "orchestrator-exit: \(.cause) in wave \(.wave)\(if (.tickets | length) > 0 then " (" + (.tickets | map("#" + .) | join(", ")) + ")" else "" end): \(.detail); decision \(.id) waits (resume, retry or halt)"'
+}
+
+# apply_exit_answers: carry out the Artisan's answers to orchestrator-exit
+# decisions (state.sh decide <run-dir> <id> resume|retry|halt), once each:
+# resume carries the wave on; retry sends the decision's tickets still
+# returned back to queued for fresh workers, like steering (no attempt used);
+# halt halts the run, so launch refuses (12) until --resume.
+apply_exit_answers() {
+  apply '
+    . as $s0
+    | reduce (.decisions[] | select(.kind == "orchestrator-exit" and .status == "decided" and .applied != true)) as $d (.;
+      (if $d.choice == "retry" then
+         reduce ($d.tickets[] | select(. as $t | $s0.tickets[$t].status == "returned")) as $t (.;
+           steered($t; "retry after the orchestrator for wave \($d.wave) exited (\($d.cause))"; $now))
+       elif $d.choice == "halt" and .halted == null then
+         .halted = {wave: $d.wave, tickets: $d.tickets, at: $now,
+                    reason: "the Artisan halted the run after the orchestrator for wave \($d.wave) exited (\($d.cause))"}
+         | event({event: "halted", wave: $d.wave, tickets: $d.tickets, reason: "orchestrator-exit"}; $now)
+       else . end)
+      | .decisions |= map(if .id == $d.id then .applied = true else . end))'
+}
+
+# settle_orchestrator_exit: launch's step. Judge the last orchestrator's exit;
+# a waiting decision refuses the launch (23) unless --resume answers it
+# "resume"; then carry out any answers.
+settle_orchestrator_exit() { # id attempt wave classification resume
+  local d=""
+  [ -z "$1" ] || check_orchestrator_exit "$1" "$2" "$3" "$4"
+  d=$(exit_decision_waiting)
+  if [ -n "$d" ]; then
+    [ "$5" -eq 1 ] || state_die 23 "wave.sh: $(exit_decision_lines | tail -1); nothing launches until the Artisan answers: state.sh decide $RUN_DIR $d resume|retry|halt (or wave.sh launch --resume)"
+    apply 'decide($d; {choice: "resume", by: "Artisan"}; $now)
+      | event({event: "decided", decision: $d, kind: "orchestrator-exit", choice: "resume", by: "Artisan"}; $now)' \
+      --argjson d "$d"
+  fi
+  apply_exit_answers
+}
+
+# wave.sh wait: block until the last orchestrator has ended, for the chat to
+# run as a background task so the exit wakes it.
+cmd_wait() {
+  open_run "${1:-}"
+  shift
+  local timeout=6600 last="" cls="" waited=0 interval="${ARTISAN_WAIT_INTERVAL:-5}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --timeout) [ $# -ge 2 ] && state_is_uint "$2" || usage; timeout=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  last=$(last_orchestrator)
+  [ -n "$last" ] || { echo "orchestrator: none"; return 0; }
+  set -- $last
+  while :; do
+    cls=$(orchestrator_state "$1" "$2")
+    case "$cls" in
+      running*) ;;
+      *) echo "orchestrator: $cls (wave $3, attempt $2); run wave.sh status"; return 0 ;;
+    esac
+    [ "$waited" -lt "$timeout" ] \
+      || state_die 3 "wave.sh: the orchestrator for wave $3 is still running after ${waited}s; wait again"
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
 }
 
 # ------------------------------------------------------------------- start
@@ -268,13 +454,15 @@ cmd_launch() {
       *) usage ;;
     esac
   done
-  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner=
+  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner= turns=
+  local -a ended=("" "" "")
   wave=1 attempt=1
   last=$(last_orchestrator)
   if [ -n "$last" ]; then
     set -- $last
     id=$1 attempt=$2 wave=$3 pid=$4
     cls=$(orchestrator_state "$id" "$attempt")
+    ended=("$id" "$attempt" "$wave")
     # A hand-off (drain.sh handoff): the running orchestrator, which recorded
     # why, launches the next one for the same wave before it exits.
     if [ "$handoff" -eq 1 ]; then
@@ -305,6 +493,18 @@ cmd_launch() {
   state_lock "$RUN_DIR" "$me" || exit 3
   export ARTISAN_WRITER_PID=$me
 
+  # The last orchestrator's exit is judged, and the Artisan's answer carried
+  # out, before anything launches: an unclean exit never passes silently (#171).
+  if [ "$handoff" -eq 0 ]; then
+    settle_orchestrator_exit "${ended[0]}" "${ended[1]}" "${ended[2]}" "${cls:-}" "$resume"
+    # An orchestrator that exited 0 without finishing its wave: the next one
+    # carries that same wave on, as after any other unclean exit.
+    if [ -n "${ended[0]}" ] && [ "$(get --arg id "${ended[0]}" --argjson a "${ended[1]}" \
+         '[.orchestrators[] | select(.id == $id and .attempt == $a)] | last | .exit.clean == false')" = true ]; then
+      wave=${ended[2]} attempt=$((ended[1] + 1)) id="orchestrator-w${ended[2]}"
+    fi
+  fi
+
   local was_halted=0
   [ "$(get '.halted != null')" = false ] || was_halted=1
   if [ "$(get '.halted != null')" = true ]; then
@@ -332,6 +532,7 @@ cmd_launch() {
   # longest worker deadline plus half an hour.
   deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
+  turns=$(orchestrator_max_turns)
 
   mkdir -p "$RUN_DIR/prompts"
   prompt="$RUN_DIR/prompts/$id.$attempt.md"
@@ -374,6 +575,7 @@ EOF
   runner=$("$SCRIPT_DIR/run-ticket.sh" --role orchestrator --lock-from "$me" --run-dir "$RUN_DIR" --ticket "$id" \
     --attempt "$attempt" --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$deadline" \
+    --max-turns "$turns" \
     -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" \
     --add-dir "$MAIN" --add-dir "$WT_ROOT" \
     ${EXTRA[@]+"${EXTRA[@]}"} ${args[@]+"${args[@]}"}) || die "could not launch $id"
@@ -421,7 +623,7 @@ record_orchestrator_cost() { # id attempt
 # still to open will (its agent ticket is in that slice, or it is carried from
 # a gate that has closed); else at the end gate.
 human_checks_line() {
-  local n="" at_slice=""
+  local n="" at_slice="" waiting=""
   n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
   [ "$n" -gt 0 ] || return 0
   at_slice=$(get "$STATE_JQ_DEFS"' . as $s | ($s.review_gates // []) as $rg
@@ -431,6 +633,8 @@ human_checks_line() {
        | select(any($rg[]; .id == $hg and (.status == "open" or .status == "deferred"))
                 or any($unopened[]; .tickets | index($a))
                 or ($hg != null and ($unopened | length) > 0))] | length')
+  waiting=$(get -r "$STATE_JQ_DEFS"' . as $s | [open_human_checks[] as $c | ($s | check_rework($c)) as $o
+    | select($o != null) | "#\($c) waiting on rework #\($o | split(" ")[1])"] | join(", ")')
   if [ "$at_slice" -eq 0 ]; then
     echo "Human checks: $n open (end gate)"
   elif [ "$at_slice" -eq "$n" ]; then
@@ -438,6 +642,7 @@ human_checks_line() {
   else
     echo "Human checks: $n open ($at_slice at the next slice gate, $((n - at_slice)) at the end gate)"
   fi
+  [ -z "$waiting" ] || echo "Human checks waiting on a rework: $waiting"
 }
 
 cmd_status() {
@@ -464,6 +669,9 @@ cmd_status() {
       for o in $(get '(.orchestrators // [])[] | select(.cost_usd == null) | "\(.id).\(.attempt)"'); do
         record_orchestrator_cost "${o%.*}" "${o##*.}"
       done
+      # The Artisan's answers to an orchestrator's unclean exit (#171), before
+      # the reconciler, so a retried ticket is back on the frontier.
+      apply_exit_answers
       # A hands-on ticket the Artisan finished, and any that can now start (human.sh).
       "$SCRIPT_DIR/human.sh" sync "$RUN_DIR" >/dev/null 2>"$RUN_DIR/.human.err" \
         || echo "human.sh sync failed: $(tr '\n' ' ' <"$RUN_DIR/.human.err")" >&2
@@ -479,6 +687,8 @@ cmd_status() {
         "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard >/dev/null
       }
       [ -z "${id:-}" ] || halt_if_wave_failed
+      # The ended orchestrator's exit, judged once (#171).
+      [ -z "${id:-}" ] || check_orchestrator_exit "$id" "$attempt" "$wave" "$cls"
       # A usage park, as the guard last left it (budget.sh parked reads only).
       # The guard itself runs from the orchestrator's sweep and from launch,
       # never from here: status writes no guard state and opens no gate (#120).
@@ -493,6 +703,8 @@ cmd_status() {
       [ "$(get '.frontier | length')" -gt 0 ] \
         || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
       if [ "$(get '.halted != null')" = true ]; then next=halted
+      # An orchestrator that exited without finishing its wave: never launch.
+      elif [ -n "$(exit_decision_waiting)" ]; then next=decide
       elif [ "$(get '.ci_park != null')" = true ]; then next=parked
         parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
       elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
@@ -525,6 +737,7 @@ $reviews"
       ;;
   esac
   echo "next: $next"
+  [ "$next" != decide ] || exit_decision_lines
   [ "$next" != parked ] || echo "$parked"
   [ "$next" != done ] || echo "run the end gate: end-gate.sh open $RUN_DIR"
   human_checks_line
@@ -652,6 +865,14 @@ cmd_dispatch() {
   else
     git -C "$MAIN" worktree add -q -b "$branch" "$wt" "$base" >/dev/null 2>&1 || die "could not add worktree $wt"
   fi
+  # The project's worktree_setup (#173) runs before the worker starts. If it
+  # fails the attempt fails with the reason "setup", not a red test; nothing
+  # ran in the worktree, so it goes, and the attempt is the one that counts.
+  if ! worktree_setup "$wt"; then
+    git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    apply '.tickets[$t].attempts += 1 | failed_attempt($t; $r; $now)' --arg t "$t" --arg r "$SETUP_ERR"
+    state_die 6 "wave.sh: #$t attempt $n: $SETUP_ERR; it is now $(get --arg t "$t" '.tickets[$t].status')"
+  fi
 
   repo=$(get '.repo')
   title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
@@ -675,6 +896,7 @@ You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR --ticket $t (an area-scoped guardrail is listed only if this ticket touches its area; plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
+- Dependencies (such as node_modules) are installed by the project's worktree_setup before you start. If a tool is "not found" or a module is missing, that is a setup failure, not a code failure: say so in your notes and don't change the code to work around it.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
   # The Artisan's answers to the questions an earlier worker filed (questions.sh).
@@ -754,10 +976,21 @@ failure_evidence() {
   if [ -f "$RUN_DIR/verify/$t.$p.evidence.json" ]; then
     jq -r '
       "- The verifier found \(.criteria_met) of \(.criteria_total) criteria met:",
-      (.acceptance[] | select(.met != true and .human != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
+      (.acceptance[] | select(.met != true and .human != true and .gate != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
+      (.acceptance[] | select(.gate == true) | "- Checked by the merge gate, not yours to meet (verifier): \(.criterion)"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
+  # A red CI merge gate (#176): the tests it failed, read from the CI log.
+  get --arg t "$t" --argjson p "$p" '.tickets[$t].failures[] | select(.attempt == $p and .kind == "ci") | .ci
+    | (.failing_tests // {tests: [], total: 0}) as $f
+    | "- The merge gate ran the full suite on CI with your work merged, and it went red (\(.conclusion // "red") on \(.url // "no run")). The failing tests\(if $f.truncated then " (the first \($f.tests | length) of \($f.total))" else "" end), as job: place name: message:",
+      ($f.tests[] | "    - \(.job): \([.where, .name] | map(select(. != null)) | join(" "))\(if .message then ": \(.message)" else "" end)"),
+      (if $f.tests == [] then
+         (if ($f.excerpt // []) != [] then "    No test could be named from the log; its last error lines:", ($f.excerpt[] | "    - \(.)")
+          else "    No failing test could be read from the log\(if $f.why then " (\($f.why))" else "" end); open the run to see what failed." end)
+       else empty end),
+      "- The break may be outside the tests you ran last time: run these failing tests (or the specs they are in) yourself before you finish, as well as your covering tests."'
   branch=$(get --arg t "$t" '.tickets[$t].branch')
   base=$(get --arg t "$t" '.tickets[$t].base // ""')
   if [ -n "$base" ] && log=$(git -C "$MAIN" log --oneline -n 10 "$base..refs/heads/$branch" 2>/dev/null) && [ -n "$log" ]; then
@@ -802,6 +1035,30 @@ join_paths() { # JSON array -> "a b c" for messages
 # branch after its PR merged (end-gate.sh urgent-finish), never the ticket's
 # own branch (#143). Its failures queue a decision instead of blocking it.
 is_urgent_sync() { [ "$(get --arg t "$1" '.tickets[$t].urgent // false')" = true ]; }
+
+# ci_red ticket why gate-record: a red CI merge gate (failure or timed_out,
+# #176) is a failed attempt of kind ci, the merge already undone: the ticket
+# is queued for a fresh worker, whose notes list the failing tests the
+# gate's record read from the CI log (failure_evidence), or, once it has
+# used its attempts, blocked with an exception decision whose gate lists
+# them (gate-action.sh). The reason names the first few.
+ci_red() {
+  local t="$1" why="$2" g="$3" names=""
+  names=$(jq -r '(.failing_tests.tests // []) as $ts | (.failing_tests.total // ($ts | length)) as $n
+    | if $ts == [] then ""
+      else "; failing: " + ([$ts[:3][] | [.where, .name] | map(select(. != null)) | join(" ")] | join(", "))
+        + (if $n > 3 then ", and \($n - 3) more" else "" end) end' <<<"$g")
+  apply 'failed_attempt($t; $r; $now)
+    | .tickets[$t].failures[-1] += {kind: "ci", ci: ($g | {run_id, url, conclusion, failing_tests})}
+    | .events[-1] += {kind: "ci"}' --arg t "$t" --arg r "$why$names" --argjson g "$g"
+}
+
+# ci_red_next ticket: what became of a ticket after ci_red, for a message.
+ci_red_next() {
+  get -r --arg t "$1" '.tickets[$t] | if .status == "queued"
+    then "a failed attempt: queued for attempt \(.attempts + 1) with the failing tests in its notes"
+    else "a failed attempt, its last: blocked, with an exception decision" end'
+}
 
 # gate_failed ticket reason: the merge was undone. A ticket is blocked; an
 # urgent ticket's main sync queues a decision (its PR is merged already).
@@ -855,7 +1112,7 @@ cmd_merge() {
     esac
   done
   [ "$(jq length <<<"$list")" -ge 1 ] || usage
-  # A batch in progress is finished first, whichever of its tickets is named.
+  # A merge batch in progress is finished first, whichever of its tickets is named.
   if [ "$(get '.merge_batch != null')" = true ]; then
     [ "$(get --argjson l "$list" '[.merge_batch.tickets[] | select(. as $t | $l | index($t))] | length > 0')" = true ] \
       || state_die 20 "wave.sh: not merged yet: merge batch $(get '.merge_batch.id') ($(get -r '.merge_batch.tickets | map("#" + .) | join(", ")')) is in progress; finish it first (wave.sh merge $RUN_DIR $(get -r '.merge_batch.tickets | join(" ")'))"
@@ -875,7 +1132,7 @@ cmd_merge() {
   merge_one "$(jq -r '.[0]' <<<"$list")" "$wait"
 }
 
-# merge_one ticket wait: a batch of one, the merge as it always was.
+# merge_one ticket wait: a merge batch of one, the merge as it always was.
 merge_one() {
   local t="$1" wait="$2"
   local n= branch= wt= ib= suite= pre= title=
@@ -1114,8 +1371,13 @@ finish_gate() {
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs}))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
-        gate_failed "$t" "CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
-        state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
+        why="CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
+        if is_urgent_sync "$t"; then
+          gate_failed "$t" "$why"
+          state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
+        fi
+        ci_red "$t" "$why" "$GATE_JSON"
+        state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url); $(ci_red_next "$t")"
       fi
       why=$(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON")
       minutes=$(ci_setting timeout_minutes)
@@ -1156,21 +1418,21 @@ finish_gate() {
 # A merge batch (#167): tickets ready together are merged in order onto the
 # integration branch and their tip is gated once. Green merges them all. Red
 # is split: the gate runs on the tip of the first half (a prefix of the
-# batch, its merge commits already built); a green prefix merges and the
+# merge batch, its merge commits already built); a green prefix merges and the
 # split goes on in what is left, a red one is halved again, until one
 # ticket's merge turns a green tip red. That ticket alone gets the red
 # handling (finish_gate's), and the tickets after it are merged afresh
-# without it and gated as the batch's next round. A conflict while building
+# without it and gated as the merge batch's next round. A conflict while building
 # leaves its ticket out, for the existing conflict path (merge it alone). A
-# batch run counts against no ticket's attempts. Recorded as merge_batch:
+# merge batch run counts against no ticket's attempts. Recorded as merge_batch:
 #   {id, tickets, attempts, pre, order, commits, red, red_record, rebuild,
 #    merged, red_tickets, left_out, gates, at}
-# pre is always green (the integration tip before the batch, or the last
+# pre is always green (the integration tip before the merge batch, or the last
 # green prefix); order are the tickets still to settle, commits their merge
 # commits built on pre; red is the shortest prefix of order known red.
 
 # batch_start wait tickets-json: check every ticket as a merge does, build
-# the batch and run it.
+# the merge batch and run it.
 batch_start() {
   local wait="$1" list="$2" t= wt= pre= gt= attempts='{}' id=
   wt=$(integration_worktree)
@@ -1195,7 +1457,7 @@ batch_start() {
   pre=$(git -C "$wt" rev-parse HEAD)
   id=$(( $(get '[.events[] | select(.event == "merge-batch")] | length') + 1 ))
   # Recorded before anything is merged, to be built (rebuild) by batch_run:
-  # a crash mid-build leaves a batch whose next call builds it again on pre,
+  # a crash mid-build leaves a merge batch whose next call builds it again on pre,
   # never merge commits nothing records.
   apply '.merge_batch = {id: $id, tickets: $l, attempts: $a, pre: $pre, order: $l, commits: [],
           red: null, red_record: null, rebuild: true, merged: [], red_tickets: [], left_out: [], gates: 0, at: $now}
@@ -1230,7 +1492,7 @@ batch_build() {
   BUILT=$(jq -nc --argjson o "$order" --argjson c "$commits" --argjson l "$left" '{order: $o, commits: $c, left_out: $l}')
 }
 
-# batch_run wait: settle the batch, gate by gate, within `wait` seconds:
+# batch_run wait: settle the merge batch, gate by gate, within `wait` seconds:
 # exits 0 (all merged), 7 (a ticket red), 19 (parked on CI), 20 (a gate
 # still running).
 batch_run() {
@@ -1262,7 +1524,7 @@ batch_run() {
   done
 }
 
-# batch_gate p: gate the tip of the batch's first p tickets (the merge
+# batch_gate p: gate the tip of the merge batch's first p tickets (the merge
 # commit of order[p-1]), recorded as merge_gate with the tickets it judges.
 batch_gate() {
   local p="$1" wt= mode= sha= pre= id= k= key= ci='{}' tickets=
@@ -1300,7 +1562,7 @@ batch_gate() {
   fi
 }
 
-# batch_await end: 0 once the batch's gate has an outcome; 1 when its runner
+# batch_await end: 0 once the merge batch's gate has an outcome; 1 when its runner
 # died with nothing to wait on (undone: batch_run gates it again); 20 while
 # it runs past `end`.
 batch_await() {
@@ -1318,9 +1580,9 @@ batch_await() {
   state_die 20 "wave.sh: merge batch $(get '.merge_batch.id')'s gate is running on $(get -r '.merge_gate | "\(.tickets | map("#" + .) | join(", ")) (\(if .mode == "ci" then "CI on \(.branch)" else "the suite here" end))"'); wait (wait-any.sh), then run wave.sh merge $RUN_DIR $(get -r '.merge_batch.tickets | join(" ")') again"
 }
 
-# batch_outcome: act on the batch gate's outcome. Green merges the prefix it
+# batch_outcome: act on the merge batch gate's outcome. Green merges the prefix it
 # judged; red marks it the shortest red prefix; no verdict from CI parks the
-# run (batch_park). The integration worktree ends at the batch's green pre.
+# run (batch_park). The integration worktree ends at the merge batch's green pre.
 batch_outcome() {
   local wt= result= rc= mode= sha= pre= p= suite= record= head= who=
   wt=$(integration_worktree)
@@ -1342,7 +1604,8 @@ batch_outcome() {
       || GATE_JSON=$(get -c '.merge_gate | {mode: "ci", workflow, branch, sha, run_id: null, url: null, conclusion: null, jobs: [], why: "merge-gate.sh gave no record"}')
     record=$(jq -c --arg c "$suite" --argjson p "$([ "$rc" -eq 0 ] && echo true || echo false)" '{command: $c, passed: $p}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
-      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
+      + (if .skipped then {skipped, relied_on, why} else {} end)
+      + (if .failing_tests then {failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   record=$(jq -c --argjson b "$(get '.merge_batch.id')" --argjson ts "$(get -c '.merge_gate.tickets')" \
     '. + {batch: $b, batch_tickets: $ts}' <<<"$record")
@@ -1359,9 +1622,9 @@ batch_outcome() {
   esac
 }
 
-# batch_merge_prefix p record: the batch's first p tickets passed their gate:
+# batch_merge_prefix p record: the merge batch's first p tickets passed their gate:
 # record each merged at its own merge commit, with the gate's record as its
-# suite, and move the batch's green pre up to the last of them.
+# suite, and move the merge batch's green pre up to the last of them.
 batch_merge_prefix() {
   local p="$1" record="$2" wt= i=0 t= c= worker_wt=
   wt=$(integration_worktree)
@@ -1370,7 +1633,7 @@ batch_merge_prefix() {
     t=$(get --argjson i "$i" '.merge_batch.order[$i]')
     c=$(get --argjson i "$i" '.merge_batch.commits[$i]')
     i=$((i + 1))
-    # Merged already by a call cut off before it moved the batch on: the
+    # Merged already by a call cut off before it moved the merge batch on: the
     # rest (cost, suite record, worktree) is done again, harmlessly.
     [ "$(get --arg t "$t" '.tickets[$t].status')" = merged ] || "$SCRIPT_DIR/state.sh" merge "$RUN_DIR" "$t" "$c"
     record_session_cost "$t" "$(get --arg t "$t" '.merge_batch.attempts[$t]')"
@@ -1387,31 +1650,30 @@ batch_merge_prefix() {
     | .merge_gate = null' --argjson p "$p"
 }
 
-# batch_red_ticket: the batch's first ticket turned its green pre red. It
+# batch_red_ticket: the merge batch's first ticket turned its green pre red. It
 # alone gets the red handling, as finish_gate gives a single merge (its suite
 # record, then blocked with a decision); the tickets after it are merged
 # afresh on pre without it (batch_run, rebuild).
 batch_red_ticket() {
-  local t= record= why= url=
+  local t= record= url=
   t=$(get '.merge_batch.order[0]')
   record=$(get -c '.merge_batch.red_record')
-  # Blocked first, once: a call cut off after it only moves the batch on.
-  if [ "$(get --arg t "$t" '.tickets[$t].status')" != blocked ]; then
+  # Handled first, once: a call cut off after it only moves the merge batch on.
+  if [ "$(get --arg t "$t" '.tickets[$t].status')" = returned ]; then
+    apply '.tickets[$t].suite = ($r | del(.failing_tests))' --arg t "$t" --argjson r "$record"
     if [ "$(jq -r .mode <<<"$record")" = local ]; then
-      why="the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
+      gate_failed "$t" "the suite failed after merging ($(jq -r .log <<<"$record"), merge batch $(get '.merge_batch.id')); the merge was undone"
     else
       url=$(jq -r '.url // "no run"' <<<"$record")
-      why="CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone"
+      ci_red "$t" "CI went red after merging ($(jq -r .conclusion <<<"$record") on $url, merge batch $(get '.merge_batch.id')); the merge was undone" "$record"
     fi
-    apply '.tickets[$t].suite = $r' --arg t "$t" --argjson r "$record"
-    gate_failed "$t" "$why"
   fi
   apply '.merge_batch |= (.red_tickets += [.order[0]] | .order = .order[1:] | .commits = []
       | .rebuild = (.order | length > 0) | .red = null | .red_record = null)'
 }
 
-# batch_park: CI gave the batch's gate no verdict. The tickets not yet merged
-# stay returned, the batch ends, and the run parks on CI as for one merge;
+# batch_park: CI gave the merge batch's gate no verdict. The tickets not yet merged
+# stay returned, the merge batch ends, and the run parks on CI as for one merge;
 # unpark-ci clears it and they are merged afresh.
 batch_park() {
   local minutes=
@@ -1433,20 +1695,22 @@ batch_park() {
   state_die 19 "wave.sh: merge batch not merged: $(jq -r '.why // "no conclusion from CI"' <<<"$GATE_JSON"); the run is parked on CI (wave.sh unpark-ci, then merge them again)"
 }
 
-# batch_end: every ticket settled. One line per ticket, the batch cleared.
+# batch_end: every ticket settled. One line per ticket, the merge batch cleared.
 # 0 all merged (or left out for their own merge); 7 a ticket went red.
 batch_end() {
   local red=
   red=$(get '.merge_batch.red_tickets | length')
   batch_report
   batch_close
-  [ "$red" -eq 0 ] || state_die 7 "wave.sh: not merged: $(get -r '[.events[] | select(.event == "merge-batch-ended")] | last | .red | map("#" + .) | join(", ")') went red in its merge batch; blocked, with a decision queued"
+  [ "$red" -eq 0 ] || state_die 7 "wave.sh: not merged: $(get -r '. as $s | [.events[] | select(.event == "merge-batch-ended")] | last | .red
+      | map("#\(.) (\(if $s.tickets[.].status == "queued" then "a failed attempt: queued for attempt \($s.tickets[.].attempts + 1)" else "blocked, with a decision queued" end))")
+      | join(", ")') went red in its merge batch"
   exit 0
 }
 
-# batch_report: what became of each ticket, in the batch's order:
+# batch_report: what became of each ticket, in the merge batch's order:
 #   #<t> merged <commit> | #<t> red | #<t> left out: conflict in <paths>; merge it alone
-# then each ticket named beside the batch (BATCH_EXTRA): #<t> not merged: ...
+# then each ticket named beside the merge batch (BATCH_EXTRA): #<t> not merged: ...
 BATCH_EXTRA='[]'
 batch_report() {
   get -r --arg rd "$RUN_DIR" '.merge_batch as $b | $b.tickets[] as $t
@@ -1458,7 +1722,7 @@ batch_report() {
     ($x[] | "#\(.) not merged: not in merge batch \($b.id); merge it next")' --argjson x "$BATCH_EXTRA"
 }
 
-# batch_close: log the batch's end and clear it.
+# batch_close: log the merge batch's end and clear it.
 batch_close() {
   apply '.merge_batch as $b
     | event({event: "merge-batch-ended", batch: $b.id, tickets: $b.tickets, merged: [$b.merged[].ticket],
@@ -1518,7 +1782,7 @@ ci_setting() { # key
 # to wait on (a local suite cut off, or a CI gate cut off before its run was
 # dispatched): stop anything left in its runner's group, undo its merge
 # commit and keep it for the ticket's next merge to gate again (ci_retry;
-# a batch's gate is gated again by the batch).
+# a merge batch's gate is gated again by the merge batch).
 # A CI gate's branch goes at the next gate's sweep.
 abandon_gate() {
   local wt="$1" pid= sha=
@@ -1528,7 +1792,7 @@ abandon_gate() {
   if state_is_uint "$pid" && ! state_pid_alive "$pid"; then kill -KILL "-$pid" 2>/dev/null || true; fi
   sha=$(get '.merge_gate.sha')
   if [ "$(git -C "$wt" rev-parse HEAD)" = "$sha" ]; then git -C "$wt" reset -q --hard "$(get '.merge_gate.pre')"; fi
-  # A batch's gate is gated again by the batch itself (batch_run), on its
+  # A merge batch's gate is gated again by the merge batch itself (batch_run), on its
   # own recorded commits: no ticket keeps a retry.
   apply '.merge_gate as $g
     | if $g.batch then . else .tickets[$g.ticket].ci_retry = {pre: $g.pre, sha: $g.sha, at: $now} end
@@ -1643,7 +1907,7 @@ cmd_unpark_ci() {
     esac
   done
   [ "$(get '.ci_park != null')" = true ] || state_die 6 "wave.sh: run $RUN_ID is not parked on CI"
-  # A batch's park retries nothing in place: its tickets are merged afresh.
+  # A merge batch's park retries nothing in place: its tickets are merged afresh.
   apply '.ci_park as $p
     | if $p.batch then . else .tickets[$p.ticket].ci_retry = {pre: $p.pre, sha: $p.sha, at: $now} end
     | .decisions |= map(if .kind == "ci" and .status == "waiting"
@@ -1718,6 +1982,7 @@ case "$cmd" in
   start) cmd_start "$@" ;;
   launch) cmd_launch "$@" ;;
   status) cmd_status "$@" ;;
+  wait) cmd_wait "$@" ;;
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
   resolved) cmd_resolved "$@" ;;

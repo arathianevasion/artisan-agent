@@ -495,6 +495,9 @@ test_a_compacted_orchestrator_hands_off_and_a_fresh_one_finishes_the_same_wave()
 test_a_waiting_risk_gate_does_not_stop_the_chat_launching() {
   setup_run
   kill -KILL "$ORCH_PID"; wait "$ORCH_PID" 2>/dev/null || true
+  # Killed only to end it: its exit counts as judged clean, so no
+  # orchestrator-exit decision (#171) stands in the risk gate's way.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.orchestrators[-1].exit = {clean: true, at: 1}'
   stub_issue 10 open; stub_issue 11 open; stub_issue 12 open
   stub_blocked_by 11 "10:open"
   "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 deadbeef

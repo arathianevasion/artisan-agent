@@ -45,6 +45,9 @@
 #                         headSha, event, status, conclusion, url, createdAt, updatedAt
 #   gh run view <id> [-R repo] [--json fields] [-q filter]
 #                         one run, with jobs [{name, status, conclusion}]
+#   gh run view <id> [-R repo] --log-failed
+#                         the failed jobs' log ("<job>\t<step>\t<timestamp> <line>"): the file
+#                         ci-log-failed the test writes in $FAKE_GH_DIR; with none, it fails
 # Anything else fails with exit 1. Needs jq (and git, for workflow run).
 
 set -euo pipefail
@@ -336,17 +339,23 @@ case "${1:-} ${2:-}" in
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   "run view")
     shift 2
-    id= filter=
+    id= filter= logfailed=
     while [ $# -gt 0 ]; do
       case "$1" in
         -R|--repo) check_repo "$2"; shift 2 ;;
         --json) shift 2 ;;
         -q|--jq) filter=$2; shift 2 ;;
+        --log-failed) logfailed=1; shift ;;
         -*) echo "gh (fake): run view: unsupported: $1" >&2; exit 1 ;;
         *) id=$1; shift ;;
       esac
     done
     [ -f "$FAKE_GH_DIR/run-$id.json" ] || { echo "gh: run $id not found (HTTP 404)" >&2; exit 1; }
+    if [ -n "$logfailed" ]; then
+      [ -f "$FAKE_GH_DIR/ci-log-failed" ] || { echo "gh: log not found" >&2; exit 1; }
+      cat "$FAKE_GH_DIR/ci-log-failed"
+      exit 0
+    fi
     out=$(jq -c . "$FAKE_GH_DIR/run-$id.json")
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;

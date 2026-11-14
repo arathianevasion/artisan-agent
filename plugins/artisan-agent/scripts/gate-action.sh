@@ -754,6 +754,18 @@ exception_body() { # gate-json
     (if ($k.failures // []) == [] then "| - | none failed: it was blocked |" else ($k.failures[] | "| \(.attempt) | \(.reason | gsub("\\|"; "/")) |") end),
     "",
     (if $k.suite.log then "The suite log: `\($k.suite.log)` in the run folder.\n" else empty end),
+    # A red CI merge gate (#176): the tests its last failed attempt broke.
+    (($k.failures // []) | last | select(.kind? == "ci") | .ci | (.failing_tests // {tests: []}) as $f
+     | "## Failing tests",
+       "",
+       "The merge gate on CI went red with #\($t) merged (\(.conclusion // "red") on \(.url // "no run"))\(if $f.truncated then "; the first \($f.tests | length) of \($f.total)" else "" end):",
+       "",
+       (if $f.tests != [] then
+          "| Job | Where | Test | Message |", "|---|---|---|---|",
+          ($f.tests[] | [.job, (.where // "-"), .name, (.message // "-")] | map(gsub("[|\n]"; " ")) | "| \(join(" | ")) |")
+        elif ($f.excerpt // []) != [] then "No test could be named from the log; its last error lines:", "", ($f.excerpt[] | "    \(.)")
+        else "No failing test could be read from the log\(if $f.why then " (\($f.why))" else "" end)." end),
+       ""),
     "## Your call",
     "",
     "Exception gates are never removed. Decide what happens to the ticket, or bypass or defer the gate.",

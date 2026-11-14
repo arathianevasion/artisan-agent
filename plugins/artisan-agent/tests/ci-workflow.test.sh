@@ -41,9 +41,18 @@ test_workflow_comment_describes_the_shards() {
 }
 
 test_merge_gate_judges_the_run_by_its_overall_conclusion_only() {
-  # Job names are recorded, never matched on.
-  grep -q 'select(.name' "$PLUGIN_ROOT/scripts/merge-gate.sh" && fail "merge-gate.sh must not select on a job name"
-  grep -q 'failure | timed_out) record "\$view" ""; return 7' "$PLUGIN_ROOT/scripts/merge-gate.sh" \
-    || fail "a failed run must be red (exit 7)"
+  local mg="$PLUGIN_ROOT/scripts/merge-gate.sh" branch=
+  # Job names are recorded, never matched on (failed jobs' logs are read
+  # only to name the failing tests, after the verdict).
+  grep -q 'select(.name' "$mg" && fail "merge-gate.sh must not select on a job name"
+  # The verdict is a case on the run's overall conclusion.
+  grep -qF 'conclusion=$(jq -r '"'"'.conclusion // ""'"'"' <<<"$view")' "$mg" \
+    || fail "the verdict must come from the run's overall .conclusion"
+  grep -qF 'case "$conclusion" in' "$mg" || fail "the verdict must be a case on \$conclusion"
+  # Its failure | timed_out branch, up to its ;;, records the run and is red.
+  branch=$(awk '/^ *failure \| timed_out\)/ {on=1} on {print} on && /;;/ {exit}' "$mg")
+  [ -n "$branch" ] || fail "no failure | timed_out branch in the verdict"
+  printf '%s\n' "$branch" | grep -qF 'record "$view" ""' || fail "a failed run must be recorded"
+  printf '%s\n' "$branch" | grep -qF 'return 7' || fail "a failed run must be red (exit 7)"
   return 0
 }

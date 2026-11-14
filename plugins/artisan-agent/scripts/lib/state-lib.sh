@@ -348,6 +348,8 @@ STATE_JQ_DEFS='
     merge_commit: null, cost_usd: 0, failures: []
   };
   def current_wave: ((.orchestrators // []) | last | .wave) // 0;
+  # On a ticket: a verifier pass for its current attempt (verify.sh judge).
+  def verified_pass: .evidence != null and .evidence.verdict == "pass" and .evidence.attempt == .attempts;
   def failed_attempt($t; $reason; $at):
     (.plan.attempts_per_ticket + (.tickets[$t].extra_attempts // 0)) as $max
     | .tickets[$t] as $tk
@@ -421,6 +423,12 @@ STATE_JQ_DEFS='
   def gate_done($t):
     (.tickets[$t].status // "") as $st
     | $st == "merged" or $st == "closed" or (out_of_run | index($st)) != null;
+  # A failed Human check whose rework has not merged (#165, #178): its last
+  # answer is a fail with a rework not yet done. "<gate> <rework>", or null.
+  def check_rework($t):
+    . as $s | ((.tickets[$t].human_check.answers // []) | last
+    | select(. != null and .verdict == "fail" and (.rework // null) != null)
+    | .rework as $r | select($s | gate_done($r) | not) | "\(.gate) \($r)") // null;
   def gate_left($g):
     . as $s | [$g.tickets[] | select(($s.tickets[.].status // "") as $st | out_of_run | index($st))];
   def gate_left_run($g):

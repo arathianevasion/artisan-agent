@@ -61,6 +61,8 @@ The Artisan approves each recommendation, or moves the item to `needs-triage` (t
 
 Each item names the criterion that applies by number, for example "criterion 3: new dependency", and carries your recommendation and the reasoning. Take them one at a time, highest-leverage first. Ask for the ruling: Do, Defer, Discard or take it myself. When in doubt, an item is controversial.
 
+**Give options when the ruling has more than one reasonable shape.** When an item turns on a design choice (how it's built, where it lives, which cases it covers), lay out 2–4 concrete options, each with its trade-off in one line. Put your recommendation first, marked "(recommended)". Use a structured question tool when the host has one, so the Artisan can pick an option or write their own. Several independent choices are numbered questions the Artisan can answer tersely ("1 agree, 2 B"). When the only real choice is the outcome itself, the recommendation and the strongest rejected alternative (`ARTISAN.md`) are enough. The uncontroversial queue stays one line per item.
+
 ## Gathering context for an item
 
 1. Read the whole ticket (body, comments, labels, author, dates) and prior triage notes; don't re-ask resolved questions. Explore the codebase with the glossary, respecting ADRs.
@@ -111,6 +113,10 @@ A `needs-triage` ticket a worker filed mid-run (its body: question, options, rec
 - **Answer** (Do): post a comment whose first line is `Answer: <the decision>`, then close the ticket. The blocked ticket is redispatched with it. An answer that adds scope is new work: file it as its own ticket for triage; it never rides in on the answer.
 - **Defer**: as below, `deferred` with its `Return condition:` line. If the question blocks a running ticket, the Engineering chat then asks whether to pull that ticket from the run (it defers with this one) or let it carry on with "not now". That ticket's deferral comment uses the same `Return condition: blocked-by #<question>` format.
 - **Discard**: close with a reason; the Engineering chat sends the blocked ticket back to the Artisan.
+
+## Ending a turn
+
+Whenever a turn ends with something only the Artisan can decide, end it with the `Waiting on you:` line (`${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`, "Waiting on you"). That covers a queue of recommendations to approve, a worker question to rule on, and a gate or a plan needing its envelope approved that the sweep or a doorbell surfaced. For example: `Waiting on you: rule on #31 (worker question from #12)`. A turn that only hands work to the Engineering chat doesn't add it.
 
 ## Recording a miss
 

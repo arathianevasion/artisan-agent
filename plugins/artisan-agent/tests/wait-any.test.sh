@@ -136,3 +136,25 @@ test_an_interval_given_on_the_command_line_overrides_a_bad_variable() {
   ARTISAN_WAIT_ANY_POLL_SECONDS=soon wait_any "$RUN" --timeout 1 --interval 0.1 >/dev/null 2>&1 || status=$?
   assert_eq 124 "$status" "--interval 0.1 is used; the variable is only the default"
 }
+
+# #175: one orchestrator turn waits on every worker and the merge gate at once.
+test_one_call_waits_on_workers_and_a_merge_gate_and_names_the_first_to_finish() {
+  setup_run
+  wait_any "$RUN" --timeout 1 >/dev/null || true
+  # Two workers and a merge batch's CI gate in flight; the gate ends first.
+  later 1 append "$RUN/results/merge-1.1.g1.json" '{"exit_code":0}'
+  later 4 append "$RUN/results/2.1.exit.json" '{"exit_code":0}'
+  local out= start=$SECONDS
+  out=$(wait_any "$RUN" --timeout 570)
+  assert_eq "new results/merge-1.1.g1.json" "$out"
+  [ $((SECONDS - start)) -lt 4 ] || fail "waited past the first to finish"
+  out=$(wait_any "$RUN" --timeout 570)
+  assert_eq "new results/2.1.exit.json" "$out" "the next call wakes on the worker"
+}
+
+test_a_timeout_past_the_bash_tools_ten_minutes_is_refused() {
+  setup_run
+  local err=
+  err=$(wait_any "$RUN" --timeout 591 2>&1 >/dev/null) && fail "a 591-second wait was accepted"
+  assert_contains "$err" "--timeout must be at most 590"
+}

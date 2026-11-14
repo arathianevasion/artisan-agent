@@ -10,6 +10,11 @@
 #                                   home: with no argument, print it as merge-gate.sh resolves it; with
 #                                   one, record it (other keys kept). auto (the default) is local on
 #                                   macOS and ci on Linux: where the full suite runs after each merge
+#   machine-setup.sh merge-batch [on|off]
+#                                   whether ready tickets merge as one batch (#167, #180), merge_batch
+#                                   in host.json beside merge_gate: with no argument, print the
+#                                   setting and its source (host.json, ARTISAN_MERGE_BATCH or default)
+#                                   as JSON; with one, record it (other keys kept; a rerun changes nothing)
 #
 # Everything lives under CLAUDE_CONFIG_DIR (default $HOME/.claude). Nothing is deleted:
 # skill copies move to $CFG/skills/.trash. ARTISAN_CLAUDE_BIN overrides the claude binary.
@@ -109,6 +114,23 @@ cmd_merge_gate() {
   echo "changed: merge_gate is $want in $f"
 }
 
+cmd_merge_batch() {
+  local want="${1:-}" f="$HOME_DIR/host.json" tmp=
+  if [ -z "$want" ]; then
+    "$HERE/../../../scripts/merge-gate.sh" show | jq -c '{batch, source: .batch_source}'
+    return
+  fi
+  command -v jq >/dev/null 2>&1 || { echo "missing: jq"; return 1; }
+  mkdir -p "$HOME_DIR"
+  if [ -f "$f" ] && [ "$(jq -r '.merge_batch // ""' "$f")" = "$want" ]; then
+    echo "unchanged: merge_batch is $want in $f"
+    return 0
+  fi
+  tmp="$f.tmp.$$"
+  { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq --arg m "$want" '.merge_batch = $m' >"$tmp" && mv -f "$tmp" "$f"
+  echo "changed: merge_batch is $want in $f"
+}
+
 cmd_scan() {
   local up= name= pid= scope= ppath= ver= value=
   up=$(upstream_names)
@@ -202,5 +224,11 @@ case ${1:-} in
   scan) cmd_scan ;;
   remove) shift; cmd_remove "$@" ;;
   merge-gate) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh merge-gate [auto|local|ci]" >&2; exit 2; }; cmd_merge_gate "$@" ;;
-  *) echo "usage: machine-setup.sh init|check|scan|remove ID...|merge-gate [auto|local|ci]" >&2; exit 2 ;;
+  merge-batch)
+    shift
+    if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ "$1" != on ] && [ "$1" != off ]; }; then
+      echo "usage: machine-setup.sh merge-batch [on|off]" >&2; exit 2
+    fi
+    cmd_merge_batch "$@" ;;
+  *) echo "usage: machine-setup.sh init|check|scan|remove ID...|merge-gate [auto|local|ci]|merge-batch [on|off]" >&2; exit 2 ;;
 esac

@@ -35,6 +35,12 @@
 #                  While one stands the plan is not approvable: render says so
 #                  and state.sh init refuses it. Split it into a Human check
 #                  (to-plan.sh split-human-check) or override it:
+#   criteria_missing  the tickets with no acceptance criteria anywhere: not in
+#                  the draft, the issue body or a triage "Agent Brief" comment
+#                  (criteria.py ticket; body wins, then the newest comment).
+#                  tickets.<t>.acceptance_source says where a read list came
+#                  from ("body" or the comment's url). While one stands the
+#                  plan is not approvable: render says so, state.sh init refuses.
 #   human_check_overrides  [{ticket, criterion, why}], one per
 #                  --override-human-check, the Artisan's reason recorded
 #   recorded_checks the recorded checks (checks.sh json over --standards,
@@ -243,23 +249,28 @@ cmd_build() {
   # A ticket the draft gives no `acceptance` list gets its criteria from its
   # issue body (criteria.py extract); a draft's own list wins and its issue is
   # not read. Tickets whose issue can't be read are named on stderr.
-  local repo="" t="" body="" crit="" unchecked=""
+  local repo="" t="" issue="" tc="" unchecked=""
   repo=$(jq -r '.repo // ""' "$draft")
   while IFS= read -r t; do
     [ -n "$t" ] || continue
-    body=""
+    issue=""
     if [ -n "$repo" ] && command -v gh >/dev/null 2>&1; then
-      body=$(gh issue view "$t" -R "$repo" --json body -q .body 2>/dev/null) || body=""
+      issue=$(gh issue view "$t" -R "$repo" --json body,comments 2>/dev/null) || issue=""
     fi
-    if [ -z "$body" ] || ! crit=$(printf '%s\n' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract 2>/dev/null); then
+    if [ -z "$issue" ] || ! tc=$(printf '%s\n' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket 2>/dev/null); then
       unchecked="${unchecked:+$unchecked, }#$t"
       continue
     fi
-    out=$(printf '%s' "$out" | jq --arg t "$t" --argjson c "$crit" '.tickets[$t].acceptance = $c')
+    out=$(printf '%s' "$out" | jq --arg t "$t" --argjson c "$tc" '.tickets[$t].acceptance = $c.criteria
+      | .tickets[$t].acceptance_source = $c.source')
   done < <(printf '%s' "$out" | jq -r '.tickets | to_entries[] | select(.value.acceptance == null and (.value.human_check_for // null) == null) | .key')
   if [ -n "$unchecked" ]; then
     printf 'plan.sh: could not read the issue for %s: those tickets'"'"' criteria were not checked for Human check flags\n' "$unchecked" >&2
   fi
+  # A ticket that still has no criteria (neither the draft, the body nor an
+  # Agent Brief comment gave any) can't be verified: the plan isn't approvable.
+  out=$(printf '%s' "$out" | jq '.criteria_missing = [.tickets | to_entries[]
+    | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
   # Agent criteria that need a person (references/human-checks.md), less the
   # Artisan's overrides.
   ov='[]'
@@ -330,6 +341,14 @@ cmd_render() {
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),
+      ( ($p.criteria_missing // []) | if length == 0 then empty else
+        "### Tickets with no acceptance criteria",
+        "| Ticket |",
+        "|---|",
+        ( .[] | "| \(ticket(.)) (\($p.tickets[.].title // "untitled")) |" ),
+        "",
+        "Neither the ticket body nor a triage Agent Brief comment has a checkbox list of acceptance criteria, so the verifier would have nothing to check. Add a `## Acceptance criteria` checklist to each ticket, then rebuild. Not approvable while one stands.",
+        "" end ),
       ( ($p.human_check_overrides // []) | if length == 0 then empty else
         "### Human-check overrides",
         "| Ticket | Criterion kept on the agent ticket | Why |",
@@ -368,7 +387,8 @@ cmd_render() {
       ( $p.config | settings_list[] | .key as $k
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
-      (if ($p.human_check_flags // []) == [] then "Approve as shown, or name any number to change for this run only."
+      (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) ticket(s) with no acceptance criteria (above)."
+       elif ($p.human_check_flags // []) == [] then "Approve as shown, or name any number to change for this run only."
        else "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)." end)
   ' "$plan"
 }

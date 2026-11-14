@@ -221,6 +221,12 @@ start_one() { # ticket: sets WORKTREE
   else
     git -C "$MAIN" worktree add -q -b "$branch" "$wt" "$base" >/dev/null 2>&1 || die "could not add worktree $wt"
   fi
+  # The project's worktree_setup (#173). A hands-on ticket is the Artisan's, so
+  # no attempt is spent: the worktree goes and the ticket stays queued.
+  if ! worktree_setup "$wt"; then
+    git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    state_die 6 "human.sh: #$t: $SETUP_ERR"
+  fi
   focus=$(get --arg t "$t" '(.plan.hands_on | if . != null and (.ticket | tostring) == $t then .focus else "" end)')
   apply '.tickets[$t].worktree = $wt
     | .tickets[$t].human = {worktree: $wt, branch: $branch, base: $base, focus: $focus,
@@ -338,7 +344,7 @@ cmd_verdict() {
       "",
       "| Criterion | Met | Evidence |",
       "|---|---|---|",
-      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(
+      ($e.acceptance[] | "| \(.criterion) | \(if .met then "yes" elif .gate == true then "checked by the merge gate" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(
          if .met then ([(.evidence.checks // [])[] | "\(.command): \(.result)"] + (.evidence.tests // []) | join("; "))
          else (.evidence.why // "not shown") end) |"),
       "",
