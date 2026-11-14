@@ -95,6 +95,6 @@ The merge gate table (`facts.json` `merge_gates` and `artisan_wait`; `retro.py g
 | Gates not run: reused | `merge_gates.not_run.reused` | a ticket's `suite` record with `reused` (#194), one per CI run |
 | Waiting on the Artisan | `artisan_wait.minutes`, `longest_minutes`, `decisions` | each `gate-opened` to the first `gate-approved`, `gate-decided`, `gate-redirected`, `gate-bypassed`, `gate-deferred`, `gate-resolved`, `gate-empty` or `end-gate-approved` with its `gate` (`end-gate-approved` with none closes `end`); a gate still open is not counted |
 
-A run with no `merge-gate` and no `ci-wait` event (no merge gate ran, or a state file from before they were recorded) has every `merge_gates` figure null, and one with no decided gate has the `artisan_wait` minutes null; the table shows each as a dash.
+A run with no `merge-gate` and no `ci-wait` event (no merge gate ran, or a state file from before they were recorded) has every `merge_gates` figure null, one whose CI gates logged no `ci-wait` (before #195) has its minutes and red gates null, and one with no decided gate has the `artisan_wait` minutes null; the table shows each as a dash.
 
 Tests: `tests/retro.test.sh`, on a seeded sample run with a throwaway individual home, the fake tracker and a stub `claude`.

@@ -467,3 +467,23 @@ test_an_old_run_shows_a_dash_for_each_merge_gate_figure() {
   assert_contains "$out" "| Merge gates run | - |"
   assert_contains "$out" "| Waiting on the Artisan | - |"
 }
+
+test_ci_gates_from_before_their_wait_was_recorded_give_null_minutes_and_causes() {
+  sample_run; gate_events
+  # A run from before #195: its CI gates logged merge-gate but no ci-wait.
+  jq '.events |= map(select(.event != "ci-wait")) | del(.tickets["10"].suite)' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" \
+    && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '5 1' "$(jq -r '.merge_gates | "\(.run) \(.not_run.skipped)"' <<<"$f")" "gates run and skipped are still known"
+  assert_eq 'null null null null null' \
+    "$(jq -r '.merge_gates | "\(.minutes) \(.minutes_per_merged) \(.red.total) \(.red.own) \(.red.no_verdict)"' <<<"$f")" "unknown, not zero"
+}
+
+test_the_table_dashes_only_the_figures_an_old_ci_run_cannot_have() {
+  sample_run; gate_events
+  jq '.events |= map(select(.event != "ci-wait"))' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  local out=; out=$(python3 -I "$PLUGIN_ROOT/skills/retro/scripts/retro.py" gate-costs "$RUN_DIR/state.json")
+  assert_contains "$out" "| Merge gates run | 5 (2.5 per merged ticket) |"
+  assert_contains "$out" "| Waiting on merge gates | - |"
+  assert_contains "$out" "| Red gates by cause | - |"
+}

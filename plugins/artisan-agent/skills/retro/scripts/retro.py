@@ -176,6 +176,12 @@ def merge_gate_costs(s, merged):
     no_verdict = len([e for e in waits if e.get("outcome") == "no-verdict"])
     own = max(0, ci_red - base) + local_red
     run = len(starts) - skipped
+    if not waits and any(g.get("mode") != "local" for _, g in starts):
+        # CI gates from before #195 logged no ci-wait: their minutes and red
+        # causes are unknown, not zero.
+        return {"run": run, "run_per_merged": per(run, merged), "minutes": None, "minutes_per_merged": None,
+                "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
+                "not_run": {"skipped": skipped, "reused": reused}}
     return {"run": run, "run_per_merged": per(run, merged),
             "minutes": num(minutes), "minutes_per_merged": per(minutes, merged),
             "red": {"total": own + base + flaky + no_verdict, "own": own, "base": base,
@@ -390,15 +396,16 @@ def dash(x):
 def gate_costs_table(g, w):
     """The merge gates' costs and the waits on the Artisan as a Markdown table;
     a figure the run can't have is a dash."""
-    if g["run"] is None:
-        run = wait = red = not_run = "-"
-    else:
+    run = wait = red = not_run = "-"
+    if g["run"] is not None:
         run = "%s (%s per merged ticket)" % (g["run"], dash(g["run_per_merged"]))
+        not_run = "skipped %s · reused %s" % (g["not_run"]["skipped"], g["not_run"]["reused"])
+    if g["minutes"] is not None:
         wait = "%s min (%s per merged ticket)" % (g["minutes"], dash(g["minutes_per_merged"]))
-        r = g["red"]
+    r = g["red"]
+    if r["total"] is not None:
         red = "%s: own failure %s · red base %s · flaky %s · no verdict %s" % (
             r["total"], r["own"], r["base"], r["flaky"], r["no_verdict"])
-        not_run = "skipped %s · reused %s" % (g["not_run"]["skipped"], g["not_run"]["reused"])
     artisan = ("%s min over %d decision%s (longest %s min)" % (
         w["minutes"], w["decisions"], "" if w["decisions"] == 1 else "s", w["longest_minutes"])
                if w["minutes"] is not None else "-")
