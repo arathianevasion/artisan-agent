@@ -356,16 +356,22 @@ test_resuming_the_open_run_passes_the_run_lock() {
 # (its grandparent, as a host that runs hooks through a shell would).
 hold_lock_as_ancestor() { # shape: direct|shell
   mkdir -p "$REPO/.artisan-agent/runs/r1"
-  local s="$TEST_TMPDIR/holder.sh"
-  if [ "$1" = shell ]; then
-    printf '#!/bin/bash\nln -s "$$" "%s"\nsh -c '"'"'"$1" run-start'"'"' sh "%s"\nrc=$?\nrm -f "%s"\nexit $rc\n' \
-      "$REPO/.artisan-agent/runs/r1/state.lock" "$PROTECT" "$REPO/.artisan-agent/runs/r1/state.lock" >"$s"
-  else
-    printf '#!/bin/bash\nln -s "$$" "%s"\n"%s" run-start\nrc=$?\nrm -f "%s"\nexit $rc\n' \
-      "$REPO/.artisan-agent/runs/r1/state.lock" "$PROTECT" "$REPO/.artisan-agent/runs/r1/state.lock" >"$s"
-  fi
-  chmod +x "$s"
-  HOLDER_SCRIPT=$s
+  local run="" lock="$REPO/.artisan-agent/runs/r1/state.lock"
+  # "; exit $?" keeps sh from exec-ing the hook in its own place, so the
+  # shell really sits between the holder and the hook.
+  run='"$PROTECT" run-start'
+  [ "$1" = direct ] || run='sh -c '"'"'"$1" run-start; exit $?'"'"' sh "$PROTECT"'
+  HOLDER_SCRIPT="$TEST_TMPDIR/holder-$1.sh"
+  cat >"$HOLDER_SCRIPT" <<HOLDER
+#!/bin/bash
+PROTECT='$PROTECT'
+ln -s "\$\$" '$lock'
+$run
+rc=\$?
+rm -f '$lock'
+exit \$rc
+HOLDER
+  chmod +x "$HOLDER_SCRIPT"
 }
 
 test_the_holding_session_passes_whatever_it_asks_in_both_process_tree_shapes() {
@@ -408,6 +414,37 @@ test_the_holding_session_passes_while_its_wave_runner_holds_the_lock() {
   fake_runner "$OTHER_PID"
   trap 'kill $RUNNER_PID $OTHER_PID 2>/dev/null || true' EXIT
   ln -s "$RUNNER_PID" "$lock"
+  out=$(run_start_args "plan the login page" | "$PROTECT" run-start)
+  assert_contains "$out" '"decision":"block"'
+  assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: plan the login page"
+}
+
+# #153: from another session, "continue", "carry on", "resume" or "pick up",
+# with or without "run" and the run's id (extra words after the id allowed),
+# is a resume. A refused request naming the running run is never filed as a
+# plan; it says how to resume instead. A new plan is still refused and queued.
+test_resume_phrasings_from_another_session_pass_as_a_resume() {
+  make_repo; stub_gh; hold_lock
+  local a=""
+  for a in "continue" "Carry on" "carry  on run" "pick up" "Resume run" "continue r1" "Carry on run r1" \
+           "carry on run r1 after the #151 repair" "PICK UP run r1" "continue #r1" "run r1" "resume run r1 please"; do
+    assert_eq "" "$(run_start_args "$a" | "$PROTECT" run-start)" "typed: $a"
+    assert_eq "" "$(run_start_args "$a" tool | "$PROTECT" run-start)" "called: $a"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+  assert_contains "$(run_start_args "continue with the login page" | "$PROTECT" run-start)" '"decision":"block"'
+}
+
+test_a_refused_request_naming_the_running_run_is_not_filed_as_a_plan() {
+  make_repo; stub_gh; hold_lock
+  local a="" out=""
+  for a in "please carry on run r1" "restart run r1" "look at #r1 again"; do
+    out=$(run_start_args "$a" | "$PROTECT" run-start)
+    assert_contains "$out" '"decision":"block"' "$a"
+    assert_contains "$out" "resume r1" "$a"
+  done
+  assert_eq 0 "$(grep -c . "$GH_LOG")" "nothing was queued as a plan"
+  # A new plan is still refused and queued.
   out=$(run_start_args "plan the login page" | "$PROTECT" run-start)
   assert_contains "$out" '"decision":"block"'
   assert_contains "$(cat "$TEST_TMPDIR/issues")" "Plan: plan the login page"

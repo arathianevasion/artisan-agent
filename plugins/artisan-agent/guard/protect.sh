@@ -101,19 +101,37 @@ case "$mode" in
       /implement-plan | /artisan-agent:implement-plan) resume= ;;
       "/implement-plan "* | "/artisan-agent:implement-plan "*) resume=${resume#* } ;;
     esac
-    case "$resume" in
-      "" | resume | "$run_id" | "resume $run_id") exit 0 ;;
+    # "continue", "carry on", "resume" or "pick up", optionally followed by
+    # "run" and the run's id (or #id), any case; words after the id are fine
+    # (#153). The id alone, or "run <id>", is a resume too.
+    lc=$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]')
+    lid=$(printf '%s' "$run_id" | tr '[:upper:]' '[:lower:]')
+    rest=$lc lead=
+    for verb in continue "carry on" resume "pick up"; do
+      case "$rest" in "$verb" | "$verb "*) rest=${rest#"$verb"}; rest=${rest# }; lead=verb; break ;; esac
+    done
+    case "$rest" in run | "run "*) rest=${rest#run}; rest=${rest# }; lead=${lead:-run} ;; esac
+    case "$rest" in
+      "$lid" | "#$lid") exit 0 ;;
+      "") [ -n "$lead" ] || [ -z "$lc" ] && exit 0 ;;
+      "$lid "* | "#$lid "*) [ -n "$lead" ] && exit 0 ;;
     esac
     # Adding work to the running run is not a second run either: "add <tickets>"
     # and "urgent <ticket>" go through to the add-work flow
     # (skills/implement-plan/SKILL.md, "Adding to a running run"), and are not
     # refused or queued as a separate plan.
     # The request must name a ticket (#45 or 45): "add login page" is a new plan.
-    case "$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]')" in
+    case "$lc" in
       add\ * | add-work\ * | urgent\ * | --urgent\ *)
         if printf '%s' "$resume" | grep -Eq '(^|[^[:alnum:]])#?[0-9]+([^[:alnum:]]|$)'; then exit 0; fi ;;
     esac
     msg="Blocked by the artisan-agent run lock: run $run_id (pid $pid) holds the lock, and a repo has one run at a time."
+    # A request naming the running run ("run <id>" or "#<id>") is about that
+    # run, never a new plan: say how to carry it on and file nothing (#153).
+    case " $(printf '%s' "$lc" | tr -c '[:alnum:]#_.-' ' ') " in
+      *" run $lid "* | *"#$lid "* | *" run $lid. "* | *"#$lid. "*)
+        refuse "$msg Your request names run $run_id, which is already running, so it was not filed as a \`plan\` issue. To carry the run on, call \`/artisan-agent:implement-plan resume $run_id\` (or \`carry on run $run_id\`); the chat that holds the run can carry it on with any wording." ;;
+    esac
     if (cd "$cwd" && "$HERE/queue-plan.sh" "$request") >/dev/null 2>&1; then
       msg="$msg Your request is left as a \`plan\` issue on the tracker; it runs after the current run."
     else
