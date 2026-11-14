@@ -255,10 +255,11 @@ cmd_open() {
   view="$dir/$id.view.json"
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
-    jq --argjson cards "$(PACKET cards <"$view.tmp")" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
-      '.gate.cards = $cards | . + $hc' "$view.tmp" >"$view.tmp2"
+    PACKET cards <"$view.tmp" >"$view.cards"
+    jq --slurpfile cards "$view.cards" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
+      '.gate.cards = $cards[0] | . + $hc' "$view.tmp" >"$view.tmp2"
     mv "$view.tmp2" "$view"
-    rm -f "$view.tmp"
+    rm -f "$view.tmp" "$view.cards"
   fi
   body="$dir/$id.md"
   PACKET body <"$view" >"$body"

@@ -319,7 +319,8 @@ packet() {
               tickets: [$s[0].plan.scope[] | tostring | select($s[0].tickets[.].status? == "merged")],
               dependents: []},
        state: $s[0], guardrails: "", provisional: ""}')
-    gview=$(jq --argjson c "$(PACKET cards <<<"$gview")" '.gate.cards = $c' <<<"$gview")
+    # The view and its cards grow with the run: both reach jq on stdin (#203).
+    gview=$({ printf '%s\n' "$gview"; PACKET cards <<<"$gview"; } | jq -s '.[0].gate.cards = .[1] | .[0]')
     PACKET body <<<"$gview" | sed '1,2d' | sed '/^## Overall action/,$d'
   else
     echo "| Gate | Role needed | Tickets | PRs to |"
