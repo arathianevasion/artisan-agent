@@ -46,6 +46,9 @@ DEFS='
     else (. * 100 | round) as $c | "$\($c / 100 | floor).\($c % 100 | tostring | if length == 1 then "0" + . else . end)" end;
   def name($s; $t): "#\($t) (\($s.plan.tickets[$t].title // "untitled"))";
   def arr: if type == "array" then . elif . == null then [] else [.] end;
+  # The criteria only a person can verify, and where they went (#158).
+  def hc($e): if ($e.criteria_human // 0) == 0 then ""
+    else ", \($e.criteria_human) to a Human check" + (if $e.human_check then " (#\($e.human_check))" else "" end) end;
   def ev: if type == "object" then
       ([(.tests | arr)[] | tostring] + [(.checks | arr)[] | if type == "object" then "\(.command): \(.result)" else tostring end]
        + (if .diff then [.diff | tostring] else [] end) + (if .why then [.why | tostring] else [] end)) | join("; ")
@@ -60,12 +63,12 @@ cmd_comment() {
   jq -r --arg t "$t" "$DEFS"'
     . as $s | .tickets[$t] as $k
     | $k.evidence | .unsure |= arr | .decisions |= arr | .verifier.unsure |= arr | . as $e
-    | "**Evidence for \(name($s; $t))**: the verifier says **\($e.verdict)**, \($e.criteria_met) of \($e.criteria_total) criteria met (attempt \($e.attempt), commit \($e.commit[0:7]), run \($s.run_id)).",
+    | "**Evidence for \(name($s; $t))**: the verifier says **\($e.verdict)**, \($e.criteria_met) of \($e.criteria_total) criteria met\(hc($e)) (attempt \($e.attempt), commit \($e.commit[0:7]), run \($s.run_id)).",
       (if $k.status == "merged" and $k.merge_commit then
          "Merged into `\($s.integration.branch)` as \($k.merge_commit[0:7]); the full suite passed after the merge." else empty end),
       "",
       "| Criterion | Met | Evidence |", "|---|---|---|",
-      ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" else "no" end) | \(.evidence | ev | cell) |"),
+      ($e.acceptance[] | "| \(.criterion | cell) | \(if .met then "yes" elif .human == true then "needs a human check\(if $e.human_check then " (#\($e.human_check))" else "" end)" else "no" end) | \(.evidence | ev | cell) |"),
       "",
       "- **Tests the worker ran:** \(if $e.tests then ((if ($e.tests.files // []) | length > 0 then "\($e.tests.files | map("`\(.)`") | join(", ")): " else "" end) + "`\($e.tests.command // "-")` → \($e.tests.summary // "-" | cell) (the full suite runs at the merge gate)") else "not reported" end)",
       "- **Checks:** " + (if $e.checks == null then "not reported"
@@ -124,7 +127,7 @@ cmd_digest() {
           # A contract from an earlier attempt says nothing about the current one.
           + " | " + (if $e == null then "not verified"
                      elif $e.attempt != $k.attempts and $k.status != "blocked" then "not verified yet (attempt \($k.attempts))"
-                     else "\($e.criteria_met)/\($e.criteria_total) verified" end)
+                     else "\($e.criteria_met)/\($e.criteria_total) verified\(hc($e))" end)
           + " | " + (if $e then "\($e.unsure | arr | length) unsure, \($e.decisions | arr | length) decision\(if ($e.decisions | arr | length) == 1 then "" else "s" end)" else "-" end)
           + " | \($k.cost_usd // 0 | usd) of \($s.plan.tickets[$t].estimate_usd // null | usd) |" ),
       "",

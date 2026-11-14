@@ -30,6 +30,15 @@
 #       evidence contract, write it to the state file (one event,
 #       "verified"), remove the verifier's worktree. Prints one line:
 #         pass <met>/<total>                    every criterion met: merge it
+#         pass <met>/<total>, <k> to Human check #<n>
+#                                               every criterion met but k the
+#                                               verifier marked "human" (only a
+#                                               person can verify them): merge
+#                                               it; those k moved to Human
+#                                               check #n (to-plan.sh
+#                                               split-human-check), in the
+#                                               run's scope, for the next slice
+#                                               gate. Never a failed attempt
 #         fail <met>/<total> retry: <first unmet>   a failed attempt: queued
 #                                               for a fresh worker given the
 #                                               verifier's findings
@@ -41,7 +50,13 @@
 #       cites it unmet, or every criterion when none does.
 #       An unmet criterion on which the verifier named a guardrail (its
 #       `guardrail`, an id from guardrails.sh resolve) logs guardrail-fired
-#       in the same write. A fail posts the evidence comment on the ticket. Exit 0 pass, 6 fail
+#       in the same write. A fail posts the evidence comment on the ticket.
+#       A "human" criterion is neither met nor unmet: it never fails an
+#       attempt, and a pass with some splits them off before anything is
+#       recorded (logging human-check-split), so judging again, or after a
+#       crash, makes no second Human check. A ticket with a ticket_path has
+#       no tracker ticket to split: its contract says to move them by hand.
+#       Exit 0 pass, 6 fail
 #       or a second verifier failure (blocked), 8 the verifier is still
 #       running, 14 the verifier failed once: start it again.
 #
@@ -279,6 +294,22 @@ cmd_start() {
 
 # ------------------------------------------------------------------- judge
 
+# Moves the criteria (a JSON array) off ticket $1 into its Human check, one
+# split-human-check call each; prints the Human check's number.
+split_human_check() { # ticket criteria-json
+  local c="" out="" hc="" n=0 i=0
+  n=$(printf '%s' "$2" | jq length)
+  while [ "$i" -lt "$n" ]; do
+    c=$(printf '%s' "$2" | jq -r --argjson i "$i" '.[$i]')
+    out=$("$SCRIPT_DIR/to-plan.sh" split-human-check --repo "$(get .repo)" "$1" "$c") \
+      || die "could not split \"$c\" off #$1 into its Human check; nothing recorded, judge again"
+    hc=$(printf '%s\n' "$out" | sed -n 's/^Human check #\([0-9][0-9]*\) for .*/\1/p' | tail -1)
+    [ -n "$hc" ] || die "split-human-check named no Human check for #$1 ($out); judge again"
+    i=$((i + 1))
+  done
+  printf '%s\n' "$hc"
+}
+
 # The evidence contract, from the criteria lined up with the verdict and the
 # worker's claims ($acc, lib/criteria.py align), the worker's evidence record
 # ($record), the verdict ($verdict) and the state file.
@@ -287,14 +318,16 @@ CONTRACT_FILTER='
   def vers: [to_entries[] | select(.key | startswith("verify.")) | .value] | add // 0;
   . as $s | $s.tickets[$t] as $k
   | ([$acc[] | select(.met)] | length) as $met
+  | ([$acc[] | select(.human == true)] | length) as $human
   | { ticket: $t,
       title: ($s.plan.tickets[$t].title // null),
       attempt: $n,
       commit: $commit,
       base: $base,
-      verdict: (if $met == ($acc | length) then "pass" else "fail" end),
+      verdict: (if $met + $human == ($acc | length) then "pass" else "fail" end),
       checks: $checks,
       criteria_met: $met,
+      criteria_human: $human,
       criteria_total: ($acc | length),
       acceptance: $acc,
       tests: ($record.tests // null),
@@ -307,7 +340,11 @@ CONTRACT_FILTER='
               estimate_usd: ($s.plan.tickets[$t].estimate_usd // null) },
       verifier: { attempt: $v, model: $model,
                   unsure: ($verdict.unsure // []), notes: ($verdict.notes // null) },
-      verified_at: $now }'
+      verified_at: $now }
+  | if $human == 0 then .
+    elif $met == 0 and .verdict == "pass"
+    then .note = "Every criterion needs a human check: the verifier could show none of them, so this work passed on the Human check alone"
+    else . end'
 
 # The line judge prints for a judged verifier, and its exit status.
 say_again() { # ticket
@@ -316,8 +353,10 @@ say_again() { # ticket
     | if $x.verdict == "error" then "error \($x.reason)"
       else $k.evidence as $e
         | "\($e.verdict) \($e.criteria_met)/\($e.criteria_total)"
-          + (if $e.verdict == "pass" then ""
-             else " \($x.next // "blocked"): \([$e.acceptance[] | select(.met | not) | .criterion] | first)" end)
+          + (if $e.verdict != "pass" then " \($x.next // "blocked"): \([$e.acceptance[] | select((.met | not) and .human != true) | .criterion] | first)"
+             elif ($e.criteria_human // 0) == 0 then ""
+             elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
+             else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
       end')
   echo "$line"
   case "$line" in
@@ -410,7 +449,8 @@ cmd_judge() {
   acc=$(python3 -I "$SCRIPT_DIR/lib/criteria.py" align "$RUN_DIR/prompts/$id.$v.criteria.json" "$verdict" "$record") \
     || die "could not line the verdict up with #$t's criteria"
   # A red recorded check: every criterion marked met that cites it is unmet;
-  # one no criterion cites leaves no criterion shown met.
+  # one no criterion cites leaves no criterion shown met, nor any left to a
+  # Human check (a broken build is not passed on to the Artisan to try).
   acc=$(printf '%s' "$acc" | jq -c --argjson res "$cres" '
     def cited: [(.evidence | objects | .checks // []) | if type == "array" then .[] else . end | objects | .command];
     if ($res.recorded | not) then . else
@@ -418,7 +458,10 @@ cmd_judge() {
       | if ($red | length) == 0 then . else
           ([.[] | cited[]]) as $all
           | [$red[] | select(.command as $c | $all | index($c))] as $named
-          | map(if .met | not then . else
+          | map(if .human == true and ($named | length) == 0
+              then del(.human) | .evidence = ((.evidence | objects // {})
+                + {why: ($red | map("recorded check `\(.command)` is red: \(.result)") | join("; "))})
+            elif .met | not then . else
               cited as $mine
               | (if ($named | length) == 0 then $red else [$named[] | select(.command as $c | $mine | index($c))] end) as $hit
               | if ($hit | length) == 0 then .
@@ -442,15 +485,48 @@ cmd_judge() {
     '$st[0] | ($verdict[0]) as $verdict | '"$CONTRACT_FILTER" >"$contract" \
     || die "could not build the evidence contract for #$t"
 
+  # A pass with criteria only a person can verify: they move to the agent
+  # ticket's Human check first (to-plan.sh split-human-check: created, or the
+  # open one added to; a repeat changes nothing), then the verdict is
+  # recorded with it. A split that fails records nothing: judge again.
+  local hc="" hcrit=""
+  hcrit=$(jq -c '[.acceptance[] | select(.human == true) | .criterion]' "$contract")
+  if [ "$(jq -r .verdict "$contract")" = pass ] && [ "$hcrit" != "[]" ]; then
+    if [ -n "$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')" ]; then
+      jq '.unsure += ["Only a person can verify \(.criteria_human) of its criteria, and it has no tracker ticket to split them from: move them into a Human check by hand"]' \
+        "$contract" >"$contract.tmp" && mv "$contract.tmp" "$contract"
+    else
+      hc=$(split_human_check "$t" "$hcrit") || exit 1
+      jq --arg hc "$hc" '.human_check = $hc' "$contract" >"$contract.tmp" && mv "$contract.tmp" "$contract"
+    fi
+  fi
+
   apply '.tickets[$t].evidence = $ev[0]
     | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
              met: $ev[0].criteria_met, total: $ev[0].criteria_total}; $now)
     | reduce ($ev[0].acceptance[] | select((.met | not) and (.guardrail // "") != "")) as $c (.;
         event({event: "guardrail-fired", guardrail: $c.guardrail, ticket: $t, attempt: $n,
-               criterion: $c.criterion, by: "verifier"}; $now))' \
-    --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract"
+               criterion: $c.criterion, by: "verifier"}; $now))
+    | if ($ev[0].human_check // null) == null then . else
+        ($ev[0].human_check) as $h
+        | .plan.scope = ((.plan.scope + [$h]) | unique)
+        | .plan.tickets[$h] = ((.plan.tickets[$h] // {}) + {title: $title, human_check_for: $t})
+        | (if .tickets[$h] == null then .tickets[$h] = new_ticket($h) else . end)
+        | .tickets[$h].human_check = ((.tickets[$h].human_check // {state: "open"}) + {for: $t})
+        | event({event: "human-check-split", ticket: $t, attempt: $n, human_check: $h,
+                 criteria: [$ev[0].acceptance[] | select(.human == true) | .criterion]}; $now)
+      end' \
+    --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract" \
+    --arg title "Human check: $(get --arg t "$t" '.plan.tickets[$t].title // "#\($t)"') (#$t)"
   remove_worktree "$wt"
+  if [ -n "$hc" ]; then
+    # Nothing is ticked for them here: they are the Human check's now.
+    gh issue comment "$t" -R "$(get .repo)" --body "$(jq -r --arg hc "$hc" '
+      "The verifier marked \(.criteria_human) of this ticket'"'"'s criteria as needing a human check (only a person can verify them), so they moved to Human check #\($hc), for the next slice gate:",
+      "", (.acceptance[] | select(.human == true) | "- \(.criterion): \(.evidence.why // "no reason given")")' "$contract")" >/dev/null 2>&1 \
+      || echo "verify.sh: could not comment on #$t that its criteria moved to Human check #$hc" >&2
+  fi
 
   if [ "$(jq -r .verdict "$contract")" = fail ]; then
     # A criterion missed is a failed attempt: a fresh worker gets the
@@ -461,13 +537,13 @@ cmd_judge() {
       # A hands-on ticket is the Artisan's: no fresh worker, no attempt used.
       # It goes back to them with what the verifier found (human.sh verdict).
       apply '.tickets[$t] |= (.status = "queued" | .human.done_at = null
-          | .human.feedback += [{round: $n, unmet: [$e[0].acceptance[] | select(.met | not) | .criterion]}])
+          | .human.feedback += [{round: $n, unmet: [$e[0].acceptance[] | select((.met | not) and .human != true) | .criterion]}])
         | .tickets[$t].verifications[-1].next = "human"
         | event({event: "human-feedback", ticket: $t, attempt: $n}; $now)' \
         --arg t "$t" --argjson n "$n" --slurpfile e "$contract"
     else
     apply 'failed_attempt($t; $r; $now)
-      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select(.met | not) | .criterion] | first)"' "$contract")"
+      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true) | .criterion] | first)"' "$contract")"
     fi
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"

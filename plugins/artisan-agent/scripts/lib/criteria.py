@@ -12,7 +12,8 @@ Usage:
       such heading gives every checkbox line in it. Text is kept verbatim.
   python3 -I criteria.py align <criteria.json> <verdict.json> <record.json>
       one entry per ticket criterion, in order, as JSON: {criterion, met,
-      evidence, claimed}. Each takes the verdict entry with the same text,
+      evidence, claimed}, plus "human": true where the verdict's "met" is
+      "human" (only a person can verify it; met stays false). Each takes the verdict entry with the same text,
       else the verdict entry in its position when the counts agree; with
       none it is unmet. "claimed" is the worker record's "met" by the same
       rule (the same text, else the entry in its position when the record's
@@ -85,8 +86,12 @@ def align(criteria, verdict, record):
             "evidence": (e.get("evidence") or {}) if e else {"why": "the verifier gave no verdict on this criterion"},
             "claimed": None if w is None else w.get("met") is True,
         }
+        # Only a person can verify it (references/human-checks.md): not met,
+        # and not unmet either; verify.sh judge splits it into a Human check.
+        if e and e.get("met") == "human":
+            entry["human"] = True
         # The guardrail an unmet criterion broke, as the verifier named it.
-        if not met and e and isinstance(e.get("guardrail"), str) and e["guardrail"]:
+        elif not met and e and isinstance(e.get("guardrail"), str) and e["guardrail"]:
             entry["guardrail"] = e["guardrail"]
         out.append(entry)
     return out
