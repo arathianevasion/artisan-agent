@@ -214,7 +214,8 @@ orchestrator_max_turns() {
 # failed, and none of them passed verification, the run halts: a decision for
 # the Artisan, and no wave launches until they resume it. A ticket failed when
 # it is blocked for any reason but its worker's own design question (result
-# status "blocked"). One verified pass, merged or not (a red suite or CI gate
+# status "blocked"). One verifier's pass for a ticket's current attempt
+# (a pass from an earlier attempt or wave doesn't count), merged or not (a red suite or CI gate
 # can block a verified ticket at its merge), means the wave did not fail
 # whole: something downstream of the workers works, and each failed ticket
 # keeps its own handling (retry, exception gate). A one-ticket wave failing
@@ -226,8 +227,7 @@ halt_if_wave_failed() {
     | [.tickets | to_entries[] | select(.value.wave != null and .value.wave == $w)] as $d
     | if $w == 0 or .halted != null or ($d | length) < 2
          or ([$d[] | select(.value.status != "blocked" or .value.result.status? == "blocked")] | length) > 0
-         or ([$d[] | select(.value.evidence.verdict? == "pass"
-                            or any((.value.verifications // [])[]; .verdict? == "pass"))] | length) > 0 then .
+         or any($d[]; .value | verified_pass) then .
       else ([$d[].key]) as $ts
         | ($d | map("#\(.key): \(.value.blocked_reason // ((.value.failures // []) | last | .reason?) // "see its decision")") | join("; ")) as $why
         | .halted = {wave: $w, tickets: $ts, at: $now,
@@ -274,7 +274,7 @@ check_orchestrator_exit() { # id attempt wave classification
   cause=$(exit_cause "$4")
   apply '
     [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
-     | ($k.evidence != null and $k.evidence.verdict == "pass" and $k.evidence.attempt == $k.attempts) as $passed
+     | ($k | verified_pass) as $passed
      | if $k.status == "in_flight" then {ticket: $t, why: "in flight, no verdict", cause: "no-verdict"}
        elif $k.status != "returned" then empty
        elif ($passed | not) then {ticket: $t, why: "returned, no verdict", cause: "no-verdict"}
