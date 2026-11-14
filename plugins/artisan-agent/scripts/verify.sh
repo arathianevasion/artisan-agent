@@ -229,7 +229,7 @@ cmd_start() {
   trap 'rm -rf "'"$claim"'"' EXIT
 
   local criteria= base= ib= wt= id= prompt= cfile= repo= title= path= expected= result= model= estimate= minutes= ref= suite=
-  local std= checks= cout= leave= gate=
+  local std= checks= cout= leave= gate= cionly='[]' worker=0
   criteria=$(read_criteria "$t")
   [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
@@ -262,6 +262,11 @@ cmd_start() {
   # worker does (checks.sh run --worker); it runs every other recorded check.
   gate=$("$SCRIPT_DIR/merge-gate.sh" mode) || die "could not tell this machine's merge gate mode (merge-gate.sh show)"
   if [ -n "$suite" ] && [ "$gate" = ci ]; then leave=$suite; fi
+  # And a recorded check this machine can't run (runs_locally, #194) is the
+  # worker's CI run on its branch: judge checks that run instead.
+  cionly=$("$SCRIPT_DIR/checks.sh" ci-only --file "$std" | jq -Rsc 'split("\n") | map(select(. != ""))') \
+    || die "could not read the recorded checks in $std"
+  if [ "$gate" = ci ] && { [ -n "$leave" ] || [ "$cionly" != '[]' ]; }; then worker=1; fi
   result="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
   prompt="$RUN_DIR/prompts/$id.$v.md"
@@ -279,9 +284,11 @@ cmd_start() {
     if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then
       printf -- '- The recorded checks (%s, `## Checks`; each proven to fail at setup). Run exactly these, from your checkout, with this one command. It writes their results where the judge reads them; a verdict without them is an error:\n' "$std"
       printf '    $ %q run%s --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" \
-        "$([ -z "$leave" ] || printf ' --worker --suite %q' "$leave")" "$std" "$cout"
-      printf '%s' "$checks" | jq -r --arg l "$leave" '.checks[] | "    - `\(.command)`"
-        + (if .command == $l then ": left to the merge gate, which runs on CI from this machine; the command skips it" else "" end)'
+        "$([ "$worker" = 0 ] || printf ' --worker'; [ -z "$leave" ] || printf ' --suite %q' "$leave")" "$std" "$cout"
+      printf '%s' "$checks" | jq -r --arg l "$leave" --argjson ci "$cionly" '.checks[] | "    - `\(.command)`"
+        + (if .command == $l then ": left to the merge gate, which runs on CI from this machine; the command skips it"
+           elif (.command as $c | $ci | index($c)) != null then ": runs on CI on the worker'"'"'s branch (this machine can'"'"'t run it); the command skips it, and the judge checks the worker'"'"'s CI run for this commit"
+           else "" end)'
       printf '  A red one makes every criterion it bears on unmet: cite it in that criterion'"'"'s evidence.checks. If you can'"'"'t tie it to any criterion, every criterion is unmet.\n'
     else
       printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found, one quoted argument each. It writes their results where the judge reads them and says you fell back:\n' \
@@ -302,12 +309,13 @@ cmd_start() {
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
       + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null,
-          checks: ($ck | {recorded, file, reason, commands: [.checks[].command | select(. != $leave)], results: $co}
+          checks: ($ck | {recorded, file, reason, commands: [.checks[].command | select(. as $c | $c != $leave and ($ci | index($c) | not))], results: $co}
                    + (if $leave != "" and ([.checks[].command] | index($leave)) != null
-                      then {left_to_merge_gate: [$leave]} else {} end))}])
+                      then {left_to_merge_gate: [$leave]} else {} end)
+                   + (if $ci == [] then {} else {ci_only: $ci} end))}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
-    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave"
+    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave" --argjson ci "$cionly"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid=
   # The project's worktree_setup (#173) runs before the verifier starts. A
@@ -331,6 +339,34 @@ cmd_start() {
 }
 
 # ------------------------------------------------------------------- judge
+
+# ci_only_results ticket checks-record results: the results with one entry
+# per CI-only check (#194; the verification's checks.ci_only), passed only
+# when the worker's evidence names a run (ci_runs) that worker-ci.sh check
+# finds green for exactly the commit verified, and with that run as ci_run.
+# A red entry makes the criteria unmet as a red recorded check does.
+ci_only_results() {
+  local t="$1" ck="$2" res="$3" commit="" rec="" id="" out="" ok=false why="" run='null'
+  [ "$(printf '%s' "$ck" | jq '(.ci_only // []) | length')" -gt 0 ] || { printf '%s\n' "$res"; return 0; }
+  commit=$(get --arg t "$t" '.tickets[$t].verifications[-1].commit')
+  rec="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+  run=$(jq -c --arg c "$commit" '[(.ci_runs // [])[] | objects | select(.sha == $c and .conclusion == "success")] | last // null' "$rec" 2>/dev/null) || run=null
+  [ -n "$run" ] || run=null
+  if [ "$run" = null ]; then
+    why="no green CI run for $commit in the worker's evidence (ci_runs)"
+  else
+    id=$(printf '%s' "$run" | jq -r .run_id)
+    if out=$("$SCRIPT_DIR/worker-ci.sh" check --repo "$(get .repo)" --run-id "$id" --sha "$commit"); then
+      ok=true why="green on CI: run $id"
+    else
+      why="no green CI run for $commit: $(printf '%s' "$out" | jq -r '.why // "run \($id) could not be read"' 2>/dev/null || echo "run $id could not be read")"
+      run=null
+    fi
+  fi
+  printf '%s' "$res" | jq -c --argjson ck "$ck" --argjson ok "$ok" --arg why "$why" --argjson run "$run" '
+    .results += [$ck.ci_only[] | {command: ., passed: $ok, exit_code: (if $ok then 0 else 1 end), result: $why, ci: true}]
+    | if $run == null then . else .ci_run = ($run | {run_id, url, sha, tree, workflow, branch, full, inputs, minutes}) end'
+}
 
 # Moves the criteria (a JSON array) off ticket $1 into its Human check, one
 # split-human-check call each; prints the Human check's number.
@@ -470,6 +506,7 @@ cmd_judge() {
     cres=$(printf '%s' "$ck" | jq -c '{recorded: false, reason, results: [],
       fallback: "no recorded checks (\(.reason)): the verifier ran none it found"}')
   fi
+  [ -n "$why" ] || cres=$(ci_only_results "$t" "$ck" "$cres")
   if [ -n "$why" ]; then
     remove_worktree "$wt"
     apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = $r)

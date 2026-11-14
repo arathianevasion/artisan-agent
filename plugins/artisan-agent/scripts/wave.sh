@@ -1214,6 +1214,13 @@ finish_merge() {
       git -C "$wt" reset -q --hard "$pre"
       die "#$t not merged: $NO_GATE_WORKFLOW"
     }
+    # The worker's green run on its branch, when it ran the gate workflow in
+    # full (no ci_gate.worker_inputs), is offered for reuse (#194):
+    # merge-gate.sh reuses it only when this merge's tree is the tree it tested.
+    ci=$(jq -c --argjson r "$(get -c --arg t "$t" --arg c "$TIP" '.tickets[$t].evidence
+        | if . != null and .commit == $c and (.checks.ci_run.full // false) == true
+          then {run_id: .checks.ci_run.run_id, sha: .checks.ci_run.sha} else null end')" \
+      'if $r == null then . else . + {reuse: $r} end' <<<"$ci")
   fi
   k=$(( $(get --arg t "$t" '[.events[] | select(.event == "merge-gate" and .ticket == $t)] | length') + 1 ))
   key="$t.$n.g$k"
@@ -1245,6 +1252,9 @@ launch_gate() {
     # The release allowlist (#168): a merge that only changes these paths over
     # a green commit is recorded green without a dispatch.
     while IFS= read -r p; do args+=(--skip-path "$p"); done < <(skip_paths)
+    if [ "$(jq -r '.reuse != null' <<<"$g")" = true ]; then
+      args+=(--reuse-run "$(jq -r .reuse.run_id <<<"$g")" --reuse-sha "$(jq -r .reuse.sha <<<"$g")")
+    fi
     [ "${1:-}" != --resume ] || args+=(--resume)
   else
     args=(local --dir "$(integration_worktree)" --command "$(get '.plan.suite_command')"
@@ -1393,7 +1403,8 @@ finish_gate() {
     fi
     record=$(jq -c --arg c "$suite" '{command: $c, passed: true}
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
-      + (if .skipped then {skipped, relied_on, why} else {} end)' <<<"$GATE_JSON")
+      + (if .skipped then {skipped, relied_on, why} else {} end)
+      + (if .reused then {reused, relied_on, why} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
     apply '.merge_gate = null'
@@ -1745,8 +1756,15 @@ skip_paths() {
 
 # note_skipped_gate record who-json: a gate that CI never ran, because only
 # release paths changed over a green commit, leaves an event naming the green
-# run it relied on (#168). Any other record leaves nothing.
+# run it relied on (#168); one that reused a worker's green run on its branch
+# (#194) leaves merge-gate-reused. Any other record leaves nothing.
 note_skipped_gate() {
+  if [ "$(jq -r '.reused // null' <<<"$1")" != null ]; then
+    # A worker's green run on its branch tested this merge's tree (#194).
+    apply 'event({event: "merge-gate-reused", sha: $g.sha, run_id: $g.relied_on.run_id, url: $g.relied_on.url,
+        relied_on_sha: $g.relied_on.sha, why: $g.why} + $who; $now)' --argjson g "$1" --argjson who "$2"
+    return 0
+  fi
   [ "$(jq -r '.skipped // false' <<<"$1")" = true ] || return 0
   apply 'event({event: "merge-gate-skipped", sha: $g.sha, run_id: $g.relied_on.run_id, url: $g.relied_on.url,
       relied_on_sha: $g.relied_on.sha, why: $g.why} + $who; $now)' --argjson g "$1" --argjson who "$2"

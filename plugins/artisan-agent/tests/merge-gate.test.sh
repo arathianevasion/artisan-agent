@@ -785,3 +785,86 @@ test_mg_reuse_never_counts_a_run_that_was_not_green_for_that_commit() {
   skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
   dispatched || fail "a run for another commit was reused"
 }
+
+# ---- a worker's CI run on its branch (#194)
+
+# A CI machine whose project has an e2e check that never runs here, a gate
+# workflow in the project config the worker reads, and a worker that runs
+# CI on its branch (WORKER_CI=1). [config-extra] goes under ci_gate.
+setup_worker_ci() { # [config-extra]
+  setup_ci
+  printf '#!/bin/sh\ntouch %s/e2e-ran-here\n' "$TEST_TMPDIR" >"$PROJECT/e2e.sh"
+  printf '# Coding standards\n\n## Checks\n\n- `true`: proven to fail on 2026-11-13, breaking: x\n- `sh e2e.sh`: proven to fail on 2026-11-13, breaking: y (runs_locally: never)\n' >"$PROJECT/CODING_STANDARDS.md"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m standards
+  git_quiet -C "$PROJECT" branch -f run/r1 main
+  git_quiet -C "$PROJECT" push -q origin main
+  mkdir -p "$PROJECT/.artisan-agent"
+  printf 'ci_gate:\n  workflow: ci.yml\n%s' "${1:-}" >"$PROJECT/.artisan-agent/config.yml"
+  export WORKER_CI=1 VERIFIER_RUN_CHECKS=1
+}
+
+dispatches() { grep -c '^workflow run' "$FAKE_GH_DIR/calls" 2>/dev/null || true; }
+
+# verified_ticket, but judged whatever the verdict (fail exits 6).
+judged_ticket() {
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.1.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
+  "$SCRIPTS/verify.sh" judge "$RUN_DIR" 1 >"$TEST_TMPDIR/judge.out" 2>"$TEST_TMPDIR/judge.err" || true
+}
+
+test_mg_worker_ci_the_verifier_passes_a_green_branch_run_and_the_merge_gate_reuses_it() {
+  setup_worker_ci
+  judged_ticket
+  local commit=
+  commit=$(state_get '.tickets["1"].evidence.commit')
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')" "$(cat "$TEST_TMPDIR/judge.out" "$TEST_TMPDIR/judge.err")"
+  assert_eq "9001 $commit true" "$(state_get '.tickets["1"].evidence.checks.ci_run | "\(.run_id) \(.sha) \(.full)"')"
+  # The verifier didn't run the e2e check here: it was left to the worker's CI run.
+  assert_eq '["true"]' "$(state_get '.tickets["1"].verifications[0].checks.commands | tojson')"
+  assert_eq '["sh e2e.sh"]' "$(state_get '.tickets["1"].verifications[0].checks.ci_only | tojson')"
+  assert_contains "$(cat "$RUN_DIR/prompts/verify-1.1.md")" '- `sh e2e.sh`: runs on CI'
+  [ ! -e "$TEST_TMPDIR/e2e-ran-here" ] || fail "the e2e check ran on this machine"
+  assert_eq 1 "$(dispatches)" "only the worker's run"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "9001 true" "$(state_get '.tickets["1"].suite | "\(.reused) \(.passed)"')"
+  assert_eq 1 "$(dispatches)" "the merge gate dispatched nothing"
+  assert_eq 9001 "$(state_get '[.events[] | select(.event == "merge-gate-reused")] | last | .run_id')"
+}
+
+test_mg_worker_ci_the_verifier_fails_a_commit_with_no_green_run_for_a_ci_only_check() {
+  setup_worker_ci
+  unset WORKER_CI
+  judged_ticket
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(state_get '.tickets["1"].evidence.acceptance[0].evidence.why')" "no green CI run"
+  assert_eq '["sh e2e.sh:false"]' "$(state_get '[.tickets["1"].evidence.checks.results[] | select(.ci) | "\(.command):\(.passed)"] | tojson')"
+}
+
+test_mg_worker_ci_a_red_branch_run_fails_the_verifier_too() {
+  setup_worker_ci
+  echo failure >"$FAKE_GH_DIR/ci-outcome"
+  judged_ticket
+  rm "$FAKE_GH_DIR/ci-outcome"
+  assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
+}
+
+test_mg_worker_ci_with_worker_inputs_the_run_passes_them_and_the_merge_gate_runs_in_full() {
+  setup_worker_ci '  worker_inputs:
+    macos: false
+'
+  judged_ticket
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "-f macos=false"
+  assert_eq false "$(state_get '.tickets["1"].evidence.checks.ci_run.full')"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "null 9002" "$(state_get '.tickets["1"].suite | "\(.reused // null) \(.run_id)"')"
+  assert_eq 2 "$(dispatches)" "the merge gate ran CI in full"
+}
