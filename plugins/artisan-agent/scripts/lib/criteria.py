@@ -30,7 +30,16 @@ Usage:
       none it is unmet. "claimed" is the worker record's "met" by the same
       rule (the same text, else the entry in its position when the record's
       count matches the ticket's), or null. A record or verdict that is missing or unreadable
-      counts as empty.
+      counts as empty. A criterion the worker's record lists in
+      "unmeetable" (no worker could meet it here, #186), by the same text,
+      gets "unmeetable": {why, verifier_agrees}: the worker's why, and
+      whether the verifier agrees (it is unmet and the verdict entry says
+      "unmeetable": true); never on one that is "human" or "gate".
+  python3 -I criteria.py change <changes.json> < criteria.json
+      the criteria (a JSON array) with the changes the Artisan made at an
+      exception gate applied in order (#186): each {action, criterion, as?};
+      "drop" and "split" take the criterion off, "rewrite" puts "as" in its
+      place. A change naming no criterion here changes nothing.
   python3 -I criteria.py tick <evidence.json> < body.md > body.md
       the body with "- [ ] <criterion>" turned into "- [x] <criterion>" for
       every criterion the evidence (a contract or a record) marks met, or
@@ -143,8 +152,31 @@ def find(items, criterion):
     return next((e for e in items if norm(e.get("criterion", "")) == key), None)
 
 
+def unmeetable_claims(record):
+    """The worker record's "unmeetable" entries: dicts only."""
+    listed = record.get("unmeetable") if isinstance(record, dict) else None
+    return [u for u in listed if isinstance(u, dict)] if isinstance(listed, list) else []
+
+
+def change(criteria, changes):
+    out = list(criteria)
+    for ch in changes if isinstance(changes, list) else []:
+        if not isinstance(ch, dict):
+            continue
+        key = norm(ch.get("criterion", ""))
+        at = next((i for i, c in enumerate(out) if norm(c) == key), None)
+        if at is None:
+            continue
+        if ch.get("action") == "rewrite" and str(ch.get("as") or "").strip():
+            out[at] = str(ch["as"]).strip()
+        elif ch.get("action") in ("drop", "split"):
+            del out[at]
+    return out
+
+
 def align(criteria, verdict, record):
     given, claims = entries(verdict), entries(record)
+    listed = unmeetable_claims(record)
     out = []
     for i, c in enumerate(criteria):
         e = find(given, c)
@@ -172,6 +204,14 @@ def align(criteria, verdict, record):
         # The guardrail an unmet criterion broke, as the verifier named it.
         elif not met and e and isinstance(e.get("guardrail"), str) and e["guardrail"]:
             entry["guardrail"] = e["guardrail"]
+        # The worker said no worker could meet it here (#186): kept with
+        # whether the verifier agrees, which only an unmet one can.
+        u = find(listed, c)
+        if u is not None and not entry.get("human") and not entry.get("gate"):
+            entry["unmeetable"] = {
+                "why": str(u.get("why") or ""),
+                "verifier_agrees": not met and bool(e) and e.get("unmeetable") is True,
+            }
         out.append(entry)
     return out
 
@@ -210,6 +250,14 @@ def main(argv):
         if not isinstance(criteria, list):
             sys.exit("criteria.py: the criteria file is not a JSON array")
         print(json.dumps(align(criteria, load(argv[3]), load(argv[4]))))
+    elif cmd == "change" and len(argv) == 3:
+        try:
+            criteria = json.load(sys.stdin)
+        except ValueError:
+            sys.exit("criteria.py: stdin is not a JSON array of criteria")
+        if not isinstance(criteria, list):
+            sys.exit("criteria.py: stdin is not a JSON array of criteria")
+        print(json.dumps(change(criteria, load(argv[2]))))
     elif cmd == "merge-gate" and len(argv) == 2:
         print(json.dumps(merge_gate_lines(sys.stdin.read().split("\n"))))
     elif cmd == "tick" and len(argv) == 3:

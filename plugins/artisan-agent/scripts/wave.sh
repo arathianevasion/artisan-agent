@@ -960,6 +960,16 @@ EOF
     printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
     get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
   fi
+  # Criteria the Artisan changed at an unmeetable-criterion exception gate
+  # (#186): the verifier judges the ticket's criteria with these applied.
+  if [ "$(get --arg t "$t" '(.tickets[$t].criteria_changes // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan changed these acceptance criteria at an exception gate; the verifier judges the ticket with them applied, whatever the ticket still says:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].criteria_changes[]
+      | "  - \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
+          elif .action == "split" then "moved to #\(.to); not yours to meet"
+          else "dropped; not yours to meet" end)
+        + (if .why then " (\(.why))" else "" end)' >>"$prompt"
+  fi
   # Steering (lever.sh steer): the Artisan stopped the last attempt and gave notes.
   if [ "$(get --arg t "$t" '(.tickets[$t].steering // []) | length')" -gt 0 ]; then
     printf -- '- The Artisan stopped an earlier attempt to steer you. This is not a failed attempt: continue from the branch, and follow their notes:\n' >>"$prompt"
@@ -1035,6 +1045,8 @@ failure_evidence() {
       (.acceptance[] | select(.met != true and .human != true and .gate != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.gate == true) | "- Checked by the merge gate, not yours to meet (verifier): \(.criterion)"),
+      (.acceptance[] | select(.unmeetable != null and .unmeetable.verifier_agrees != true)
+        | "- The last worker said no worker could meet \(.criterion) (\(.unmeetable.why)); the verifier disagrees, so meet it: \(.evidence.why // "no reason given")"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
   # A red CI merge gate (#176): the tests it failed, read from the CI log.
