@@ -333,6 +333,45 @@ test_repair_returns_a_ticket_the_stream_miscount_failed_and_its_gate_closes_as_r
   assert_eq queued "$(state_get '.tickets["3"].status')"
 }
 
+# Every file's checksum and every symlink's target: a run folder's whole content.
+run_snapshot() {
+  (cd "$RUN_DIR" && find . -type f -exec cksum {} + | sort; find . -type l -exec sh -c 'for l; do echo "$l -> $(readlink "$l")"; done' sh {} + | sort)
+}
+
+test_repair_dry_run_prints_the_plan_under_a_live_lock_and_writes_nothing_then_the_repair_does_exactly_that() {
+  setup_run
+  miscounted_3
+  "$A" sync "$RUN_DIR" >/dev/null
+  local num= holder= before= after= dry= real=
+  num=$(state_get '.exception_gates[0].issue')
+  sleep 60 &
+  holder=$!
+  ln -s "$holder" "$RUN_DIR/state.lock"
+  before=$(run_snapshot)
+  dry=$("$SCRIPTS/sweep.sh" repair "$RUN_DIR" --dry-run)
+  after=$(run_snapshot)
+  assert_eq "$before" "$after" "a dry run leaves the run folder byte for byte as it was"
+  assert_eq "$holder" "$(readlink "$RUN_DIR/state.lock")" "the lock is not taken or released"
+  assert_eq 0 "$(jq -r '.tickets["3"].repaired // [] | length' "$RUN_DIR/state.json")"
+  assert_eq 0 "$(wc -c <"$RUN_DIR/workers/3.2/output.json" | tr -d ' ')" "no output.json rebuilt"
+  assert_contains "$dry" "rebuilt workers/3.2/output.json"
+  assert_contains "$dry" "#3 attempt 2 completed: result complete, cost 1.2 recorded"
+  assert_contains "$dry" "attempt given back; #3 returned"
+  assert_contains "$dry" "gate-action.sh repaired $RUN_DIR $num"
+  assert_contains "$dry" "dry run: nothing written"
+  # Without --dry-run the real repair prints exactly the planned lines.
+  real=$(ARTISAN_WRITER_PID=$holder "$SCRIPTS/sweep.sh" repair "$RUN_DIR")
+  assert_eq "$(printf '%s\n' "$dry" | grep -v '^dry run: ')" "$real"
+  assert_eq returned "$(state_get '.tickets["3"].status')"
+  assert_eq 2.3 "$(state_get '.tickets["3"].cost_usd')"
+  kill "$holder" 2>/dev/null || true
+}
+
+test_repair_dry_run_still_needs_a_run_dir() {
+  setup_run
+  assert_status 2 "$SCRIPTS/sweep.sh" repair --dry-run
+}
+
 test_repair_prefers_the_result_files_cost_and_returns_a_ticket_whose_gate_was_deferred() {
   setup_run
   miscounted_3

@@ -75,3 +75,5 @@ It launches waves whatever the percentage: the chat's band never holds a wave ba
 | compaction | the `SessionStart` hook (source `compact`), as above |
 
 At start-up the hook only says the run is open in one line; `implement-plan` shows the digest.
+
+The run lock's `run-start` hook (`guard/protect.sh`) lets every one of these through. The chat that holds the run passes whatever it asks: its Claude process holds the lock between waves, and the wave's runner names it (`--lock-from`) while a wave runs. Any other chat passes with a bare call, `add`/`urgent` with tickets, or a resume: `continue`, `carry on`, `resume` or `pick up`, optionally followed by `run` and the run's id (`carry on run <id> …`), or `run <id>` or the id alone. A refused request that names the running run (`run <id>`, `#<id>`) is never filed as a `plan` issue; the refusal says how to resume.

@@ -491,3 +491,34 @@ test_a_bug_found_at_the_end_gate_is_flagged_by_ticket() {
   assert_status 4 "$G" bug "$RUN_DIR" 99 --gate end
   assert_status 2 "$G" bug "$RUN_DIR" 1
 }
+
+test_a_gate_closed_by_hand_logs_one_keep_gate_decision_with_the_areas_union_and_the_tracker_by() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["1"].areas = ["billing"] | .plan.tickets["4"].areas = ["auth", "billing"]'
+  local num= cards=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.review_gates[0].cards[0].ticket = "4"'
+  cards=$(state_get '.review_gates[0].cards | length')
+  [ "$cards" -ge 2 ] || fail "the fixture should give the gate several cards, got $cards"
+  gh issue close "$num" -R local/sample
+  "$G" sync "$RUN_DIR" >/dev/null
+  assert_eq "[{\"card\":null,\"outcome\":\"keep\",\"redirect\":false,\"areas\":[\"auth\",\"billing\"],\"by\":\"Artisan (closed on the tracker)\",\"cards\":$cards}]" \
+    "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, redirect, areas, by, cards}]' | jq -c .)"
+  # Syncing again logs nothing more.
+  "$G" sync "$RUN_DIR" >/dev/null
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "gate-decision")] | length')"
+}
+
+test_a_gate_closed_by_hand_after_a_change_keeps_the_changes_event_and_logs_one_keep_for_the_rest() {
+  setup_gate
+  merged_with_evidence 1
+  local num= cards=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  cards=$(state_get '.review_gates[0].cards | length')
+  "$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --by Andrew >/dev/null
+  gh issue close "$num" -R local/sample
+  "$G" sync "$RUN_DIR" >/dev/null
+  assert_eq "[{\"card\":1,\"outcome\":\"change\",\"cards\":null},{\"card\":null,\"outcome\":\"keep\",\"cards\":$((cards - 1))}]" \
+    "$(state_get '[.events[] | select(.event == "gate-decision") | {card, outcome, cards}]' | jq -c .)"
+}

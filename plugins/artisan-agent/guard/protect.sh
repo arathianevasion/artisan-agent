@@ -4,8 +4,9 @@
 # (without it the hook says so on stderr and lets the call through).
 #   protect.sh main-edit   PreToolUse on Edit|Write|MultiEdit|NotebookEdit
 #   protect.sh run-start   UserPromptExpansion and PreToolUse(Skill) for implement-plan
-#                          (while a run holds the lock only a resume, "add <tickets>"
-#                          or "urgent <ticket>" passes: the last two are the add-work flow)
+#                          (while a run holds the lock only the holding chat, a
+#                          resume, "add <tickets>" or "urgent <ticket>" passes: the
+#                          last two are the add-work flow)
 # Both refuse by printing the host's deny/block JSON and exit 0.
 # Details: guard/README.md, "Main-checkout protection and the run lock".
 set -uo pipefail
@@ -38,6 +39,34 @@ existing_dir() {
   printf '%s' "$d"
 }
 
+# True when pid is one of this hook's ancestors. `ps -o ppid= -p` reads the
+# same on BSD (macOS) and Linux ps.
+is_ancestor() { # pid
+  local p=$PPID depth=0
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$depth" -lt 64 ]; do
+    [ "$p" = "$1" ] && return 0
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# True when the lock holder is this hook's own chat. The chat holds the lock
+# with its Claude process's pid between waves (implement-plan, "Hold the
+# run"), and that process runs the hook, so the pid is an ancestor. While a
+# wave runs, the orchestrator's runner holds it instead: it is detached, but
+# its command line names the chat it took the lock from
+# (`run-ticket.sh ... --lock-from <chat pid>`, wave.sh launch).
+holding_chat() { # lock pid
+  local args="" from=""
+  is_ancestor "$1" && return 0
+  args=$(ps -ww -o args= -p "$1" 2>/dev/null) || return 1
+  case "$args" in *run-ticket.sh*--lock-from\ *) ;; *) return 1 ;; esac
+  from=${args#*--lock-from }; from=${from%% *}
+  case "$from" in "" | *[!0-9]*) return 1 ;; esac
+  is_ancestor "$from"
+}
+
 case "$mode" in
   main-edit)
     file=$(field '.tool_input.file_path'); [ -n "$file" ] || file=$(field '.tool_input.notebook_path')
@@ -62,6 +91,9 @@ case "$mode" in
     holder=$("$SCRIPTS/run-lock.sh" check "$cwd" 2>/dev/null) && exit 0
     [ -n "$holder" ] || exit 0          # not a repo, or the check itself failed: do not block
     run_id=${holder% *}; pid=${holder#* }
+    # The chat that holds the run is carrying on or adding to its own run,
+    # whatever the wording (#153).
+    holding_chat "$pid" && exit 0
     # Resuming the open run is not a second run: a bare call, "resume" or the
     # run's id opens with its digest (skills/implement-plan/references/context-drain.md).
     # (With no arguments the request is the prompt itself: drop the command.)
@@ -70,19 +102,40 @@ case "$mode" in
       /implement-plan | /artisan-agent:implement-plan) resume= ;;
       "/implement-plan "* | "/artisan-agent:implement-plan "*) resume=${resume#* } ;;
     esac
-    case "$resume" in
-      "" | resume | "$run_id" | "resume $run_id") exit 0 ;;
+    # "continue", "carry on", "resume" or "pick up", optionally followed by
+    # "run" and the run's id (or #id), any case and punctuation; words after
+    # the id are fine (#153). "run <id>" or the id alone is a resume too.
+    # words: the request lowercased, punctuation (but # _ - and inner dots)
+    # turned into single spaces.
+    words=$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]#_.-' ' ' \
+      | sed -E -e 's/\.+( |$)/ /g' -e 's/  +/ /g' -e 's/^ //' -e 's/ $//')
+    run_id_lc=$(printf '%s' "$run_id" | tr '[:upper:]' '[:lower:]')
+    rest=$words prefix=
+    for verb in continue "carry on" resume "pick up"; do
+      case "$rest" in "$verb" | "$verb "*) rest=${rest#"$verb"}; rest=${rest# }; prefix=verb; break ;; esac
+    done
+    case "$rest" in run | "run "*) rest=${rest#run}; rest=${rest# }; prefix=${prefix:-run} ;; esac
+    case "$rest" in
+      "$run_id_lc" | "#$run_id_lc") exit 0 ;;
+      "$run_id_lc "* | "#$run_id_lc "*) [ -z "$prefix" ] || exit 0 ;;
+      "") if [ -z "$words" ] || [ "$prefix" = verb ]; then exit 0; fi ;;
     esac
     # Adding work to the running run is not a second run either: "add <tickets>"
     # and "urgent <ticket>" go through to the add-work flow
     # (skills/implement-plan/SKILL.md, "Adding to a running run"), and are not
     # refused or queued as a separate plan.
     # The request must name a ticket (#45 or 45): "add login page" is a new plan.
-    case "$(printf '%s' "$resume" | tr '[:upper:]' '[:lower:]')" in
+    case "$words" in
       add\ * | add-work\ * | urgent\ * | --urgent\ *)
         if printf '%s' "$resume" | grep -Eq '(^|[^[:alnum:]])#?[0-9]+([^[:alnum:]]|$)'; then exit 0; fi ;;
     esac
     msg="Blocked by the artisan-agent run lock: run $run_id (pid $pid) holds the lock, and a repo has one run at a time."
+    # A request naming the running run ("run <id>" or "#<id>") is about that
+    # run, never a new plan: say how to carry it on and file nothing (#153).
+    case " $words " in
+      *" run $run_id_lc "* | *"#$run_id_lc "*)
+        refuse "$msg Your request names run $run_id, which is already running, so it was not filed as a \`plan\` issue. To carry the run on, call \`/artisan-agent:implement-plan resume $run_id\` (or \`carry on run $run_id\`); the chat that holds the run can carry it on with any wording." ;;
+    esac
     if (cd "$cwd" && "$HERE/queue-plan.sh" "$request") >/dev/null 2>&1; then
       msg="$msg Your request is left as a \`plan\` issue on the tracker; it runs after the current run."
     else

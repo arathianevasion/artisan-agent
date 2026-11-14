@@ -3,7 +3,7 @@
 # Field meanings: ${CLAUDE_PLUGIN_ROOT}/references/state-file.md
 #
 # Usage: sweep.sh <run-dir> [--no-guard]
-#        sweep.sh repair <run-dir>
+#        sweep.sh repair <run-dir> [--dry-run]
 #
 # For each ticket whose status is in_flight, in this order:
 #   1. a result file results/<ticket>.<attempt>.result.json -> the result is recorded
@@ -41,6 +41,10 @@
 # with the command that closes it as resolved by the repair (gate-action.sh
 # repaired), never as an Artisan bypass. An ended orchestrator with no cost
 # gets its cost. Running it again changes nothing. It never runs the guard.
+# --dry-run (#154) takes no lock and writes nothing: it runs the same repair
+# on a scratch copy of the run (the copy leaves the lock behind) and prints
+# the lines the real repair would print, then "dry run: nothing written".
+# Run it first on a live run; the real repair prints exactly those lines.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 the lock is held by another live process.
 
@@ -53,12 +57,18 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/stream-lib.sh"
 state_require_jq
 
-GUARD=1 guard_rc=0 guard_out= MODE=sweep
-if [ "${1:-}" = repair ]; then MODE=repair GUARD=0; shift; fi
+GUARD=1 guard_rc=0 guard_out= MODE=sweep DRY=0 scratch=
+if [ "${1:-}" = repair ]; then
+  MODE=repair GUARD=0
+  shift
+  if [ "${1:-}" = --dry-run ]; then DRY=1; shift
+  elif [ "${2:-}" = --dry-run ]; then DRY=1; set -- "$1"; fi
+fi
 if [ "$MODE" = sweep ] && [ "${2:-}" = --no-guard ]; then GUARD=0; set -- "$1"; fi
 [ $# -eq 1 ] || state_usage "$0"
 RUN_DIR=$1
 state_require_run_dir "$RUN_DIR"
+SHOWN_DIR=$RUN_DIR   # the run as the Artisan names it, in printed commands
 RESULTS="$RUN_DIR/results"
 
 # The pid and every process descended from it.
@@ -227,7 +237,7 @@ REPAIR_FILTER="$STATE_JQ_DEFS"'
     else . end'
 
 repair() {
-  local file="" tmp="" now="" d="" key="" out="" pair="" t="" n="" cls="" usd="" result="" id="" a="" gates=""
+  local file="" tmp="" now="" d="" key="" out="" pair="" t="" n="" cls="" usd="" result="" id="" a="" gates="" failed_why=""
   local -a returned=()
   file=$(state_file "$RUN_DIR")
   state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
@@ -258,13 +268,14 @@ repair() {
     [ "$(jq -r '.status // "complete"' "$result" 2>/dev/null)" = complete ] || continue
     usd=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$n/output.json" 2>/dev/null || echo null)
     [ -n "$usd" ] || usd=null
+    failed_why=$(jq -r --arg t "$t" --argjson n "$n" '[.tickets[$t].failures[]? | select(.attempt == $n) | .reason] | join("; ")' "$tmp")
     step "$REPAIR_FILTER" --arg t "$t" --argjson n "$n" --argjson usd "$usd" --slurpfile rs "$result" \
       --arg file "results/$t.$n.result.json" --argjson now "$now"
     if [ "$(jq -r --arg t "$t" '.tickets[$t].status' "$tmp")" = returned ]; then
       returned+=("$t")
-      echo "#$t attempt $n completed: its failed attempt is taken back, cost $usd recorded, #$t returned"
+      echo "#$t attempt $n completed: result $(jq -r '.status // "complete"' "$result"), cost $usd recorded; failure moves to repaired ($failed_why); attempt given back; #$t returned"
     else
-      echo "#$t attempt $n completed: its failed attempt is taken back, cost $usd recorded"
+      echo "#$t attempt $n completed: result $(jq -r '.status // "complete"' "$result"), cost $usd recorded; failure moves to repaired ($failed_why); attempt given back"
     fi
   done
 
@@ -287,13 +298,24 @@ repair() {
   for t in ${returned[@]+"${returned[@]}"}; do
     gates=$(jq -r --arg t "$t" '(.exception_gates // [])[] | select(.ticket == $t and (.status == "open" or .status == "deferred")) | .issue' "$tmp")
     for id in $gates; do
-      echo "exception gate #$id was opened by the miscount: close it as resolved by the repair with gate-action.sh repaired $RUN_DIR $id"
+      echo "exception gate #$id was opened by the miscount: close it as resolved by the repair with gate-action.sh repaired $SHOWN_DIR $id"
     done
   done
 
   state_commit "$RUN_DIR" "$tmp"
 }
 
+if [ "$MODE" = repair ] && [ "$DRY" -eq 1 ]; then
+  # A scratch copy, without the lock: the repair writes there, never to the run.
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/sweep-dry.XXXXXX")
+  trap 'rm -rf "$scratch"' EXIT
+  cp -R "$RUN_DIR/." "$scratch/"
+  rm -f "$(state_lock_path "$scratch")"
+  RUN_DIR=$scratch RESULTS="$scratch/results"
+  repair
+  echo "dry run: nothing written"
+  exit 0
+fi
 if [ "$MODE" = repair ]; then
   state_with_lock "$RUN_DIR" repair
   exit 0
