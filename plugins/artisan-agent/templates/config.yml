@@ -13,7 +13,8 @@
 # Workers in flight at once. Review capacity comes from this and the gates.
 max_agents: 5
 
-# How often the orchestrator sweeps the run folder, in minutes.
+# How often the chats sweep, in minutes. The orchestrator sweeps on every
+# wake, at least every ten minutes (one wait-any.sh call, #175).
 sweep_minutes: 5
 
 # Context drain rules, as a percentage of the context window.
@@ -47,6 +48,21 @@ stale_usage_minutes: 10
 
 # Failed attempts allowed before a ticket is blocked.
 attempts_per_ticket: 2
+
+# The orchestrator's turn budget (#175): wave.sh launch gives each wave's
+# orchestrator --max-turns base + per_ticket x T + per_ci_gate x G, where T is
+# the tickets the wave can take (the scope's tickets not yet merged or blocked,
+# at most Max Agents) and G is T when this machine's merge gate runs on CI
+# (each ticket may need a gate of its own; merge batches only need fewer), 0
+# when it runs here. A ticket costs about a dozen turns (dispatch, wait and
+# sweep, verify, judge, merge, close, drain checks); a CI gate about ten, since
+# a CI wait is one wait-any.sh turn of up to ten minutes plus a merge call.
+# Source: riley run p266-1114, whose wave of 5 tickets and 2 CI gates ran out
+# at 40 turns; these defaults give it 20 + 60 + 50 = 130.
+orchestrator_turns:
+  base: 20
+  per_ticket: 12
+  per_ci_gate: 10
 
 # Deferred gates come back for review after this many days.
 deferral_review_days: 30

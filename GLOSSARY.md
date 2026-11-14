@@ -151,7 +151,7 @@ The run's own checkout of its integration branch, where merges and the full suit
 _Avoid_: merge worktree
 
 **Merge gate**:
-The full suite after each merge into the integration branch: green keeps the merge, red undoes it and blocks the ticket. The machine chooses where it runs: locally in the integration worktree, or on CI, where the project's gate workflow runs on the merge commit itself. On CI only a failed or hung suite is red; a run CI never judged (unreachable, slow, cancelled) parks the run instead and leaves the ticket unblocked. Either way it runs detached from the orchestrator's call, which waits on it a minute at a time, so a cut-off call never cuts the gate off.
+The full suite after each merge into the integration branch: green keeps the merge, red undoes it and blocks the ticket. The machine chooses where it runs: locally in the integration worktree, or on CI, where the project's gate workflow runs on the merge commit itself. On CI only a failed or hung suite is red; a run CI never judged (unreachable, slow, cancelled) parks the run instead and leaves the ticket unblocked. Either way it runs detached from the orchestrator's call, which waits on it at most a minute; the orchestrator then waits for its result in one long wait, so a cut-off call never cuts the gate off.
 _Avoid_: post-merge check, CI check
 
 **Wave digest**:

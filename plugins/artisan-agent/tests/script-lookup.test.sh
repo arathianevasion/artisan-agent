@@ -5,7 +5,7 @@
 . "$TESTS_DIR/helpers/run-state.sh"
 
 # A repo whose main checkout and whose linked worktree each hold a copy of the
-# plugin's scripts; each copy's run-ticket.sh only writes its own name to
+# plugin's scripts and templates; each copy's run-ticket.sh only writes its own name to
 # $TEST_TMPDIR/ran and fails.
 setup_two_copies() {
   init_run
@@ -17,6 +17,7 @@ setup_two_copies() {
     dir="$where/plugins/artisan-agent"
     mkdir -p "$dir"
     cp -R "$PLUGIN_ROOT/scripts" "$dir/scripts"
+    cp -R "$PLUGIN_ROOT/templates" "$dir/templates"   # config defaults (wave.sh launch's turn budget)
     printf '#!/bin/sh\necho %s >>"%s/ran"\nexit 1\n' "$(basename "$where")" "$TEST_TMPDIR" >"$dir/scripts/run-ticket.sh"
     chmod +x "$dir/scripts/run-ticket.sh"
   done

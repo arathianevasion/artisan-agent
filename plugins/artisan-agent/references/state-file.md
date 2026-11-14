@@ -206,7 +206,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 
 ## The sweep
 
-`sweep.sh <run-dir>`, on every wake and at least every sweep interval (`plan.config.sweep_minutes`, default 5 minutes). For each `in_flight` ticket, reading only the current attempt's files (n = `attempts`), first match wins:
+`sweep.sh <run-dir>`, on every wake. The orchestrator wakes at least every ten minutes (`wait-any.sh --timeout 570`, one turn per wait, #175), so a worker past its deadline is stopped within that; the chats sweep at least every `plan.config.sweep_minutes` (default 5 minutes). For each `in_flight` ticket, reading only the current attempt's files (n = `attempts`), first match wins:
 
 1. A result file: recorded. `complete` → `returned`; `blocked` → `blocked`; `failed` → a failed attempt.
 2. An exit record and no result file: a failed attempt.
