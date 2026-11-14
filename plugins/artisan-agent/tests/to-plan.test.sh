@@ -720,3 +720,94 @@ test_split_without_a_graph_still_moves_the_criterion() {
   "$TP" split-human-check --repo local/sample 2 "checked in game" >/dev/null
   assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-2.json")" "checked in game"
 }
+
+# #202: a ticket's acceptance criteria are read by one rule, criteria.py's,
+# whatever the body's form: the triage template's bold label, a heading, or a
+# heading with checkboxes under another heading too.
+TEMPLATE_BODY='## Agent Brief
+
+**Summary:** x
+
+**Acceptance criteria:**
+- [ ] shows percent
+- [ ] contract keys stay stable, checked in game
+
+**Out of scope:**
+- changing the template'
+HEADING_BODY='## What
+x
+
+## Acceptance criteria
+- [ ] shows percent
+- [x] contract keys stay stable, checked in game
+
+## Blocked by
+- #1'
+MIXED_BODY='## What
+- [ ] read the spec first
+
+## Acceptance criteria
+- [ ] shows percent
+- [ ] contract keys stay stable, checked in game
+
+## Notes
+- [ ] not a criterion either'
+
+body_on() { # ticket body
+  jq --arg b "$2" '.body = $b' "$FAKE_GH_DIR/issue-$1.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-$1.json"
+}
+
+test_split_on_a_template_form_body_makes_the_human_check_and_removes_only_that_line() {
+  use_fake_gh
+  body_on 2 "$TEMPLATE_BODY"
+  local hc= body=
+  "$TP" split-human-check --repo local/sample 2 "checked in game" >/dev/null
+  hc=$(jq -s 'max_by(.number) | .number' "$FAKE_GH_DIR"/issue-*.json)
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")" "- [ ] contract keys stay stable, checked in game"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")" "<!-- artisan-agent:human-check-for #2 -->"
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-2.json")
+  assert_eq "$(printf '%s\n' "$TEMPLATE_BODY" | grep -v 'checked in game')" "$body" "only the moved line left the agent ticket"
+  # Again: nothing changes.
+  local calls=; calls=$(grep -c '^issue \(create\|edit\)' "$FAKE_GH_DIR/calls")
+  "$TP" split-human-check --repo local/sample 2 "checked in game" >/dev/null
+  assert_eq "$calls" "$(grep -c '^issue \(create\|edit\)' "$FAKE_GH_DIR/calls")" "a repeat wrote to the tracker"
+  assert_eq "$body" "$(jq -r .body "$FAKE_GH_DIR/issue-2.json")"
+}
+
+test_graph_lists_a_template_form_tickets_criteria() {
+  use_fake_gh
+  body_on 1 "$TEMPLATE_BODY"
+  assert_eq '["shows percent","contract keys stay stable, checked in game"]' \
+    "$("$TP" graph --repo local/sample 1 | jq -c '.tickets["1"].acceptance')"
+}
+
+test_split_graph_and_extract_find_the_same_criteria_in_every_body_form() {
+  local py="$PLUGIN_ROOT/scripts/lib/criteria.py" form= body= want= c= hc=
+  for form in TEMPLATE_BODY HEADING_BODY MIXED_BODY; do
+    use_fake_gh
+    eval "body=\$$form"
+    body_on 2 "$body"
+    want=$(printf '%s' "$body" | python3 -I "$py" extract | jq -c .)
+    assert_eq '["shows percent","contract keys stay stable, checked in game"]' "$want" "$form: extract"
+    assert_eq "$want" "$("$TP" graph --repo local/sample 2 | jq -c '.tickets["2"].acceptance')" "$form: graph"
+    # Every criterion extract finds splits; a checkbox it doesn't find is refused.
+    assert_status 1 "$TP" split-human-check --repo local/sample 2 "not a criterion"
+    assert_status 1 "$TP" split-human-check --repo local/sample 2 "read the spec first"
+    for c in "shows percent" "checked in game"; do
+      "$TP" split-human-check --repo local/sample 2 "$c" >/dev/null || fail "$form: split of '$c' refused"
+    done
+    hc=$(jq -s 'max_by(.number) | .number' "$FAKE_GH_DIR"/issue-*.json)
+    assert_eq "$want" "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json" | python3 -I "$py" extract | jq -c .)" "$form: the Human check holds them"
+    assert_eq "[]" "$(jq -r .body "$FAKE_GH_DIR/issue-2.json" | python3 -I "$py" extract | jq -c 'map(select(test("percent|in game")))')" "$form: gone from the agent ticket"
+    rm -rf "$FAKE_GH_DIR"
+  done
+}
+
+test_the_docs_say_the_split_reads_criteria_as_the_verifier_does() {
+  local f=
+  for f in references/human-checks.md skills/triage/SKILL.md; do
+    assert_not_contains "$(cat "$PLUGIN_ROOT/$f")" "split-human-check moves a checkbox under" "$f"
+    assert_not_contains "$(grep 'split-human-check' "$PLUGIN_ROOT/$f")" "body's \`## Acceptance criteria\`" "$f"
+    assert_contains "$(grep 'split-human-check' "$PLUGIN_ROOT/$f")" "verifier" "$f"
+  done
+}

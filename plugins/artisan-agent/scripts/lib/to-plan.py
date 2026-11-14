@@ -20,6 +20,11 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# `python3 -I` leaves this folder off sys.path; criteria.py holds the one rule
+# for a ticket's acceptance criteria (#202). No bytecode in the plugin folder.
+sys.path.insert(0, HERE)
+sys.dont_write_bytecode = True
+import criteria  # noqa: E402
 PRICES = os.path.join(HERE, "..", "..", "references", "model-prices.json")
 HUMAN_CHECKS = os.path.join(HERE, "..", "..", "references", "human-checks.md")
 MARKER = "<!-- artisan-agent:human-check-for #%s -->"
@@ -436,20 +441,10 @@ def match_criterion(criteria, text, n):
     raise Refusal("#%s has no criterion %r" % (n, text))
 
 
-CHECKBOX = re.compile(r"^(\s*[-*]\s+\[[ xX]\]\s+)(.*?)\s*$")
-
-
 def ac_lines(body):
-    """(index, criterion) for each checkbox under ## Acceptance criteria."""
-    out, inside = [], False
-    for i, line in enumerate(body.split("\n")):
-        if re.match(r"^##\s", line):
-            inside = bool(re.match(r"^##\s+[Aa]cceptance [Cc]riteria", line))
-            continue
-        m = CHECKBOX.match(line)
-        if inside and m:
-            out.append((i, m.group(2)))
-    return out
+    """(index, criterion) for each of the body's acceptance criteria, by
+    criteria.py's rule: the one the verifier and wave.sh close read by."""
+    return criteria.extract_lines(body.split("\n"))
 
 
 def split_human_check(req):

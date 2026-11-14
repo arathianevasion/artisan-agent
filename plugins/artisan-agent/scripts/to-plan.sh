@@ -56,6 +56,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PY=$SCRIPT_DIR/lib/to-plan.py
+CRITERIA_PY=$SCRIPT_DIR/lib/criteria.py
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'to-plan.sh: %s\n' "$*" >&2; exit 1; }
@@ -128,15 +129,15 @@ case "$cmd" in
     for n in $numbers; do
       issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state) || die "cannot read #$n"
       deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of #$n (a missing edge could put a blocker after its dependent)"
-      crit=$(printf '%s' "$issue" | jq -r '.body // ""' | awk '
-        /^##[[:space:]]/ { in_ac = ($0 ~ /^##[[:space:]]+[Aa]cceptance [Cc]riteria/); next }
-        in_ac && /^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]+/ { sub(/^[[:space:]]*[-*][[:space:]]+\[[ xX]\][[:space:]]+/, ""); print }')
-      out=$(jq --arg n "$n" --argjson issue "$issue" --argjson deps "$deps" --arg crit "$crit" \
+      # criteria.py's rule, the one the verifier reads a ticket by (#202).
+      crit=$(printf '%s' "$issue" | jq -r '.body // ""' | python3 -I "$CRITERIA_PY" extract) \
+        || die "cannot read the acceptance criteria of #$n"
+      out=$(jq --arg n "$n" --argjson issue "$issue" --argjson deps "$deps" --argjson crit "$crit" \
             --arg set "$numbers" '
         ($set | split("\n") | map(select(. != ""))) as $in
         | .tickets[$n] = {
             title: $issue.title,
-            acceptance: ($crit | split("\n") | map(select(. != ""))),
+            acceptance: $crit,
             blocked_by: [$deps[] | .number | tostring | select(. as $b | $in | index($b))],
             external_blockers: [$deps[] | select(.state == "open") | .number | tostring | select(. as $b | ($in | index($b)) | not)]
           }

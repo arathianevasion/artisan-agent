@@ -173,7 +173,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 
 | Command | Does | Exit status |
 | :- | :- | :- |
-| `to-plan.sh graph --repo <o/n> <ticket>...` | reads the tickets: title, acceptance criteria (the checkboxes under `## Acceptance criteria`), blockers within the set, open blockers outside it as `external_blockers` | 0, 1 |
+| `to-plan.sh graph --repo <o/n> <ticket>...` | reads the tickets: title, acceptance criteria (by `lib/criteria.py extract`'s rule, as the verifier reads them), blockers within the set, open blockers outside it as `external_blockers` | 0, 1 |
 | `to-plan.sh propose --graph F --budget USD` | proposes plans (JSON) | 0, 1 |
 | `to-plan.sh split\|merge\|reorder\|move <plans> --graph F ...` | edits the plans file in place, renumbering; refused, file untouched, when a blocker would follow its dependent | 0, 1 |
 | `to-plan.sh check <plans> --graph F [--override-human-check <t> "<criterion>" --why TEXT]...` | every ticket in exactly one plan, no blocker in a later plan, a Human check in its agent ticket's plan; then refuses approval (flags printed under "Needs your attention") while an agent criterion reads as needing a person. Overrides are recorded in the plans file | 0, 1 |

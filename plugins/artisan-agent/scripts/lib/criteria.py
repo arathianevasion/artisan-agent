@@ -10,6 +10,9 @@ Usage:
       ("- [ ] ..." or "- [x] ...") under an "Acceptance criteria" heading,
       up to the next heading of the same or a higher level. A body with no
       such heading gives every checkbox line in it. Text is kept verbatim.
+      This is the one rule for which checkboxes are a ticket's criteria:
+      to-plan.sh graph and split-human-check read a body by it too
+      (extract_lines, which also gives each criterion's line index).
   python3 -I criteria.py ticket < issue.json
       a ticket's criteria and where they came from, as JSON {criteria, source}
       from the issue as `gh issue view --json body,comments` prints it. The
@@ -57,9 +60,10 @@ def norm(text):
     return " ".join(str(text).split()).casefold()
 
 
-def extract(lines):
+def extract_lines(lines):
+    """(line index, criterion) for each of a body's criteria (see extract)."""
     found, inside, level, seen_heading = [], False, 0, False
-    for line in lines:
+    for i, line in enumerate(lines):
         h = HEADING.match(line)
         if h:
             depth = len(h.group(1))
@@ -71,10 +75,14 @@ def extract(lines):
             continue
         m = BOX.match(line)
         if m and inside:
-            found.append(m.group(1))
+            found.append((i, m.group(1)))
     if seen_heading:
         return found
-    return [m.group(1) for m in map(BOX.match, lines) if m]
+    return [(i, m.group(1)) for i, m in enumerate(map(BOX.match, lines)) if m]
+
+
+def extract(lines):
+    return [c for _, c in extract_lines(lines)]
 
 
 # A criterion about CI, the merge gate or the PR (#174): a run can't judge
