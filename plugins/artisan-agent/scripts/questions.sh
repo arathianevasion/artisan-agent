@@ -15,6 +15,19 @@
 #       $ARTISAN_FINDINGS_FILE (when set). --blocking: the worker's own ticket
 #       can't finish without the answer; --split: the worker finishes
 #       the rest. Prints the new ticket's number.
+#   questions.sh file --ticket T --criterion 8 --case C --harm H
+#                --recommendation R (--blocking | --split | --non-blocking)
+#                [--raised-by plan|worker|verifier|gate|finding] [--from F]
+#                [--run <run-dir>] [--repo owner/name]
+#       an open decision in ticket T (references/open-decisions.md): the case
+#       (incomplete, misaligned, invented or adr), the concrete harm and one
+#       recommendation, nothing more; refused without a case or a harm. The
+#       body records where it was raised ("Raised at:", default worker).
+#       --blocking only from T's own worker; --non-blocking files it without
+#       blocking T, as --raised-by finding (with --from, the ticket whose
+#       worker found it) must. Works with no run (the plan step). --run logs
+#       guardrail-fired "open-decision"; a worker's findings line carries
+#       case, raised_by and about, and the sweep logs it.
 #
 # Usage, from the orchestrator and the Engineering chat:
 #   questions.sh block <run-dir> <ticket>
@@ -62,8 +75,9 @@ die() { state_die 1 "questions.sh: $*"; }
 # --------------------------------------------------------------------- file
 
 cmd_file() {
-  local ticket= criterion= question= rec= repo= mode=
-  local options=()
+  local ticket="" criterion="" question="" rec="" repo="" mode="" case_="" harm="" raised_by="" from="" run_dir=""
+  local -a options=()
+  local harm_set=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --ticket) ticket=${2:-}; shift 2 ;;
@@ -72,19 +86,33 @@ cmd_file() {
       --option) options+=("${2:-}"); shift 2 ;;
       --recommendation) rec=${2:-}; shift 2 ;;
       --repo) repo=${2:-}; shift 2 ;;
+      --case) case_=${2:-}; shift 2 ;;
+      --harm) harm=${2:-}; harm_set=1; shift 2 ;;
+      --raised-by) raised_by=${2:-}; shift 2 ;;
+      --from) from=${2:-}; shift 2 ;;
+      --run) run_dir=${2:-}; shift 2 ;;
       --blocking) mode=blocking; shift ;;
       --split) mode=split; shift ;;
+      --non-blocking) mode=non-blocking; shift ;;
       *) usage ;;
     esac
   done
-  [ -n "$ticket" ] && [ -n "$question" ] && [ -n "$rec" ] && [ -n "$mode" ] || usage
+  [ -n "$ticket" ] && [ -n "$mode" ] || usage
+  if [ "$criterion" = 8 ]; then
+    file_open_decision
+    return
+  fi
+  [ -n "$question" ] && [ -n "$rec" ] || usage
   [ "${#options[@]}" -ge 2 ] || die "a question needs at least two options"
   case "$criterion" in
     [1-7]|always-ask) ;;
-    *) die "--criterion is 1-7 or always-ask" ;;
+    *) die "--criterion is 1-8 or always-ask" ;;
   esac
+  [ -z "$case_$raised_by$from$run_dir" ] && [ "$harm_set" -eq 0 ] \
+    || die "--case, --harm, --raised-by, --from and --run are criterion 8's (an open decision)"
+  [ "$mode" != non-blocking ] || die "--non-blocking is criterion 8's (an open decision); a question is --blocking or --split"
   ticket=${ticket#\#}
-  local opt= body= title= url= num= i= crit_text= effect= run_note=
+  local opt="" body="" title="" i=0 crit_text="" effect="" run_note="" num=""
   if [ "$criterion" = always-ask ]; then crit_text="an \"Always ask\" item"; else crit_text="criterion $criterion"; fi
   if [ "$mode" = blocking ]; then
     effect="Blocked by this question until it is answered."
@@ -117,25 +145,127 @@ $rec
 
 ## Criterion
 
-$criterion: $crit_text (the plugin's controversy criteria, 1-7, plus the project's \"Always ask\" items).
+$criterion: $crit_text (the plugin's controversy criteria, 1-8, plus the project's \"Always ask\" items).
 
 ## Effect on #$ticket
 
 $effect
 
 Answer by commenting \`Answer: <the decision>\` and closing this ticket. Deferring it asks whether to pull #$ticket from the run or let it carry on."
-  local rargs=()
-  [ -z "$repo" ] || rargs=(-R "$repo")
-  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind question -- ${rargs[@]+"${rargs[@]}"} --title "$title" --body-file - <<<"$body" --label needs-triage) \
-    || die "could not file the question ticket"
-  num=${url##*/}
-  state_is_uint "$num" || die "gh gave no issue number: $url"
+  new_question_ticket
   if [ -n "${ARTISAN_FINDINGS_FILE:-}" ]; then
     mkdir -p "$(dirname "$ARTISAN_FINDINGS_FILE")"
     jq -cn --arg t "$num" --arg by "$ticket" --arg c "$criterion" --arg q "$question" \
       --argjson blocking "$([ "$mode" = blocking ] && echo true || echo false)" \
       '{kind: "question", ticket: $t, asked_by: $by, criterion: $c, blocking: $blocking,
         title: ("Question #" + $t + ": " + $q), why: ("needs the Artisan'"'"'s decision (criterion " + $c + ")"), blocks: []}' \
+      >>"$ARTISAN_FINDINGS_FILE"
+  fi
+  printf '%s\n' "$num"
+}
+
+# new_question_ticket: files $title and $body as a needs-triage ticket (in
+# $repo when set) and sets num to its number.
+new_question_ticket() {
+  local url=""
+  local -a rargs=()
+  [ -z "$repo" ] || rargs=(-R "$repo")
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind question -- ${rargs[@]+"${rargs[@]}"} --title "$title" --body-file - <<<"$body" --label needs-triage) \
+    || die "could not file the question ticket"
+  num=${url##*/}
+  state_is_uint "$num" || die "gh gave no issue number: $url"
+}
+
+# file_open_decision: criterion 8 (references/open-decisions.md). The case,
+# the harm and one recommendation, nothing more; where it was raised; logs
+# guardrail-fired "open-decision" when --run names the run (a worker's is
+# logged by the sweep, from its finding). Reads cmd_file's locals.
+file_open_decision() {
+  local case_text="" raiser="" effect="" run_note="" run_id="" short="" title="" body="" num=""
+  [ -n "$case_" ] || die "an open decision names its case: --case incomplete, misaligned, invented or adr"
+  [ -n "$harm" ] || die "an open decision names its concrete harm (--harm); without one it is the execution agent's call"
+  [ -n "$rec" ] || die "an open decision carries one recommendation (--recommendation)"
+  [ -z "$question" ] && [ "${#options[@]}" -eq 0 ] \
+    || die "an open decision holds the case, the harm and one recommendation, nothing more: no --question or --option"
+  case "$case_" in
+    incomplete) case_text="the feature would be incomplete: a user could reach something that doesn't do what it offers" ;;
+    misaligned) case_text="the feature would be misaligned: no reading fits the spec's user story, or it contradicts the spec, another ticket or a recorded decision" ;;
+    invented) case_text="it would invent user-facing behaviour the ticket doesn't describe" ;;
+    adr) case_text="it settles something that needs an ADR" ;;
+    *) die "--case is incomplete, misaligned, invented or adr" ;;
+  esac
+  [ -n "$raised_by" ] || raised_by=worker
+  ticket=${ticket#\#}
+  from=${from#\#}
+  case "$raised_by" in
+    worker) raiser="the worker of #$ticket" ;;
+    plan) raiser="the plan step" ;;
+    verifier) raiser="the verifier of #$ticket" ;;
+    gate) raiser="a gate reviewer" ;;
+    finding)
+      [ -n "$from" ] || die "--raised-by finding names the ticket whose worker found it: --from <ticket>"
+      raiser="the worker of #$from, in another ticket" ;;
+    *) die "--raised-by is plan, worker, verifier, gate or finding" ;;
+  esac
+  [ "$raised_by" = finding ] || [ -z "$from" ] || die "--from is for --raised-by finding"
+  [ "$mode" != blocking ] || [ "$raised_by" = worker ] \
+    || die "only a worker blocks on an open decision, and only its own ticket; file it --split or --non-blocking"
+  [ "$raised_by" != finding ] || [ "$mode" = non-blocking ] \
+    || die "an open decision found in another ticket is filed --non-blocking: it never blocks that ticket"
+  case "$mode" in
+    blocking) effect="Blocked by this open decision until it is ruled on." ;;
+    split) effect="The rest of #$ticket carries on; this open decision was split off." ;;
+    non-blocking) effect="Filed without blocking #$ticket; a ruling that needs the block adds it." ;;
+  esac
+  if [ -n "$run_dir" ]; then
+    open_run "$run_dir"
+    run_id=$(get .run_id)
+  else
+    run_id=${ARTISAN_RUN_ID:-}
+  fi
+  [ -z "$run_id" ] || run_note=" (run $run_id)"
+  short=$(printf '%s' "$harm" | head -n 1)
+  [ "${#short}" -le 100 ] || short="${short:0:97}..."
+  title="Open decision in #$ticket: $short"
+  body="> *Filed by $raiser: an open decision, not yet triaged.*
+
+Raised at: $raised_by, by $raiser$run_note.
+
+## Case
+
+$case_: $case_text.
+
+## Harm
+
+$harm
+
+## Recommendation
+
+$rec
+
+## Criterion
+
+8: an open decision (the plugin's controversy criteria; the cases and the harm bar: references/open-decisions.md).
+
+## Effect on #$ticket
+
+$effect
+
+Answer by commenting \`Answer: <the decision>\` and closing this ticket."
+  new_question_ticket
+  if [ -n "$run_dir" ]; then
+    apply 'event({event: "guardrail-fired", guardrail: "open-decision", ticket: $t, raised_by: $r, case: $c,
+             question: $q, areas: ticket_areas([$t])} + (if $f == "" then {} else {from: $f} end); $now)' \
+      --arg t "$ticket" --arg r "$raised_by" --arg c "$case_" --arg q "$num" --arg f "$from"
+  fi
+  if [ -n "${ARTISAN_FINDINGS_FILE:-}" ]; then
+    mkdir -p "$(dirname "$ARTISAN_FINDINGS_FILE")"
+    jq -cn --arg t "$num" --arg by "${from:-$ticket}" --arg about "$ticket" --arg c "$case_" --arg r "$raised_by" \
+      --arg h "$short" --argjson blocking "$([ "$mode" = blocking ] && echo true || echo false)" \
+      --argjson logged "$([ -n "$run_dir" ] && echo true || echo false)" \
+      '{kind: "question", ticket: $t, asked_by: $by, about: $about, criterion: "8", case: $c, raised_by: $r,
+        blocking: $blocking, guardrail_logged: $logged,
+        title: ("Open decision #" + $t + ": " + $h), why: "an open decision for the Decision chat (criterion 8)", blocks: []}' \
       >>"$ARTISAN_FINDINGS_FILE"
   fi
   printf '%s\n' "$num"

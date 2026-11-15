@@ -228,7 +228,16 @@ sweep() {
       | reduce ($lines | map(try fromjson catch null)[]
                 | select(type == "object" and .kind == "question" and ((.criterion // "") | tostring) == "2")) as $q (.;
           event({event: "guardrail-fired", guardrail: "scope-floor", ticket: $t,
-                 areas: ticket_areas([$t]), question: ($q.ticket | tostring)}; $now))' \
+                 areas: ticket_areas([$t]), question: ($q.ticket | tostring)}; $now))
+      # A worker filing an open decision (criterion 8, #227), unless
+      # questions.sh logged it itself (--run).
+      | reduce ($lines | map(try fromjson catch null)[]
+                | select(type == "object" and .kind == "question" and ((.criterion // "") | tostring) == "8"
+                         and .guardrail_logged != true)) as $q (.;
+          (($q.about // $t) | tostring) as $a
+          | event({event: "guardrail-fired", guardrail: "open-decision", ticket: $a,
+                   raised_by: ($q.raised_by // "worker"), case: $q.case, question: ($q.ticket | tostring),
+                   areas: ticket_areas([$a])} + (if $a == $t then {} else {from: $t} end); $now))' \
       --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" --argjson now "$now" \
       --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -R . | jq -s .)"
   done
