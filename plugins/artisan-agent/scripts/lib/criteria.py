@@ -124,6 +124,41 @@ def merge_gate_criterion(text):
     return any(p.search(bare) for p in MERGE_GATE_OUTCOMES)
 
 
+# A criterion that reads as needing CI, a pull request or the whole suite but
+# that merge_gate_criterion doesn't recognize (#213): the verifier would judge
+# it, and a worker can't meet it (it runs no CI, opens no PR, runs only the
+# tests covering its change). The plan step flags it; the merge gate already
+# checks it on every merge. Each pattern names what the criterion needs, and
+# each states an outcome (green, passes, succeeds) of CI, on a PR or of the
+# whole suite. One that names a script, or a condition, is about code (the
+# same rule as merge_gate_criterion's), and one that names CI, a PR or the
+# suite in passing ("the script's CI mode prints ...", "the merge gate runs
+# the full suite", "the PR is merged at the end gate") states no such
+# outcome, so neither is one.
+_PASSES = r"(is\s+|are\s+|goes\s+|stays\s+|turns\s+)?(green|pass(es|ing)?|succeeds?)\b"
+_PASSED = r"\b(pass(es|ing)?|green|succeeds?)\s+(on|in)\s+"
+NEEDS_MERGE_GATE = [
+    ("the full suite", re.compile(r"\b(full|whole|entire|complete)\s+(test\s+)?suite\s+" + _PASSES
+                                  + r"|^(the\s+)?(test\s+)?suite\s+" + _PASSES
+                                  + r"|^(all|every)\s+(the\s+)?(tests?|checks?)\s+" + _PASSES + r"\W*$", re.I)),
+    ("CI", re.compile(r"\bci\s+((run|runs|job|jobs|checks?|build)\s+)?" + _PASSES
+                      + r"|" + _PASSED + r"(the\s+)?ci\b", re.I)),
+    ("a pull request", re.compile(_PASSED + r"(the|this|its|a)\s+(pr|pull\s+request)\b", re.I)),
+]
+SCRIPT = re.compile(r"\.(sh|py)\b", re.I)
+
+
+def needs_merge_gate(text):
+    """What the criterion reads as needing ("CI", "a pull request" or "the full
+    suite") when #174's rule doesn't already leave it to the merge gate, else None."""
+    if merge_gate_criterion(text) or SCRIPT.search(str(text)):
+        return None
+    bare = " ".join(QUOTED.sub("x", str(text)).split())
+    if IMPLEMENTATION.search(bare):
+        return None
+    return next((what for what, p in NEEDS_MERGE_GATE if p.search(bare)), None)
+
+
 def merge_gate_lines(lines):
     return [m.group(1) for m in map(BOX.match, lines) if m and merge_gate_criterion(m.group(1))]
 

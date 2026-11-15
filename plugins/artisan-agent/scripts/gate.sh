@@ -523,7 +523,6 @@ At the slice gate the Artisan changed a decision #\(.ticket) made alone.
 ## Acceptance criteria
 
 - [ ] \($choice), replacing: \(.choice // "the earlier choice")
-- [ ] The full suite passes
 "' <<<"$card")") || die "could not open the rework ticket"
   num=${url##*/}
   gid=$(issue_id "$num") || die "could not read #$num"
@@ -705,7 +704,6 @@ $BY checked the build of #$agent by hand and it failed:
 ## Acceptance criteria
 
 - [ ] #$agent's work no longer fails Human check #$t: $(printf '%s' "$WHY" | head -1)
-- [ ] The full suite passes
 ") || die "could not open the rework ticket"
         num=${url##*/}
       fi

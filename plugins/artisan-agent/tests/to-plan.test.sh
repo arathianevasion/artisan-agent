@@ -693,6 +693,46 @@ test_an_override_with_a_reason_lets_approval_through_and_is_recorded_on_the_plan
     "- #2: \"contract keys stay stable, checked in game\" stays on the agent ticket. Why: the save test covers it"
 }
 
+# Merge-gate flags (#213): criteria that need CI, a PR or the full suite,
+# which #174's rule doesn't leave to the merge gate, block approval until each
+# is dropped, reworded or overridden with a reason.
+merge_gate_graph() {
+  sample_graph
+  jq '.tickets["2"].acceptance = ["shows percent", "CI green on this ticket'"'"'s branch", "The full suite passes",
+        "CI is green", "the script'"'"'s CI mode prints the summary"]' "$GRAPH" >"$GRAPH.tmp" && mv "$GRAPH.tmp" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+}
+
+test_check_flags_criteria_the_merge_gate_already_checks_until_each_is_answered() {
+  merge_gate_graph
+  local out=
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>"$TEST_TMPDIR/err") && fail "check approved a plan with merge-gate flags"
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "criterion \"CI green on this ticket's branch\" reads as needing CI, which the merge gate already checks"
+  assert_contains "$out" "criterion \"The full suite passes\" reads as needing the full suite"
+  assert_not_contains "$out" "\"CI is green\" reads"
+  assert_not_contains "$out" "CI mode"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "2 agent criteria read as needing CI, a PR or the full suite"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "--override-merge-gate 2"
+  # One overridden with a reason, one reworded in the graph: approvable.
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH" --override-merge-gate 2 "CI green on this"
+  jq '.tickets["2"].acceptance |= map(if . == "The full suite passes" then "the merge gate is green" else . end)' \
+    "$GRAPH" >"$GRAPH.tmp" && mv "$GRAPH.tmp" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH" --override-merge-gate 2 "CI green on this" --why "the ticket adds the branch's CI job" \
+    || fail "check refused after every merge-gate flag was answered"
+  assert_eq "CI green on this ticket's branch|the ticket adds the branch's CI job" \
+    "$(jq -r '.merge_gate_overrides[] | "\(.criterion)|\(.why)"' "$PLANS")"
+  assert_eq 0 "$(jq '.human_check_overrides // [] | length' "$PLANS")"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" \
+    "| #2 | CI green on this ticket's branch | the ticket adds the branch's CI job |"
+  use_fake_gh
+  "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >/dev/null 2>&1
+  local p1=; p1=$(jq -r '.plans[0].issue' "$PLANS")
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$p1.json")" \
+    "## Merge-gate overrides
+- #2: \"CI green on this ticket's branch\" stays for the verifier to judge. Why: the ticket adds the branch's CI job"
+}
+
 test_publish_takes_the_override_at_approval() {
   human_tracker
   "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved \

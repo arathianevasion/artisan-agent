@@ -437,7 +437,6 @@ Redirected at review gate #\($issue). In run \($run).
 + (if $why != "" then "Why: \($why)\n\n" else "" end) + "## Acceptance criteria
 
 - [ ] " + (if $notes != "" then $notes | split("\n") | first else "The slice is as the Artisan wants it, by their own judgement" end) + "
-- [ ] The full suite passes
 "' <<<"$GATE")
     url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$(g '.tickets[0]')" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label "$label" --label in-run --body-file - <<<"$body") \
       || die "could not open the rework ticket"

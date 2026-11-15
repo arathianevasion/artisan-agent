@@ -539,6 +539,57 @@ test_build_records_an_override_and_the_plan_becomes_approvable() {
   assert_contains "$out" "| human_check_phrases | none |"
 }
 
+# ------------------------------------------------- merge-gate flags (#213)
+
+# Real wordings: the first three need CI, the full suite or a PR and the
+# verifier would judge them; the next two the verifier already leaves to the
+# merge gate (#174); the rest name CI or the suite only in passing.
+MG_CRITERIA='["CI green on this ticket'"'"'s branch", "All tests pass on CI", "The full suite passes",
+  "CI is green", "The PR shows the review notes",
+  "`merge-gate.sh` prints the CI run'"'"'s URL", "the script'"'"'s CI mode prints the summary",
+  "The existing plan, to-plan, gate and gate-action tests pass, changed only where they expect the removed line",
+  "No rework ticket the plugin opens contains a full-suite criterion",
+  "The merge gate runs the full suite", "The docs describe the whole suite", "The PR is merged at the end gate",
+  "Tests pass on the PR", "The pull request description lists the tickets"]'
+
+test_build_flags_a_criterion_that_needs_ci_a_pr_or_the_full_suite_and_the_plan_is_not_approvable() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq --argjson c "$MG_CRITERIA" '.tickets["10"].acceptance = $c' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[["CI green on this ticket'"'"'s branch","CI"],["All tests pass on CI","CI"],["The full suite passes","the full suite"],["Tests pass on the PR","a pull request"]]' \
+    "$(jq -c '[.merge_gate_flags[] | select(.ticket == "10") | [.criterion, .needs]]' "$TEST_TMPDIR/plan.json")"
+  assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Already checked by the merge gate"
+  assert_contains "$out" "| #10 (Retry failed uploads) | The full suite passes | the full suite |"
+  assert_contains "$out" "Drop it, or reword it"
+  assert_contains "$out" "Not approvable yet: 4 criteria the merge gate already checks (above)."
+  assert_not_contains "$out" "Approve as shown"
+  assert_status 1 "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json"
+}
+
+test_build_clears_merge_gate_flags_reworded_dropped_or_overridden_with_a_reason() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  # Reworded to #174's form, dropped, and kept with a reason.
+  jq '.tickets["10"].acceptance = ["CI is green", "retries twice", "All tests pass on CI"]' \
+    "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  assert_status 1 "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/d2.json" --config "$PROJECT/.artisan-agent/config.yml" \
+    --override-merge-gate 10 "All tests pass on CI"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json" \
+    --override-merge-gate 10 "pass on CI" --why "this ticket adds the CI job itself") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[]' "$(jq -c .merge_gate_flags "$TEST_TMPDIR/plan.json")"
+  assert_eq "All tests pass on CI|this ticket adds the CI job itself" \
+    "$(jq -r '.merge_gate_overrides[] | "\(.criterion)|\(.why)"' "$TEST_TMPDIR/plan.json")"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Merge-gate overrides"
+  assert_contains "$out" "| #10 | All tests pass on CI | this ticket adds the CI job itself |"
+  assert_contains "$out" "Approve as shown"
+  (cd "$PROJECT" && "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json") >/dev/null \
+    || fail "state.sh init refused a plan whose merge-gate flag was overridden"
+}
+
 # ------------------------------------------------- criteria from the tracker (#160)
 
 put_issue() { # n body

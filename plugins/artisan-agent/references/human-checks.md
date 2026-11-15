@@ -53,6 +53,20 @@ While a flag stands, the plan can't be approved: `check` exits 1, so `publish` r
 - **Split it**: `to-plan.sh split-human-check --repo <owner/name> [--graph <graph.json> [--plans <plans.json>]] <ticket> "<criterion>"` moves the criterion off the agent ticket into its Human check ticket, creating that ticket (title, marker, `ready-for-human`, blocking edge) or adding to the existing one. Running it again changes nothing. It reads the agent ticket's criteria the way the verifier does (`scripts/lib/criteria.py ticket`: the body's, else the newest triage comment's with an Agent Brief heading; in either, the checkboxes under an "Acceptance criteria" heading, or every checkbox in one with no such heading, as in the triage brief's `**Acceptance criteria:**` list) and moves that one line off wherever they live, editing the body or that comment in place (`scripts/lib/criteria-lib.sh`).
 - **Override it**: the Artisan decides the criterion stays, with a reason: `--override-human-check <ticket> "<criterion>" --why "<reason>"` on `to-plan.sh check` or `publish`, or on `plan.sh build`. It is recorded on the plan (`human_check_overrides` in `plans.json` and the plan issue's body; in `plan.json` at the plan step).
 
+## Merge-gate flags
+
+A worker runs no CI, opens no PR and runs only the tests that cover its change; the merge gate runs the suite (or CI) on every merge. So an agent criterion that needs CI, a PR or the full suite can't be met by a worker. Worded as a merge-gate criterion ("CI is green", "the PR shows ...", `GLOSSARY.md`), the verifier leaves it to the merge gate. Worded any other way ("CI green on this ticket's branch", "All tests pass on CI", "The full suite passes"), the verifier would judge it, and the ticket fails its attempts.
+
+The plan check flags those other wordings, beside the Human check flags: `to-plan.sh check` and `render` under "Needs your attention", `plan.sh build` as `merge_gate_flags` ([{ticket, criterion, needs}], `needs` being `CI`, `a pull request` or `the full suite`), read from the same criteria. The rule is `scripts/lib/criteria.py` `needs_merge_gate`, beside `merge_gate_criterion`: a criterion that states CI, a PR or the whole suite as the outcome. One that names a script or a condition is about code, and one that names CI in passing ("the script's CI mode prints ...") states no such outcome, so neither is flagged.
+
+While a flag stands the plan can't be approved, as with a Human check flag. Each is cleared one of three ways:
+
+- **Drop it** from the ticket (its body, or the triage comment its criteria are in): the merge gate already checks it. Then graph or build again.
+- **Reword it** to a merge-gate criterion, "CI is green" or "The PR shows ...", which the verifier leaves to the merge gate. Then graph or build again.
+- **Override it**: the Artisan decides it stays for the verifier to judge, with a reason: `--override-merge-gate <ticket> "<criterion>" --why "<reason>"` on `to-plan.sh check` or `publish`, or on `plan.sh build`. It is recorded on the plan (`merge_gate_overrides` in `plans.json` and the plan issue's body; in `plan.json` at the plan step).
+
+The plugin writes no such criterion itself: a rework ticket a gate opens carries no full-suite line.
+
 ## Phrases
 
 A criterion containing any of these reads as needing a person. A project adds its own in `.artisan-agent/config.yml` under `human_check_phrases`.

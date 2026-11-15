@@ -300,6 +300,8 @@ test_change_on_a_card_creates_a_rework_ticket_in_the_run() {
   rw=$("$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt" --why "Matches the feature")
   assert_eq "Rework #1: Which file name?" "$(jq -r .title "$FAKE_GH_DIR/issue-$rw.json")"
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$rw.json")" "- [ ] Name it greeting.txt, replacing: t1.txt"
+  # The merge gate runs the suite on every merge: no full-suite criterion (#213).
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$rw.json")" "full suite"
   assert_contains "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$rw.json")" "in-run"
   # In the run: scope, a queued ticket, the original's model and caps.
   assert_eq true "$(jq -r --arg r "$rw" '.plan.scope | index($r) != null' "$RUN_DIR/state.json")"
