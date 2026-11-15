@@ -373,3 +373,69 @@ test_every_report_reads_a_run_state_over_1_mib() {
   assert_eq "[]" "$(jq -c '.tickets_closed_outside_run' <<<"$("$H" backstop --runs "$(R r1)" --repo-dir "$PROJECT" --main main --prs "$TEST_TMPDIR/prs.json" --closed "$TEST_TMPDIR/closed.json")")"
   assert_eq "90 91" "$(jq -r '[.candidates[].issue] | join(" ")' <<<"$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json")")"
 }
+
+# The built-in open-decision guardrail (criterion 8, #233): a filing as
+# questions.sh and the sweep log it, and a ruling as questions.sh sync logs it.
+od() { # raised_by ticket question
+  jq -nc --arg r "$1" --arg t "$2" --arg q "$3" \
+    '{event: "guardrail-fired", guardrail: "open-decision", ticket: $t, raised_by: $r, case: "incomplete", question: $q, areas: []}'
+}
+ruled() { # question took needed (true, false or null)
+  jq -nc --arg q "$1" --argjson took "$2" --argjson needed "$3" \
+    '{event: "ruled", ticket: "5", question: $q, ruling: "answer", took_recommendation: $took, needed_decision_chat: $needed}'
+}
+od_row() { jq -c '.guardrails[] | select(.id == "open-decision")' <<<"$1"; }
+
+test_only_a_didnt_need_the_decision_chat_ruling_is_loosen_evidence_for_open_decisions() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(od worker 5 40), $(od worker 5 41), $(od worker 5 42), $(od worker 5 43),
+    $(ruled 40 true false), $(ruled 41 false false), $(ruled 42 true true), $(ruled 43 false true)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "built-in fired 2 0" "$(od_row "$out" | jq -r '"\(.level) \(.status) \(.loosen.count) \(.tighten.count)"')"
+  assert_eq "40 41" "$(od_row "$out" | jq -r '[.loosen.evidence[].question] | join(" ")')"
+  assert_eq none "$(proposal "$out" open-decision)"
+  run r2 "[$(ruled 50 true false)]"
+  assert_eq loosen "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)")" open-decision)"
+}
+
+test_an_open_decision_raised_at_a_gate_or_after_its_ticket_merged_is_tighten_evidence() {
+  setup
+  merge() { jq -nc --arg t "$1" '{event: "merge", ticket: $t, commit: "abc"}'; }
+  # #5 and #6 raised before any merge by a worker and a verifier; #7 at a gate;
+  # #8 by a finding after #8 merged; #9 after #6 merged, but #9 had not.
+  run r1 "[$(od worker 5 40), $(od verifier 6 41), $(merge 6), $(od gate 7 42), $(merge 8), $(od finding 8 43), $(od finding 9 44)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "raised at a gate 42, raised after merge 43" \
+    "$(od_row "$out" | jq -r '[.tighten.evidence[] | "\(.kind) \(.question)"] | join(", ")')"
+  assert_eq "0 2" "$(od_row "$out" | jq -r '"\(.loosen.count) \(.tighten.count)"')"
+  run r2 "[$(od gate 10 45)]"
+  assert_eq tighten "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)")" open-decision)"
+}
+
+test_the_health_table_shows_plan_step_open_decisions_on_their_own_line() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(od plan 5 40), $(od plan 6 41), $(od worker 7 42)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "2 40 41 0 0" "$(od_row "$out" | jq -r '"\(.plan_step.count) \([.plan_step.evidence[].question] | join(" ")) \(.loosen.count) \(.tighten.count)"')"
+  table=$("$H" health --runs "$(R r1)" --table)
+  assert_contains "$table" "| open-decision | built-in | fired |"
+  assert_contains "$table" "Open decisions caught at the plan step: 2 (#40 on #5, #41 on #6)"
+}
+
+test_a_run_with_no_open_decision_filed_or_ruled_shows_no_open_decision_row() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(fired other)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "quiet" "$(jq -r '[.guardrails[].id] | join(" ")' <<<"$out")"
+  assert_not_contains "$("$H" health --runs "$(R r1)" --table)" "plan step"
+}
+
+test_the_reference_documents_the_open_decision_guardrail_and_its_evidence() {
+  doc=$(cat "$PLUGIN_ROOT/references/guardrail-health.md")
+  assert_contains "$doc" "### The open-decision guardrail"
+  assert_contains "$doc" '`ruled` with `needed_decision_chat: false`'
+  assert_contains "$doc" '`raised_by: "gate"`'
+  assert_contains "$doc" 'after a `merge` event'
+  assert_contains "$doc" '`raised_by: "plan"`'
+  assert_contains "$doc" "references/open-decisions.md"
+}

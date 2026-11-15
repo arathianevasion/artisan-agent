@@ -23,6 +23,19 @@ An event belongs to a guardrail when its `guardrail` is the guardrail's `id`, it
 - **Guardrail conflicts** (`resolve`'s `conflicts` and `overridden`) are carried in the output for the retro to raise.
 - Fewer events than the threshold propose nothing.
 
+### The open-decision guardrail
+
+Criterion 8 (`references/open-decisions.md`, ADR 0002) is a built-in guardrail, `open-decision`, level `built-in`. No level file defines it; its row shows once the runs carry an open-decision filing or a ruling, so a run from before criterion 8 shows none. Its evidence is its own, never the other guardrails' rules:
+
+| Evidence | Counts toward | Event it reads |
+|---|---|---|
+| A ruling with "Needed the Decision chat: no", whatever "Took the recommendation" says | loosen (the only loosen evidence) | `ruled` with `needed_decision_chat: false` |
+| An open decision first raised at a gate | tighten | `guardrail-fired` with `guardrail: "open-decision"`, `raised_by: "gate"` |
+| An open decision raised after its ticket merged | tighten | the same, after a `merge` event for its `ticket` in that run's log |
+| An open decision caught at the plan step | neither: counted on its own line (`plan_step`; the table's "Open decisions caught at the plan step") | the same, `raised_by: "plan"` |
+
+A ruling with "yes", or with no verdict, counts neither way. A bypass, an unchanged gate approval and never firing are not loosen evidence for it. Filings by a worker, verifier or finding before the merge count neither way. It is not protected: three loosen events propose loosening it like any other guardrail.
+
 ## Where the events come from
 
 Each is written in the same one-step state write as the change it belongs to (`references/state-file.md`). A run from before these events has none, which already reads as "no evidence".
