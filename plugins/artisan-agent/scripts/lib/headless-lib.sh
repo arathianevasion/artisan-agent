@@ -1,6 +1,7 @@
 # The permission arguments every headless `claude -p` step starts with, chosen
 # in one place (#187): wave.sh's orchestrator and workers, verify.sh's
-# verifier and retro.sh's preparer. Sourced, never run.
+# verifier, retro.sh's preparer, upstream-check.sh's judge and model-prices.sh's
+# price agent (#214). Sourced, never run.
 #
 # --permission-mode dontAsk denies a tool outside the allowlist at once and
 # never asks. A headless session has no one to answer a prompt, and a `claude`
@@ -20,4 +21,11 @@ HEADLESS_PERMISSION_MODE=dontAsk
 # headless session allowed exactly tools (a --allowedTools list).
 headless_args() {
   HEADLESS_ARGS=(--permission-mode "$HEADLESS_PERMISSION_MODE" --allowedTools "$1")
+}
+
+# headless_denials session-json: prints, one per line, the tools the session
+# was denied (its final result event's permission_denials). Nothing when it
+# was denied none or the file is not JSON. Needs jq.
+headless_denials() {
+  jq -r '(if type == "array" then .[-1] else . end) | (.permission_denials // [])[] | .tool_name' "$1" 2>/dev/null || true
 }

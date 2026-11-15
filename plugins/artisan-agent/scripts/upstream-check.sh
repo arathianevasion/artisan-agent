@@ -50,6 +50,10 @@ UPSTREAM=mattpocock-skills
 PIPELINE_REPO=${ARTISAN_PIPELINE_REPO:-arathianevasion/artisan-agent}
 GH=${GH_BIN:-gh}
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
+# shellcheck source=lib/headless-lib.sh
+. "$HERE/lib/headless-lib.sh"   # headless_args: never a permission prompt (#214)
+# What JUDGE.md asks: read both trees, search, diff them, write the answer file.
+JUDGE_TOOLS="Read,Glob,Grep,Write,Bash(diff:*)"
 DEPS="$PLUGIN_ROOT/guard/dependencies.list"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -175,7 +179,7 @@ moved_field() { cut -f"$2" "$1/moved.tsv"; } # work-dir field-number of moved.ts
 block_file() { printf '%s/upstream-block.json' "$HOME_DIR"; }
 
 cmd_run() {
-  local work=${1:-} line= old= new= oldtree= url= blocked= state= judge_prompt=
+  local work=${1:-} line= old= new= oldtree= url= blocked= state= judge_prompt= denied=
   [ -n "$work" ] || usage
   mkdir -p "$work"
   rm -f "$work/mechanical.txt" "$work/judgement.json" "$work/report.md"
@@ -211,11 +215,13 @@ cmd_run() {
     printf '\n### ARTISAN.md (the six rules kept skills must not break)\n\n'
     cat "$PLUGIN_ROOT/ARTISAN.md"
   } >"$judge_prompt"
-  ( cd "$work" && ARTISAN_ROLE=upstream-judge "$CLAUDE" -p "$(cat "$judge_prompt")" \
+  headless_args "$JUDGE_TOOLS"
+  ( cd "$work" && ARTISAN_ROLE=upstream-judge "$CLAUDE" -p "$(cat "$judge_prompt")" "${HEADLESS_ARGS[@]}" \
       --model "${ARTISAN_UPSTREAM_MODEL:-claude-sonnet-5-5}" --max-budget-usd "${ARTISAN_UPSTREAM_BUDGET:-1.00}" \
       --output-format json >"$work/judge-session.json" 2>"$work/judge-session.err" ) \
     || die "the judgement agent failed (see $work/judge-session.err)"
-  [ -s "$work/judgement.json" ] || die "the judgement agent wrote no $work/judgement.json"
+  denied=$(headless_denials "$work/judge-session.json" | sort -u | tr '\n' ' ')
+  [ -s "$work/judgement.json" ] || die "the judgement agent wrote no $work/judgement.json${denied:+ (denied tools: ${denied% })}"
   jq -e '.port and .behaviour and .artisan_md and .breaking' "$work/judgement.json" >/dev/null \
     || die "judgement.json lacks one of port, behaviour, artisan_md, breaking (arrays)"
   cmd_report "$work"

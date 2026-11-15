@@ -200,3 +200,55 @@ test_file_ports_twice_files_nothing_twice_and_keeps_empty_fields() {
   assert_contains "$(bash "$UC" file-ports "$TEST_TMPDIR/w")" "already filed"
   [ ! -e "$FAKE_GH_DIR/issue-3.json" ] || fail "a duplicate ticket was filed"
 }
+
+# --- the judge never waits on a permission prompt (#214) ---
+
+# A stub that, like dontAsk, writes the answer only when --allowedTools lists
+# Write (and Bash(diff:*), which the brief asks for), and otherwise reports
+# the denial in its result event.
+allowlist_claude() {
+  cat >"$TEST_TMPDIR/claude" <<'S'
+#!/bin/bash
+printf '[%s]\n' "$@" >"$TEST_TMPDIR/claude.args"
+mode= tools= prompt=
+while [ $# -gt 0 ]; do
+  case "$1" in --permission-mode) mode=$2 ;; --allowedTools) tools=$2 ;; -p) prompt=$2 ;; esac; shift
+done
+out=$(printf '%s' "$prompt" | sed -n 's/.*Write your answer to: \([^ ]*judgement.json\).*/\1/p' | head -1)
+case ",$tools," in
+  *,Write,*) [ "$mode" = dontAsk ] && printf '%s' "$JUDGE_JSON" >"$out"; echo '{"result":"done"}' ;;
+  *) echo '{"result":"stopped","permission_denials":[{"tool_name":"Write","tool_input":{}}]}' ;;
+esac
+S
+  chmod +x "$TEST_TMPDIR/claude"
+  export ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/claude"
+}
+
+test_the_judge_starts_in_dontask_with_an_allowlist_for_its_brief() {
+  setup_env; mk_upstream ""; allowlist_claude; fake_tracker
+  export TEST_TMPDIR JUDGE_JSON='{"port":[],"behaviour":[],"artisan_md":[],"breaking":[]}'
+  bash "$UC" run "$TEST_TMPDIR/w" >/dev/null
+  local args=; args=$(cat "$TEST_TMPDIR/claude.args")
+  assert_contains "$args" "[--permission-mode]
+[dontAsk]"
+  assert_contains "$args" "[--allowedTools]
+[Read,Glob,Grep,Write,Bash(diff:*)]"
+  [ -s "$TEST_TMPDIR/w/judgement.json" ] || fail "the judge could not write judgement.json with only the listed tools"
+}
+
+test_a_denied_tool_under_the_shim_ends_the_judge_promptly_with_the_denial_reported() {
+  setup_env; mk_upstream ""; fake_tracker
+  unset ARTISAN_CLAUDE_BIN
+  export FAKE_CLAUDE_MODE=deny FAKE_SHIM_LOG="$TEST_TMPDIR/shim.log"
+  local out= i=0 pid=
+  PATH="$TESTS_DIR/fixtures/fake-cmux-shim:$TESTS_DIR/fixtures/fake-claude:$PATH" \
+    bash "$UC" run "$TEST_TMPDIR/w" >"$TEST_TMPDIR/out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.2; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; fail "the upstream check waited on the shim's prompt"; fi
+  wait "$pid" && fail "the upstream check passed with no judgement" || true
+  out=$(cat "$TEST_TMPDIR/out")
+  assert_contains "$out" "wrote no"
+  assert_contains "$out" "denied tools: Bash"
+  assert_eq shim "$(cat "$FAKE_SHIM_LOG")" "the shim started the session"
+}

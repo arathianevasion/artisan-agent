@@ -77,3 +77,55 @@ test_an_agent_that_writes_nothing_or_nonsense_fails_and_changes_nothing() {
 test_no_arguments_is_bad_usage() {
   assert_status 2 bash "$MP"
 }
+
+# --- the agent never waits on a permission prompt (#214) ---
+
+# A stub that, like dontAsk, writes the answer only when --allowedTools lists
+# Write, and otherwise reports the denial in its result event. It records its
+# arguments, one "[arg]" per line.
+allowlist_claude() {
+  cat >"$TEST_TMPDIR/claude" <<'S'
+#!/bin/bash
+printf '[%s]\n' "$@" >"$TEST_TMPDIR/claude.args"
+mode= tools=
+while [ $# -gt 0 ]; do
+  case "$1" in --permission-mode) mode=$2 ;; --allowedTools) tools=$2 ;; esac; shift
+done
+case ",$tools," in
+  *,Write,*) [ "$mode" = dontAsk ] && printf '%s' "$PUBLISHED_JSON" >"$PUBLISH_TO"; echo '{"result":"done"}' ;;
+  *) echo '{"result":"stopped","permission_denials":[{"tool_name":"Write","tool_input":{}}]}' ;;
+esac
+S
+  chmod +x "$TEST_TMPDIR/claude"
+  export ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/claude"
+}
+
+test_the_price_agent_starts_in_dontask_with_an_allowlist_for_its_brief() {
+  setup_prices; allowlist_claude
+  export TEST_TMPDIR PUBLISHED_JSON; PUBLISHED_JSON=$(jq -c '{models}' "$ARTISAN_PRICES_FILE")
+  export PUBLISH_TO="$TEST_TMPDIR/w/published.json"
+  bash "$MP" fetch "$TEST_TMPDIR/w"
+  local args=; args=$(cat "$TEST_TMPDIR/claude.args")
+  assert_contains "$args" "[--permission-mode]
+[dontAsk]"
+  assert_contains "$args" "[--allowedTools]
+[Read,WebFetch,WebSearch,Write]"
+  [ -s "$TEST_TMPDIR/w/published.json" ] || fail "the agent could not write published.json with only the listed tools"
+}
+
+test_a_denied_tool_under_the_shim_ends_the_price_check_promptly_with_the_denial_reported() {
+  setup_prices
+  unset ARTISAN_CLAUDE_BIN
+  export FAKE_CLAUDE_MODE=deny FAKE_SHIM_LOG="$TEST_TMPDIR/shim.log"
+  local out= i=0 pid=
+  PATH="$TESTS_DIR/fixtures/fake-cmux-shim:$TESTS_DIR/fixtures/fake-claude:$PATH" \
+    bash "$MP" fetch "$TEST_TMPDIR/w" >"$TEST_TMPDIR/out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.2; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; fail "the price check waited on the shim's prompt"; fi
+  wait "$pid" && fail "the price check passed with no answer" || true
+  out=$(cat "$TEST_TMPDIR/out")
+  assert_contains "$out" "wrote no"
+  assert_contains "$out" "denied tools: Bash"
+  assert_eq shim "$(cat "$FAKE_SHIM_LOG")" "the shim started the session"
+}
