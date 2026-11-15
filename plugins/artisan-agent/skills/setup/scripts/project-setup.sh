@@ -142,6 +142,35 @@ found_checks() { # candidate check commands, "check<TAB>source<TAB>command"
   return 0
 }
 
+# board_convention dir: the board docs/agents/issue-tracker.md describes (#146),
+# as JSON {owner, number, fields_at_filing}, or nothing. The project is the
+# first github.com/users|orgs/<owner>/projects/<number> link; the fields at
+# filing are the rows of a table whose last column says whoever files the
+# issue sets them ("whoever files", "set at filing", "the filer").
+board_convention() {
+  local f=$1/docs/agents/issue-tracker.md
+  [ -f "$f" ] || return 0
+  python3 -I - "$f" <<'PY'
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"github\.com/(?:users|orgs)/([A-Za-z0-9_.-]+)/projects/([0-9]+)", text)
+if not m:
+    sys.exit(0)
+fields = []
+for line in text.splitlines():
+    if not line.strip().startswith("|"):
+        continue
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    if len(cells) < 2:
+        continue
+    if re.search(r"whoever files|set at filing|the filer|when filing|files the issue", cells[-1], re.I):
+        name = re.sub(r"[*`_]", "", cells[0]).strip()
+        if name and name not in fields:
+            fields.append(name)
+print(json.dumps({"owner": m.group(1), "number": int(m.group(2)), "fields_at_filing": fields}))
+PY
+}
+
 cmd_scan() {
   local d= m= p= kind=
   d=$(cd "${1:-.}" && pwd); m=$(main_of "$d")
@@ -153,6 +182,8 @@ cmd_scan() {
   done
   if grep -qsF "$POINTER" "$m/$(agents_file "$m")"; then printf 'item\tpointer\tpresent\n'; else printf 'item\tpointer\tmissing\n'; fi
   if grep -qs 'Who the Artisan is' "$m/docs/agents/issue-tracker.md"; then printf 'item\tidentity\tpresent\n'; else printf 'item\tidentity\tmissing\n'; fi
+  p=$(board_convention "$m")
+  [ -z "$p" ] || printf 'board\t%s\n' "$(jq -r '"\(.owner)/\(.number)\t\(.fields_at_filing | join(", "))"' <<<"$p")"
   p=$(git -C "$m" rev-parse --path-format=absolute --git-path hooks)/pre-commit
   if [ ! -e "$p" ]; then echo "pre-commit	missing"; elif grep -q artisan-agent-pre-commit "$p"; then echo "pre-commit	installed"; else echo "pre-commit	foreign"; fi
   if [ ! -d "$HOME_DIR/.git" ]; then echo "individual-home	missing"
@@ -217,7 +248,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf= ws= cur_ws= q=
+  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf= ws= cur_ws= q= board= cur_board=
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -286,6 +317,34 @@ cmd_apply() {
       printf "worktree_setup: '%s'\n" "$q" >>"$tmp/config.yml"
       cp "$tmp/config.yml" "$f"
       echo "changed: worktree_setup is $ws"
+    fi
+  fi
+  # The board (#146): tracker.board from the answers' tracker_board, else from
+  # the board the tracker doc describes. Recorded when the config has none;
+  # a different one already there is kept. No board: nothing is written.
+  board=$(jq -c '.tracker_board // empty' "$answers")
+  [ -n "$board" ] || board=$(board_convention "$wt")
+  if [ -n "$board" ]; then
+    cur_board=$("$ROOT/scripts/config.sh" get tracker.board --file "$f" 2>/dev/null | jq -c . 2>/dev/null) || cur_board='{}'
+    [ -n "$cur_board" ] || cur_board='{}'
+    if [ "$(jq -cS . <<<"$cur_board")" = "$(jq -cS . <<<"$board")" ]; then
+      echo "unchanged: tracker.board is $(jq -r '"\(.owner)/\(.number)"' <<<"$board")"
+    elif [ "$cur_board" != '{}' ]; then
+      echo "kept: .artisan-agent/config.yml has tracker.board $(jq -r '"\(.owner)/\(.number)"' <<<"$cur_board"); change it by hand if you want $(jq -r '"\(.owner)/\(.number)"' <<<"$board")"
+    else
+      jq -r '"tracker:\n  board:\n    owner: \(.owner | tojson)\n    number: \(.number)\n    fields_at_filing: [\((.fields_at_filing // []) | map(tojson) | join(", "))]"' <<<"$board" >"$tmp/board.yml"
+      if grep -q '^tracker:' "$f"; then
+        # The template's "tracker:" block (board: {}) gives way to the board.
+        awk -v blk="$tmp/board.yml" '
+          /^tracker:[[:space:]]*$/ { while ((getline l < blk) > 0) print l; skip = 1; next }
+          skip && /^[[:space:]]/ { next }
+          { skip = 0; print }' "$f" >"$tmp/config.yml"
+      else
+        { cat "$f"; printf '\n'; cat "$tmp/board.yml"; } >"$tmp/config.yml"
+      fi
+      cp "$tmp/config.yml" "$f"
+      "$ROOT/scripts/config.sh" get tracker.board --file "$f" >/dev/null || die "the board did not read back from $f: $board"
+      echo "changed: tracker.board is $(jq -r '"\(.owner)/\(.number), fields at filing: \(.fields_at_filing | join(", "))"' <<<"$board")"
     fi
   fi
   if ! grep -qsx '.artisan-agent/runs/' "$wt/.gitignore"; then

@@ -446,3 +446,62 @@ test_setup_picks_the_node_default_by_lockfile() {
   : >"$P/pnpm-lock.yaml"
   assert_contains "$("$PS" scan "$P")" "node-setup	pnpm install --frozen-lockfile --prefer-offline"
 }
+
+# #146: setup learns the board convention from the tracker doc and records it
+# as tracker.board; a doc without one leaves the board empty.
+board_doc() { # a tracker doc that describes a board, as claudia-kerman's does
+  cat >>"$P/docs/agents/issue-tracker.md" <<'DOC'
+
+## The Project: every issue gets an Area
+
+All issues live on the GitHub Project **Board**: <https://github.com/users/someone/projects/3>, project number 3.
+
+| Field | Values | Set by |
+|---|---|---|
+| **Area** | UI · Test & Tooling | whoever files the issue |
+| **Priority** | P0 · P1 | triage |
+| **Verified in** | Not yet · Stable | whoever merges |
+DOC
+  git -C "$P" commit -q -am "board doc"
+  git -C "$P" push -q origin main
+}
+
+test_a_tracker_doc_that_describes_a_board_is_recorded_as_tracker_board() {
+  seed
+  board_doc
+  assert_contains "$("$PS" scan "$P")" "$(printf 'board\tsomeone/3\tArea')"
+  local out=
+  out=$(run_setup)
+  assert_contains "$out" "changed: tracker.board is someone/3, fields at filing: Area"
+  branch_file .artisan-agent/config.yml >"$TEST_TMPDIR/config.yml"
+  assert_eq '{"fields_at_filing":["Area"],"number":3,"owner":"someone"}' \
+    "$("$PLUGIN_ROOT/scripts/config.sh" get tracker.board --file "$TEST_TMPDIR/config.yml" | jq -cS .)"
+  assert_eq 1 "$(grep -c '^tracker:' "$TEST_TMPDIR/config.yml")" "one tracker block"
+}
+
+test_a_tracker_doc_without_a_board_records_none() {
+  seed
+  assert_not_contains "$("$PS" scan "$P")" "board"
+  local out=
+  out=$(run_setup)
+  assert_not_contains "$out" "tracker.board"
+  branch_file .artisan-agent/config.yml >"$TEST_TMPDIR/config.yml"
+  assert_eq '{}' "$("$PLUGIN_ROOT/scripts/config.sh" get tracker.board --file "$TEST_TMPDIR/config.yml" | jq -c .)"
+}
+
+test_a_board_already_in_the_config_is_kept() {
+  seed
+  board_doc
+  mkdir -p "$P/.artisan-agent"
+  printf 'tracker:\n  board:\n    owner: other\n    number: 9\n    fields_at_filing: [Team]\n' >"$P/.artisan-agent/config.yml"
+  git -C "$P" add -A && git -C "$P" commit -q -m config && git -C "$P" push -q origin main
+  assert_contains "$(run_setup)" "kept: .artisan-agent/config.yml has tracker.board other/9"
+}
+
+test_the_answers_name_a_board_the_doc_does_not_link() {
+  seed
+  answers '{"pr_boundary":"slice","pr_level":"product","always_ask":{"product":[],"coding":[]},"team_repo":"","checks":[],"tracker_board":{"owner":"org","number":2,"fields_at_filing":["Area"]}}'
+  run_setup >/dev/null
+  branch_file .artisan-agent/config.yml >"$TEST_TMPDIR/config.yml"
+  assert_eq 'org/2' "$("$PLUGIN_ROOT/scripts/config.sh" get tracker.board --file "$TEST_TMPDIR/config.yml" | jq -r '"\(.owner)/\(.number)"')"
+}
