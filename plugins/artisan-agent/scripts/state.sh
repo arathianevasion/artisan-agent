@@ -107,7 +107,9 @@ init_write() {
           suite_source: ($p.suite_source // null),
           recorded_checks: ($p.recorded_checks // null),
           checks: ($p.checks // []),
-          orchestrator: ($p.orchestrator // {})
+          orchestrator: ($p.orchestrator // {}),
+          plans: ($p.plans // []),
+          spec: ($p.spec // null)
         },
         tickets: {},
         integration: { branch: $p.integration_branch, merges: [] },

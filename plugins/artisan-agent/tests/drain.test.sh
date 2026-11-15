@@ -476,6 +476,9 @@ test_a_compacted_orchestrator_hands_off_and_a_fresh_one_finishes_the_same_wave()
   # The second: the same wave, told why, finished it from the state file.
   assert_eq "1 1" "$(state_get '[.orchestrators[].wave | tostring] | join(" ")')"
   assert_contains "$(cat "$RUN_DIR/prompts/orchestrator-w1.2.md")" "handed off to you (compaction blocked"
+  # Named as the first one, saying it is a hand-off (#189).
+  assert_eq "sample · Wave 1 · run r1|sample · Wave 1 · run r1 (handoff 1)" "$(state_get '[.orchestrators[].name] | join("|")')"
+  assert_eq "sample · Wave 1 · run r1 (handoff 1)" "$(jq -r .name "$RUN_DIR/results/orchestrator-w1.2.exit.json")"
   assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" orchestrator-w1 2)"
   assert_eq merged "$(state_get '.tickets["1"].status')"
   assert_eq 1 "$(state_get '.tickets["1"].attempts')" "the worker in flight was never dispatched again"

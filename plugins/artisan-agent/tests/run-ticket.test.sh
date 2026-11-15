@@ -381,6 +381,35 @@ test_a_worker_gets_a_name_and_accepts_messages_from_other_sessions() {
   assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" '[{"crossSessionInbound":"accept"}]'
 }
 
+test_an_orchestrator_or_verifier_gets_the_name_it_is_given_and_its_exit_record_keeps_it() {
+  setup_run
+  export FAKE_CLAUDE_MODE=complete
+  "$PLUGIN_ROOT/scripts/run-ticket.sh" --run-dir "$RUN" --ticket verify-46 --role verifier \
+    --prompt-file "$TEST_TMPDIR/prompt.md" --workdir "$WORKTREE" \
+    --estimate-usd 0.25 --expected-minutes 5 --name 'Verify #46 · "kerman" · Wave 2' >/dev/null
+  wait_for_file "$RUN/results/verify-46.1.exit.json"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" "[--name]
+[Verify #46 · \"kerman\" · Wave 2]"
+  assert_eq 'Verify #46 · "kerman" · Wave 2' "$(jq -r .name "$RUN/results/verify-46.1.exit.json")"
+}
+
+test_a_worker_cannot_be_given_another_name() {
+  setup_run
+  assert_status 2 run_ticket --name "something else"
+  [ ! -e "$RUN/workers/46.1" ] || fail "a worker folder was made"
+}
+
+test_an_unnamed_orchestrator_has_no_name_in_its_exit_record() {
+  setup_run
+  export FAKE_CLAUDE_MODE=complete
+  "$PLUGIN_ROOT/scripts/run-ticket.sh" --run-dir "$RUN" --ticket orchestrator-w1 --role orchestrator \
+    --prompt-file "$TEST_TMPDIR/prompt.md" --workdir "$WORKTREE" \
+    --estimate-usd 0.25 --expected-minutes 5 >/dev/null
+  wait_for_file "$RUN/results/orchestrator-w1.1.exit.json"
+  assert_eq null "$(jq -c .name "$RUN/results/orchestrator-w1.1.exit.json")"
+  case "$(cat "$FAKE_CLAUDE_ARGS")" in *"[--name]"*) fail "an unnamed orchestrator was given --name" ;; esac
+}
+
 # --- settable poll interval (#169) ---
 
 test_a_bad_runner_poll_interval_is_refused_before_anything_starts() {

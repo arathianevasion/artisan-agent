@@ -317,6 +317,23 @@ test_several_plans_and_single_tickets_mix_without_duplicates() {
   assert_eq "null" "$(jq -c '.tickets[3].from' <<<"$out")"
 }
 
+test_resolve_scope_names_the_plans_and_the_first_named_issues_spec() {
+  scope_tracker
+  jq -n '{number: 90, title: "The spec", state: "open", labels: [], body: ""}' >"$FAKE_GH_DIR/issue-90.json"
+  printf '90' >"$FAKE_GH_DIR/parent-$P2"
+  local out=; out=$("$RS" --repo local/sample "$P2" 1 "$P1")
+  assert_eq "$P2,$P1" "$(jq -r '.plans | map(.number) | join(",")' <<<"$out")"
+  assert_eq "$(jq -r .title "$FAKE_GH_DIR/issue-$P2.json")" "$(jq -r '.plans[0].title' <<<"$out")"
+  assert_eq '{"number":90,"title":"The spec"}' "$(jq -c .spec <<<"$out")"
+  # A ticket named alone: no plans, and the spec is its plan's parent.
+  out=$("$RS" --repo local/sample 4)
+  assert_eq '[]' "$(jq -c .plans <<<"$out")"
+  assert_eq '{"number":90,"title":"The spec"}' "$(jq -c .spec <<<"$out")"
+  # A plan with no parent: no spec.
+  out=$("$RS" --repo local/sample "$P1")
+  assert_eq null "$(jq -c .spec <<<"$out")"
+}
+
 test_a_single_ticket_is_its_own_scope() {
   scope_tracker
   local out=; out=$("$RS" --repo local/sample 4)

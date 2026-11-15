@@ -17,6 +17,12 @@
 #   skipped   [{number, reason}] closed tickets, left out
 #   outside_blockers  [{plan, blocker}] open plans blocking a named plan that are not
 #             themselves named: their tickets may block this run's tickets
+#   plans     [{number, title}] the plan issues named, in order (#189)
+#   spec      {number, title} the first named issue's parent (a plan's parent is
+#             its spec; for a ticket in a plan, the plan's parent), or null when
+#             it has none or it can't be read. The plan
+#             step copies plans and spec into the draft: they name the run's
+#             orchestrator sessions (wave.sh launch).
 # A `plan` issue with no tickets is a queued request (queue-plan.sh leaves
 # them when a run holds the lock), not work to run: exit 3 naming it.
 #
@@ -67,7 +73,7 @@ body_blockers() { # number what(ticket|plan)
   printf '%s\n' "$out"
 }
 
-tickets='[]' skipped='[]' outside='[]'
+tickets='[]' skipped='[]' outside='[]' plans='[]'
 add_ticket() { # number title state from
   if [ "$3" != open ]; then
     skipped=$(jq -c --argjson n "$1" '. + [{number: $n, reason: "closed"}]' <<<"$skipped")
@@ -83,6 +89,7 @@ for n in "${NAMED[@]}"; do
     add_ticket "$n" "$(jq -r .title <<<"$issue")" "$(jq -r '.state | ascii_downcase' <<<"$issue")" ""
     continue
   fi
+  plans=$(jq -c --argjson i "$issue" '. + [$i | {number, title}]' <<<"$plans")
   subs=$(gh api "repos/$REPO/issues/$n/sub_issues") || die "cannot read the sub-issues of plan #$n"
   members=$(jq -c '[.[] | {number, title, state: (.state | ascii_downcase)}]' <<<"$subs")
   if [ "$(jq length <<<"$members")" -eq 0 ]; then
@@ -134,5 +141,15 @@ for n in $(jq -r '.[].number' <<<"$tickets"); do
   tickets=$(jq -c --argjson n "$n" --argjson b "$bl" 'map(if .number == $n then . + {blocked_by: $b} else . end)' <<<"$tickets")
 done
 
-jq -n --argjson t "$tickets" --argjson s "$skipped" --argjson o "$outside" \
-  '{tickets: $t, skipped: $s, outside_blockers: $o}'
+# The spec: the first named issue's parent, or, when that is a plan (a ticket
+# named alone), the plan's parent. Only a display name rides on it, so a
+# failed read is no spec.
+spec=null
+parent=$(gh api "repos/$REPO/issues/${NAMED[0]}/parent" 2>/dev/null) || parent=
+if [ -n "$parent" ] && jq -e '(.labels // []) | map(.name) | index("plan")' <<<"$parent" >/dev/null 2>&1; then
+  parent=$(gh api "repos/$REPO/issues/$(jq -r .number <<<"$parent")/parent" 2>/dev/null) || parent=
+fi
+[ -z "$parent" ] || spec=$(jq -c '{number, title}' <<<"$parent" 2>/dev/null) || spec=null
+
+jq -n --argjson t "$tickets" --argjson s "$skipped" --argjson o "$outside" --argjson p "$plans" --argjson sp "$spec" \
+  '{tickets: $t, skipped: $s, outside_blockers: $o, plans: $p, spec: $sp}'

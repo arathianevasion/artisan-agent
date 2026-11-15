@@ -7,7 +7,7 @@
 #                 --estimate-usd N --expected-minutes N
 #                 [--attempt N] [--model MODEL] [--max-turns N]
 #                 [--deadline-seconds N] [--role worker|orchestrator|verifier]
-#                 [--lock-from PID] [-- extra claude arguments...]
+#                 [--lock-from PID] [--name NAME] [-- extra claude arguments...]
 #
 # Prints the detached runner's PID and returns at once. The runner starts its
 # own session (setsid, or perl's POSIX::setsid where there is no setsid
@@ -67,6 +67,10 @@
 # A worker (not an orchestrator or verifier) is also started with
 #   --name worker-<ticket> --settings '{"crossSessionInbound":"accept"}'
 # so the orchestrator can relay a finding to it (references/findings.md).
+# An orchestrator or verifier is started with --name NAME when given one
+# (wave.sh and verify.sh build it from the run state, #189), so the agent
+# panel tells them apart; its exit record keeps the name. A worker's name is
+# always worker-<ticket>: --name for a worker is a usage error.
 #
 # Environment: ARTISAN_RUNNER_POLL_SECONDS, how often the runner looks at its
 # worker (whether it ended, the deadline, a stop, the latest rate-limit
@@ -91,7 +95,7 @@ die_usage() {
 
 orig_args=("$@")
 run_dir= ticket= prompt_file= workdir= estimate= expected_minutes=
-attempt=1 model= max_turns= deadline_seconds= foreground= role=worker lock_from=
+attempt=1 model= max_turns= deadline_seconds= foreground= role=worker lock_from= name=
 extra=()
 
 while [ $# -gt 0 ]; do
@@ -112,6 +116,7 @@ while [ $# -gt 0 ]; do
     --deadline-seconds) deadline_seconds=$2; shift 2 ;;
     --role) role=$2; shift 2 ;;
     --lock-from) lock_from=$2; shift 2 ;;
+    --name) name=$2; shift 2 ;;
     --foreground) foreground=1; shift ;;
     --) shift; extra=("$@"); break ;;
     *) die_usage "unknown argument: $1" ;;
@@ -141,6 +146,7 @@ case "$role" in
   *) die_usage "--role is worker, orchestrator or verifier" ;;
 esac
 [ -z "$lock_from" ] || [ "$role" = orchestrator ] || die_usage "--lock-from is for an orchestrator"
+[ -z "$name" ] || [ "$role" != worker ] || die_usage "a worker is always named worker-<ticket>; --name is for an orchestrator or verifier"
 poll_seconds=${ARTISAN_RUNNER_POLL_SECONDS:-1}
 is_number "$poll_seconds" || die_usage "ARTISAN_RUNNER_POLL_SECONDS must be a number of seconds, got: $poll_seconds"
 
@@ -207,9 +213,12 @@ write_exit_record() {
   recorded=1
   local tmp="$run_dir/results/.$key.exit.json.tmp"
   mkdir -p "$run_dir/results"
-  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"permission_denials":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"}\n' \
+  local named=""
+  # The session's name (#189), JSON-escaped: a plan title may hold quotes.
+  [ -z "$name" ] || named=",\"name\":\"$(printf '%s' "$name" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"permission_denials":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"%s}\n' \
     "$ticket" "$attempt" "${code:-255}" "${reason:-runner-error}" "$$" "$started_at" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$denials" "$key" "$key" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$denials" "$key" "$key" "$named" \
     >"$tmp"
   judge_exit "$tmp"
   mv "$tmp" "$exit_record"
@@ -289,6 +298,8 @@ claude_args=(-p "$prompt" --output-format stream-json --verbose --max-budget-usd
 # switch on (it is ignored); only --settings does.
 if [ "$role" = worker ]; then
   claude_args+=(--name "worker-$ticket" --settings '{"crossSessionInbound":"accept"}')
+elif [ -n "$name" ]; then
+  claude_args+=(--name "$name")
 fi
 
 # set -m gives the worker its own process group, so it and anything it

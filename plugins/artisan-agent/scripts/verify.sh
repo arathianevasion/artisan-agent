@@ -11,7 +11,9 @@
 #       for a returned ticket whose attempt completed: read its acceptance
 #       criteria from the tracker (or its ticket_path), check out the
 #       worker's commit in a throwaway detached worktree and launch the
-#       verifier there, detached (run-ticket.sh --role verifier). Prints
+#       verifier there, detached (run-ticket.sh --role verifier), named
+#       "Verify #<t> · <repo> · Wave <n>" (#189; the verification records
+#       the name). Prints
 #       the verifier's runner pid. Idempotent per attempt: while the
 #       attempt has a verifier running, ended but not judged, or passed (or
 #       another call is starting one), it launches nothing and prints that
@@ -334,17 +336,19 @@ cmd_start() {
   model=$(get --arg d "$DEFAULT_MODEL" '.plan.verifier.model // $d')
   estimate=$(clamp_estimate "$(get --arg d "$DEFAULT_ESTIMATE_USD" '.plan.verifier.estimate_usd // $d')")
   minutes=$(get --arg d "$DEFAULT_MINUTES" '.plan.verifier.minutes // $d')
+  local vname=""
+  vname=$(verifier_name "$t")   # its session name (#189), recorded with it
   # Recorded before it launches, so no verifier ever runs unrecorded.
   apply '
     .tickets[$t].verifications = ((.tickets[$t].verifications // [])
-      + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, started_at: $now, verdict: null,
+      + [{attempt: $v, worker_attempt: $n, commit: $c, base: $b, model: $m, worktree: $wt, name: $vname, started_at: $now, verdict: null,
           checks: ($ck | {recorded, file, reason, commands: [.checks[].command | select(. as $c | $c != $leave and ($ci | index($c) | not))], results: $co}
                    + (if $leave != "" and ([.checks[].command] | index($leave)) != null
                       then {left_to_merge_gate: [$leave]} else {} end)
                    + (if $ci == [] then {} else {ci_only: $ci} end))}])
     | event({event: "verify", ticket: $t, attempt: $n, verifier: $v}; $now)' \
     --arg t "$t" --argjson v "$v" --argjson n "$n" --arg c "$tip" --arg b "$base" --arg m "$model" --arg wt "$wt" \
-    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave" --argjson ci "$cionly"
+    --argjson ck "$checks" --arg co "verify/checks/$t.$v.json" --arg leave "$leave" --argjson ci "$cionly" --arg vname "$vname"
   trap - EXIT   # recorded: the claim stays, and the state file speaks for it
   local pid=
   # The project's worktree_setup (#173) runs before the verifier starts. A
@@ -358,7 +362,7 @@ cmd_start() {
   headless_args "$VERIFIER_TOOLS"
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \
-    --estimate-usd "$estimate" --expected-minutes "$minutes" \
+    --estimate-usd "$estimate" --expected-minutes "$minutes" --name "$vname" \
     -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR" \
     ${EXTRA[@]+"${EXTRA[@]}"}); then
     remove_worktree "$wt"

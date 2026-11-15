@@ -260,6 +260,71 @@ test_orchestrator_worker_and_verifier_start_in_dont_ask_mode() {
   assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/verifier.args")" "[Bash,Read,Write,Glob,Grep]"
 }
 
+# --- session names (#189) ---
+
+test_sessions_are_named_by_repo_wave_and_plan_and_workers_keep_theirs() {
+  setup_wave
+  jq '.plan.plans = [{number: 7, title: "Plan: Contract integration"}]' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" \
+    && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  export FAKE_CLAUDE_ARGS_DIR="$TEST_TMPDIR/args"
+  mkdir -p "$FAKE_CLAUDE_ARGS_DIR"
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/orchestrator.args")" "[--name]
+[sample · Wave 1 · Contract integration]"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/verifier.args")" "[--name]
+[Verify #1 · sample · Wave 1]"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/worker.args")" "[--name]
+[worker-1]"
+  assert_eq "Wave 1 of sample run r1 (Contract integration): you are its orchestrator. Follow" \
+    "$(head -1 "$RUN_DIR/prompts/orchestrator-w1.1.md" | sed 's/ Follow .*/ Follow/')"
+  assert_eq "sample · Wave 1 · Contract integration" "$(state_get '.orchestrators[0].name')"
+  assert_eq "sample · Wave 1 · Contract integration" "$(jq -r .name "$ORCH_EXIT")"
+  assert_eq "Verify #1 · sample · Wave 1" "$(state_get '.tickets["1"].verifications[0].name')"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR" | head -1)" 'as "sample · Wave 1 · Contract integration"'
+}
+
+test_a_resumed_orchestrator_is_named_as_resumed() {
+  setup_wave
+  export FAKE_CLAUDE_ARGS_DIR="$TEST_TMPDIR/args" ORCH_STOP=fail
+  mkdir -p "$FAKE_CLAUDE_ARGS_DIR"
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  "$SCRIPTS/wave.sh" launch "$RUN_DIR" --resume >"$TEST_TMPDIR/launch2.out"
+  wait_for "$RUN_DIR/results/orchestrator-w1.2.exit.json" 60
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/orchestrator.args")" "[--name]
+[sample · Wave 1 · run r1 (resumed)]"
+  assert_eq "sample · Wave 1 · run r1 (resumed)" "$(state_get '.orchestrators[1].name')"
+}
+
+# The names from the run state alone: lib/wave-lib.sh, on a state file.
+session_names() { # state-json wave suffix
+  printf '%s' "$1" >"$TEST_TMPDIR/names.json"
+  ( . "$PLUGIN_ROOT/scripts/lib/wave-lib.sh"
+    FILE="$TEST_TMPDIR/names.json"
+    orchestrator_name "$2" "$3"; run_label; verifier_name 5 )
+}
+
+test_a_name_falls_back_to_the_spec_then_the_run_and_counts_further_plans() {
+  local out=""
+  out=$(session_names '{"run_id":"1038","repo":"me/claudia-kerman","plan":{"plans":[{"number":3,"title":"Plan: Contract integration"},{"number":4,"title":"Plan: Later"}],"spec":{"title":"Contracts"}},"tickets":{"5":{"wave":3}}}' 3 "")
+  assert_eq "claudia-kerman · Wave 3 · Contract integration +1
+claudia-kerman run 1038 (Contract integration +1)
+Verify #5 · claudia-kerman · Wave 3" "$out"
+  out=$(session_names '{"run_id":"1038","repo":"me/claudia-kerman","plan":{"plans":[],"spec":{"number":9,"title":"Contracts"}}}' 3 "")
+  assert_eq "claudia-kerman · Wave 3 · Contracts" "$(head -1 <<<"$out")"
+  out=$(session_names '{"run_id":"1038","repo":"me/claudia-kerman","plan":{}}' 2 " (handoff 1)")
+  assert_eq "claudia-kerman · Wave 2 · run 1038 (handoff 1)" "$(head -1 <<<"$out")"
+}
+
+test_a_long_title_is_cut_at_a_word_boundary_to_sixty_characters() {
+  local out="" name=""
+  out=$(session_names '{"run_id":"1","repo":"me/claudia-kerman","plan":{"plans":[{"title":"Plan: Contract integration with the career mode and its many reputation rules"},{"title":"B"}]}}' 12 " (resumed)")
+  name=$(head -1 <<<"$out")
+  assert_eq "claudia-kerman · Wave 12 · Contract integration +1 (resumed)" "$name"
+  [ "$(printf '%s' "$name" | jq -Rr length)" -le 60 ] || fail "longer than 60 characters: $name"
+}
+
 test_a_worker_that_paraphrases_every_criterion_still_closes_the_ticket_ticked() {
   setup_wave
   export WORKER_PARAPHRASE=1

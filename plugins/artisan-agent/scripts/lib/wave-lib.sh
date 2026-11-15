@@ -114,6 +114,41 @@ worktree_setup() {
 
 writer() { printf '%s\n' "${ARTISAN_WRITER_PID:-$$}"; }
 
+# Session names (#189): the agent panel tells sessions apart by name.
+#   orchestrator  "<repo> · Wave <n> · <plan title>[ +N][ (resumed)|(handoff k)]"
+#   verifier      "Verify #<t> · <repo> · Wave <n>"
+# <repo> is the short name (after the slash). The plan title is the first
+# plan issue's title without its "Plan: " prefix (plan.plans), +N for the
+# other plans, else the spec's title (plan.spec.title), else "run <id>". The
+# title is cut at a word boundary so the whole name is SESSION_NAME_MAX
+# characters or less. Workers keep worker-<ticket> (run-ticket.sh).
+SESSION_NAME_MAX=60
+SESSION_JQ_DEFS='
+  def repo_short: (.repo // "" | split("/") | last) // "";
+  def run_title: ((.plan.plans // []) | map(.title // "" | sub("^ *[Pp]lan: *"; "") | select(. != ""))) as $p
+    | if ($p | length) > 0 then {title: $p[0], more: (if ($p | length) > 1 then " +\(($p | length) - 1)" else "" end)}
+      elif (.plan.spec.title // "") != "" then {title: .plan.spec.title, more: ""}
+      else {title: "run \(.run_id)", more: ""} end;
+  def cut($n): if length <= $n then . elif $n <= 0 then ""
+    else .[0:$n + 1] | (if test(" ") then sub(" +[^ ]*$"; "") else .[0:$n] end) | sub("[ ,;:·-]+$"; "") end;
+'
+# orchestrator_name wave suffix: the orchestrator's name; suffix is "" or
+# " (resumed)" / " (handoff k)".
+orchestrator_name() {
+  get --argjson w "$1" --arg s "$2" --argjson max "$SESSION_NAME_MAX" "$SESSION_JQ_DEFS"'
+    run_title as $t | "\(repo_short) · Wave \($w) · " as $head | ($t.more + $s) as $tail
+    | $head + ($t.title | cut($max - ($head | length) - ($tail | length))) + $tail'
+}
+# run_label: "<repo> run <id> (<plan title>)", uncut, for the first line of
+# the orchestrator's prompt.
+run_label() {
+  get "$SESSION_JQ_DEFS"'run_title as $t | "\(repo_short) run \(.run_id) (\($t.title)\($t.more))"'
+}
+verifier_name() { # ticket
+  get --arg t "$1" --argjson max "$SESSION_NAME_MAX" "$SESSION_JQ_DEFS"'
+    "Verify #\($t) · \(repo_short) · Wave \(.tickets[$t].wave // "?")" | cut($max)'
+}
+
 # apply filter [jq args]: one locked, one-step event write with the shared defs.
 apply() {
   local filter="$1"

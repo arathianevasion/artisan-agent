@@ -17,6 +17,11 @@
 #       Its estimate is --estimate-usd, else the plan's orchestrator.estimate_usd,
 #       else its turns x orchestrator_usd_per_turn (#216); run-ticket.sh caps it
 #       at twice that. Launch prints its turns, estimate and cap on stderr.
+#       Its session is named "<repo> · Wave <n> · <plan title>" (#189,
+#       orchestrator_name in lib/wave-lib.sh), with " (resumed)" or
+#       " (handoff k)" on a later attempt at the same wave; the name is
+#       recorded in orchestrators[], its exit record and status's first line,
+#       and the prompt's first line names the wave, repo, run and plan.
 #       The state lock passes to the orchestrator's runner for the wave.
 #       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
@@ -525,6 +530,13 @@ cmd_start() {
 
 # ------------------------------------------------------------------ launch
 
+# orchestrator_named id attempt: ' as "<its name>"' (#189), or nothing for
+# an orchestrator launched before names.
+orchestrator_named() {
+  get --arg id "$1" --argjson a "$2" \
+    '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)] | last | .name // empty | " as \"\(.)\""'
+}
+
 # Last orchestrator: "id attempt wave pid", or nothing. Its pid is its
 # runner's, from the runner's own pid file ("-" before it has one).
 last_orchestrator() {
@@ -555,7 +567,7 @@ cmd_launch() {
       *) usage ;;
     esac
   done
-  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner= turns=
+  local wt= last= id= attempt= wave= pid= cls= me= deadline= minutes= prompt= runner= turns= name= again=""
   local -a ended=("" "" "")
   wave=1 attempt=1
   last=$(last_orchestrator)
@@ -638,10 +650,20 @@ cmd_launch() {
   deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
 
+  # Its name (#189): a later attempt at the same wave says how it came.
+  if [ "$attempt" -gt 1 ]; then
+    if [ "$handoff" -eq 1 ]; then
+      again=" (handoff $(get --argjson w "$wave" '[(.orchestrators // [])[] | select(.wave == $w and .handoff != null)] | length'))"
+    else
+      again=" (resumed)"
+    fi
+  fi
+  name=$(orchestrator_name "$wave" "$again")
+
   mkdir -p "$RUN_DIR/prompts"
   prompt="$RUN_DIR/prompts/$id.$attempt.md"
   cat >"$prompt" <<EOF
-You are the orchestrator for wave $wave of run $RUN_ID. Follow $PLUGIN_DIR/skills/implement-plan/references/orchestrator.md exactly; it is your whole brief.
+Wave $wave of $(run_label): you are its orchestrator. Follow $PLUGIN_DIR/skills/implement-plan/references/orchestrator.md exactly; it is your whole brief.
 
 - Run folder: $RUN_DIR
 - Integration worktree: $wt (branch $(integration_branch)); you are in it.
@@ -669,9 +691,9 @@ EOF
   fi
 
   apply '
-    .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, launched_at: $now}])
+    .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, name: $name, launched_at: $now}])
     | event({event: "orchestrator", id: $id, wave: $w, attempt: $a}; $now)' \
-    --arg id "$id" --argjson w "$wave" --argjson a "$attempt"
+    --arg id "$id" --argjson w "$wave" --argjson a "$attempt" --arg name "$name"
 
   # The runner takes the lock over from this writer before its session
   # starts: the orchestrator is the writer for the wave.
@@ -680,7 +702,7 @@ EOF
   runner=$("$SCRIPT_DIR/run-ticket.sh" --role orchestrator --lock-from "$me" --run-dir "$RUN_DIR" --ticket "$id" \
     --attempt "$attempt" --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$deadline" \
-    --max-turns "$turns" \
+    --max-turns "$turns" --name "$name" \
     -- "${HEADLESS_ARGS[@]}" \
     --add-dir "$MAIN" --add-dir "$WT_ROOT" \
     ${EXTRA[@]+"${EXTRA[@]}"} ${args[@]+"${args[@]}"}) || die "could not launch $id"
@@ -779,7 +801,7 @@ cmd_status() {
     set -- $last
     id=$1 attempt=$2 wave=$3 pid=$4
     cls=$(orchestrator_state "$id" "$attempt")
-    echo "orchestrator: $cls (wave $wave, attempt $attempt, pid $pid)"
+    echo "orchestrator: $cls (wave $wave, attempt $attempt, pid $pid)$(orchestrator_named "$id" "$attempt")"
   fi
   case "${cls:-}" in
     running*) next=wait ;;

@@ -30,6 +30,7 @@
 #                         a list of numbers); POST --method with -F sub_issue_id=<id> adds one, failing
 #                         like GitHub when the child already has a parent (parent-<child>) unless
 #                         -F replace_parent=true
+#   gh api repos/<o>/<r>/issues/<n>/parent    the issue its parent-<n> file names, else HTTP 404
 #   gh api --method POST repos/<o>/<r>/issues/<n>/dependencies/blocked_by -F issue_id=<id>
 #   gh api --method DELETE repos/<o>/<r>/issues/<n>/dependencies/blocked_by/<id>
 #   gh issue edit <n> --add-label L / --remove-label L (also with a body)
@@ -229,6 +230,11 @@ case "${1:-} ${2:-}" in
         list='[]'
         [ -f "$FAKE_GH_DIR/sub_issues-$n.json" ] && list=$(cat "$FAKE_GH_DIR/sub_issues-$n.json")
         for b in $(printf '%s' "$list" | jq -r '.[]'); do jq -c '{number, title, state, labels}' "$(issue_file "$b")"; done | jq -s . ;;
+      repos/*/issues/*/parent)
+        n=${path%/parent}; n=${n##*/}
+        need_issue "$n"
+        [ -f "$FAKE_GH_DIR/parent-$n" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+        jq '. + {id: (.id // (1000 + .number))}' "$(issue_file "$(cat "$FAKE_GH_DIR/parent-$n")")" ;;
       repos/*/issues/*/dependencies/blocked_by)
         n=${path%/dependencies/blocked_by}; n=${n##*/}
         need_issue "$n"
