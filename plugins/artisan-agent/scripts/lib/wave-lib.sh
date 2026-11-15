@@ -34,10 +34,12 @@ get() { jq -r "$@" "$FILE"; }
 # 900). It runs in its own session (detach-lib's detach, so no `timeout`
 # binary is needed on macOS); past the limit its whole process group gets
 # TERM, then KILL two seconds later, and it returns 1 with SETUP_ERR =
-# "setup: setup timeout after <n>s: <command> ...: <stderr tail>".
+# "setup: setup timeout after <n>s: <command> ...: <stderr tail>". A leader
+# killed from outside has its group killed too; one that never came up (no
+# setsid, perl failed) returns 1 with "... could not start ...", not a timeout.
 SETUP_ERR=
 worktree_setup() {
-  local wt="$1" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out=""
+  local wt="$1" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
   SETUP_ERR=
   conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
   cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
@@ -57,11 +59,21 @@ worktree_setup() {
   deadline=$((SECONDS + limit + 1))
   while [ ! -s "$dir/rc" ]; do
     if [ "$SECONDS" -ge "$deadline" ]; then timed_out=1; break; fi
-    # A leader gone without an exit status was killed from outside.
-    if [ -s "$dir/pid" ] && ! kill -0 "$(cat "$dir/pid")" 2>/dev/null; then break; fi
+    if [ -s "$dir/pid" ]; then
+      # A leader gone without an exit status was killed from outside.
+      kill -0 "$(cat "$dir/pid")" 2>/dev/null || break
+    elif ! kill -0 "$bg" 2>/dev/null; then
+      # detach has returned (setsid forks when the caller leads its process
+      # group) but the leader never wrote its pid: give it detach_start's ten
+      # seconds, then it never started.
+      starting=$((starting + 1))
+      [ "$starting" -le 100 ] || { never_started=1; break; }
+    fi
     sleep 0.1
   done
-  if [ -n "$timed_out" ]; then
+  [ -s "$dir/pid" ] || never_started=1
+  if [ ! -s "$dir/rc" ] && [ -z "$never_started" ]; then
+    # Timed out, or the leader was killed: its whole group goes.
     pgid=$(cat "$dir/pid" 2>/dev/null) || pgid=
     if state_is_uint "$pgid"; then
       kill -TERM "-$pgid" 2>/dev/null || true
@@ -74,7 +86,10 @@ worktree_setup() {
   fi
   wait "$bg" 2>/dev/null || true
   tail_=$(tail -n 10 "$dir/err" | cut -c1-300)
-  if [ -n "$timed_out" ]; then
+  if [ -n "$never_started" ] && [ ! -s "$dir/rc" ]; then
+    SETUP_ERR="setup: \`$cmd\` could not start in $wt: ${tail_:-no stderr}"
+    rc=1
+  elif [ -n "$timed_out" ]; then
     SETUP_ERR="setup: setup timeout after ${limit}s: \`$cmd\` in $wt was killed: ${tail_:-no stderr}"
     rc=124
   else

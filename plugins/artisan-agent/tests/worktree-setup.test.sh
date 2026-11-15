@@ -153,3 +153,40 @@ test_ws_a_setup_that_finishes_within_the_timeout_dispatches_as_before() {
 test_ws_the_setup_timeout_defaults_to_900_seconds() {
   assert_eq 900 "$("$PLUGIN_ROOT/scripts/config.sh" get worktree_setup_timeout --file /nonexistent/config.yml)"
 }
+
+test_ws_a_setup_that_cannot_start_fails_at_once_not_as_a_timeout() {
+  setup_wave
+  set_setup 'touch deps-installed'
+  set_setup_timeout 60
+  mkdir -p "$TEST_TMPDIR/nosetsid"
+  printf '#!/bin/sh\necho "setsid: failed" >&2\nexit 1\n' >"$TEST_TMPDIR/nosetsid/setsid"
+  chmod +x "$TEST_TMPDIR/nosetsid/setsid"
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  export FAKE_CLAUDE_MODE=complete
+  local status=0 started=$SECONDS
+  PATH="$TEST_TMPDIR/nosetsid:$PATH" "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 6 "$status"
+  [ $((SECONDS - started)) -lt 30 ] || fail "dispatch waited out the limit"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "could not start"
+  assert_not_contains "$(state_get '.tickets["1"].failures[0].reason')" "setup timeout"
+  assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "setsid: failed"
+}
+
+test_ws_a_setup_whose_leader_is_killed_leaves_no_process_behind() {
+  setup_wave
+  export PIDS="$TEST_TMPDIR/setup.pids"
+  # $PPID is the session leader that runs the command: killed, it records no
+  # exit status, and the backgrounded sleep would otherwise be orphaned.
+  set_setup 'sleep 30 & echo $! >>"$PIDS"; kill -KILL $PPID; wait'
+  set_setup_timeout 60
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  export FAKE_CLAUDE_MODE=complete
+  local status=0 started=$SECONDS p="" i=0
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 6 "$status"
+  [ $((SECONDS - started)) -lt 30 ] || fail "dispatch waited out the limit"
+  assert_not_contains "$(state_get '.tickets["1"].failures[0].reason')" "setup timeout"
+  p=$(cat "$PIDS")
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+  ! kill -0 "$p" 2>/dev/null || fail "setup process $p was left running"
+}
