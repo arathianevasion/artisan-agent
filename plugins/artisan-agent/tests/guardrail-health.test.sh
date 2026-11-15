@@ -439,3 +439,89 @@ test_the_reference_documents_the_open_decision_guardrail_and_its_evidence() {
   assert_contains "$doc" '`raised_by: "plan"`'
   assert_contains "$doc" "references/open-decisions.md"
 }
+
+# backstop_gh_stub: a fake gh first on PATH answering `gh pr list` from
+# $TEST_TMPDIR/gh/prs.json and `gh issue list` from $TEST_TMPDIR/gh/closed.json,
+# whatever the flags: GitHub may hand back more than the window asked for.
+backstop_gh_stub() {
+  mkdir -p "$TEST_TMPDIR/gh/bin"
+  cat >"$TEST_TMPDIR/gh/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$TEST_TMPDIR/gh/calls"
+case "$1 $2" in
+  "pr list") cat "$TEST_TMPDIR/gh/prs.json" ;;
+  "issue list") cat "$TEST_TMPDIR/gh/closed.json" ;;
+  *) echo "gh stub: unsupported: $*" >&2; exit 1 ;;
+esac
+STUB
+  chmod +x "$TEST_TMPDIR/gh/bin/gh"
+  PATH="$TEST_TMPDIR/gh/bin:$PATH"; export PATH
+}
+
+# #246: two runs as riley's retros saw them. r1 closed #12 and recorded its
+# plan issue, its review, exception, overrun, end and urgent gates' issues;
+# r2 closed #13. The PRs: each run's end-gate PRs, an urgent PR, the retro PR,
+# a ticket's PR, an old PR from before the window and a hotfix no run opened.
+backstop_runs() {
+  run r1 '[{"event":"closed","ticket":"12"}]' '{"integration": {"branch": "run/r1", "merges": []},
+    "tickets": {"12": {"status": "merged", "branch": "agent/12"}},
+    "plans": [{"number": 300, "title": "Plan: riley"}],
+    "review_gates": [{"id": "slice-1", "kind": "slice", "issue": 301}],
+    "exception_gates": [{"id": "exception-4", "kind": "exception", "issue": 302}],
+    "overrun_gates": [{"id": "overrun-1", "kind": "exception", "issue": 303}],
+    "end_gate": {"status": "ended", "issue": 304, "prs": [{"n": 1, "branch": "pr/r1/1"}]},
+    "urgent_gates": {"15": {"status": "ended", "issue": 305, "pr": {"branch": "pr/r1/urgent-15"}}}}'
+  run r2 '[]' '{"integration": {"branch": "run/r2", "merges": []}, "tickets": {"13": {"status": "merged", "branch": "agent/13"}}}'
+  cat >"$TEST_TMPDIR/gh/prs.json" <<'JSON'
+[{"number":100,"headRefName":"someone/old","mergedAt":"2026-11-01T09:00:00Z"},
+ {"number":110,"headRefName":"agent/12","mergedAt":"2026-11-14T10:00:00Z"},
+ {"number":111,"headRefName":"pr/r1/1","mergedAt":"2026-11-14T11:00:00Z"},
+ {"number":112,"headRefName":"pr/r1/2","mergedAt":"2026-11-14T11:05:00Z"},
+ {"number":113,"headRefName":"pr/r1/urgent-15","mergedAt":"2026-11-14T12:00:00Z"},
+ {"number":114,"headRefName":"retro/r1","mergedAt":"2026-11-14T13:00:00Z"},
+ {"number":115,"headRefName":"pr/r2/1","mergedAt":"2026-11-15T09:00:00Z"},
+ {"number":116,"headRefName":"retro/r2","mergedAt":"2026-11-15T10:00:00Z"},
+ {"number":117,"headRefName":"pr/r9/1","mergedAt":"2026-11-15T10:30:00Z"},
+ {"number":118,"headRefName":"someone/hotfix","mergedAt":"2026-11-15T11:00:00Z"}]
+JSON
+  cat >"$TEST_TMPDIR/gh/closed.json" <<'JSON'
+[{"number":12,"closedAt":"2026-11-14T10:00:00Z"},{"number":13,"closedAt":"2026-11-15T09:00:00Z"},
+ {"number":300,"closedAt":"2026-11-14T14:00:00Z"},{"number":301,"closedAt":"2026-11-14T10:30:00Z"},
+ {"number":302,"closedAt":"2026-11-14T10:40:00Z"},{"number":303,"closedAt":"2026-11-14T10:50:00Z"},
+ {"number":304,"closedAt":"2026-11-14T11:30:00Z"},{"number":305,"closedAt":"2026-11-14T12:30:00Z"},
+ {"number":77,"closedAt":"2026-11-14T15:00:00Z"},{"number":60,"closedAt":"2026-11-02T15:00:00Z"}]
+JSON
+}
+
+backstop_out() { "$H" backstop --runs "$(R r1)" "$(R r2)" --repo-dir "$PROJECT" --main main --since 2026-11-14 "$@"; }
+
+test_the_backstop_leaves_out_a_pr_merged_before_since() {
+  setup; backstop_gh_stub; backstop_runs
+  out=$(backstop_out)
+  assert_not_contains "$(jq -r '.prs_without_run | map(.number) | join(" ")' <<<"$out")" "100"
+  assert_not_contains "$(backstop_out --table)" "#100"
+}
+
+test_the_backstop_counts_a_runs_own_gate_and_plan_issues_as_closed_in_that_run() {
+  setup; backstop_gh_stub; backstop_runs
+  out=$(backstop_out)
+  assert_eq "77" "$(jq -r '.tickets_closed_outside_run | join(" ")' <<<"$out")"
+  table=$(backstop_out --table)
+  for n in 300 301 302 303 304 305; do assert_not_contains "$table" "#$n"; done
+}
+
+test_the_backstop_counts_a_runs_end_gate_urgent_and_retro_prs_as_its_record() {
+  setup; backstop_gh_stub; backstop_runs
+  out=$(backstop_out)
+  # pr/r9/1 and the hotfix: r9 is not a run given, and no run opened the hotfix
+  assert_eq "117 118" "$(jq -r '.prs_without_run | map(.number) | join(" ")' <<<"$out")"
+}
+
+test_the_backstop_still_flags_a_ticket_closed_outside_any_run_and_a_pr_no_run_opened() {
+  setup; backstop_gh_stub; backstop_runs
+  table=$(backstop_out --table)
+  assert_contains "$table" "| ticket closed outside a run | #77 |"
+  assert_contains "$table" "| PR with no run record | #118 (someone/hotfix) |"
+  assert_not_contains "$table" "#60 "
+  assert_contains "$(cat "$TEST_TMPDIR/gh/calls")" "pr list"
+}
