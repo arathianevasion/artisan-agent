@@ -113,6 +113,7 @@ init_write() {
         integration: { branch: $p.integration_branch, merges: [] },
         findings: [],
         findings_read: {},
+        pushed: {},
         relays: [],
         lessons: [],
         costs: { workers_usd: 0, orchestrator_usd: 0, total_usd: 0 },
