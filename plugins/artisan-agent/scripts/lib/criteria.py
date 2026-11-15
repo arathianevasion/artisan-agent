@@ -31,7 +31,9 @@ Usage:
       evidence, claimed}, plus "human": true where the verdict's "met"
       is "human" (only a person can verify it; met stays false), and "gate":
       true where it is "gate" or the criterion reads as one only the merge
-      gate can check (merge_gate_criterion; met stays false). Each takes the verdict entry with the same text,
+      gate can check (merge_gate_criterion; met stays false). One measured
+      on the run's PR or CI run after merge (after_merge_criterion, #244) is
+      "human" with "after_merge": true, whatever the verdict said. Each takes the verdict entry with the same text,
       else the verdict entry in its position when the counts agree; with
       none it is unmet. "claimed" is the worker record's "met" by the same
       rule (the same text, else the entry in its position when the record's
@@ -65,7 +67,8 @@ Usage:
       every checkbox line in the body, under any heading, that reads as a
       criterion only the merge gate can check, as a JSON array of strings:
       the whole criterion states the outcome (CI or the merge gate is green,
-      on the PR or not; the PR shows or lists ...), and it names no script
+      on the PR or not; CI is green, passes or succeeds on the merged commit
+      or change, #244; the PR shows or lists ...), and it names no script
       and no condition (when, if, blocks, fails), so one about code that
       runs CI is not one. Quoted or backticked text is read as one word: a
       criterion quoting one is about it, not one itself.
@@ -114,7 +117,8 @@ def extract(lines):
 # it (workers never open PRs, and the merge gate runs after the verifier),
 # so it is "gate": wave.sh merge's gate is what satisfies it. Only a whole
 # criterion that states the outcome reads as one ("CI is green on the PR",
-# "the run's merge gate is green", "the PR shows ..."); one about code that
+# "the run's merge gate is green", "CI check job is green on the merged
+# commit", "the PR shows ..."); one about code that
 # runs CI or a merge gate ("wave.sh merge blocks the ticket when CI is not
 # green") never does: the verifier judges that, or marks it "gate" itself.
 _GATE_SUBJECT = r"^(the\s+)?(run'?s\s+)?(ci|merge\s+gate)('s)?(\s+[\w'-]+){0,2}\s+"

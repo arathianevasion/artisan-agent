@@ -46,7 +46,9 @@
 #                  An issue that can't be read (no gh, offline) leaves the
 #                  build succeeding, with those tickets named on stderr
 #                  as unchecked (references/human-checks.md,
-#                  plus config human_check_phrases): [{ticket, criterion, phrase}].
+#                  plus config human_check_phrases): [{ticket, criterion, phrase}];
+#                  one measured on the run's PR or CI run after merge (#244,
+#                  criteria.py after_merge_criterion) also has after_merge: true.
 #                  While one stands the plan is not approvable: render says so
 #                  and state.sh init refuses it. Split it into a Human check
 #                  (to-plan.sh split-human-check) or override it:
