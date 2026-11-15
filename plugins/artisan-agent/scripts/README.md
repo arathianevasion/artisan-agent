@@ -136,7 +136,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | a worker's CI run inputs (#194) | `ci_gate.worker_inputs` (a map; each passed as `gh workflow run -f key=value`) | none: a worker's branch run is the gate's own run, which the merge gate may reuse; set, it never reuses it |
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
-| worktree setup command (run once in every new worker, verifier, hands-on and end-gate worktree; `ARTISAN_MAIN` is the main checkout; a failure is reason `setup`) | `worktree_setup` | none |
+| worktree setup command (run once in every new worker, verifier, hands-on and end-gate worktree; `ARTISAN_MAIN` is the main checkout; a failure is reason `setup`; at the end gate, an `end-gate-setup` decision, #182) | `worktree_setup` | none |
 | worktree setup time limit (#181), in seconds | `worktree_setup_timeout` | 900: a setup still running then has its process group killed and fails with reason `setup`, `setup timeout after <n>s` and its stderr tail |
 | estimate multipliers | `estimate_multipliers` (`<model id>` or `all`: number) | none |
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
@@ -473,5 +473,5 @@ The edit itself is not scripted: the Artisan approves a drafted diff, it lands b
 | `end-gate.sh boundary <run-dir>` | Engineering chat | the PR boundary as JSON: from the `pr-boundaries` guardrail (product, team, individual), approved, or proposed | 0 |
 | `end-gate.sh approve <run-dir> [--boundary B]` | Engineering chat | refused while a gate is deferred, or with no boundary recorded and none given; refused (22) while a Human check is open and not deferred; decides the end gate (job 13) and the boundary (job 17) | 0, 1, 2, 3, 6, 22 |
 | `end-gate.sh defer-check <run-dir> <n> --why W [--by NAME] [--return CONDITION]` | Engineering chat | a Human check deferred past the run: open, labelled `deferred` with a return condition; `human-check-deferred` | 0, 1, 2, 3, 6 |
-| `end-gate.sh prs <run-dir> [--json]` / `cut <run-dir> <n> --body-file F` | Engineering chat | the stacked PRs; builds `pr/<run-id>/<n>`, pushes it when there is an `origin`, opens the PR with the body upstream `pr` wrote | 0, 1, 6 |
+| `end-gate.sh prs <run-dir> [--json]` / `cut <run-dir> <n> --body-file F` | Engineering chat | the stacked PRs; builds `pr/<run-id>/<n>`, pushes it when there is an `origin`, opens the PR with the body upstream `pr` wrote; a failed `worktree_setup` in the PR's worktree records `end-gate-setup-failed` and a waiting `end-gate-setup` decision (retry or bypass) and refuses (6) | 0, 1, 6 |
 | `end-gate.sh finish <run-dir>` | Engineering chat | every PR cut: `in-run` off every ticket in scope, `run-ended`, the retro offer | 0, 1, 6 |

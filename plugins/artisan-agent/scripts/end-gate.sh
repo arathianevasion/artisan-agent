@@ -46,6 +46,12 @@
 #       previous PR when its merges are not consecutive), pushes it when the
 #       repo has an origin, and opens the PR with the body upstream `pr`
 #       wrote. Prints the PR's URL; again, the same URL. PR n-1 first (6).
+#       A worktree_setup that fails in the PR's worktree (#182) records an
+#       end-gate-setup-failed event and a waiting end-gate-setup decision
+#       (command, exit status, stderr tail), cuts nothing and refuses (6);
+#       cut refuses that PR (6) until the Artisan answers with
+#       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
+#       the setup).
 #   end-gate.sh finish <run-dir>
 #       once every PR is cut: removes the in-run label from every ticket in
 #       scope, records the run's end and prints the merge gate costs
