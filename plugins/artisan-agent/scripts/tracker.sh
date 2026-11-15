@@ -25,6 +25,7 @@
 # human-check, rework, split. Kinds off it (run plumbing that closes inside
 # the run): gate (review, risk, exception, overrun and end gates), question.
 #
+# --run-dir defaults to ARTISAN_RUN_DIR (set for the sessions a run launches).
 # The project is the main checkout of --run-dir's repo, else of --project
 # (default: the current directory). Its config is .artisan-agent/config.yml;
 # the queue is .artisan-agent/runs/.board/pending.jsonl (git-ignored), one
@@ -47,7 +48,7 @@ warn() { printf 'tracker.sh: %s\n' "$*" >&2; }
 ON_BOARD=" plan finding human-check rework split "
 OFF_BOARD=" gate question "
 
-KIND= FROM= RUN_DIR= PROJECT=. FIELDS='{}'
+KIND= FROM= RUN_DIR=${ARTISAN_RUN_DIR:-} PROJECT=. FIELDS='{}'
 [ $# -ge 1 ] || usage
 cmd=$1
 shift
@@ -175,7 +176,10 @@ record_failure() { # entry-json why
 cmd_new_issue() {
   local url="" repo="" issue="" entry=""
   case "$ON_BOARD$OFF_BOARD" in *" $KIND "*) ;; *) usage ;; esac
-  [ -z "$FROM" ] || state_is_uint "$FROM" || usage
+  if [ -n "$FROM" ] && ! state_is_uint "$FROM"; then
+    warn "--from $FROM is not an issue number; no field is copied from it"
+    FROM=
+  fi
   [ $# -gt 0 ] || usage
   url=$(gh issue create "$@") || exit $?
   printf '%s\n' "$url"

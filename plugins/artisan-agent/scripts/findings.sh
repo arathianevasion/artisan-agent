@@ -63,7 +63,8 @@ cmd_pending() {
 
 cmd_mark() {
   [ $# -eq 4 ] || state_usage "$0"
-  local from=$1 seq=$2 target=$3 action=$4 repo= title= why= body= issue= line=
+  local from=$1 seq=$2 target=$3 action=$4 repo= title= why= body= issue= line= kv=""
+  local -a fargs=()
   case "$action" in relay | comment | triage) ;; *) state_usage "$0" ;; esac
   line=$(cmd_pending | jq -c --arg f "$from" --argjson s "$seq" --arg t "$target" \
     'select(.from == $f and .seq == $s and .target == $t)' | head -1)
@@ -86,7 +87,14 @@ cmd_mark() {
 $why
 
 Needs triage before it can join any run."
-      issue=$(gh issue create -R "$repo" --title "Finding from #$from: $title" --body "$body" --label needs-triage) \
+      # A worker may name the finding's own board fields ("fields" in its line).
+      fargs=()
+      while IFS= read -r kv; do
+        [ -z "$kv" ] || fargs+=(--field "$kv")
+      done < <(jq -r --arg f "$from" --argjson s "$seq" \
+        '.findings[] | select(.from == $f and .seq == $s) | (.fields // {}) | objects | to_entries[] | select(.value | type == "string" and . != "") | "\(.key)=\(.value)"' "$FILE")
+      issue=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind finding --from "$from" --run-dir "$RUN_DIR" \
+        ${fargs[@]+"${fargs[@]}"} -- -R "$repo" --title "Finding from #$from: $title" --body "$body" --label needs-triage) \
         || state_die 1 "could not file the finding for triage"
       gh issue comment "$from" -R "$repo" --body "Finding from #$from: $title. $why About finished #$target; filed for triage: $issue" >/dev/null || state_die 1 "could not comment on #$from"
       ;;

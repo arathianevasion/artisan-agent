@@ -504,7 +504,7 @@ cmd_open() {
   num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
-    url=$(gh issue create -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/end.md")") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/end.md")") \
       || die "could not open the end gate's issue"
     num=${url##*/}
   fi
@@ -647,7 +647,7 @@ cmd_urgent_open() {
   num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
-    url=$(gh issue create -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/urgent-$U.md")") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/urgent-$U.md")") \
       || die "could not open the urgent end gate's issue"
     num=${url##*/}
   fi

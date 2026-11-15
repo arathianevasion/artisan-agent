@@ -29,7 +29,8 @@
 #                  [--no-fetch] [--project DIR]
 #       The cheap check each chat makes on every wake and at least every
 #       sweep_minutes: gates (above), gates closed by hand, guardrail changes,
-#       a new plugin version, and (Engineering chat) the plan to start now
+#       a new plugin version, board adds that failed (tracker.sh board-retry,
+#       #146), and (Engineering chat) the plan to start now
 #       when the run lock is free. Prints Markdown, then `ACTION <verb> ...`
 #       lines for the chat to act on, then `notify: <text>` when --idle (the
 #       terminal is idle) and a decision is waiting that no earlier sweep
@@ -175,7 +176,7 @@ cmd_send() {
     echo "$existing"
     return 0
   fi
-  url=$(gh issue create -R "$REPO" --title "$title" --label plan --body "Sent from the Product chat for the Engineering chat's plan step. It waits here until Engineering plans it.
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body "Sent from the Product chat for the Engineering chat's plan step. It waits here until Engineering plans it.
 
 $list
 <!-- artisan-agent:sent-from-product -->") || die "could not create the plan issue"
@@ -517,6 +518,9 @@ cmd_sweep() {
     sweep_decisions
   fi
   [ ! -s "$ACTIONS" ] || { cat "$ACTIONS"; }
+  # Board adds that failed when their issue was opened (#146), such as a plan
+  # sent from the Product chat, are tried again.
+  "$SCRIPT_DIR/tracker.sh" board-retry --project "$PROJECT" || echo "chats.sh: the board retry failed; the next sweep tries again" >&2
   # A push notification, once per waiting decision, when the terminal is idle.
   notified=$(mem_get '(.notified // []) | join(" ")')
   for key in $WAITING_KEYS; do

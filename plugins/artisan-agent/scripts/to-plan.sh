@@ -196,7 +196,7 @@ case "$cmd" in
     # The Human check first, then the edge, then the agent ticket: a run that
     # stops part way leaves the criterion in both places, and a repeat finishes it.
     if [ -z "$hc" ]; then
-      url=$(gh issue create -R "$REPO" --title "$title" --body "$(jq -r .hc_body <<<"$plan")" --label ready-for-human) \
+      url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind human-check --from "$agent" -- -R "$REPO" --title "$title" --body "$(jq -r .hc_body <<<"$plan")" --label ready-for-human) \
         || die "could not create the Human check for #$agent (does the ready-for-human label exist on $REPO?)"
       hc=${url##*/}
       printf '%s' "$hc" | grep -Eq '^[0-9]+$' || die "could not read the new issue number from: $url"
@@ -249,7 +249,7 @@ case "$cmd" in
               | "- #\(.ticket): \"\(.criterion)\" stays on the agent ticket. Why: \(.why)"] | join("\n")) as $ov
           | (if $ov == "" then "" else "\n\n## Human-check overrides\n\($ov)" end) as $ov
           | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\($ov)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
-        url=$(gh issue create -R "$REPO" --title "$title" --body "$body" --label plan) \
+        url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "$(jq -r --argjson i "$i" '.plans[$i].tickets[0] // empty' "$file")" -- -R "$REPO" --title "$title" --body "$body" --label plan) \
           || die "could not create the plan issue (does the \`plan\` label exist on $REPO?)"
         num=${url##*/}
         printf '%s' "$num" | grep -Eq '^[0-9]+$' || die "could not read the new issue number from: $url"
