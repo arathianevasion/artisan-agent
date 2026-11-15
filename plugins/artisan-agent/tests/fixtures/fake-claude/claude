@@ -33,6 +33,14 @@
 #               the result event
 #               A line that is not JSON sits between them, as a stream cut
 #               mid-write would leave one.
+#   deny        calls a tool outside its allowlist (#187). With
+#               --permission-mode dontAsk the call is denied at once: the
+#               result event lists it in permission_denials, without the
+#               completion line. Without dontAsk, a PermissionRequest hook in
+#               a --settings argument (what the cmux shim adds) turns the
+#               denial into a "needs input" prompt no -p session can answer:
+#               it waits until its runner stops it. With neither, plain -p
+#               denies it as dontAsk does.
 #   sleep       leaves a stray background `sleep` (argv names the working
 #               folder: fake-claude-stray:<folder>) in its process group, sleeps
 #               FAKE_CLAUDE_SLEEP seconds (default 30), then completes
@@ -42,12 +50,15 @@
 # so nothing may find an event by the start of its line. FAKE_CLAUDE_TYPE_FIRST=1
 # writes "type" first instead, the order older versions used.
 #
-# It records its arguments, one "[arg]" per line, to $FAKE_CLAUDE_ARGS, its
-# working directory and environment of interest to $FAKE_CLAUDE_ENV, and its
-# PID to $FAKE_CLAUDE_PID, when those are set.
+# It records its arguments, one "[arg]" per line, to $FAKE_CLAUDE_ARGS, and
+# to $FAKE_CLAUDE_ARGS_DIR/<role>.args (the role from $ARTISAN_ROLE, worker
+# by default; a later session of the same role replaces it), its working
+# directory and environment of interest to $FAKE_CLAUDE_ENV, and its PID to
+# $FAKE_CLAUDE_PID, when those are set.
 
 [ -n "${FAKE_CLAUDE_PID:-}" ] && echo $$ >"$FAKE_CLAUDE_PID"
 [ -n "${FAKE_CLAUDE_ARGS:-}" ] && printf '[%s]\n' "$@" >"$FAKE_CLAUDE_ARGS"
+[ -n "${FAKE_CLAUDE_ARGS_DIR:-}" ] && printf '[%s]\n' "$@" >"$FAKE_CLAUDE_ARGS_DIR/${ARTISAN_ROLE:-worker}.args"
 if [ -n "${FAKE_CLAUDE_ENV:-}" ]; then
   {
     echo "PWD=$PWD"
@@ -82,11 +93,18 @@ rate_limit() { # window utilization resetsAt
   fi
 }
 
-# The --max-turns this session was given, or empty.
+# The --max-turns this session was given, or empty; its --permission-mode;
+# whether a --settings argument carries a PermissionRequest hook.
 max_turns=
+mode=
+permission_hook=
 prev=
 for a in "$@"; do
   [ "$prev" != --max-turns ] || max_turns=$a
+  [ "$prev" != --permission-mode ] || mode=$a
+  if [ "$prev" = --settings ]; then
+    case "$a" in *PermissionRequest*) permission_hook=1 ;; esac
+  fi
   prev=$a
 done
 
@@ -169,6 +187,14 @@ ARTISAN-WORKER: complete"
     result success false 4 "Built the ticket.
 
 ARTISAN-WORKER: complete"
+    ;;
+  deny)
+    if [ "$mode" != dontAsk ] && [ -n "$permission_hook" ]; then
+      sh -c 'sleep 300; :' "fake-claude-stray:$PWD"   # waiting on "needs input"
+      exit 0
+    fi
+    text="Bash was denied, so the step stopped."
+    printf '{"total_cost_usd":0.01,"is_error":false,"num_turns":2,"subtype":"success","result":"%s","permission_denials":[{"tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"rm -rf build"}}],"type":"result"}\n' "$text"
     ;;
   sleep)
     # Named for the test's folder (argv "$0"), so tests/run.sh's cleanup, which

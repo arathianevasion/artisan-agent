@@ -39,6 +39,55 @@ existing_dir() {
   printf '%s' "$d"
 }
 
+# Physical path of a file that may not exist yet: the deepest existing
+# directory is resolved with cd -P, the rest of the path (which does not
+# exist, so has no symlinks) is resolved by name, and a final symlink is
+# followed (bounded, so a loop ends). Bash 3.2-safe: no readlink -f.
+real_path() { # absolute path
+  local p=$1 d="" rest="" c="" t="" n=0
+  while :; do
+    d=$(existing_dir "$(dirname "$p")")
+    rest=${p#"$d"}
+    d=$(cd -P "$d" 2>/dev/null && pwd) || return 1
+    while [ -n "$rest" ]; do
+      rest=${rest#/}; c=${rest%%/*}
+      case "$rest" in */*) rest=${rest#*/} ;; *) rest= ;; esac
+      case "$c" in
+        "" | .) ;;
+        ..) d=$(dirname "$d") ;;
+        *) if [ "$d" = / ]; then d=/$c; else d=$d/$c; fi ;;
+      esac
+    done
+    [ -L "$d" ] && [ "$n" -lt 16 ] || break
+    t=$(readlink "$d") || break
+    case "$t" in /*) p=$t ;; *) p=$(dirname "$d")/$t ;; esac
+    n=$((n + 1))
+  done
+  printf '%s' "$d"
+}
+
+# True when the file (absolute) is under a folder the project config lists in
+# main_checkout_runtime (#191): runtime files the main-checkout guard lets
+# sessions write, like ignored ones. Both sides are compared as physical
+# paths, so .. and symlinks cannot reach outside a listed folder. An entry
+# that is absolute or resolves to the repo root or outside it allows nothing.
+runtime_path() { # root file
+  local root="" file="" entry="" listed="" list=""
+  root=$(cd -P "$1" 2>/dev/null && pwd) || return 1
+  file=$(real_path "$2") || return 1
+  list=$("$SCRIPTS/config.sh" get main_checkout_runtime --file "$1/.artisan-agent/config.yml" 2>/dev/null \
+    | jq -r '.[]? | strings' 2>/dev/null) || return 1
+  while IFS= read -r entry; do
+    case "$entry" in "" | /*) continue ;; esac
+    listed=$(real_path "$root/$entry/") || continue
+    case "$listed" in "$root"/?*) ;; *) continue ;; esac
+    case "$file" in "$listed"/?*) return 0 ;; esac
+  done <<EOF
+$list
+EOF
+  return 1
+}
+
 # True when pid is one of this hook's ancestors. `ps -o ppid= -p` reads the
 # same on BSD (macOS) and Linux ps.
 is_ancestor() { # pid
@@ -79,6 +128,7 @@ case "$mode" in
     root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0   # not a work tree (bare, .git): fine
     [ -e "$root/.artisan-agent/config.yml" ] || exit 0       # the repo has not adopted the pipeline
     git -C "$dir" check-ignore -q -- "$file" 2>/dev/null && exit 0   # ignored runtime files are not "edits to main"
+    runtime_path "$root" "$file" && exit 0                   # nor are the folders config lists in main_checkout_runtime
     refuse "Blocked by the artisan-agent main-checkout guard: $root is the main checkout, and no session edits it directly. Work in a worktree instead: for a doc or small change run \`$SCRIPTS/doc-change.sh start <name>\` and edit there (finish fast-forwards the main checkout); a run's workers and integration branch already have their own worktrees. See $ROOT/references/main-checkout.md."
     ;;
   run-start)

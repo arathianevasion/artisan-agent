@@ -398,3 +398,42 @@ test_a_short_runner_poll_interval_still_leaves_the_exit_record() {
   wait_for_file "$EXIT_RECORD"
   assert_eq 0 "$(jq -r .exit_code "$EXIT_RECORD")"
 }
+
+# --- a denied tool never waits on a prompt (#187) ---
+
+# Under the cmux shim (its PermissionRequest hook first on PATH), a session
+# started with the headless arguments every launch site uses is denied the
+# tool at once, ends, and its exit record counts the denial.
+test_a_denied_tool_under_the_shim_ends_promptly_with_the_denial_recorded() {
+  setup_run
+  . "$PLUGIN_ROOT/scripts/lib/headless-lib.sh"
+  headless_args "Read,Bash(ls:*)"
+  export FAKE_SHIM_LOG="$TEST_TMPDIR/shim.log"
+  PATH="$TESTS_DIR/fixtures/fake-cmux-shim:$PATH"
+  launch deny --deadline-seconds 20 -- "${HEADLESS_ARGS[@]}"
+  wait_for_file "$EXIT_RECORD" 15
+  assert_eq exited "$(field "$EXIT_RECORD" reason)" "denied at once, not stopped at the deadline"
+  assert_eq 1 "$(field "$EXIT_RECORD" permission_denials)"
+  assert_eq Bash "$(jq -r '.permission_denials[0].tool_name' "$RUN/workers/46.1/output.json")"
+  assert_eq shim "$(cat "$FAKE_SHIM_LOG")" "the shim started the session"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS")" "[--permission-mode]
+[dontAsk]"
+}
+
+# The control: the same session under the shim without the headless
+# arguments waits on the prompt until its deadline stops it.
+test_without_the_headless_arguments_the_shim_makes_a_denied_tool_wait() {
+  setup_run
+  PATH="$TESTS_DIR/fixtures/fake-cmux-shim:$PATH"
+  launch deny --deadline-seconds 2 -- --permission-mode acceptEdits --allowedTools "Read"
+  wait_for_file "$EXIT_RECORD" 15
+  assert_eq deadline "$(field "$EXIT_RECORD" reason)"
+  assert_eq 0 "$(field "$EXIT_RECORD" permission_denials)"
+}
+
+test_an_exit_record_counts_no_denials_for_a_session_denied_nothing() {
+  setup_run
+  launch complete
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 0 "$(field "$EXIT_RECORD" permission_denials)"
+}

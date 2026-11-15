@@ -204,6 +204,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/wave-lib.sh"
 # shellcheck source=lib/config-lib.sh
 . "$SCRIPT_DIR/lib/config-lib.sh"   # the template's defaults (orchestrator_turns)
+# shellcheck source=lib/headless-lib.sh
+. "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -595,11 +597,12 @@ EOF
   # The runner takes the lock over from this writer before its session
   # starts: the orchestrator is the writer for the wave.
   read_extra_args
+  headless_args "$SESSION_TOOLS"
   runner=$("$SCRIPT_DIR/run-ticket.sh" --role orchestrator --lock-from "$me" --run-dir "$RUN_DIR" --ticket "$id" \
     --attempt "$attempt" --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$deadline" \
     --max-turns "$turns" \
-    -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" \
+    -- "${HEADLESS_ARGS[@]}" \
     --add-dir "$MAIN" --add-dir "$WT_ROOT" \
     ${EXTRA[@]+"${EXTRA[@]}"} ${args[@]+"${args[@]}"}) || die "could not launch $id"
 
@@ -991,6 +994,7 @@ EOF
     --arg t "$t" --arg wt "$wt" --arg base "$base"
 
   read_extra_args
+  headless_args "$SESSION_TOOLS"
   local caps=()
   [ -z "$turns" ] || caps+=(--max-turns "$turns")
   [ -z "$deadline" ] || caps+=(--deadline-seconds "$deadline")
@@ -998,7 +1002,7 @@ EOF
   pid=$("$SCRIPT_DIR/run-ticket.sh" --run-dir "$RUN_DIR" --ticket "$t" --attempt "$n" \
     --prompt-file "$prompt" --workdir "$wt" --estimate-usd "$estimate" --expected-minutes "$minutes" \
     ${caps[@]+"${caps[@]}"} \
-    -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" --add-dir "$RUN_DIR/results" \
+    -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR/results" \
     ${EXTRA[@]+"${EXTRA[@]}"}) || die "could not launch the worker for #$t"
 
   if [ -n "$deadline" ]; then
@@ -2102,7 +2106,7 @@ cmd_unpark_ci() {
             + (if $p.batch then {tickets: $p.tickets, batch: $p.batch} else {} end); $now)
     | .ci_park = null' --arg by "$by"
   get -r '[.events[] | select(.event == "unparked" and .reason == "ci")] | last
-    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their batch is merged and gated afresh)"
+    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their merge batch is merged and gated afresh)"
       else "unparked: #\(.ticket) merges next with the gate retried" end'
 }
 

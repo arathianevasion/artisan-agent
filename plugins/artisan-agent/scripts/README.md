@@ -55,11 +55,13 @@ The exit record:
 ```json
 {"ticket":"46","attempt":1,"exit_code":0,"reason":"exited","runner_pid":123,
  "started_at":"2026-11-10T19:38:48Z","finished_at":"2026-11-10T19:39:14Z",
- "max_budget_usd":"3.00","max_turns":60,"deadline_seconds":3600,
+ "max_budget_usd":"3.00","max_turns":60,"deadline_seconds":3600,"permission_denials":0,
  "output":"workers/46.1/output.json","result_file":"results/46.1.result.json"}
 ```
 
 `reason` is `exited` (claude ended by itself, including a crash or being killed from outside), `deadline` (the runner stopped it at its deadline, never before it, or on ALRM, which brings the deadline forward to now), `stopped` (the runner got TERM or INT and stopped it) or `runner-error` (the runner itself failed). `exit_code` is claude's, so 128 + the signal number when it was killed (137 for SIGKILL, 139 for SIGSEGV). If the runner itself gets SIGKILL, it can't write the record; `classify-worker.sh` reports that as `failed vanished`, because the runner PID is gone and there is still no exit record on a second look (the runner writes the record in its exit trap and then exits, so a dead PID alone proves nothing). A runner pid file that is empty or unreadable is an error, exit 3, never `vanished`: callers (`verify.sh`, `wave.sh`, `sweep.sh`) stop and run again instead of treating it as a dead session.
+
+`permission_denials` counts the tool calls the session was denied, from its final result event (the calls themselves are in `output.json`). Every headless session starts with `lib/headless-lib.sh`'s `headless_args`: `--permission-mode dontAsk` and its allowlist, so a tool outside the allowlist is denied at once and never waits on a prompt, whichever `claude` is on PATH (#187).
 
 ## Caps
 
@@ -140,6 +142,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | host configured | `host_configured` | false |
 | extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
 | merge gate time limit (#200), in minutes | `merge_gate_minutes_limit` | 6: the plan step on a CI machine says so in one line when the expected CI minutes per merge are over it; the retro says so when the run's median merge gate was, and proposes a ticket to bring it back under. Nothing refuses, blocks or fails over it (source in `templates/config.yml`) |
+| runtime folders the main-checkout guard lets sessions write (#191) | `main_checkout_runtime` (a list of folders relative to the repo root, each ending in `/`; runtime files only, never source; `references/main-checkout.md`) | none; this repo lists `.claude/orchestrator/` |
 | release skip on the CI merge gate | `merge_gate_skip_paths` (a list of globs, `*` crossing `/`; the last match wins, a leading `!` means never skip) | none (every merge runs CI); this repo lists its version files, the plugin's changelog and `*.md` outside `plugins/` (the plugin's own files come after `!plugins/*`, which would otherwise deny them) |
 
 ## Overrides are for this run only
