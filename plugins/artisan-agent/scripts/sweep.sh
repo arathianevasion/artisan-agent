@@ -243,7 +243,17 @@ sweep() {
           (($q.about // $t) | tostring) as $a
           | event({event: "guardrail-fired", guardrail: "open-decision", ticket: $a,
                    raised_by: ($q.raised_by // "worker"), case: $q.case, question: ($q.ticket | tostring),
-                   areas: ticket_areas([$a])} + (if $a == $t then {} else {from: $t} end); $now))' \
+                   areas: ticket_areas([$a])} + (if $a == $t then {} else {from: $t} end); $now))
+      # One a worker found in another ticket of the run (#231) sits on that
+      # ticket, not blocking it, so questions.sh sync reads its ruling.
+      | reduce ($lines | map(try fromjson catch null)[]
+                | select(type == "object" and .kind == "question" and ((.criterion // "") | tostring) == "8"
+                         and .raised_by == "finding" and .ticket != null)) as $q (.;
+          (($q.about // "") | tostring) as $a | ($q.ticket | tostring) as $n
+          | if $a == "" or $a == $t or .tickets[$a] == null
+               or any(.tickets[$a].questions[]?; .ticket == $n) then .
+            else .tickets[$a].questions = ((.tickets[$a].questions // [])
+                   + [{ticket: $n, blocking: false, state: "open", raised_by: "finding", from: $t, at: $now}]) end)' \
       --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" --argjson now "$now" \
       --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -R . | jq -s .)"
   done
