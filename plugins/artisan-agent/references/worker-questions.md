@@ -45,8 +45,8 @@ The Engineering chat runs `questions.sh sync $RUN` between waves (it is cheap: a
 | Ruling | What `sync` sees | What happens |
 |---|---|---|
 | Answered | the ticket closed, with a comment line `Answer: <the decision>` | prints `answered #<t> #<q>`. Once every question of the ticket is answered it is `queued` again and `wave.sh dispatch` tells the new worker the answers (it is a continuation on the same branch, not a retry, and uses no attempt of the failed kind) |
-| Closed with no `Answer:` | the ticket closed without one | prints `closed …`, queues a `question` decision: the Artisan answers, redirects or defers the ticket |
-| Deferred | the ticket labelled `deferred` (its `Return condition:` is triage's, `skills/triage/SKILL.md`, "Defer") | prints `deferred …` and queues a `defer-question` decision |
+| Closed with no `Answer:` | the ticket closed without one | prints `closed …`, queues a `question` decision: the Artisan answers, redirects or defers the ticket. On a question with `blocking: false` (a gate-raised open decision, or one a finding raised) it is a Discard and settles it: `discarded #<t> #<q>`, state `discarded`, no decision queued, its ticket's status, labels and scope untouched |
+| Deferred | the ticket labelled `deferred` (its `Return condition:` is triage's, `skills/triage/SKILL.md`, "Defer") | prints `deferred …` and queues a `defer-question` decision. On a question with `blocking: false` it settles it: state `deferred`, no decision queued, its ticket's status, labels and scope untouched, and `deferred … pull` or `carry` never acts on it |
 | Rejected | the ticket closed, with a comment line `Reject: <what the rewrite must settle>` | prints `rejected #<t> #<q>`. The ticket leaves the run as **pull** below takes one, but back to `needs-triage` (not `deferred`) with a comment noting the open decision: `in-run` off, status `sent_back`, off the run's scope, its native edges kept, so its dependents wait. If its work merged already, nothing is pulled or reverted: a follow-up `needs-triage` ticket that corrects it is filed instead (`rejected #<t> #<q> follow-up #<n>`); closed without a merge, only the record changes. While an attempt is still going it prints `reject-waits …` and the next `sync` acts |
 | Add ticket | the ticket closed, with a comment line `Add ticket: #<n>` | prints `added #<t> #<q> #<n>`. The ticket is unblocked (the native edge comes off) and `queued` with the answer `not covered here`; #<n> is triaged as usual. One that names no ticket is read as no ruling: `closed …`, and a `question` decision saying so |
 | Add the block | an open decision a finding raised (another ticket's worker found it in this one, filed `--non-blocking`), still open, with a comment line `Add the block: <why>` | prints `blocked #<t> #<q>`, once (on a merged or closed ticket nothing: `open …`). The question becomes blocking: the native edge goes on, a `queued` ticket turns `blocked` (one in flight finishes its attempt) and a `question` decision is queued, as `block` does; its later ruling then acts as for any blocking question. Until then such a question never holds its ticket: a Defer only marks it `deferred`, and a Discard marks it `discarded` and prints `discarded #<t> #<q>`, with no decision queued |
@@ -61,7 +61,7 @@ Ask the Artisan, in a table (owner preference), once per decision:
 |---|---|---|---|
 | #12 Billing tab | #31 (deferred) | defers with #31, back to the plan queue | redispatched with "not now" as the answer |
 
-Then `questions.sh deferred $RUN <ticket> pull` or `carry`:
+Then `questions.sh deferred $RUN <ticket> pull` or `carry`. It acts only on the ticket's deferred questions with `blocking: true`; with none it exits 1, so a ticket whose deferred question never held it (a gate-raised open decision on merged work) is never pulled:
 
 | Answer | The ticket ends up |
 |---|---|

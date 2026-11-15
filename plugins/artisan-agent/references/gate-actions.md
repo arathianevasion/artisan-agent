@@ -32,7 +32,7 @@ gate-action.sh triage <run> <issue> (--card N | --uncertainty N) --case incomple
 
 **The gate stays approvable and nothing is reverted.** Triage changes neither the gate's status nor its cards, nor any merged work: answer the gate as usual. A ruling never means a revert: a Reject on work that merged files a follow-up ticket that corrects it (`references/worker-questions.md`).
 
-**The end gate holds until it is ruled on.** The end gate lists every open decision raised at a gate with no ruling yet, and won't approve or cut a PR to `main` while one is open (`references/end-gate.md`).
+**The end gate holds until it is ruled on.** The end gate lists every open decision raised at a gate with no ruling yet, and won't approve or cut a PR to `main` while one is open (`references/end-gate.md`). A Defer or a Discard is a ruling too: it is recorded with its verdicts and settles the decision (it is `blocking: false`), with nothing queued for the Artisan and its merged ticket left merged, in scope and unlabelled (`references/worker-questions.md`).
 
 **A redirect's rework ticket is a ticket of its own.** It joins `plan.scope` with its own `tickets` entry (attempts 0), the first gate ticket's model, caps and estimate, and `rework_of`. Its attempts never count against the original's, and the original's never against it. It is not a new scope decision: the gate's answer is the approval, as with `gate.sh change`. Its cost counts against the approved budget; raising the budget is the overrun gate's (#72).
 

@@ -537,3 +537,48 @@ test_a_pr_is_not_cut_while_an_open_decision_raised_at_a_gate_waits() {
   assert_status 6 "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md"
   assert_eq 0 "$(ls "$FAKE_GH_DIR"/pr-*.json 2>/dev/null | wc -l | tr -d ' ')"
 }
+
+# A Defer or Discard on a gate-raised open decision (blocking: false, #238)
+# is recorded and settled: no decision for the Artisan, the merged ticket
+# left merged, in scope and unlabelled, and the end gate's hold released.
+gate_raised_od_on_merged_ticket() {
+  setup_end
+  product_boundary ticket
+  OD=$("$SCRIPTS/questions.sh" file --ticket 2 --criterion 8 --case invented --harm "Users see a name nobody chose" \
+         --recommendation "Ask product" --split --raised-by gate --run "$RUN_DIR")
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"].questions = [{ticket: $q, blocking: false, state: "open",
+      at: "2026-11-15T00:00:00Z", raised_at: "gate", gate: "slice-export", gate_issue: 9, item: {card: 1}}]' --arg q "$OD"
+  "$E" open "$RUN_DIR" >/dev/null
+  assert_status 6 "$E" approve "$RUN_DIR"
+}
+
+assert_settled_and_the_pr_opens() { # ruling
+  assert_contains "$("$E" packet "$RUN_DIR")" "None waiting"
+  assert_eq "$1 true false" "$(state_get '.tickets["2"].questions[0].ruling | "\(.kind) \(.took_recommendation) \(.needed_decision_chat)"')"
+  assert_eq 1 "$(jq --arg q "$OD" '[.events[] | select(.event == "ruled" and .question == $q)] | length' "$RUN_DIR/state.json")"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "question" or .kind == "defer-question")] | length')"
+  # The merged ticket is untouched: merged, in scope, never labelled deferred.
+  assert_eq merged "$(state_get '.tickets["2"].status')"
+  assert_eq true "$(state_get '.plan.scope | index("2") != null')"
+  assert_eq false "$(jq '[.labels[].name] | index("deferred") != null' "$FAKE_GH_DIR/issue-2.json")"
+  # Nothing for `deferred … pull` to take: the settled decision never blocked it.
+  assert_status 1 "$SCRIPTS/questions.sh" deferred "$RUN_DIR" 2 pull
+  assert_eq merged "$(state_get '.tickets["2"].status')"
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_eq 3 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
+}
+
+test_a_defer_on_a_gate_raised_open_decision_settles_it_and_the_end_gate_goes_on() {
+  gate_raised_od_on_merged_ticket
+  printf 'Deferred: not this run.\nTook the recommendation: yes\nNeeded the Decision chat: no' >"$FAKE_GH_DIR/comments-$OD.md"
+  jq '.labels += [{name: "deferred"}]' "$FAKE_GH_DIR/issue-$OD.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$OD.json"
+  assert_settled_and_the_pr_opens defer
+}
+
+test_a_discard_on_a_gate_raised_open_decision_settles_it_and_the_end_gate_goes_on() {
+  gate_raised_od_on_merged_ticket
+  printf 'Not worth it.\nTook the recommendation: yes\nNeeded the Decision chat: no' >"$FAKE_GH_DIR/comments-$OD.md"
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-$OD.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$OD.json"
+  assert_settled_and_the_pr_opens discard
+}

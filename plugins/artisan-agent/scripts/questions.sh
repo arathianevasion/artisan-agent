@@ -64,7 +64,9 @@
 #       defers with the question (label deferred, Return condition:
 #       blocked-by #<q>, off the run's scope, status "deferred"). carry: the
 #       blocking edge comes off, "not now" is the answer, the ticket is
-#       queued again.
+#       queued again. Only a deferred question that blocks the ticket: a
+#       non-blocking one (a gate-raised open decision, #238) is settled by
+#       its Defer, so 1 when the ticket has no blocking one.
 #   questions.sh list <run-dir>
 #       the run's questions as a Markdown table.
 #   questions.sh provisional <run-dir> [--shown]
@@ -604,8 +606,11 @@ cmd_deferred() {
   local t="${2:-}" choice="${3:-}"
   [ -n "$t" ] && { [ "$choice" = pull ] || [ "$choice" = carry ]; } || usage
   local qs= q=
-  qs=$(get --arg t "$t" '.tickets[$t].questions[]? | select(.state == "deferred") | .ticket')
-  [ -n "$qs" ] || die "#$t has no deferred question; run sync first"
+  # Only a deferred question that blocks the ticket: one that never held it
+  # (blocking: false, as a gate-raised open decision) is settled by its
+  # Defer, and pulling or carrying the ticket over it would undo merged work.
+  qs=$(get --arg t "$t" '.tickets[$t].questions[]? | select(.state == "deferred" and .blocking == true) | .ticket')
+  [ -n "$qs" ] || die "#$t has no deferred question that blocks it; run sync first"
   for q in $qs; do
     if [ "$choice" = carry ]; then
       remove_blocker "$t" "$q"
