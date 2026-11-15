@@ -151,9 +151,9 @@ blockers_of() { gh api "repos/$(repo)/issues/$1/dependencies/blocked_by"; }
 # blocks ticket blocker: 0 when the blocker natively blocks the ticket, 1 when
 # it doesn't. A tracker that can't be read ends the call: never act blind.
 blocks() {
-  local b=
-  b=$(blockers_of "$1") || die "could not read the blockers of #$1 from the tracker"
-  jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' <<<"$b" >/dev/null
+  local blockers=
+  blockers=$(blockers_of "$1") || die "could not read the blockers of #$1 from the tracker"
+  jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' <<<"$blockers" >/dev/null
 }
 
 add_blocker() { # ticket blocker-issue
@@ -421,8 +421,9 @@ cmd_redirect() {
           | jq -r --arg t "$title" --arg mark "Redirected at review gate #$issue." \
               '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
   if [ -z "$num" ]; then
-    body=$(jq -rn --arg issue "$issue" --arg run "$RUN_ID" --arg notes "$NOTES" --arg why "$WHY" --arg by "$BY" \
-      --arg mode "$mode" --argjson gate "$GATE" '
+    # The recorded gate grows with its cards: it reaches jq on stdin (#208).
+    body=$(jq -r --arg issue "$issue" --arg run "$RUN_ID" --arg notes "$NOTES" --arg why "$WHY" --arg by "$BY" \
+      --arg mode "$mode" '. as $gate |
 "## Parent
 
 Redirected at review gate #\($issue). In run \($run).
@@ -437,7 +438,7 @@ Redirected at review gate #\($issue). In run \($run).
 
 - [ ] " + (if $notes != "" then $notes | split("\n") | first else "The slice is as the Artisan wants it, by their own judgement" end) + "
 - [ ] The full suite passes
-"')
+"' <<<"$GATE")
     url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$(g '.tickets[0]')" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label "$label" --label in-run --body "$body") \
       || die "could not open the rework ticket"
     num=${url##*/}
@@ -915,8 +916,8 @@ reason_of() { # ticket
 exception_body() { # gate-json
   local tbl=""
   if [ "$(jq -r '.reason // ""' <<<"$1")" = unmeetable ]; then tbl=$(unmeetable_choices_table body); else tbl=$(exception_choices_table body); fi
-  jq -rn --argjson gt "$1" --slurpfile s "$FILE" --arg tbl "$tbl" '
-    $s[0] as $s | $gt.ticket as $t | $s.tickets[$t] as $k | $s.plan.tickets[$t] as $p
+  jq -r --slurpfile s "$FILE" --arg tbl "$tbl" '
+    . as $gt | $s[0] as $s | $gt.ticket as $t | $s.tickets[$t] as $k | $s.plan.tickets[$t] as $p
     | ($gt.downstream // ($gt.dependents | map(.number))) as $dn
     | (if $dn == [] then "" else "; " + ($dn | map("#" + .) | join(", ")) + " (everything that depends on it, directly or through others) leave(s) the run with it and go back to `needs-triage`" end) as $leaves
     | "| Gate | Role needed | Ticket | Tickets blocked |",
@@ -963,7 +964,7 @@ exception_body() { # gate-json
     "",
     "Exception gates are never removed. Decide what happens to the ticket, or bypass or defer the gate.",
     "",
-    ($tbl | gsub("\\{\\{leaves\\}\\}"; $leaves) | split("\n") | map(select(. != "")) | .[])'
+    ($tbl | gsub("\\{\\{leaves\\}\\}"; $leaves) | split("\n") | map(select(. != "")) | .[])' <<<"$1"
 }
 
 open_exception() { # decision-json
@@ -1013,14 +1014,16 @@ open_exception() { # decision-json
     num=${url##*/}
   fi
   for d in $(jq -r '.[].number' <<<"$deps"); do add_blocker "$d" "$num"; done
-  apply '
-    if any((.exception_gates // [])[]; .id == $g.id) then .
+  # The new gate carries its dependents and downstream, which grow with the
+  # scope: it reaches jq on stdin (#208).
+  apply '$g[0] as $g
+    | if any((.exception_gates // [])[]; .id == $g.id) then .
     else .exception_gates = ((.exception_gates // []) + [$g + {issue: $num, status: "open", opened_at: $now}])
       | .decisions |= map(if .id == $g.decision then . + {issue: $num, gate: $g.id} else . end)
       | event({event: "gate-opened", gate: $g.id, kind: "exception", issue: $num, tickets: [$g.ticket],
                dependents: ($g.dependents | map(.number))}; $now)
       | guardrails_fired($g; $now)
-    end' --argjson g "$gate" --argjson num "$num"
+    end' --slurpfile g /dev/stdin --argjson num "$num" <<<"$gate"
   echo "opened #$num exception-$did"
 }
 
@@ -1050,7 +1053,7 @@ cmd_sync() {
 
 cmd_parked() {
   open_run "${1:-}"
-  local record=0 t= tracker='{}' line=
+  local record=0 t= tracker='' blockers= line=
   [ "${2:-}" != --record ] || record=1
   # Quick refusals from the state file alone: work still moving, work ready,
   # a decision that isn't a gate, or no gate open.
@@ -1060,12 +1063,17 @@ cmd_parked() {
     and (waiting_non_gate_decisions | map(select(.kind != "usage")) | length) == 0
     and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
          + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0')" = true ] || return 1
+  # Each queued ticket's open blockers, one {ticket: [...]} per line: the
+  # responses carry whole issue bodies and the map grows with the scope, so
+  # both reach jq on stdin (#208). An unreadable tracker gives null.
   for t in $(get "$STATE_JQ_DEFS"' . as $s | .plan.scope[] as $t | select(.tickets[$t].status == "queued" and ($s | is_human_check($t) | not)) | $t'); do
-    tracker=$(jq -c --arg t "$t" --argjson b "$(blockers_of "$t" || echo null)" \
-      '. + {($t): ($b // null | if . == null then null else [.[] | select((.state | ascii_downcase) == "open") | .number | tostring] end)}' <<<"$tracker")
+    blockers=$(blockers_of "$t") || blockers=null
+    tracker=$tracker$(jq -c --arg t "$t" \
+      '{($t): (. // null | if . == null then null else [.[] | select((.state | ascii_downcase) == "open") | .number | tostring] end)}' <<<"$blockers")$'\n'
   done
   line=$(get "$STATE_JQ_DEFS"'
-    . as $s
+    (reduce $trs[] as $e ({}; . + $e)) as $tr
+    | . as $s
     | [($s.review_gates // [])[], ($s.exception_gates // [])[] | select(.status == "open")] as $open
     | ($open | map(.issue | tostring)) as $gi
     | [$s.tickets | to_entries[] | select(.value.risk_gate.status? == "waiting") | .key] as $risk
@@ -1096,7 +1104,7 @@ cmd_parked() {
              + [$unopened[] | "\(.kind) gate \(.slice) (not open yet)"] | join(", "))
           + "; \($left | length) ticket\(if ($left | length) == 1 then " waits" else "s wait" end) behind \(if $n == 1 then "it" else "them" end): "
           + ($left | map("#" + .) | join(", "))
-      end' --argjson tr "$tracker")
+      end' --slurpfile trs /dev/stdin <<<"$tracker")
   [ -n "$line" ] || return 1
   echo "$line"
   if [ "$record" -eq 1 ]; then

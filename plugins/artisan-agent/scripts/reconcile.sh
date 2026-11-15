@@ -106,23 +106,28 @@ reconcile() {
   ARTISAN_WRITER_PID=$(state_writer_pid) "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard || return $?
   cp "$file" "$tmp"
 
-  # Tracker: state, labels and blockers for every ticket in scope.
-  tracker='{}'
+  # Tracker: state, labels and blockers for every ticket in scope. The
+  # responses carry whole issue bodies and the map grows with the scope, so
+  # both reach jq on stdin, never as an argument (Linux refuses one over
+  # 128 KiB: #208).
+  tracker=''
   for t in $(jq -r '.plan.scope[]' "$tmp"); do
     issue=$(gh api "repos/$repo/issues/$t") || { rm -f "$tmp"; state_die 1 "reconcile: could not read #$t from the tracker"; }
     blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
       || { rm -f "$tmp"; state_die 1 "reconcile: could not read blockers of #$t from the tracker"; }
-    tracker=$(jq -n --argjson acc "$tracker" --arg t "$t" --argjson i "$issue" --argjson b "$blockers" '
-      $acc + {($t): {
+    tracker=$tracker$(printf '%s\n%s\n' "$issue" "$blockers" | jq -cn --arg t "$t" '
+      input as $i | input as $b
+      | {($t): {
         state: ($i.state | ascii_downcase),
         labels: [$i.labels[]? | (.name? // .)],
         human_check_for: ([($i.body // "") | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null),
         blocked_by: [$b[]? | {number: (.number | tostring), state: (.state | ascii_downcase)}]
-      }}')
+      }}')$'\n'
   done
 
   step "$STATE_JQ_DEFS"'
-    .tickets |= with_entries(
+    (reduce $trs[] as $e ({}; . + $e)) as $tr
+    | .tickets |= with_entries(
       if .value.status == "queued" and $tr[.key].state == "closed"
       then .value.status = "closed" else . end)
     # A Human check is known by its body marker (references/human-checks.md).
@@ -151,7 +156,7 @@ reconcile() {
     | .tickets |= with_entries(.key as $t
         | ([$tr[$t].blocked_by[]? | .number | select($s.tickets[.].status? == "merged")]) as $bs
         | (if .value.status == "queued" and $bs != [] then $s | gate_waits($t; $bs) else [] end) as $w
-        | if $w == [] then .value |= del(.gate_waits) else .value.gate_waits = $w end)' --argjson tr "$tracker"
+        | if $w == [] then .value |= del(.gate_waits) else .value.gate_waits = $w end)' --slurpfile trs /dev/stdin <<<"$tracker"
 
   state_commit "$RUN_DIR" "$tmp"
 }

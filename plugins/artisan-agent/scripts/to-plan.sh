@@ -132,9 +132,13 @@ case "$cmd" in
       # criteria.py's rule, the one the verifier reads a ticket by (#202).
       crit=$(printf '%s' "$issue" | jq -r '.body // ""' | python3 -I "$CRITERIA_PY" extract) \
         || die "cannot read the acceptance criteria of #$n"
-      out=$(jq --arg n "$n" --argjson issue "$issue" --argjson deps "$deps" --argjson crit "$crit" \
+      # The graph so far, the issue and its blockers carry whole bodies: they
+      # reach jq on stdin, never as an argument (#208).
+      out=$(printf '%s\n%s\n%s\n' "$out" "$issue" "$deps" | jq -n --arg n "$n" --argjson crit "$crit" \
             --arg set "$numbers" '
-        ($set | split("\n") | map(select(. != ""))) as $in
+        input as $acc | input as $issue | input as $deps
+        | ($set | split("\n") | map(select(. != ""))) as $in
+        | $acc
         | .tickets[$n] = {
             title: $issue.title,
             acceptance: $crit,
@@ -143,7 +147,7 @@ case "$cmd" in
           }
         | if .tickets[$n].external_blockers == [] then del(.tickets[$n].external_blockers) else . end
         | ([$issue.body // "" | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null) as $hc
-        | if $hc then .tickets[$n].human_check_for = $hc else . end' <<<"$out")
+        | if $hc then .tickets[$n].human_check_for = $hc else . end')
     done
     printf '%s\n' "$out" ;;
 
@@ -187,8 +191,8 @@ case "$cmd" in
     hc=$(jq -r --arg m "$marker" '[.[] | select((.body // "") | contains($m))] | sort_by(.number) | .[0].number // empty' <<<"$open")
     hc_body=null
     [ -z "$hc" ] || hc_body=$(jq --argjson n "$hc" '.[] | select(.number == $n) | .body // ""' <<<"$open")
-    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" \
-      '{agent: ($i.number | tostring), agent_title: $i.title, agent_body: ($i.body // ""),
+    req=$(printf '%s\n%s\n' "$issue" "$hc_body" | jq -n --arg c "${POS[1]}" \
+      'input as $i | input as $hb | {agent: ($i.number | tostring), agent_title: $i.title, agent_body: ($i.body // ""),
         criterion: $c, hc_body: $hb}')
     plan=$(py split-text <<<"$req") || exit 1
     crit=$(jq -r .criterion <<<"$plan")
