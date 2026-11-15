@@ -905,3 +905,80 @@ closed risk-2: none of its tickets merged (#3 dropped): nothing to review" "$("$
   assert_eq '["3"]' "$(state_get '.review_gates[0].left_run | map(.number) | tojson')" "a closed ticket did not leave the run"
   assert_eq "Risk gate: #3 (Ticket 3), new seam or module boundary (run r1)" "$(state_get '.review_gates[1].title')"
 }
+
+# ------------------------------------------- a gate over 128 KiB (#208)
+
+# inflate_gate: the recorded review gate grows past 128 KiB (a long card),
+# the most Linux takes as one argument. Sets EMPTY_TMP, a TMPDIR to watch.
+inflate_gate() {
+  head -c 200000 /dev/zero | tr '\0' x >"$TEST_TMPDIR/pad.txt"
+  jq --rawfile pad "$TEST_TMPDIR/pad.txt" '.review_gates[0].cards[0].context = $pad' \
+    "$RUN_DIR/state.json" >"$TEST_TMPDIR/state.next"
+  mv "$TEST_TMPDIR/state.next" "$RUN_DIR/state.json"
+  [ "$(jq -c '.review_gates[0]' "$RUN_DIR/state.json" | wc -c)" -gt 131072 ] || fail "the gate should be over 128 KiB"
+  EMPTY_TMP="$TEST_TMPDIR/empty-tmp"
+  mkdir -p "$EMPTY_TMP"
+}
+
+# no_leftovers: TMPDIR is empty again and no temporary file is left in the
+# checkout or the run folder.
+no_leftovers() {
+  assert_eq "" "$(ls -A "$EMPTY_TMP")" "TMPDIR left with files"
+  assert_eq "" "$(find "$PROJECT" -path "$PROJECT/.git" -prune -o \( -name '*.tmp*' -o -name '*.next' \) -print)" \
+    "temporary files left in the checkout or run folder"
+}
+
+test_a_gate_over_128_kib_is_shown_and_redirected_leaving_nothing_behind() {
+  setup_run
+  local num= rw= out=
+  num=$(open_slice_gate)
+  inflate_gate
+  out=$(TMPDIR="$EMPTY_TMP" "$G" chat "$RUN_DIR") || fail "chat failed: $out"
+  assert_contains "$out" "greeting"
+  rw=$(TMPDIR="$EMPTY_TMP" "$A" redirect "$RUN_DIR" "$num" --notes "Greet by name") || fail "redirect failed: $rw"
+  assert_eq redirected "$(state_get '.review_gates[0].status')"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$rw.json")" "sent the slice gate on #1 back with notes"
+  no_leftovers
+}
+
+test_a_gate_over_128_kib_is_approved_leaving_nothing_behind() {
+  setup_run
+  local num=
+  num=$(open_slice_gate)
+  inflate_gate
+  TMPDIR="$EMPTY_TMP" "$A" approve "$RUN_DIR" "$num" >/dev/null || fail "approve failed"
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+  no_leftovers
+}
+
+test_a_gate_over_128_kib_closed_on_the_tracker_is_synced_leaving_nothing_behind() {
+  setup_run
+  local num=
+  num=$(open_slice_gate)
+  inflate_gate
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-$num.json" >"$TEST_TMPDIR/issue.next"
+  mv "$TEST_TMPDIR/issue.next" "$FAKE_GH_DIR/issue-$num.json"
+  TMPDIR="$EMPTY_TMP" "$G" sync "$RUN_DIR" >/dev/null || fail "sync failed"
+  assert_eq approved "$(state_get '.review_gates[0].status')"
+  assert_eq true "$(state_get '.review_gates[0].closed_on_tracker')"
+  no_leftovers
+}
+
+test_a_redirect_of_a_gate_over_128_kib_failing_part_way_leaves_nothing_behind() {
+  setup_run
+  local num=
+  num=$(open_slice_gate)
+  inflate_gate
+  # The tracker refuses to close the gate's issue: the redirect stops there.
+  mkdir -p "$TEST_TMPDIR/gh-shim"
+  cat >"$TEST_TMPDIR/gh-shim/gh" <<SH
+#!/usr/bin/env bash
+case "\$1 \${2:-}" in "issue close") echo "gh: HTTP 502" >&2; exit 1 ;; esac
+exec "$TESTS_DIR/fixtures/fake-gh/gh" "\$@"
+SH
+  chmod +x "$TEST_TMPDIR/gh-shim/gh"
+  ! PATH="$TEST_TMPDIR/gh-shim:$PATH" TMPDIR="$EMPTY_TMP" "$A" redirect "$RUN_DIR" "$num" --notes "Greet by name" >/dev/null 2>&1 \
+    || fail "the redirect should fail when the gate can't be closed"
+  assert_eq open "$(state_get '.review_gates[0].status')"
+  no_leftovers
+}

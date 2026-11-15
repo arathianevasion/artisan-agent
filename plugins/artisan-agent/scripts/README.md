@@ -100,6 +100,14 @@ The runner starts a new session (`setsid`, or perl's `POSIX::setsid` on macOS, w
 
 `bash` 3.2 or later, `awk`, `perl` (macOS, where `setsid` is missing) and `jq` (`classify-worker.sh`). All ship with macOS and with GitHub's Ubuntu runners.
 
+## JSON that grows with the run
+
+- JSON that grows with the run or the tracker (a `gh api` or `gh issue view` response carrying issue bodies, a map built over the scope, a gate recorded in the state) never reaches jq as a `--arg` or `--argjson` value: Linux refuses one argument over 128 KiB, and macOS all of them together over 1 MiB (#203, #208).
+- It reaches jq on stdin (`jq '. as $x | …' <<<"$json"`, or `--slurpfile x /dev/stdin <<<"$json"` beside a file input), or from the file that already holds it (`--slurpfile`, `--rawfile`).
+- A map built over the scope is kept as one JSON object per line and merged inside jq (`reduce $xs[] as $e ({}; . + $e)`).
+- Temporary data stays out of the checkout and the run folder: where a new file is the only way, it is made with `mktemp` under `${TMPDIR:-/tmp}` and a trap removes it whether the command succeeds or fails.
+- `tests/jq-args.test.sh` fails on each form; `tests/large-json.test.sh` and `tests/gate-actions.test.sh` run reconcile, parking and the gate actions on data over the limits and check that nothing is left in `TMPDIR`.
+
 ## Hand check
 
 Not covered by the script tests; to do once by hand on the machine that will run workers:

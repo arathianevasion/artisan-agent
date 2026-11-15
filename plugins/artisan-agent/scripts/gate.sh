@@ -244,7 +244,7 @@ without_left() { # def
 cmd_open() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  local id="$2" def= rec= dir= view= body= title= repo= num= url= d= gid=
+  local id="$2" def= rec= dir= view= body= title= repo= num= url= d= gid= hcv=
   rec=$(recorded "$id")
   if [ -n "$rec" ]; then jq -r .issue <<<"$rec"; return 0; fi
   def=$(gate_def "$id")
@@ -260,8 +260,10 @@ cmd_open() {
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
     PACKET cards <"$view.tmp" >"$view.cards"
-    jq --slurpfile cards "$view.cards" --argjson hc "$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))")" \
-      '.gate.cards = $cards[0] | . + $hc' "$view.tmp" >"$view.tmp2"
+    # The Human checks carry their issues' bodies: they reach jq on stdin (#208).
+    hcv=$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))") || exit $?
+    jq --slurpfile cards "$view.cards" --slurpfile hc /dev/stdin \
+      '.gate.cards = $cards[0] | . + $hc[0]' "$view.tmp" <<<"$hcv" >"$view.tmp2"
     mv "$view.tmp2" "$view"
     rm -f "$view.tmp" "$view.cards"
   fi
@@ -808,13 +810,14 @@ cmd_sync() {
       GATE=$(recorded "$issue")
       id=$(jq -r .id <<<"$GATE")
       f=$(new_action "$id")
-      jq -n --arg key "$(basename "$f" .json)" --arg g "$id" --argjson gate "$GATE" '
-        {key: $key, type: "approve", gate: $g, by: "Artisan (closed on the tracker)", closed_on_tracker: true,
+      # The recorded gate grows with its cards: it reaches jq on stdin (#208).
+      jq --arg key "$(basename "$f" .json)" --arg g "$id" '. as $gate
+        | {key: $key, type: "approve", gate: $g, by: "Artisan (closed on the tracker)", closed_on_tracker: true,
          carried: [$gate.cards[] | select(.card as $c | [$gate.decisions[].card] | index($c) | not) | .card],
          decisions: ([$gate.cards[] | select(.card as $c | [$gate.decisions[].card] | index($c) | not)
            | {job: (.job // 13), choice, by: "Artisan (closed on the tracker)", card, ticket, gate: $g,
               outcome: "keep", original: {choice, by}}]
-           + [{job: 13, choice: "approve the slice", by: "Artisan (closed on the tracker)", gate: $g, outcome: "approve"}])}' >"$f"
+           + [{job: 13, choice: "approve the slice", by: "Artisan (closed on the tracker)", gate: $g, outcome: "approve"}])}' <<<"$GATE" >"$f"
       carried=$(jq -r '.carried | length' "$f")
       fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
       # One line on the tracker, so either chat announces it on its next sweep.
@@ -886,10 +889,11 @@ cmd_carried() {
 view_of() { # recorded-gate-json: its view, with the cards and dependents recorded
   local g="$1" f=
   f="$RUN_DIR/gates/$(jq -r .id <<<"$g").view.json"
+  # The recorded gate grows with its cards: it reaches jq on stdin (#208).
   if [ -f "$f" ]; then
-    jq --slurpfile s "$FILE" --argjson g "$g" '.state = $s[0] | .gate.issue = $g.issue' "$f"
+    jq --slurpfile s "$FILE" --slurpfile g /dev/stdin '$g[0] as $g | .state = $s[0] | .gate.issue = $g.issue' "$f" <<<"$g"
   else
-    jq -n --slurpfile s "$FILE" --argjson g "$g" '{gate: ($g + {kind: ($g.kind // "slice")}), state: $s[0], guardrails: "", provisional: ""}'
+    jq --slurpfile s "$FILE" '. as $g | {gate: ($g + {kind: ($g.kind // "slice")}), state: $s[0], guardrails: "", provisional: ""}' <<<"$g"
   fi
 }
 
