@@ -280,3 +280,17 @@ test_every_issue_list_in_scripts_reads_every_matching_issue() {
     | grep -v '/scripts/guardrail-health\.sh:' || true)
   assert_eq "" "$hits" "a gh issue list that may miss an existing issue"
 }
+
+# A part that can't be posted fails the call, naming the missing parts, but
+# the issue it made still gets its URL printed and goes on the board.
+test_a_part_that_cannot_be_posted_fails_the_call_after_the_issue_reaches_the_board() {
+  setup_board
+  jq -nr '[range(0; 3000) | "line \(.) of a finding that keeps going for a while"] | join("\n")' >"$TEST_TMPDIR/body.md"
+  touch "$FAKE_GH_DIR/comments-fail"
+  local out="" status=0
+  out=$("$TRACKER" new-issue --kind finding --from 5 -- -R owner/repo --title "A finding" --body-file "$TEST_TMPDIR/body.md" 2>"$TEST_TMPDIR/err") || status=$?
+  assert_eq 1 "$status"
+  assert_eq "https://github.com/owner/repo/issues/7" "$out"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "parts 2 3 of 3 of its body were not posted"
+  assert_eq '{"Area":"UI"}' "$(board_item 7)"
+}

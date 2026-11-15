@@ -205,7 +205,6 @@ split_body() {
   local file="$1" dir="$2" n=0 i=0
   # --rawfile, not -Rs: jq 1.7 -R breaks a character cut by its 4 KiB reads.
   jq -n --rawfile body "$file" --argjson room "$PART_ROOM" '
-    def cpbytes: if . < 128 then 1 elif . < 2048 then 2 elif . < 65536 then 3 else 4 end;
     # The longest head of the string, in characters, of at most $cap bytes.
     def head_fits($cap):
       . as $s | {n: ([length, $cap] | min)}
@@ -259,7 +258,7 @@ split_body() {
 }
 
 cmd_new_issue() {
-  local url="" repo="" issue="" entry="" tmp="" parts=1 k=0 tries=0 has_body=0 missing=""
+  local url="" repo="" issue="" tmp="" parts=1 k=0 tries=0 has_body=0 missing=""
   local -a args=()
   case "$ON_BOARD$OFF_BOARD" in *" $KIND "*) ;; *) usage ;; esac
   if [ -n "$FROM" ] && ! state_is_uint "$FROM"; then
@@ -303,12 +302,23 @@ cmd_new_issue() {
       tries=$((tries + 1))
       if [ -z "$repo" ] || [ "$tries" -ge 3 ]; then
         while [ "$k" -le "$parts" ]; do missing="$missing $k"; k=$((k + 1)); done
-        warn "#$issue was created, but parts$missing of $parts of its body were not posted as comments; post them by hand"
-        exit 1
+        break
       fi
     done
     k=$((k + 1))
   done
+  # The issue stands either way, so it goes on the board before a missing
+  # part fails the call.
+  board_step "$url" "$issue" "$repo"
+  [ -z "$missing" ] || {
+    warn "#$issue was created, but parts$missing of $parts of its body were not posted as comments; post them by hand"
+    exit 1
+  }
+}
+
+# board_step url issue repo: the new issue on the board, when its kind goes there.
+board_step() {
+  local url="$1" issue="$2" repo="$3" entry=""
   case "$ON_BOARD" in *" $KIND "*) ;; *) return 0 ;; esac
   main_checkout
   read_board

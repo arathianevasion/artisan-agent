@@ -718,7 +718,7 @@ test_a_200000_character_packet_opens_as_one_issue_whose_body_and_comments_hold_i
   [ "$(jq -n --rawfile p "$packet" '$p | length')" -ge 200000 ] || fail "the packet is under 200,000 characters"
   assert_eq 1 "$(jq -r 'select(.title == "Slice gate: greeting (run r1)") | .number' "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "one issue"
   jq -r .body "$FAKE_GH_DIR/issue-$num.json" >"$TEST_TMPDIR/got"
-  [ "$(jq -n --rawfile b "$TEST_TMPDIR/got" '$b | length')" -le 65536 ] || fail "the body is over the limit"
+  [ "$(jq -n --rawfile b "$TEST_TMPDIR/got" '$b | length')" -lt 65536 ] || fail "the body is not under the limit"
   assert_contains "$(cat "$TEST_TMPDIR/got")" "it continues in the comments below (part 1 of 4)"
   assert_contains "$(cat "$FAKE_GH_DIR/comments-$num.md")" "*Continued from the issue body (part 4 of 4).*"
   cat "$FAKE_GH_DIR/comments-$num.md" >>"$TEST_TMPDIR/got"

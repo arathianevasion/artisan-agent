@@ -24,7 +24,8 @@
 #   gh issue create [-R repo] --title T (--body|-b B | --body-file|-F FILE) [--label L]...
 #                         prints the new issue's URL; numbers continue after the highest issue;
 #                         id is 1000 + number
-#   An issue or comment body over 65,536 characters fails, as on GitHub (FILE - is stdin).
+#   An issue or comment body over 65,536 characters fails, as on GitHub (FILE - is stdin);
+#   with the file comments-fail, every issue comment fails.
 #   gh api repos/<o>/<r>/issues/<n>/sub_issues                    the plan's sub-issues (sub_issues-<n>.json,
 #                         a list of numbers); POST --method with -F sub_issue_id=<id> adds one, failing
 #                         like GitHub when the child already has a parent (parent-<child>) unless
@@ -290,6 +291,7 @@ case "${1:-} ${2:-}" in
   "issue comment")
     shift 2; parse "$@"; need_issue "$n"
     [ -n "$body_set" ] || { echo "gh: a comment needs --body or --body-file" >&2; exit 1; }
+    [ ! -e "$FAKE_GH_DIR/comments-fail" ] || { echo "gh: HTTP 502: Server Error" >&2; exit 1; }
     check_body "$body"
     c="$FAKE_GH_DIR/comments-$n.md"
     [ ! -s "$c" ] || printf '\n---\n' >>"$c"
