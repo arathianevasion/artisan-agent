@@ -144,9 +144,13 @@ cmd_build() {
         [ $# -ge 3 ] || usage
         overrides=$(jq -c --arg k "${1#--override-}" --arg t "$2" --arg c "$3" '. + [{kind: $k, ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$overrides")
         shift 3 ;;
+      --override-open-decision)
+        [ $# -ge 2 ] || usage
+        overrides=$(jq -c --arg t "$2" '. + [{kind: "open-decision", ticket: ($t | ltrimstr("#")), why: ""}]' <<<"$overrides")
+        shift 2 ;;
       --why)
         [ $# -ge 2 ] || usage
-        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check or --override-merge-gate it gives the reason for"
+        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check, --override-merge-gate or --override-open-decision it gives the reason for"
         overrides=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$overrides")
         shift 2 ;;
       *) usage ;;
@@ -284,6 +288,34 @@ cmd_build() {
     | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
   # Agent criteria that need a person (references/human-checks.md), or CI, a
   # PR or the full suite (#213), less the Artisan's overrides.
+  # Open decisions (criterion 8, references/open-decisions.md): each one the
+  # draft records stands until the Artisan keeps its ticket with a reason
+  # (--override-open-decision) or plan.sh drop takes the ticket out.
+  if ! out=$(printf '%s' "$out" | jq --argjson ov "$(jq -c '[.[] | select(.kind == "open-decision") | {ticket, why}]' <<<"$overrides")" '
+      def blank: (. // "") | tostring | test("^\\s*$");
+      . as $input
+      | (.open_decisions // [])
+      | if type != "array" then error("open_decisions is a list of {ticket, case, harm, recommendation}") else . end
+      | map(.ticket = ((.ticket // "") | tostring | ltrimstr("#"))) as $od
+      | reduce $od[] as $o (.;
+          if ($input.scope | index($o.ticket)) == null then error("an open decision names #\($o.ticket), which is not in scope")
+          elif (["incomplete", "misaligned", "invented", "adr"] | index($o.case)) == null
+          then error("the open decision on #\($o.ticket) needs a case: incomplete, misaligned, invented or adr")
+          elif ($o.harm | blank) then error("the open decision on #\($o.ticket) needs its concrete harm")
+          elif ($o.recommendation | blank) then error("the open decision on #\($o.ticket) needs one recommendation")
+          else . end)
+      | reduce $ov[] as $v (.;
+          if ([$od[] | select(.ticket == $v.ticket)] | length) == 0
+          then error("--override-open-decision \($v.ticket): the draft records no open decision on #\($v.ticket)")
+          elif ($v.why | blank) then error("--override-open-decision \($v.ticket) needs --why: the Artisan'"'"'s reason")
+          else . end)
+      | $input + {open_decisions: $od, open_decision_overrides: $ov,
+                  open_decision_flags: [$od[] | select(.ticket as $t | [$ov[].ticket] | index($t) | not)
+                                        | {ticket, case, harm, recommendation}]}
+    ' 2>&1); then
+    die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
+  fi
+  overrides=$(jq -c '[.[] | select(.kind != "open-decision")]' <<<"$overrides")
   ov='{"human_check_overrides": [], "merge_gate_overrides": []}'
   if [ "$(jq length <<<"$overrides")" -gt 0 ]; then
     ov=$(printf '%s' "$out" | python3 -I "$SCRIPT_DIR/lib/to-plan.py" overrides "$overrides" 2>&1) \
@@ -364,8 +396,16 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
+      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] then empty
+        else "### Needs your attention" end ),
+      ( ($p.open_decision_flags // []) | if length == 0 then empty else
+        "| Ticket | Open decision | Harm | Recommendation |",
+        "|---|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.case) | \(.harm) | \(.recommendation) |" ),
+        "",
+        "Any answer a worker could give here would leave the feature incomplete or misaligned, invent behaviour or settle an ADR (criterion 8, `references/open-decisions.md`), so the Decision chat rules on it. File it and take the ticket out of the run with its dependents (`plan.sh drop --draft <draft.json> <ticket>`), then rebuild, or keep the ticket in with a reason (`--override-open-decision <ticket> --why ...` on the build). Not approvable while one stands.",
+        "" end ),
       ( ($p.human_check_flags // []) | if length == 0 then empty else
-        "### Needs your attention",
         "| Ticket | Criterion | Reads as needing a person |",
         "|---|---|---|",
         ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
@@ -393,6 +433,18 @@ cmd_render() {
         "| Ticket | Criterion kept on the agent ticket | Why |",
         "|---|---|---|",
         ( .[] | "| \(ticket(.ticket)) | \(.criterion) | \(.why) |" ),
+        "" end ),
+      ( ($p.open_decision_overrides // []) | if length == 0 then empty else
+        "### Open-decision overrides",
+        "| Ticket | Kept in the run with its open decision | Why |",
+        "|---|---|---|",
+        ( .[] | . as $o | "| \(ticket(.ticket)) | \([$p.open_decisions[] | select(.ticket == $o.ticket) | "\(.case): \(.harm)"] | join("; ")) | \(.why) |" ),
+        "" end ),
+      ( ($p.dropped // []) | if length == 0 then empty else
+        "### Out of the run for the Decision chat",
+        "| Ticket | Open decision filed | Dependents out with it |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\(.title // "untitled")) | \(.filed | map(ticket(.)) | join(", ")) | \(if .dependents == [] then "none" else (.dependents | map(ticket(.)) | join(", ")) end) |" ),
         "" end ),
       ( ($p.merge_gate_overrides // []) | if length == 0 then empty else
         "### Merge-gate overrides",
@@ -438,6 +490,7 @@ cmd_render() {
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
       (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) ticket(s) with no acceptance criteria (above)."
+       elif ($p.open_decision_flags // []) != [] then "Not approvable yet: \($p.open_decision_flags | length) open decision(s) (above)."
        elif ($p.human_check_flags // []) != [] then "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)."
        elif ($p.merge_gate_flags // []) != [] then "Not approvable yet: \($p.merge_gate_flags | length) criteria the merge gate already checks (above)."
        else "Approve as shown, or name any number to change for this run only." end)
