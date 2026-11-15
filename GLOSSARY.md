@@ -79,14 +79,16 @@ _Avoid_: automatic step, black box
 ### Sessions and agents
 
 **Chat**:
-An interactive session an Artisan talks to. There are two: the Engineering chat and the Product chat.
+An interactive session an Artisan talks to. There are two: the Decision chat and the Run chat.
 _Avoid_: session (except in Claude Code's technical sense), console
 
-**Engineering chat**:
-The chat that drives runs and holds the Engineering role's jobs.
+**Decision chat**:
+The chat where decisions are researched and made: triage, grilling, specs and open decisions. It is kept apart so the Artisan can decide while a run goes on, and so neither chat's context crowds out the other's.
+_Avoid_: Product chat (former name)
 
-**Product chat**:
-The chat that runs triage and holds requirements discussion and writing, keeping the Engineering chat's context free for building.
+**Run chat**:
+The chat that plans and drives runs, answers gates and cuts releases.
+_Avoid_: Engineering chat (former name)
 
 **Orchestrator**:
 A fresh headless session that runs one wave of a run: it dispatches workers, merges their work and records the run's state, then exits.
@@ -137,6 +139,10 @@ _Avoid_: sweep (a chat's regular check of runs and gates), grooming
 **Finding**:
 A fact a worker turns up during a run that may matter to other work.
 _Avoid_: discovery, note
+
+**Open decision**:
+A critical decision an execution agent may not make alone, because any answer it could give would leave the feature incomplete or misaligned, invent user-facing behaviour, or need an ADR. Every other decision is the execution agent's judgement. The Decision chat makes it.
+_Avoid_: requirement gap, ambiguity, unclear requirement
 
 **State file**:
 The record of a run's plan, progress and evidence that lets any fresh session carry the run on.
