@@ -206,7 +206,8 @@ test_g_the_shipped_ticket_writing_guidance_suggests_no_pr_or_ci_criterion() {
 test_g_a_ci_outcome_for_the_merged_work_in_other_forms_is_the_merge_gates() {
   local c=
   for c in "CI check job is green on the merged commit" "the CI build passes on the merge commit" \
-    "CI checks pass for the merged change"; do
+    "CI checks pass for the merged change" "CI is green after merge" "CI is green on main after merge" \
+    "All CI checks pass on the merged commit" "CI is green on the merged PR"; do
     printf -- '- [ ] %s\n' "$c" >b.md
     assert_eq "1" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
   done
@@ -252,4 +253,26 @@ test_g_align_reads_a_criterion_measured_after_merge_as_human_whatever_the_verifi
   echo '{"acceptance": [{"criterion": "x", "met": true}, {"criterion": "y", "met": false}, {"criterion": "z", "met": true}]}' >v.json
   assert_eq '[[false,true,true],[false,true,true],[true,null,null]]' \
     "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c 'map([.met, .human, .after_merge])')"
+}
+
+test_g_align_reads_the_merged_work_ci_outcomes_as_gate_when_judged_unmet() {
+  echo '["CI check job is green on the merged commit", "the CI build passes on the merge commit", "CI checks pass for the merged change", "hello.txt exists"]' >c.json
+  echo '{"acceptance": [{"criterion": "a", "met": false}, {"criterion": "b", "met": false}, {"criterion": "c", "met": false}, {"criterion": "d", "met": true}]}' >v.json
+  assert_eq '[[false,true],[false,true],[false,true],[true,null]]' \
+    "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c 'map([.met, .gate])')"
+}
+
+# Only a measure of the PR's or CI's run reads as measured after merge: CI or
+# a PR named beside some other duration or id stays the verifier's to judge.
+test_g_a_measure_not_of_the_prs_or_cis_run_is_not_measured_after_merge() {
+  local c=
+  for c in "README documents the CI duration" "The retry duration is configurable; PR title is short" \
+    "The tests complete in under 8 min of wall time on CI" "The PR description lists the run id" \
+    "CI timing is reported in the PR description" "The script runtime on CI is logged"; do
+    echo "[\"$c\"]" >c.json
+    echo '{"acceptance": [{"criterion": "x", "met": true}]}' >v.json
+    assert_eq '[true,null]' "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c '.[0] | [.met, .after_merge]')" "$c"
+  done
+  echo '["the duration of the CI run is under 5 min"]' >c.json
+  assert_eq 'true' "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c '.[0].after_merge')"
 }

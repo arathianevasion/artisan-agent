@@ -121,11 +121,14 @@ def extract(lines):
 # commit", "the PR shows ..."); one about code that
 # runs CI or a merge gate ("wave.sh merge blocks the ticket when CI is not
 # green") never does: the verifier judges that, or marks it "gate" itself.
-_GATE_SUBJECT = r"^(the\s+)?(run'?s\s+)?(ci|merge\s+gate)('s)?(\s+[\w'-]+){0,2}\s+"
+# CI or the merge gate, and up to two words naming its part ("CI check job",
+# "the CI build", "CI checks").
+_GATE_SUBJECT = r"^(all\s+)?(the\s+)?(run'?s\s+)?(ci|merge\s+gate)('s)?(\s+[\w'-]+){0,2}\s+"
 # The merged work (#244): "on the merged commit", "for the merged change",
 # "on the merge commit". A ticket's branch is not it: a worker's branch is
 # the verifier's to judge, or the plan step's to flag (#213).
-_MERGED = r"(on|in|for)\s+(the|this|its)\s+(merged?\s+(commit|change|work|branch|result)s?|merge)"
+_MERGED = (r"((on|in|for)\s+(the|this|its)\s+(merged?\s+(commit|change|work|branch|result|pr|pull\s+request)s?|merge)"
+           r"|(on\s+main\s+)?after\s+(the\s+|its\s+)?merge)")
 _ON_PR = r"(on|in)\s+the\s+(pr|pull\s+request)"
 MERGE_GATE_OUTCOMES = [
     re.compile(_GATE_SUBJECT + r"(is|are|goes|stays|turns)\s+green(\s+(" + _ON_PR + "|" + _MERGED + r"))?\W*$", re.I),
@@ -184,11 +187,18 @@ def needs_merge_gate(text):
 # can observe it (workers open no PR, the verifier runs before the merge), so
 # only a person checks it, after merge: the plan step flags it the way it
 # flags a Human check, and the verifier's verdict on it never fails an
-# attempt. It names the PR, a pull request or CI, and a measure of a run; one
+# attempt. It names a measure of the PR's or CI's run; one
 # that names a script or a condition is about code (merge_gate_criterion's
 # rule), and one merge_gate_criterion reads is the merge gate's.
-AFTER_MERGE_MEASURE = re.compile(r"\b(wall[\s-]+(clock\s+)?time|duration|timings?|run\s+ids?|run\s*time|runtime)\b", re.I)
-AFTER_MERGE_PLACE = re.compile(r"\b(pr|pull\s+request|ci)\b", re.I)
+_AM_MEASURE = r"(?P<measure>wall[\s-]+(clock\s+)?time|duration|timings?|run\s+ids?|run\s*time|runtime)"
+# The run's PR or CI run: "PR", "PR run's", "the PR's CI", "CI run's"; CI alone
+# ("the CI duration") is not one: it may be a setting or a doc.
+_AM_PLACE = (r"((pr|pull\s+request)('s)?(\s+(ci|run|build|job|workflow|checks?)('s)?){0,2}"
+             r"|ci('s)?\s+(run|build|job|workflow)('s)?)")
+# The measure belongs to the place: "a PR run's wall time", "the PR CI
+# timing", "the duration of the CI run".
+AFTER_MERGE = [re.compile(r"\b" + _AM_PLACE + r"\s+" + _AM_MEASURE + r"\b", re.I),
+               re.compile(r"\b" + _AM_MEASURE + r"\s+(of|for)\s+(the|a|its|this)\s+" + _AM_PLACE + r"\b", re.I)]
 
 
 def after_merge_criterion(text):
@@ -197,10 +207,10 @@ def after_merge_criterion(text):
     if merge_gate_criterion(text) or SCRIPT.search(str(text)):
         return None
     bare = " ".join(QUOTED.sub("x", str(text)).split())
-    if IMPLEMENTATION.search(bare) or not AFTER_MERGE_PLACE.search(bare):
+    if IMPLEMENTATION.search(bare):
         return None
-    m = AFTER_MERGE_MEASURE.search(bare)
-    return " ".join(m.group(0).lower().split()) if m else None
+    m = next((m for m in (p.search(bare) for p in AFTER_MERGE) if m), None)
+    return " ".join(m.group("measure").lower().split()) if m else None
 
 
 def merge_gate_lines(lines):
@@ -323,6 +333,7 @@ def align(criteria, verdict, record):
             "evidence": (e.get("evidence") or {}) if e else {"why": "the verifier gave no verdict on this criterion"},
             "claimed": None if w is None else w.get("met") is True,
         }
+        measure = after_merge_criterion(c)
         # Only the merge gate can check it (#174): neither met nor unmet;
         # wave.sh merge's gate satisfies it, whatever the verifier said.
         if merge_gate_criterion(c) or (e and e.get("met") == "gate"):
@@ -331,11 +342,11 @@ def align(criteria, verdict, record):
         # Measured on the run's PR or CI run after merge (#244): no one in the
         # run can observe it, whatever the verifier said; it needs a check
         # after merge, by a person, so it goes to the Human check like one.
-        elif after_merge_criterion(c):
+        elif measure:
             entry["met"] = False
             entry["human"] = True
             entry["after_merge"] = True
-            why = "measured on the run's PR or CI run after merge (%s): no one in the run can observe it, so a person checks it after merge" % after_merge_criterion(c)
+            why = "measured on the run's PR or CI run after merge (%s): no one in the run can observe it, so a person checks it after merge" % measure
             entry["evidence"] = dict(entry["evidence"] if isinstance(entry["evidence"], dict) else {}, why=why)
         # Only a person can verify it (references/human-checks.md): not met,
         # and not unmet either; verify.sh judge splits it into a Human check.
