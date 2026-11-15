@@ -225,3 +225,31 @@ test_g_a_ticket_whose_only_unmet_criterion_is_ci_on_the_merged_commit_passes() {
   assert_eq "pass 2/3, 1 to the merge gate" "$JUDGE_OUT"
   assert_eq "[]" "$(state_get '.tickets["1"].failures | tostring')"
 }
+
+# #244: a fact measured on the run's PR or CI run after merge reaches the
+# verifier anyway: judged unmet, it is recorded as needing a check after
+# merge (a Human check), not as unmet, and the attempt doesn't fail.
+test_g_a_criterion_measured_after_merge_judged_unmet_needs_a_check_after_merge_and_passes() {
+  gate_ticket "A PR run's wall time is <= 8 min. Give the run id."
+  export VERIFIER_UNMET="A PR run's wall time is <= 8 min. Give the run id."
+  judge_once
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq "pass 2/3, 1 to Human check #3 (1 checked after merge)" "$JUDGE_OUT"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures | tostring')"
+  assert_eq "false true true" "$(state_get '.tickets["1"].evidence.acceptance[2] | "\(.met) \(.human) \(.after_merge)"')"
+  assert_eq "1" "$(state_get '.tickets["1"].evidence.criteria_after_merge')"
+  assert_eq '["A PR run'"'"'s wall time is <= 8 min. Give the run id."]' \
+    "$(state_get '[.events[] | select(.event == "verified")][-1].after_merge' | jq -c .)"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-3.json")" "- [ ] A PR run's wall time is <= 8 min. Give the run id."
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "- A PR run's wall time is <= 8 min. Give the run id.: measured on the run's PR or CI run after merge"
+  # The plan step reads it the same way (one reading, lib/criteria.py).
+  printf -- '- [ ] %s\n' "A PR run's wall time is <= 8 min. Give the run id." >b.md
+  assert_eq "[]" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq -c .)"
+}
+
+test_g_align_reads_a_criterion_measured_after_merge_as_human_whatever_the_verifier_said() {
+  echo '["A PR run'"'"'s wall time is <= 8 min. Give the run id.", "the PR CI timing stays under 10 minutes", "wave.sh records the CI run id"]' >c.json
+  echo '{"acceptance": [{"criterion": "x", "met": true}, {"criterion": "y", "met": false}, {"criterion": "z", "met": true}]}' >v.json
+  assert_eq '[[false,true,true],[false,true,true],[true,null,null]]' \
+    "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c 'map([.met, .human, .after_merge])')"
+}

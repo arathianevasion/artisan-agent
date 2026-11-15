@@ -465,6 +465,7 @@ CONTRACT_FILTER='
       criteria_met: $met,
       criteria_human: $human,
       criteria_gate: $gate,
+      criteria_after_merge: ([$acc[] | select(.after_merge == true)] | length),
       criteria_total: ($acc | length),
       acceptance: $acc,
       tests: ($record.tests // null),
@@ -500,6 +501,7 @@ say_again() { # ticket
              else (if ($e.criteria_human // 0) == 0 then ""
                elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
                else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
+               + (if ($e.criteria_after_merge // 0) == 0 then "" else " (\($e.criteria_after_merge) checked after merge)" end)
                + (if ($e.criteria_gate // 0) == 0 then "" else ", \($e.criteria_gate) to the merge gate" end) end)
       end')
   echo "$line"
@@ -664,7 +666,8 @@ cmd_judge() {
           else .open_decisions = [$ev[0].verifier.open_decisions[] | . + {question: null}] end)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
              met: $ev[0].criteria_met, total: $ev[0].criteria_total}
-             + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end); $now)
+             + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end)
+             + ([$ev[0].acceptance[] | select(.after_merge == true) | .criterion] | if length > 0 then {after_merge: .} else {} end); $now)
     | reduce ($ev[0].acceptance[] | select(.unmeetable != null)) as $c (.;
         event({event: "criterion-unmeetable", ticket: $t, attempt: $n, criterion: $c.criterion,
                why: $c.unmeetable.why, verifier_agrees: $c.unmeetable.verifier_agrees}; $now))

@@ -324,6 +324,15 @@ def align(criteria, verdict, record):
         if merge_gate_criterion(c) or (e and e.get("met") == "gate"):
             entry["met"] = False
             entry["gate"] = True
+        # Measured on the run's PR or CI run after merge (#244): no one in the
+        # run can observe it, whatever the verifier said; it needs a check
+        # after merge, by a person, so it goes to the Human check like one.
+        elif after_merge_criterion(c):
+            entry["met"] = False
+            entry["human"] = True
+            entry["after_merge"] = True
+            why = "measured on the run's PR or CI run after merge (%s): no one in the run can observe it, so a person checks it after merge" % after_merge_criterion(c)
+            entry["evidence"] = dict(entry["evidence"] if isinstance(entry["evidence"], dict) else {}, why=why)
         # Only a person can verify it (references/human-checks.md): not met,
         # and not unmet either; verify.sh judge splits it into a Human check.
         elif e and e.get("met") == "human":
