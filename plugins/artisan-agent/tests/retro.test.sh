@@ -614,3 +614,33 @@ test_a_run_with_no_decisions_shows_no_leverage_and_no_waits() {
   assert_contains "$out" "| Leverage | no gate decisions or rulings this run |"
   assert_contains "$out" "| Waited on the Artisan | - |"
 }
+
+test_the_leverage_trend_reads_earlier_runs_facts_from_the_satisfaction_record() {
+  sample_run; with_rulings; seed_lessons
+  # Earlier runs of this project, oldest first: r0a from before #234 (its
+  # facts have gates only: 2 decisions, none changed), r0b with a leverage
+  # line (2 of 4 changed); another project's run and a lesson line are not read.
+  {
+    echo '{"type":"answers","project":"owner/repo","run":"r0a","facts":{"rubber_stamp":{"gates":2,"unchanged":2,"rate":100}}}'
+    echo '{"type":"answers","project":"other/repo","run":"x9","facts":{"leverage":{"decisions":10,"changed":10,"rate":100}}}'
+    echo '{"type":"lesson","project":"owner/repo","run":"r0b","lesson":"x"}'
+    echo '{"type":"answers","project":"owner/repo","run":"r0b","facts":{"leverage":{"decisions":4,"changed":2,"rate":50}}}'
+  } >"$ARTISAN_HOME/satisfaction.jsonl"
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq 'r0a:0 r0b:50 r1:40' "$(jq -r '[.leverage.trend.runs[] | "\(.run):\(.rate)"] | join(" ")' <<<"$f")" "the runs, oldest first"
+  # Over the three runs: (0 + 2 + 2) of (2 + 4 + 5) decisions changed the outcome.
+  assert_eq 36 "$(jq .leverage.trend.rate <<<"$f")" "the trend"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "· trend 36% over 3 runs (0% → 50% → 40%) |"
+}
+
+test_the_trend_keeps_only_the_most_recent_runs() {
+  sample_run; with_rulings
+  local i=0
+  : >"$ARTISAN_HOME/satisfaction.jsonl"
+  while [ "$i" -lt 7 ]; do
+    printf '{"type":"answers","project":"owner/repo","run":"o%s","facts":{"leverage":{"decisions":1,"changed":1,"rate":100}}}\n' "$i" >>"$ARTISAN_HOME/satisfaction.jsonl"
+    i=$((i + 1))
+  done
+  assert_eq 'o3 o4 o5 o6 r1' "$(jq -r '[.leverage.trend.runs[].run] | join(" ")' <<<"$("$RETRO" facts "$RUN_DIR")")"
+}

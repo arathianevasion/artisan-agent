@@ -3,8 +3,9 @@ the chat round, the satisfaction record and its triggers, and the edits a
 kept lesson makes. retro.sh calls it; nothing here touches git or the tracker.
 
 Usage (python3 -I retro.py <command> ...):
-  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>]
-      the run's facts and signals as JSON (below)
+  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>] [<satisfaction.jsonl>]
+      the run's facts and signals as JSON; the leverage trend reads earlier
+      runs' facts from the satisfaction record
   gate-costs <state.json>
       what the merge gates cost and how long gates waited on the Artisan,
       as the Markdown table the retro's Signals show (the run summary's)
@@ -270,7 +271,42 @@ def open_decision_wait(s):
     return {"rulings": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
 
 
-def facts(state_path, jobs_md, actions_path=None, misses_path=None):
+# The leverage trend: this run and the most recent earlier ones.
+TREND_RUNS = 5
+
+
+def earlier_leverage(f):
+    """An earlier run's leverage from its facts in the satisfaction record:
+    (decisions, changed). Facts from before #234 have gate decisions only."""
+    l = f.get("leverage")
+    if isinstance(l, dict) and isinstance(l.get("decisions"), int):
+        return l["decisions"], int(l.get("changed") or 0)
+    r = f.get("rubber_stamp")
+    if isinstance(r, dict) and isinstance(r.get("gates"), int):
+        return r["gates"], r["gates"] - int(r.get("unchanged") or 0)
+    return None
+
+
+def leverage_trend(history_path, project, run, leverage):
+    """The leverage line over this run and the earlier runs of the same
+    project in the satisfaction record, oldest first, with the share over all
+    of them pooled so one odd run doesn't move the line."""
+    rows = []
+    for h in lines(history_path) if history_path else []:
+        if h.get("type", "answers") != "answers" or h.get("project") != project or h.get("run") == run:
+            continue
+        got = earlier_leverage(h.get("facts") or {})
+        if got:
+            rows.append({"run": h.get("run"), "decisions": got[0], "changed": got[1]})
+    rows = rows[-(TREND_RUNS - 1):] + [{"run": run, "decisions": leverage["decisions"], "changed": leverage["changed"]}]
+    for r in rows:
+        r["rate"] = round(100.0 * r["changed"] / r["decisions"]) if r["decisions"] else None
+    decisions = sum(r["decisions"] for r in rows)
+    changed = sum(r["changed"] for r in rows)
+    return {"runs": rows, "rate": (round(100.0 * changed / decisions) if decisions else None)}
+
+
+def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
     plan = s.get("plan") or {}
@@ -361,7 +397,7 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "triage_misses": len(misses),
         "actions": {"total": n, "counts": counts, "shares_percent": shares},
         "rubber_stamp": rubber,
-        "leverage": leverage,
+        "leverage": dict(leverage, trend=leverage_trend(history_path, s.get("repo") or "unknown", s.get("run_id"), leverage)),
         "merge_gates": gate_limit(s, merge_gate_costs(s, len(merged))),
         "artisan_wait": artisan_wait(s),
         "open_decision_wait": open_decision_wait(s),
@@ -795,8 +831,8 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 2
     cmd, args = argv[1], argv[2:]
-    if cmd == "facts" and 2 <= len(args) <= 4:
-        print(json.dumps(facts(*(args + [None] * (4 - len(args)))), indent=2))
+    if cmd == "facts" and 2 <= len(args) <= 5:
+        print(json.dumps(facts(*(args + [None] * (5 - len(args)))), indent=2))
         return 0
     if cmd == "gate-costs" and len(args) == 1:
         s = load(args[0])
