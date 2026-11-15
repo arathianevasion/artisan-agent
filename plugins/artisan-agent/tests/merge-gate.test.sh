@@ -578,7 +578,7 @@ skip_commit() {
 skip_gate() { # [extra args]: SK_OUT, SK_RC
   SK_RC=0
   SK_OUT=$("$MG" ci --repo local/sample --workflow ci.yml --branch ci/r1-1-1-1 --sha "$SK_SHA" --dir "$SK_DIR" \
-    --timeout-minutes 1 "$@" 2>/dev/null) || SK_RC=$?
+    --timeout-minutes 1 "$@" 2>"$TEST_TMPDIR/skip.err") || SK_RC=$?
 }
 
 dispatched() { grep -q '^workflow run' "$FAKE_GH_DIR/calls" 2>/dev/null; }
@@ -757,21 +757,48 @@ test_mg_on_a_ci_machine_the_plan_step_shows_expected_ci_minutes_per_merge() {
   assert_not_contains "$("$SCRIPTS/plan.sh" render "$TEST_TMPDIR/plan3.json")" "Merge gate"
 }
 
+# The gate workflow ci.yml in checkout D, as a project has it (#212): a
+# dispatch's run name carries its macos input, which defaults to true, and
+# the fake gh names a dispatched run the same way.
+gate_workflow() { # dir
+  mkdir -p "$1/.github/workflows"
+  cat >"$1/.github/workflows/ci.yml" <<'YML'
+name: CI
+run-name: ${{ format('ci (macos={0})', inputs.macos) }}
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        type: choice
+        options: [github, ubicloud]
+        default: github
+      macos:
+        description: Run the macOS job  # false leaves it out
+        type: boolean
+        default: true
+jobs: {}
+YML
+  printf '%s\n' 'ci (macos=${{ inputs.macos }})' >"$FAKE_GH_DIR/ci-run-name"
+  printf '{"runner": "github", "macos": true}\n' >"$FAKE_GH_DIR/ci-input-defaults"
+}
+
 # Reuse (#194): a worker's green run on its branch, for a commit whose tree
 # is the merge commit's tree, is the merge gate's run: nothing is dispatched.
 # Sets RU_W (the worker's commit, green in run 9100) and SK_SHA (the --no-ff
 # merge of it). With "moved", main gains a commit first, so the trees differ.
-setup_reuse() { # [moved] [conclusion]
+# The run's name is [title] (default: the gate workflow's own, in full).
+setup_reuse() { # [moved] [conclusion] [title]
   setup_skip
   local main=""
   main=$(git -C "$SK_DIR" symbolic-ref --short HEAD)
   git_quiet -C "$SK_DIR" checkout -b agent/1
   echo work >"$SK_DIR/plugins/p/work.sh"
+  gate_workflow "$SK_DIR"
   git_quiet -C "$SK_DIR" add -A
   git_quiet -C "$SK_DIR" commit -m "the ticket"
   RU_W=$(git -C "$SK_DIR" rev-parse HEAD)
-  jq -n --arg sha "$RU_W" --arg c "${2:-success}" '{databaseId: 9100, workflowName: "ci.yml", headBranch: "agent/1",
-    headSha: $sha, event: "workflow_dispatch", status: "completed", conclusion: $c,
+  jq -n --arg sha "$RU_W" --arg c "${2:-success}" --arg t "${3:-ci (macos=true)}" '{databaseId: 9100, workflowName: "ci.yml", headBranch: "agent/1",
+    displayTitle: $t, headSha: $sha, event: "workflow_dispatch", status: "completed", conclusion: $c,
     url: "https://github.com/local/sample/actions/runs/9100", jobs: [{name: "e2e", conclusion: $c}]}' >"$FAKE_GH_DIR/run-9100.json"
   git_quiet -C "$SK_DIR" checkout "$main"
   if [ "${1:-}" = moved ]; then echo other >"$SK_DIR/plugins/p/other.sh"; git_quiet -C "$SK_DIR" add -A; git_quiet -C "$SK_DIR" commit -m other; fi
@@ -812,6 +839,52 @@ test_mg_reuse_never_counts_a_run_that_was_not_green_for_that_commit() {
   dispatched || fail "a run for another commit was reused"
 }
 
+# The gate reads the run itself, not the worker's word that it ran in full
+# (#212): it must be a dispatch of the gate workflow whose name shows every
+# input it carries at its default.
+test_mg_reuse_a_run_whose_name_shows_macos_false_runs_the_gate() {
+  setup_reuse "" success "ci (macos=false)"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "a run that left the macOS jobs out was reused"
+  assert_eq "null 9001" "$(jq -r '"\(.reused // null) \(.run_id)"' <<<"$SK_OUT")"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "not reusing run 9100: its name shows macos=false"
+}
+
+test_mg_reuse_a_green_run_of_another_workflow_runs_the_gate() {
+  setup_reuse
+  jq '.workflowName = "lint.yml"' "$FAKE_GH_DIR/run-9100.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9100.json"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "a run of another workflow was reused"
+  assert_eq null "$(jq -r '.reused // null' <<<"$SK_OUT")"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "not reusing run 9100: it is not a run of ci.yml"
+}
+
+test_mg_reuse_a_run_whose_name_carries_no_inputs_runs_the_gate() {
+  setup_reuse "" success "CI"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  assert_eq 0 "$SK_RC" "$SK_OUT"
+  dispatched || fail "a run whose name shows no inputs was reused"
+  assert_eq null "$(jq -r '.reused // null' <<<"$SK_OUT")"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "not reusing run 9100: its name (CI) carries no inputs"
+}
+
+test_mg_reuse_a_name_showing_an_input_the_workflow_does_not_declare_runs_the_gate() {
+  setup_reuse "" success "ci (macos=true, shards=1)"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a run whose name shows an undeclared input was reused"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "shards, which .github/workflows/ci.yml does not declare"
+}
+
+test_mg_reuse_a_run_that_was_not_dispatched_runs_the_gate() {
+  setup_reuse
+  jq '.event = "pull_request"' "$FAKE_GH_DIR/run-9100.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9100.json"
+  skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
+  dispatched || fail "a pull request's run was reused"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "not reusing run 9100: it was not a workflow_dispatch run"
+}
+
 # ---- a worker's CI run on its branch (#194)
 
 # A CI machine whose project has an e2e check that never runs here, a gate
@@ -820,6 +893,7 @@ test_mg_reuse_never_counts_a_run_that_was_not_green_for_that_commit() {
 setup_worker_ci() { # [config-extra]
   setup_ci
   printf '#!/bin/sh\ntouch %s/e2e-ran-here\n' "$TEST_TMPDIR" >"$PROJECT/e2e.sh"
+  gate_workflow "$PROJECT"
   printf '# Coding standards\n\n## Checks\n\n- `true`: proven to fail on 2026-11-13, breaking: x\n- `sh e2e.sh`: proven to fail on 2026-11-13, breaking: y (runs_locally: never)\n' >"$PROJECT/CODING_STANDARDS.md"
   git_quiet -C "$PROJECT" add -A
   git_quiet -C "$PROJECT" commit -m standards
@@ -894,6 +968,34 @@ test_mg_worker_ci_with_worker_inputs_the_run_passes_them_and_the_merge_gate_runs
   assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
   assert_eq "null 9002" "$(state_get '.tickets["1"].suite | "\(.reused // null) \(.run_id)"')"
   assert_eq 2 "$(dispatches)" "the merge gate ran CI in full"
+}
+
+# The evidence's full is a record only (#212): the gate reads the run.
+test_mg_worker_ci_a_run_named_macos_false_is_not_reused_though_its_evidence_says_full() {
+  setup_worker_ci
+  judged_ticket
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_eq "9001 true" "$(state_get '.tickets["1"].evidence.checks.ci_run | "\(.run_id) \(.full)"')"
+  # GitHub names the run as a Linux-only one, whatever the record says.
+  jq '.displayTitle = "ci (macos=false)"' "$FAKE_GH_DIR/run-9001.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9001.json"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "null 9002" "$(state_get '.tickets["1"].suite | "\(.reused // null) \(.run_id)"')"
+  assert_eq 2 "$(dispatches)" "the merge gate ran CI"
+  assert_contains "$(cat "$RUN_DIR"/merges/*.gate.log)" "not reusing run 9001: its name shows macos=false"
+}
+
+test_mg_worker_ci_a_run_with_worker_inputs_that_leave_no_job_out_is_reused() {
+  setup_worker_ci '  worker_inputs:
+    runner: ubicloud
+'
+  judged_ticket
+  assert_eq pass "$(state_get '.tickets["1"].evidence.verdict')"
+  assert_eq false "$(state_get '.tickets["1"].evidence.checks.ci_run.full')"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq "9001 true" "$(state_get '.tickets["1"].suite | "\(.reused) \(.passed)"')"
+  assert_eq 1 "$(dispatches)" "the merge gate dispatched nothing"
 }
 
 test_mg_worker_ci_a_later_red_run_for_the_same_commit_fails_the_verifier() {

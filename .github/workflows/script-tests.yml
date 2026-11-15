@@ -23,6 +23,13 @@ name: Script tests
 # across all its repos, and each run takes 3. A pull request has no inputs and a dispatch that doesn't pass it gets the
 # default, so both run macOS; the merge gate never passes it, so every merge is still
 # gated on Linux and Apple bash 3.2.
+#
+# A dispatch's run name carries the macos input (#212), because GitHub doesn't show a
+# run's inputs: the merge gate reuses a worker's green branch run only when its name
+# shows the default, macos=true, the way the gate's own dispatch runs. A pull request
+# keeps its title as the run name.
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Script tests (macos={0})', inputs.macos) || github.event.pull_request.title }}
+
 on:
   pull_request:
     # Documentation outside the plugin isn't read by any test.

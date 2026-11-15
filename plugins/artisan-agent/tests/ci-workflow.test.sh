@@ -113,10 +113,21 @@ test_macos_job_runs_unless_a_dispatch_turns_it_off() {
   assert_not_contains "$cond" "github.event.inputs" "github.event.inputs holds strings, so 'false' would be truthy"
 }
 
-test_only_the_macos_job_reads_the_macos_input() {
+test_only_the_macos_job_and_the_run_name_read_the_macos_input() {
   local n=""
-  n=$(grep -v '^ *#' "$WORKFLOW" | grep -c 'inputs.macos' || true)
-  assert_eq 1 "$n" "inputs.macos in the workflow"
+  n=$(grep -v '^ *#' "$WORKFLOW" | grep -v '^run-name:' | grep -c 'inputs.macos' || true)
+  assert_eq 1 "$n" "inputs.macos in the workflow's jobs"
+}
+
+# The merge gate reuses a worker's branch run only when the run's name shows
+# it ran in full (#212): GitHub doesn't show a run's inputs, so a dispatch's
+# name carries the macos input, as key=value.
+test_a_dispatch_run_name_carries_the_macos_input() {
+  local rn=""
+  rn=$(grep '^run-name:' "$WORKFLOW" || true)
+  [ -n "$rn" ] || fail "the workflow sets no top-level run-name"
+  assert_contains "$rn" "github.event_name == 'workflow_dispatch'" "the run name on a dispatch"
+  assert_contains "$rn" "macos={0})', inputs.macos)" "the run name shows macos=<value>"
 }
 
 test_workflow_comment_says_what_the_macos_input_is_for() {

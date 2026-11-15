@@ -110,7 +110,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 
 `merge_gate`, continued:
 
-- and on CI also `{workflow, branch, minutes, deadline}` and, when the verified worker ran the gate workflow in full on its branch
+- and on CI also `{workflow, branch, minutes, deadline}` and, when the verified worker ran the gate workflow on its branch (the gate reads the run before it reuses it, #212)
 - `reuse {run_id, sha}` (#194), written before the gate starts and cleared with its outcome.
 - The gate runs detached (`merge-gate.sh start`); `result` (`results/merge-<t>.<n>.g<gate>.json`) is where its outcome lands and `pid_file` names its runner.
 - The next `wave.sh merge` finishes a gate with an outcome, waits on one whose runner lives

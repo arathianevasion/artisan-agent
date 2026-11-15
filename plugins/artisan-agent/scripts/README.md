@@ -262,8 +262,11 @@ The rest of the `merge-gate.sh ci` row, one clause per line:
 - and the record's `base_check.verdict` says `flaky` (the rerun passed: exit 0), `base-red` (the base fails the same tests), `new` (`failing_tests` only those new against a red base) or `unchecked`. `--resume` waits on the run already dispatched there
 - with no push or dispatch. `--skip-path` (`wave.sh` passes `merge_gate_skip_paths`, #168): when the newest green run of the workflow on an ancestor of the commit is followed only by changes to those paths
 - nothing is pushed or dispatched and the record is green with `skipped: true` and `relied_on {run_id, url, sha}`; `wave.sh` then logs a `merge-gate-skipped` event.
-- No green ancestor, or any other path changed, dispatches as usual. `--reuse-run ID --reuse-sha W` (`wave.sh` passes the verified worker's branch run when it ran in full, #194)
+- No green ancestor, or any other path changed, dispatches as usual. `--reuse-run ID --reuse-sha W` (`wave.sh` passes the verified worker's branch run, #194)
 - checked first: when run ID concluded `success` for exactly W and W's tree is the merge commit's tree, nothing is pushed or dispatched and the record is green with `reused: ID` and `relied_on`; `wave.sh` logs `merge-gate-reused`; a reused run is green, so it never enters the base check
+- the run is read from GitHub (#212): it must be a `workflow_dispatch` run of the gate workflow
+- and its name must show at least one `key=value` input, each at the default the workflow file declares at W
+- otherwise the gate logs `not reusing run ID: <why>` on stderr and runs CI
 
 The rest of the `wave.sh merge <run-dir> <ticket>...` row, one clause per line:
 

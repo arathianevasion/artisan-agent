@@ -50,6 +50,10 @@
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down
 #                         Each -f input is kept on the run as inputs {key: value} (the fake's own
 #                         field; real gh shows inputs only in the run's web page).
+#                         The run's displayTitle is the workflow's run-name, from files the test writes:
+#                           ci-run-name        a template; each ${{ inputs.K }} becomes K's -f value, else
+#                                              its default (default: the workflow name, as GitHub does)
+#                           ci-input-defaults  a JSON object, the defaults of the workflow's inputs
 #   gh run list [-R repo] [--workflow F] [--branch B] [--event E] [--limit N] [--json fields] [-q filter]
 #                         the run-<id>.json files, newest first: databaseId, workflowName, headBranch,
 #                         headSha, event, status, conclusion, url, createdAt, updatedAt
@@ -369,13 +373,20 @@ case "${1:-} ${2:-}" in
     outcome=$(outcome_for "$sha")
     jobs='["bash 5.2", "bash 3.2"]'
     [ ! -s "$FAKE_GH_DIR/ci-jobs" ] || jobs=$(cat "$FAKE_GH_DIR/ci-jobs")
+    title=$wf
+    if [ -f "$FAKE_GH_DIR/ci-run-name" ]; then
+      defaults='{}'
+      [ ! -s "$FAKE_GH_DIR/ci-input-defaults" ] || defaults=$(cat "$FAKE_GH_DIR/ci-input-defaults")
+      title=$(jq -rn --arg t "$(cat "$FAKE_GH_DIR/ci-run-name")" --argjson d "$defaults" --argjson in "$inputs" '
+        ($d + $in) as $v | $t | gsub("\\$\\{\\{ *inputs\\.(?<k>[A-Za-z0-9_-]+) *\\}\\}"; (.k as $k | if ($v | has($k)) then ($v[$k] | tostring) else "" end))')
+    fi
     id=9001
     while [ -f "$FAKE_GH_DIR/run-$id.json" ]; do id=$((id + 1)); done
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
-      --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" '
+      --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" --arg title "$title" '
       (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
-      | {databaseId: $id, attempt: 1, workflowName: $wf, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
+      | {databaseId: $id, attempt: 1, workflowName: $wf, displayTitle: $title, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
          url: "https://github.com/\($repo)/actions/runs/\($id)", createdAt: $now, updatedAt: $now, inputs: $in}
         + $s + {jobs: [$jobs[] | {name: ., status: $s.status, conclusion: $s.conclusion}]}' >"$FAKE_GH_DIR/run-$id.json" ;;
   "run list")

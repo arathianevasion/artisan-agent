@@ -65,11 +65,14 @@
 #       match a path decides, a leading "!" meaning "never skip on this".
 #       With no green ancestor, or any other path changed, CI runs as usual.
 #       --reuse-run (#194, wave.sh passes it for a ticket whose worker ran
-#       the gate workflow in full on its branch) is checked first: when run
-#       ID concluded success for exactly commit W, and W's tree is SHA's tree
-#       (a --no-ff merge over an unmoved base), nothing is pushed or
-#       dispatched and the record is green with reused: ID, relied_on {run_id,
-#       url, sha: W} and a why naming that run. Otherwise the gate runs.
+#       the gate workflow on its branch) is checked first: when run ID is a
+#       workflow_dispatch run of FILE that concluded success for exactly
+#       commit W, W's tree is SHA's tree (a --no-ff merge over an unmoved
+#       base), and the run's name shows it ran in full (#212: at least one
+#       key=value input, each at the default FILE declares at W), nothing is
+#       pushed or dispatched and the record is green with reused: ID,
+#       relied_on {run_id, url, sha: W} and a why naming that run. Otherwise
+#       the gate runs, logging "not reusing run ID: <why>" on stderr.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
 #       --base (#195) is the integration tip before the merge (a merge
@@ -245,15 +248,79 @@ green_ancestor() {
   done
 }
 
-# try_reuse run-id sha: when that run is green for exactly sha and sha's
-# tree is the candidate's, print the green record and return 0 (#194).
+# dispatch_defaults: the workflow file on stdin's workflow_dispatch inputs,
+# one "name=default" line each (default empty when it gives none). Reads the
+# block YAML a workflow file uses: an input is a key one level under inputs:,
+# its default the default: key under it, quotes taken off.
+dispatch_defaults() {
+  awk -v q="'" '
+    function flush() { if (have) print name "=" def; have = 0 }
+    function unquote(v) {
+      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+      if (length(v) >= 2 && ((substr(v, 1, 1) == "\"" && substr(v, length(v)) == "\"") || (substr(v, 1, 1) == q && substr(v, length(v)) == q)))
+        v = substr(v, 2, length(v) - 2)
+      return v
+    }
+    /^[ \t]*(#.*)?$/ { next }
+    {
+      match($0, /^ */); i = RLENGTH; l = substr($0, i + 1); sub(/[ \t]+#.*$/, "", l)
+      if (st >= 2 && i <= ii) { flush(); st = 1 }
+      if (st >= 1 && i <= wd) st = 0
+      if (st == 0) { if (l ~ /^workflow_dispatch:[ \t]*$/) { st = 1; wd = i }; next }
+      if (st == 1) { if (l ~ /^inputs:[ \t]*$/) { st = 2; ii = i; ki = -1 }; next }
+      if (ki < 0 || i <= ki) {
+        if (l ~ /^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*$/) { flush(); ki = i; name = l; sub(/:.*/, "", name); def = ""; have = 1 }
+        next
+      }
+      if (l ~ /^default:/) { def = l; sub(/^default:/, "", def); def = unquote(def) }
+    }
+    END { flush() }'
+}
+
+# reusable_run run-id sha: the run's JSON when the merge gate may count it as
+# its own (#194, #212); otherwise why not, and 1. GitHub doesn't show a run's
+# inputs, so the gate workflow's run name carries them as key=value: the run
+# must be a dispatch of the gate workflow, green for exactly sha, sha's tree
+# the candidate's, and its name must show at least one input and every input
+# it shows at the default the workflow file declares, as the gate's own
+# dispatch (no inputs) runs.
+reusable_run() {
+  local id="$1" w="$2" t="" run="" title="" wf_file="" src="" defaults="" tokens="" tok="" key="" val="" def=""
+  t=$(git -C "$CI_DIR" rev-parse -q --verify "$w^{tree}" 2>/dev/null) || { echo "${w:0:12} is not in $CI_DIR"; return 1; }
+  [ "$t" = "$(git -C "$CI_DIR" rev-parse "$CI_SHA^{tree}")" ] || { echo "the merge's tree is not the tree of ${w:0:12}"; return 1; }
+  run=$(gh run view "$id" -R "$CI_REPO" --json databaseId,headSha,headBranch,event,displayTitle,status,conclusion,url,jobs 2>/dev/null) \
+    || { echo "gh run view could not read it"; return 1; }
+  jq -e --arg w "$w" '.headSha == $w and .conclusion == "success"' <<<"$run" >/dev/null 2>&1 \
+    || { echo "it is not green for ${w:0:12}"; return 1; }
+  [ "$(jq -r '.event // ""' <<<"$run")" = workflow_dispatch ] || { echo "it was not a workflow_dispatch run"; return 1; }
+  gh run list -R "$CI_REPO" --workflow "$CI_WF" --branch "$(jq -r '.headBranch // ""' <<<"$run")" --event workflow_dispatch \
+      --limit 50 --json databaseId 2>/dev/null \
+    | jq -e --argjson id "$id" 'any(.[]; .databaseId == $id)' >/dev/null 2>&1 \
+    || { echo "it is not a run of $CI_WF"; return 1; }
+  case "$CI_WF" in */*) wf_file=$CI_WF ;; *) wf_file=.github/workflows/$CI_WF ;; esac
+  src=$(git -C "$CI_DIR" show "$w:$wf_file" 2>/dev/null) || { echo "${w:0:12} has no $wf_file to read its inputs from"; return 1; }
+  defaults=$(printf '%s\n' "$src" | dispatch_defaults)
+  title=$(jq -r '.displayTitle // ""' <<<"$run")
+  tokens=$(printf '%s\n' "$title" | grep -oE '[A-Za-z_][A-Za-z0-9_-]*=[^ ,;()]*' || true)
+  [ -n "$tokens" ] || { echo "its name ($title) carries no inputs, so it can't show the run was in full"; return 1; }
+  while IFS= read -r tok; do
+    key=${tok%%=*} val=${tok#*=}
+    def=$(printf '%s\n' "$defaults" | awk -v k="$key" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); f = 1; exit } END { exit !f }') \
+      || { echo "its name shows $key, which $wf_file does not declare as an input"; return 1; }
+    [ "$val" = "$def" ] || { echo "its name shows $key=$val, not the default ($def), so it left jobs out"; return 1; }
+  done <<<"$tokens"
+  printf '%s\n' "$run"
+}
+
+# try_reuse run-id sha: when reusable_run counts that run, print the green
+# record and return 0 (#194); otherwise log why not, and 1: the gate runs.
 try_reuse() {
-  local id="$1" w="$2" run="" t=""
+  local id="$1" w="$2" run=""
   [ -n "$id" ] && [ -n "$w" ] || return 1
-  t=$(git -C "$CI_DIR" rev-parse -q --verify "$w^{tree}" 2>/dev/null) || return 1
-  [ "$t" = "$(git -C "$CI_DIR" rev-parse "$CI_SHA^{tree}")" ] || return 1
-  run=$(gh run view "$id" -R "$CI_REPO" --json databaseId,headSha,status,conclusion,url,jobs 2>/dev/null) || return 1
-  jq -e --arg w "$w" '.headSha == $w and .conclusion == "success"' <<<"$run" >/dev/null 2>&1 || return 1
+  if ! run=$(reusable_run "$id" "$w"); then
+    echo "merge-gate.sh: not reusing run $id: $run; running CI" >&2
+    return 1
+  fi
   record "$run" "CI not dispatched: the merge's tree is the tree of ${w:0:12}, which run $id passed" \
     | jq -c --argjson r "$run" --arg sha "$CI_SHA" '.sha = $sha | . + {reused: $r.databaseId, relied_on: {run_id: $r.databaseId, url: $r.url, sha: $r.headSha}}'
 }

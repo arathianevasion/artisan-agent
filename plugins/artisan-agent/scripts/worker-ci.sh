@@ -23,8 +23,9 @@
 #       record as JSON:
 #         {workflow, branch, sha, tree, run_id, url, conclusion, jobs,
 #          inputs, full, checks, started_at, finished_at, minutes}
-#       full is true when inputs is empty: the run is the gate's own run, so
-#       the merge gate may reuse it; checks are the CI-only checks it stood
+#       full is true when inputs is empty, a record only: the merge gate
+#       reads the run itself before reusing it (merge-gate.sh ci
+#       --reuse-run, #212); checks are the CI-only checks it stood
 #       for; minutes is the run's own time (created to last updated), what it
 #       costs the attempt. A red record also holds failing_tests
 #       (merge-gate.sh failed-tests), one with no verdict a why. M defaults to

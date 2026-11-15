@@ -1381,11 +1381,12 @@ finish_merge() {
       git -C "$wt" reset -q --hard "$pre"
       die "#$t not merged: $NO_GATE_WORKFLOW"
     }
-    # The worker's green run on its branch, when it ran the gate workflow in
-    # full (no ci_gate.worker_inputs), is offered for reuse (#194):
-    # merge-gate.sh reuses it only when this merge's tree is the tree it tested.
+    # The worker's green run on its branch is offered for reuse (#194).
+    # merge-gate.sh reads the run itself (#212): it reuses it only when it is
+    # a dispatch of the gate workflow whose name shows it ran in full and this
+    # merge's tree is the tree it tested. The evidence's full is not relied on.
     ci=$(jq -c --argjson r "$(get -c --arg t "$t" --arg c "$TIP" '.tickets[$t].evidence
-        | if . != null and .commit == $c and (.checks.ci_run.full // false) == true
+        | if . != null and .commit == $c and (.checks.ci_run.run_id // null) != null and (.checks.ci_run.sha // null) != null
           then {run_id: .checks.ci_run.run_id, sha: .checks.ci_run.sha} else null end')" \
       'if $r == null then . else . + {reuse: $r} end' <<<"$ci")
   fi
