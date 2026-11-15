@@ -24,11 +24,15 @@
 #                                  refused (file untouched) if it would put a blocker in a
 #                                  later plan than the ticket it blocks
 #   to-plan.sh check   <plans.json> --graph FILE [--override-human-check <ticket> "<criterion>" --why TEXT]...
+#                      [--override-merge-gate <ticket> "<criterion>" --why TEXT]...
 #                                  verify every ticket is in one plan, no blocker comes after its
 #                                  dependent and a Human check is in its agent ticket's plan; then
 #                                  refuse approval (exit 1, the flags printed under "Needs your
-#                                  attention") while an agent criterion reads as needing a person.
-#                                  Each override is recorded on the plan (human_check_overrides).
+#                                  attention") while an agent criterion reads as needing a person,
+#                                  or as needing CI, a PR or the full suite in a form the verifier
+#                                  doesn't leave to the merge gate (#213; drop or reword it in the
+#                                  ticket, then graph again). Each override is recorded on the
+#                                  plan (human_check_overrides, merge_gate_overrides).
 #   to-plan.sh render  <plans.json> --graph FILE      the approval view (Markdown): a table of plans,
 #                                  then each plan's tickets with their acceptance criteria
 #   to-plan.sh split-human-check --repo owner/name [--graph FILE [--plans FILE]] <ticket> "<criterion>"
@@ -40,7 +44,7 @@
 #                                  open one for that ticket; a repeat changes nothing. The graph and
 #                                  --plans (the agent ticket's plan), when given, follow.
 #   to-plan.sh publish <plans.json> --graph FILE --repo owner/name --approved [--replace-parent]
-#                      [--override-human-check <ticket> "<criterion>" --why TEXT]...
+#                      [--override-human-check|--override-merge-gate <ticket> "<criterion>" --why TEXT]...
 #                                  create one `plan` issue per plan, each ticket a sub-issue of
 #                                  its plan, and a later plan blocked by the earlier plans it
 #                                  depends on. Needs --approved: the Artisan's approval. The
@@ -75,13 +79,13 @@ parse() {
   POS=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --override-human-check)
+      --override-human-check|--override-merge-gate)
         [ $# -ge 3 ] || usage
-        OVERRIDES=$(jq -c --arg t "$2" --arg c "$3" '. + [{ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$OVERRIDES")
+        OVERRIDES=$(jq -c --arg k "${1#--override-}" --arg t "$2" --arg c "$3" '. + [{kind: $k, ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$OVERRIDES")
         shift 3 ;;
       --why)
         [ $# -ge 2 ] || usage
-        [ "$(jq length <<<"$OVERRIDES")" -gt 0 ] || die "--why follows the --override-human-check it gives the reason for"
+        [ "$(jq length <<<"$OVERRIDES")" -gt 0 ] || die "--why follows the --override-human-check or --override-merge-gate it gives the reason for"
         OVERRIDES=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$OVERRIDES")
         shift 2 ;;
       --plans) [ $# -ge 2 ] || usage; PLANS=$2; shift 2 ;;
@@ -114,7 +118,7 @@ phrases() {
   TO_PLAN_EXTRA_PHRASES=$(jq -c '.human_check_phrases // []' <<<"$p")
   export TO_PLAN_EXTRA_PHRASES
 }
-# Record any --override-human-check on the plans file, then check it.
+# Record any --override-human-check or --override-merge-gate on the plans file, then check it.
 check_plans() {
   phrases
   if [ "$(jq length <<<"$OVERRIDES")" -gt 0 ]; then py override "$1" "$GRAPH" "$OVERRIDES"; fi
@@ -263,7 +267,10 @@ case "$cmd" in
           | ([(.human_check_overrides // [])[] | select(.ticket as $t | $p.tickets | index($t))
               | "- #\(.ticket): \"\(.criterion)\" stays on the agent ticket. Why: \(.why)"] | join("\n")) as $ov
           | (if $ov == "" then "" else "\n\n## Human-check overrides\n\($ov)" end) as $ov
-          | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\($ov)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
+          | ([(.merge_gate_overrides // [])[] | select(.ticket as $t | $p.tickets | index($t))
+              | "- #\(.ticket): \"\(.criterion)\" stays for the verifier to judge. Why: \(.why)"] | join("\n")) as $mg
+          | (if $mg == "" then "" else "\n\n## Merge-gate overrides\n\($mg)" end) as $mg
+          | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\($ov)\($mg)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
         url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "$(jq -r --argjson i "$i" '.plans[$i].tickets[0] // empty' "$file")" -- -R "$REPO" --title "$title" --body-file - <<<"$body" --label plan) \
           || die "could not create the plan issue (does the \`plan\` label exist on $REPO?)"
         num=${url##*/}
