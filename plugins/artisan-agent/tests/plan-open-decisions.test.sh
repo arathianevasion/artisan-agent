@@ -180,3 +180,15 @@ test_a_failed_filing_leaves_the_ticket_in_and_a_retry_does_not_file_twice() {
   assert_eq "issue-1.json issue-2.json" "$(ls "$FAKE_GH_DIR" | grep issue- | tr '\n' ' ' | sed 's/ $//')"
   assert_eq '["1","2"]' "$(jq -c '.dropped[0].filed' "$TEST_TMPDIR/draft.json")"
 }
+
+# ------------------------------------------------------------ the skill
+
+test_the_plan_step_checks_every_ticket_against_criterion_8_citing_its_reference() {
+  local step=
+  step=$(sed -n '/^### 3\. Get the plan approved/,/^### 4\./p' "$PLUGIN_ROOT/skills/implement-plan/SKILL.md")
+  assert_contains "$step" "criterion 8"
+  assert_contains "$step" '${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md'
+  assert_contains "$step" "open_decisions"
+  assert_contains "$step" "plan.sh drop"
+  assert_contains "$step" "--override-open-decision"
+}

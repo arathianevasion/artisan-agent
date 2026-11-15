@@ -7,7 +7,21 @@
 #                 [--standards FILE] [--set key=value]...
 #                 [--override-human-check <ticket> "<criterion>" --why TEXT]...
 #                 [--override-merge-gate <ticket> "<criterion>" --why TEXT]...
+#                 [--override-open-decision <ticket> --why TEXT]...
 #                                 print the plan (JSON) for state.sh init
+#   plan.sh drop --draft FILE <ticket>
+#                                 file each open decision the draft records on
+#                                 the ticket and on every ticket in scope that
+#                                 depends on it (blocked_by, or its Human check)
+#                                 through questions.sh (criterion 8, raised at
+#                                 the plan step, --non-blocking, no run), then
+#                                 take them all out of the draft: scope, waves,
+#                                 tickets, open_decisions, their gates and a
+#                                 hands-on pick. Records {ticket, title, filed,
+#                                 dependents} in the draft's `dropped`; each
+#                                 filing is written to the draft as it lands,
+#                                 so a retry files only what is left. 1: the
+#                                 ticket has no open decision, or a filing failed
 #   plan.sh render <plan.json>    print the approval: waves, models, estimates,
 #                                 Max Agents and every config number
 #
@@ -54,6 +68,18 @@
 #                  or override it:
 #   merge_gate_overrides  [{ticket, criterion, why}], one per
 #                  --override-merge-gate, the Artisan's reason recorded
+#   open_decision_flags  each open decision the draft's optional
+#                  `open_decisions` [{ticket, case, harm, recommendation}]
+#                  records (references/open-decisions.md; the case is
+#                  incomplete, misaligned, invented or adr; a blank harm or
+#                  recommendation, or a ticket outside scope, is refused),
+#                  less the overridden: listed first under "Needs your
+#                  attention". While one stands the plan is not approvable and
+#                  state.sh init refuses it. File it and take the ticket out
+#                  with its dependents (plan.sh drop), or override it:
+#   open_decision_overrides  [{ticket, why}], one per --override-open-decision,
+#                  the Artisan's reason for keeping that ticket's open
+#                  decisions in the run
 #   recorded_checks the recorded checks (checks.sh json over --standards,
 #                  default CODING_STANDARDS.md at the checkout's top):
 #                  {recorded, file, commands, suite} or {recorded: false, reason}
