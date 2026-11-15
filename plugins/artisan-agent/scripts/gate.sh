@@ -244,21 +244,30 @@ without_left() { # def
 cmd_open() {
   [ $# -eq 2 ] || usage
   open_run "$1"
-  local id="$2" def= rec= dir= view= body= title= repo= num= url= d= gid= hcv=
+  local id="$2" def= rec= dir= view= body= title= repo= num= url= d= gid= hcv= deps= into=
   rec=$(recorded "$id")
-  if [ -n "$rec" ]; then jq -r .issue <<<"$rec"; return 0; fi
+  # A folded risk gate (#241) has no issue: it is answered with its gate.
+  if [ -n "$rec" ]; then [ "$(jq -r .status <<<"$rec")" = folded ] || jq -r .issue <<<"$rec"; return 0; fi
   def=$(gate_def "$id")
   [ -n "$def" ] || state_die 6 "gate.sh: no slice gate $id in the plan"
   [ "$(jget 'gate_due($g)' --argjson g "$def")" = true ] \
     || state_die 6 "gate.sh: $id is not due: not every ticket of its slice has merged"
   def=$(without_left "$def")
   dir=$(gates_dir)
+  # The fold rule (lib/gate-lib.sh, as at the plan step): a risk gate no
+  # unmerged ticket in scope depends on folds into its next gate.
+  if [ "$(jq -r .kind <<<"$def")" = risk ]; then
+    deps=$(dependents "$def")
+    into=$(fold_target "$def" "$deps")
+    if [ -n "$into" ]; then fold_gate "$def" "$into"; return 0; fi
+  fi
   repo=$(get '.repo')
   # Built once and kept, so a call that crashed after opening the issue
   # opens nothing new and shows the same packet.
   view="$dir/$id.view.json"
   if [ ! -s "$view" ]; then
-    build_view "$def" "$(dependents "$def")" >"$view.tmp"
+    [ -n "$deps" ] || deps=$(dependents "$def")
+    build_view "$def" "$deps" >"$view.tmp"
     PACKET cards <"$view.tmp" >"$view.cards"
     # Numbered once, as the packet lists them: triage <uncertainty> names one.
     PACKET uncertainties <"$view.tmp" >"$view.unsure"
@@ -314,6 +323,44 @@ cmd_open() {
       | guardrails_fired($v.gate; $now)
     end' --argjson num "$num" --slurpfile view "$view"
   echo "$num"
+}
+
+# A risk gate whose ticket no unmerged ticket in scope depends on (#241)
+# folds: fold_target prints the gate it folds into (the first slice gate
+# covering its ticket not yet opened or answered, else "end" while the end
+# gate is placed and not opened), or nothing when it opens on its own. The
+# rule itself is GATE_FOLD_JQ (lib/gate-lib.sh), which gate-plan.sh shares.
+fold_target() { # def dependents-json
+  jget "$GATE_FOLD_JQ"'
+    fold_into($g;
+      [slice_gates[] | {id, kind, tickets}] + [(.plan.gates // [])[] | select(.kind? == "end") | {id: "end", kind: "end", tickets: []}];
+      $w;
+      [(.review_gates // [])[].id] + (if .end_gate.issue? != null or .end_gate.status? != null then ["end"] else [] end))
+    // empty' --argjson g "$1" --argjson w "$2"
+}
+
+# fold_gate def into: records the risk gate as folded (no issue, no
+# decision): its cards are kept for the gate it folds into, whose packet
+# shows it (packet.py folded) and whose answer answers it (answer_folded).
+# Logs gate-folded, and guardrail-fired for an area's risk gate.
+fold_gate() {
+  local def="$1" into="$2" f=
+  f="$(gates_dir)/$(jq -r .id <<<"$def").fold.json"
+  jq -n --argjson g "$def" --slurpfile s "$FILE" '{gate: ($g + {dependents: []}), state: $s[0]}' >"$f"
+  PACKET cards <"$f" >"$f.cards"
+  apply '
+    if any((.review_gates // [])[]; .id == $g.id) then .
+    else . as $s | ($g + {title: ($s | gate_title($g; $run))}) as $g
+      | .review_gates = ((.review_gates // []) + [{
+          id: $g.id, kind: "risk", slice: $g.slice, title: $g.title, role: $g.role, why: $g.why,
+          issue: null, tickets: $g.tickets, dependents: [], cards: $cards[0], uncertainties: [],
+          human_checks: [], left_run: ($g.left_run // []), status: "folded", folded_into: $into,
+          folded_at: $now, opened_at: null, decisions: [], reworks: []}
+          + (if $g.guardrails then {guardrails: $g.guardrails} else {} end)])
+      | event({event: "gate-folded", gate: $g.id, kind: "risk", into: $into, tickets: $g.tickets}; $now)
+      | guardrails_fired($g; $now)
+    end' --argjson g "$def" --arg into "$into" --arg run "$RUN_ID" --slurpfile cards "$f.cards"
+  rm -f "$f" "$f.cards"
 }
 
 # ------------------------------------------------------------ the Artisan acts
@@ -428,6 +475,7 @@ ACTION_FILTER='
           | keep_event($a)
           | event({event: "gate-approved", gate: $a.gate, issue: .review_gates[$i].issue, by: $a.by}
                   + (if $a.closed_on_tracker then {closed_on_tracker: true, carried: $a.carried} else {} end); $now)
+          | answer_folded($a.gate; "approved"; $a.by; false; $now)
         else decision_events($a)
         end
     end'
@@ -827,10 +875,14 @@ cmd_sync() {
 <!-- $GATE_CLOSED_MARK carried=$carried -->" >/dev/null 2>&1 || true
     fi
   done
+  # Risk gates first: one that folds (#241) goes into the slice gate this
+  # same sync may open.
   local num=
-  for id in $(cmd_due "$RUN_DIR"); do
+  for id in $(cmd_due "$RUN_DIR" | grep '^risk-' || true) $(cmd_due "$RUN_DIR" | grep -v '^risk-' || true); do
+    [ -z "$(recorded "$id")" ] || continue
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
-    echo "opened #$num $id"
+    if [ -n "$num" ]; then echo "opened #$num $id"
+    else echo "folded $id into $(jq -r .folded_into <<<"$(recorded "$id")")"; fi
   done
   close_empty
 }

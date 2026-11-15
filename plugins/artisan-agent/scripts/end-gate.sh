@@ -395,6 +395,9 @@ packet() {
     return 0
   fi
   [ -z "$(unruled)" ] || sync_unruled >/dev/null
+  # The risk gates folded into the end gate (#241): their slice gate had
+  # opened when they were raised. Nothing when there are none.
+  jq -n --slurpfile s "$FILE" '{gate: {id: "end", kind: "end", tickets: []}, state: $s[0]}' | PACKET folded
   echo "## Deferred gates"
   echo
   echo "Still waiting here. Answer each before approving: a review gate with \`gate.sh approve\` or \`gate.sh change\`, an exception gate with \`gate-action.sh\` (references/gate-actions.md)."
@@ -617,7 +620,8 @@ cmd_approve() {
            choice: $b.value, by: $by, job: 17, changed: ($b.value != $b.proposed)}
            + (if $why == "" then {} else {why: $why} end)]
        else . end)
-    | event({event: "end-gate-approved", by: $by, boundary: $b.value, source: $src, changed: $changed}; $now)' \
+    | event({event: "end-gate-approved", by: $by, boundary: $b.value, source: $src, changed: $changed}; $now)
+    | answer_folded("end"; "approved"; $by; $changed; $now)' \
     --arg by "$by" --arg why "$why" --argjson changed "$changed" --argjson b "$b" --arg src "$src"
   if [ -n "$issue" ]; then
     gh issue close "$issue" -R "$(get -r .repo)" --comment "Approved by $by. PRs to main: one per $(jq -r .value <<<"$b") ($src$([ "$src" = guardrail ] && printf ', %s level' "$(jq -r .level <<<"$b")")).$([ -n "$why" ] && printf ' Why: %s' "$why")" >/dev/null \

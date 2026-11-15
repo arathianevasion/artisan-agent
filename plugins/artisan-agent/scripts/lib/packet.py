@@ -16,8 +16,12 @@ Usage:
       worker or the verifier. `triage <uncertainty>` names one by number.
   python3 -I packet.py body < view.json
       the issue body, top to bottom: header, summary line, decision cards,
-      uncertainties, evidence by criterion (with guardrails applied, checks
+      the risk gates folded into it, uncertainties, evidence by criterion (with guardrails applied, checks
       proven to fail, cost against estimate and the diffs), overall action.
+  python3 -I packet.py folded < view.json
+      the "## Folded risk gates" section: each risk gate the run folded into
+      this gate (#241: review_gates with folded_into its id; "end" for the
+      end gate), with what raised it and its cards; nothing when none.
   python3 -I packet.py risk < view.json
       the "Risk" section of an urgent ticket's end gate packet: the escalation
       tests it meets (plan.tickets.<t>.escalation), or "No escalation tests met."
@@ -247,6 +251,45 @@ def risk_section(view):
     return ["## Risk", ""] + (rows or ["No escalation tests met."]) + [""]
 
 
+def folded_gates(view):
+    gate_id = view["gate"].get("id") or ("end" if view["gate"].get("kind") == "end" else None)
+    return [g for g in view["state"].get("review_gates") or []
+            if gate_id is not None and g.get("folded_into") == gate_id]
+
+
+def folded_section(view, the_cards=None):
+    """The risk gates folded into this gate (#241). At a slice gate their
+    cards are this gate's own, so they are named by number; at the end gate
+    they are listed."""
+    folded = folded_gates(view)
+    if not folded:
+        return []
+    state = view["state"]
+    out = ["## Folded risk gates", "",
+           "Risk gates whose ticket nothing in the run waits on: none opened an issue of its own. "
+           "Approving this gate answers each; redirect, defer and triage work on their cards as on this gate's own.", ""]
+    for f in folded:
+        ts = [str(t) for t in f.get("tickets") or []]
+        out += ["### %s: %s" % (f["id"], ", ".join(ticket_label(state, t) for t in ts)), "",
+                "- **Raised for:** %s" % cell(f.get("why") or "-")]
+        if the_cards is not None:
+            mine = [str(c["card"]) for c in the_cards if str(c.get("ticket")) in ts]
+            out.append("- **Its cards:** %s" % (
+                ("%s, under Decisions" % ", ".join(mine)) if mine else "none: no agent made a decision alone in it"))
+            out.append("")
+        else:
+            cs = f.get("cards") or []
+            if cs:
+                out += ["", "| Card | Ticket | Decision | Confidence |", "|---|---|---|---|"]
+                out += ["| %s | #%s | %s → %s | %s |" % (c.get("card"), c.get("ticket"), cell(c.get("question")),
+                                                         cell(c.get("choice")), c.get("confidence", "provisional"))
+                        for c in cs]
+            else:
+                out.append("- **Its cards:** none: no agent made a decision alone in it")
+            out.append("")
+    return out
+
+
 GATE_HEADER = "| Gate | Role needed | Slice | Tickets blocked |"  # `packet.py header`
 
 
@@ -370,6 +413,7 @@ def body(view):
     prov = (view.get("provisional") or "").strip().splitlines()
     if len(prov) > 2:
         out += ["Provisional cards from earlier tickets, not yet shown at a gate:", ""] + prov + [""]
+    out += folded_section(view, the_cards)
 
     out += ["## Uncertainties", ""]
     if unsure:
@@ -479,6 +523,10 @@ def chat(view):
     if waiting:
         out += ["Human checks waiting on a rework: %s." % ", ".join(
             "#%s (rework #%s)" % (c["ticket"], c["waiting_on"]) for c in waiting), ""]
+    folded = folded_gates(view)
+    if folded:
+        out += ["Folded risk gates, answered with this one: %s." % ", ".join(
+            "%s (%s)" % (f["id"], f.get("why") or "-") for f in folded), ""]
     out.append("Keep all, or name one to change.")
     return "\n".join(out) + "\n"
 
@@ -487,7 +535,7 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == "header":
         print(GATE_HEADER)
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "uncertainties", "body", "chat", "risk", "checks"):
+    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "uncertainties", "body", "chat", "risk", "checks", "folded"):
         sys.stderr.write(__doc__)
         sys.exit(2)
     view = json.load(sys.stdin)
@@ -501,6 +549,10 @@ def main():
         sys.stdout.write("\n")
     elif cmd == "checks":
         sys.stdout.write("\n".join(end_checks(view)) + "\n")
+    elif cmd == "folded":
+        lines = folded_section(view)
+        if lines:
+            sys.stdout.write("\n".join(lines) + "\n")
     elif cmd == "risk":
         sys.stdout.write("\n".join(risk_section(view)) + "\n")
     elif cmd == "body":
