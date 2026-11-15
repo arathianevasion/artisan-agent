@@ -652,3 +652,11 @@ test_v_a_ticket_whose_verdict_names_an_open_decision_is_never_blocked_by_it() {
   assert_eq merged "$(state_get '.tickets["1"].status')"
   [ ! -f "$FAKE_GH_DIR/blocked_by-1.json" ] || assert_eq '[]' "$(cat "$FAKE_GH_DIR/blocked_by-1.json")"
 }
+
+test_v_the_verifier_brief_and_the_orchestrator_reference_cite_criterion_8s_reference() {
+  local doc=
+  for doc in skills/implement-plan/references/verifier.md skills/implement-plan/references/orchestrator.md; do
+    assert_contains "$(cat "$PLUGIN_ROOT/$doc")" '${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md' "$doc"
+  done
+  assert_contains "$(cat "$PLUGIN_ROOT/skills/implement-plan/references/verifier.md")" '"open_decisions"'
+}

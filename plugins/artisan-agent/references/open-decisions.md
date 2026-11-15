@@ -54,7 +54,7 @@ It refuses a filing with no case or no harm, or with a `--question` or `--option
 | A worker, in its own ticket | `worker` (the default) | `--blocking` when the answer changes what its ticket builds; `--split` when it is a case beside its ticket. Either way as a worker question (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`) |
 | A worker, in another ticket | `finding`, with `--from <its own ticket>` | `--non-blocking` only: one execution window never stops another's ticket. A block is the Decision chat's ruling |
 | The plan step | `plan` | `--split` or `--non-blocking`; works with no run |
-| A verifier | `verifier` | `--split` or `--non-blocking`, never blocking |
+| A verifier | `verifier` | Never files itself: it names the open decision in its verdict's `open_decisions` (`${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`), and the sweep files it `--split` with `--run`, once. Never blocking, and the verdict doesn't change |
 | A gate reviewer | `gate` | `--split` or `--non-blocking`; the gate stays approvable |
 
 Only a worker's own ticket blocks on one. Criterion 8 is never picked provisionally: an open decision is filed, and a card that only records one is never a provisional card.

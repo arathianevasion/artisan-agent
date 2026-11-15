@@ -165,7 +165,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `dispatched_at`, `deadline_at` | epoch seconds of the last dispatch and its wall-clock deadline |
 | `result` | from the current attempt's result file: `{status, commit, notes, file}` |
 | `evidence` | the ticket's evidence contract, written by `verify.sh judge` (`references/evidence-contract.md`); `wave.sh merge` needs its `verdict` to be `pass` for the current attempt and commit |
-| `verifications` | `[{attempt, worker_attempt, commit, base, model, worktree, name, started_at, verdict, reason?}]` (`name` the verifier's session name, `Verify #<t> · <repo> · Wave <n>`, #189), one per verifier started; `verdict` is `null` until judged, then `pass`, `fail` or `error` |
+| `verifications` | `[{attempt, worker_attempt, commit, base, model, worktree, name, started_at, verdict, reason?, open_decisions?}]` (`name` the verifier's session name, `Verify #<t> · <repo> · Wave <n>`, #189), one per verifier started; `verdict` is `null` until judged, then `pass`, `fail` or `error`; `open_decisions` (#230), written by `verify.sh judge` when the verdict names any: `[{case, harm, recommendation, question}]`, `question` `null` until the sweep files it, then the question ticket's number |
 | `merge_commit` | the merge commit on the integration branch |
 | `cost_usd` | the sum of `attempt_costs`: per attempt, from the result file's `cost_usd`, else the session's `total_cost_usd` in its JSON output (recorded by the sweep, and again by `verify.sh judge` and `wave.sh merge` once the session has ended); verifiers included |
 | `failures` | `[{attempt, reason, at}]`, one per failed attempt; one a red CI merge gate charged (#176) adds `kind: "ci"` and `ci: {run_id, url, conclusion, failing_tests}` (`merge-gate.sh failed-tests`; since #195 only the failures new against a red base), which the next worker's notes and the exception gate list |
@@ -365,6 +365,8 @@ The retro's merge gate figures (`retro.py facts`, `merge_gates` and `artisan_wai
 A failed attempt appends to `failures` and sends the ticket back to `queued`, or, once `attempts` reaches `attempts_per_ticket`, to `blocked` with an `exception` decision queued for the Artisan. The sweep then logs new complete lines of every findings file and recomputes `costs`.
 
 After the state is written, the sweep tries again every board add that failed when its issue was opened (`tracker.sh board-retry`, `references/tracker-board.md`, #146); the queue is the project's, not the run's, so nothing in the state file changes.
+
+Then it files each open decision a verifier named (#230; `verifications[].open_decisions` with `question: null`) through `questions.sh file --criterion 8 --split --raised-by verifier --run`, which logs `guardrail-fired`, and records the question's number on it, so the next sweep files nothing. One the same ticket's verifiers already filed (same case and harm) takes that number. It never blocks the ticket or changes its verdict; a filing that fails is tried again at the next sweep.
 
 **Repair (#151).** Plugin 0.4.0 found a session's `result` event by the start of its line, and current `claude -p` writes `"type"` after other keys, so `output.json` came out empty: every finished worker was judged `failed crashed`, its cost was lost, and after two such attempts an exception gate opened. `sweep.sh repair <run-dir>` mends such a run, once, under the lock:
 
