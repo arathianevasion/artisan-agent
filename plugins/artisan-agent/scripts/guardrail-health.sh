@@ -11,7 +11,8 @@
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
 #       The built-in open-decision guardrail (criterion 8) loosens only on a
-#       "didn't need the Decision chat" ruling, tightens on a filing raised at
+#       "didn't need the Decision chat" ruling on a question the same run
+#       filed as an open decision, tightens on a filing raised at
 #       a gate or after its ticket merged, and counts plan-step filings on
 #       their own line (plan_step).
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
@@ -130,7 +131,7 @@ def match($g): (.guardrail == $g.id)
 def hits($name; $g): [evs[] | select(.event == $name and match($g))];
 # The built-in open-decision guardrail (criterion 8, references/open-decisions.md):
 # its filings, each marked when its ticket had merged earlier in the run,
-# and its rulings. Only a "did not need the Decision chat" ruling loosens it;
+# and the rulings on them. Only a "did not need the Decision chat" ruling loosens it;
 # a filing raised at a gate or after merge tightens it; a plan-step filing
 # is counted on its own, neither way.
 def od_filings: [.states[] | . as $s | (.events // []) | to_entries as $e | $e[]
@@ -138,7 +139,12 @@ def od_filings: [.states[] | . as $s | (.events // []) | to_entries as $e | $e[]
   | .key as $i | ((.value.ticket // "") | tostring) as $t
   | .value + {run: $s.run_id,
       after_merge: ([$e[:$i][] | select(.value.event == "merge" and ((.value.ticket // "") | tostring) == $t)] | length > 0)}];
-def od_rulings: [evs[] | select(.event == "ruled")];
+# A ruling is the open decision'"'"'s only when the same run filed that question
+# as one (#239): a criterion 1-7 worker question'"'"'s ruling counts neither way.
+def od_rulings: [.states[] | . as $s | (.events // []) as $e
+  | [$e[] | select(.event == "guardrail-fired" and .guardrail == "open-decision") | (.question // "") | tostring] as $q
+  | $e[] | select(.event == "ruled" and (((.question // "") | tostring) as $x | any($q[]; . == $x)))
+  | . + {run: $s.run_id}];
 def od_late: [od_filings[] | select(.raised_by == "gate" or .after_merge)];
 def decided($g): [evs[] | select(.event == "gate-decision" and match($g))];
 def row($g):
@@ -178,9 +184,10 @@ def row($g):
     + (if $od then {plan_step: ([od_filings[] | select(.raised_by == "plan") | {ticket, question, run}]
                                 | {count: length, evidence: .})} else {} end);
 # The built-in row, when no level defines open-decision and the runs carry
-# a filing or a ruling: a run from before criterion 8 shows no new row.
+# a filing (every ruling it counts is on one): a run from before criterion 8
+# shows no new row.
 def builtin_rows: if ([.resolved.applied[] | select(.id == "open-decision")] | length) == 0
-    and ((od_filings | length) > 0 or (od_rulings | length) > 0)
+    and (od_filings | length) > 0
   then [{id: "open-decision", level: "built-in", key: "open-decision", value: null, area: null, protected: false,
          origin: {reason: "controversy criterion 8: open decisions go to the Decision chat (docs/adr/0002)"}}]
   else [] end;
