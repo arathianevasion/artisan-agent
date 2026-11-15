@@ -811,3 +811,32 @@ test_the_docs_say_the_split_reads_criteria_as_the_verifier_does() {
     assert_contains "$(grep 'split-human-check' "$PLUGIN_ROOT/$f")" "verifier" "$f"
   done
 }
+
+# #146: with tracker.board set, a plan issue and a Human check go on the
+# project's board, each with the Area of the ticket it came from.
+board_project() { # a git project with tracker.board, as the current directory
+  . "$TESTS_DIR/helpers/board.sh"
+  mkdir -p "$TEST_TMPDIR/project/.artisan-agent"
+  git -C "$TEST_TMPDIR/project" init -q
+  add_board "$TEST_TMPDIR/project" local/sample 1=UI 2=Pipeline
+  cd "$TEST_TMPDIR/project"
+}
+
+test_with_a_board_plan_issues_go_on_it_with_their_first_tickets_area() {
+  publish_sample
+  board_project
+  "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved >/dev/null 2>&1
+  local p1= p2=
+  p1=$(jq -r '.plans[0].issue' "$PLANS"); p2=$(jq -r '.plans[1].issue' "$PLANS")
+  assert_eq '{"Area":"UI"}' "$(on_board "$p1" local/sample)" "plan 1 starts with #1"
+  assert_eq '{}' "$(on_board "$p2" local/sample)" "plan 2 starts with #3, which has no Area"
+}
+
+test_with_a_board_a_human_check_goes_on_it_with_its_agent_tickets_area() {
+  human_tracker
+  board_project
+  local out= hc=
+  out=$("$TP" split-human-check --repo local/sample 2 "checked in game")
+  hc=$(printf '%s\n' "$out" | sed -n 's/^Human check #\([0-9]*\) for .*/\1/p')
+  assert_eq '{"Area":"Pipeline"}' "$(on_board "$hc" local/sample)"
+}

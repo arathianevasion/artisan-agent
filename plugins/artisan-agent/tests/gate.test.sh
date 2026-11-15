@@ -665,3 +665,17 @@ test_a_gate_recorded_against_its_open_issue_is_approved() {
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-$NUM.json")"
   assert_eq free "$("$G" holds "$RUN_DIR" 1 2)"
 }
+
+# #146: with tracker.board set, a rework ticket goes on the board with its
+# source ticket's Area; the review gate itself stays off it.
+test_with_a_board_the_rework_goes_on_it_and_the_gate_does_not() {
+  setup_gate
+  . "$TESTS_DIR/helpers/board.sh"
+  add_board "$PROJECT" local/sample 1=UI
+  merged_with_evidence 1
+  local num= rw=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  rw=$("$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt")
+  assert_eq absent "$(on_board "$num" local/sample)" "the review gate"
+  assert_eq '{"Area":"UI"}' "$(on_board "$rw" local/sample)" "the rework ticket"
+}

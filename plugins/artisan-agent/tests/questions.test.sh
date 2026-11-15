@@ -280,3 +280,15 @@ EOF
   assert_eq returned "$(state_get '.tickets["2"].status')"
   assert_eq "$(jq -r '.title' "$FAKE_GH_DIR/issue-3.json")" "Question from #1: Add a dependency?"
 }
+
+# #146: a worker's question is run plumbing: with tracker.board set it stays
+# off the board.
+test_with_a_board_a_worker_question_stays_off_it() {
+  setup_questions
+  . "$TESTS_DIR/helpers/board.sh"
+  add_board "$PROJECT" local/sample 1=UI
+  local q=
+  q=$(cd "$PROJECT" && ARTISAN_RUN_DIR="$RUN_DIR" file_blocking 1)
+  assert_eq absent "$(on_board "${q##*#}" local/sample)"
+  ! grep -q 'project item-add' "$FAKE_GH_DIR/calls" || fail "the question was added to the board"
+}

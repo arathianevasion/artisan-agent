@@ -150,3 +150,18 @@ test_a_finding_whose_blocks_is_null_or_not_a_list_is_skipped() {
   assert_eq 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
   assert_eq 4 "$(printf '%s' "$out" | jq -r .seq)"
 }
+
+# #146: with tracker.board set, a finding filed for triage goes on the board
+# with its source ticket's Area, or the one its worker named.
+test_with_a_board_a_finding_for_triage_goes_on_it_with_its_source_tickets_area() {
+  setup
+  . "$TESTS_DIR/helpers/board.sh"
+  add_board "$PROJECT" owner/repo 10=UI
+  export FAKE_GH_REPO=owner/repo
+  finding 10 '{"title":"99 is stale","why":"x","blocks":["99"]}'
+  finding 10 '{"title":"98 is stale","why":"y","blocks":["98"],"fields":{"Area":"Test & Tooling"}}'
+  "$SCRIPTS/findings.sh" mark "$RUN_DIR" 10 1 99 triage
+  "$SCRIPTS/findings.sh" mark "$RUN_DIR" 10 2 98 triage
+  assert_eq '{"Area":"UI"}' "$(on_board 13 owner/repo)" "the source ticket's Area"
+  assert_eq '{"Area":"Test & Tooling"}' "$(on_board 14 owner/repo)" "the Area the worker named"
+}
