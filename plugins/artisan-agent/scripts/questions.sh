@@ -18,11 +18,12 @@
 #   questions.sh file --ticket T --criterion 8 --case C --harm H
 #                --recommendation R (--blocking | --split | --non-blocking)
 #                [--raised-by plan|worker|verifier|gate|finding] [--from F]
-#                [--run <run-dir>] [--repo owner/name]
+#                [--run <run-dir>] [--at WHERE] [--repo owner/name]
 #       an open decision in ticket T (references/open-decisions.md): the case
 #       (incomplete, misaligned, invented or adr), the concrete harm and one
 #       recommendation, nothing more; refused without a case or a harm. The
-#       body records where it was raised ("Raised at:", default worker).
+#       body records where it was raised ("Raised at:", default worker;
+#       --at names the place, as a gate's triage names the gate and item).
 #       --blocking only from T's own worker; --non-blocking files it without
 #       blocking T, as --raised-by finding (with --from, the ticket whose
 #       worker found it) must. Works with no run (the plan step). --run logs
@@ -88,6 +89,7 @@ cmd_file() {
   local ticket="" criterion="" question="" rec="" repo="" mode="" case_="" harm="" raised_by="" from="" run_dir=""
   local -a options=()
   local harm_set=0
+  local at=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --ticket) ticket=${2:-}; shift 2 ;;
@@ -101,6 +103,7 @@ cmd_file() {
       --raised-by) raised_by=${2:-}; shift 2 ;;
       --from) from=${2:-}; shift 2 ;;
       --run) run_dir=${2:-}; shift 2 ;;
+      --at) at=${2:-}; shift 2 ;;
       --blocking) mode=blocking; shift ;;
       --split) mode=split; shift ;;
       --non-blocking) mode=non-blocking; shift ;;
@@ -120,6 +123,7 @@ cmd_file() {
   esac
   [ -z "$case_$raised_by$from$run_dir" ] && [ "$harm_set" -eq 0 ] \
     || die "--case, --harm, --raised-by, --from and --run are criterion 8's (an open decision)"
+  [ -z "$at" ] || die "--at is criterion 8's (an open decision)"
   [ "$mode" != non-blocking ] || die "--non-blocking is criterion 8's (an open decision); a question is --blocking or --split"
   ticket=${ticket#\#}
   local opt="" body="" title="" i=0 crit_text="" effect="" run_note="" num=""
@@ -244,7 +248,7 @@ file_open_decision() {
   title="Open decision in #$ticket: $short"
   body="> *Filed by $raiser: an open decision, not yet triaged.*
 
-Raised at: $raised_by, by $raiser$run_note.
+Raised at: $raised_by, by $raiser$run_note${at:+, at $at}.
 
 ## Case
 

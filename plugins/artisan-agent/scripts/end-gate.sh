@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The end gate and the PRs to main (#71): once every ticket in scope is done,
 # a review-gate issue holds the end gate's packet (the deferred gates of both
-# kinds, the cards carried from gates closed on GitHub, and, when it doubles as
+# kinds, the open decisions raised at gates and not yet ruled on, the cards
+# carried from gates closed on GitHub, and, when it doubles as
 # the slice gate of a Small change or Bug, the decision cards and evidence, a
 # Bug's leading with its failing test). After the Artisan approves, the PRs to
 # main are cut along the pr-boundaries guardrail, each body written with
@@ -28,7 +29,9 @@
 #   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket] [--by NAME]
 #                       [--why W] [--changed]
 #       the Artisan approves the end gate: refused (6) while a deferred gate
-#       is still open, refused (22) while a Human check is open and not
+#       is still open or an open decision raised at a gate (gate-action.sh
+#       triage) is not ruled on (it reads the rulings with questions.sh sync
+#       first), refused (22) while a Human check is open and not
 #       deferred, or (6) with no boundary recorded and none given (job 17 is
 #       approved until a guardrail covers it). Decides the end-gate decision
 #       (job 13, changed), and a pr-boundary decision (job 17) when the
@@ -201,6 +204,9 @@ pr_plan() { # boundary-value
 }
 
 need_prs_allowed() {
+  [ -z "$(unruled)" ] || sync_unruled
+  [ -z "$(unruled)" ] \
+    || refuse "open decisions raised at a gate wait for the Decision chat's ruling: $(unruled). No PR to main is cut until each is ruled on"
   case "$(status_word)" in
     approved) ;;
     ended) ;;
@@ -396,6 +402,8 @@ packet() {
   echo
   "$SCRIPT_DIR/gate-action.sh" deferred "$RUN_DIR"
   echo
+  open_decisions_section
+  echo
   human_checks_section
   echo "## Cards carried from gates closed on GitHub"
   echo
@@ -418,6 +426,32 @@ packet() {
 }
 
 cmd_packet() { [ $# -eq 1 ] || usage; open_run "$1"; packet; }
+
+# The open decisions raised at a gate (gate-action.sh triage, #232) that the
+# Decision chat hasn't ruled on: no ruling read by questions.sh sync yet.
+UNRULED_JQ='[.tickets | to_entries[] | .key as $t | (.value.questions // [])[]
+  | select(.raised_at == "gate" and .ruling == null and (.state == "open" or .state == "deferred")) | {t: $t} + .]'
+unruled() { get -r "$UNRULED_JQ"' | map("#\(.ticket)") | join(", ")'; }
+
+# Read the rulings first, so one given on the tracker counts at once.
+sync_unruled() {
+  [ -n "$(unruled)" ] || return 0
+  "$SCRIPT_DIR/questions.sh" sync "$RUN_DIR" >/dev/null || die "could not read the open decisions' rulings (questions.sh sync)"
+}
+
+open_decisions_section() {
+  echo "## Open decisions raised at gates"
+  echo
+  if [ -z "$(unruled)" ]; then
+    echo "None waiting: every open decision raised at a gate is ruled on."
+    return 0
+  fi
+  echo "Sent to the Decision chat from a gate and not ruled on yet. No PR to \`$(main_branch)\` is cut until each is ruled on (\`questions.sh sync\` reads the rulings)."
+  echo
+  echo "| Open decision | Ticket | Raised at | Item |"
+  echo "|---|---|---|---|"
+  get -r "$UNRULED_JQ"'[] | "| #\(.ticket) | #\(.t) | gate #\(.gate_issue // "-") (\(.gate // "-")) | \(.item | to_entries | map("\(.key) \(.value)") | join(", ")) |"'
+}
 
 # ------------------------------------------------------------ Human checks
 
@@ -541,6 +575,10 @@ cmd_approve() {
   st=$(status_word)
   [ "$st" = not-due ] || [ -z "$(open_deferred)" ] \
     || refuse "deferred gates are still waiting here; answer each first: $(open_deferred)"
+  # Nothing an open decision touches reaches main before it is ruled on.
+  [ "$st" = not-due ] || sync_unruled
+  [ "$st" = not-due ] || [ -z "$(unruled)" ] \
+    || refuse "open decisions raised at a gate wait for the Decision chat's ruling: $(unruled). Once each is ruled on, approve again"
   # No PR is cut while a Human check is open, unless it is deferred past the run.
   [ "$st" = not-due ] || [ -z "$(open_checks)" ] \
     || state_die 22 "end-gate.sh: Human checks are still open: $(open_checks). Answer each (gate.sh check $RUN_DIR <n> pass|fail --why W) or defer it past the run (end-gate.sh defer-check $RUN_DIR <n> --why W)"

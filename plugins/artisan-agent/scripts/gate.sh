@@ -260,12 +260,14 @@ cmd_open() {
   if [ ! -s "$view" ]; then
     build_view "$def" "$(dependents "$def")" >"$view.tmp"
     PACKET cards <"$view.tmp" >"$view.cards"
+    # Numbered once, as the packet lists them: triage <uncertainty> names one.
+    PACKET uncertainties <"$view.tmp" >"$view.unsure"
     # The Human checks carry their issues' bodies: they reach jq on stdin (#208).
     hcv=$(human_checks_view "$(jq -sc 'add' <(checks_for_gate "$def") <(waiting_checks_for_gate "$def"))") || exit $?
-    jq --slurpfile cards "$view.cards" --slurpfile hc /dev/stdin \
-      '.gate.cards = $cards[0] | . + $hc[0]' "$view.tmp" <<<"$hcv" >"$view.tmp2"
+    jq --slurpfile cards "$view.cards" --slurpfile unsure "$view.unsure" --slurpfile hc /dev/stdin \
+      '.gate.cards = $cards[0] | .gate.uncertainties = $unsure[0] | . + $hc[0]' "$view.tmp" <<<"$hcv" >"$view.tmp2"
     mv "$view.tmp2" "$view"
-    rm -f "$view.tmp" "$view.cards"
+    rm -f "$view.tmp" "$view.cards" "$view.unsure"
   fi
   body="$dir/$id.md"
   PACKET body <"$view" >"$body"
@@ -294,6 +296,7 @@ cmd_open() {
           id: $v.gate.id, kind: $v.gate.kind, slice: $v.gate.slice, title: $v.gate.title,
           role: $v.gate.role, issue: $num, tickets: $v.gate.tickets,
           dependents: $v.gate.dependents, cards: $v.gate.cards,
+          uncertainties: ($v.gate.uncertainties // []),
           human_checks: [($v.human_checks // [])[].ticket],
           left_run: ($v.gate.left_run // []),
           status: "open", opened_at: $now, decisions: [], reworks: []}

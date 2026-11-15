@@ -10,6 +10,10 @@ Usage:
       the gate's decision cards as a JSON array: every decision the workers
       of the gate's tickets made alone (tickets.<t>.evidence.decisions), in
       ticket order, numbered from 1, each with its ticket.
+  python3 -I packet.py uncertainties < view.json
+      the gate's uncertainties as a JSON array, numbered from 1 in the order
+      the packet lists them: [{uncertainty, ticket, from, text}], from the
+      worker or the verifier. `triage <uncertainty>` names one by number.
   python3 -I packet.py body < view.json
       the issue body, top to bottom: header, summary line, decision cards,
       uncertainties, evidence by criterion (with guardrails applied, checks
@@ -86,7 +90,11 @@ def cards(view):
 
 
 def uncertainties(view):
+    """(ticket, from, text) per uncertainty, in the order they are numbered
+    from 1. A gate recorded with its numbered uncertainties keeps them."""
     gate, state = view["gate"], view["state"]
+    if isinstance(gate.get("uncertainties"), list):
+        return [(u["ticket"], u["from"], u["text"]) for u in gate["uncertainties"]]
     rows = []
     for t in gate["tickets"]:
         ev = evidence_of(state, t)
@@ -365,8 +373,8 @@ def body(view):
 
     out += ["## Uncertainties", ""]
     if unsure:
-        out += ["| Ticket | From | Unsure of |", "|---|---|---|"]
-        out += ["| #%s | %s | %s |" % (t, who, cell(u)) for t, who, u in unsure]
+        out += ["| Uncertainty | Ticket | From | Unsure of |", "|---|---|---|---|"]
+        out += ["| %d | #%s | %s | %s |" % (i, t, who, cell(u)) for i, (t, who, u) in enumerate(unsure, 1)]
     else:
         out += ["None recorded."]
     out += ["", "## Evidence", "", "### By criterion", ""]
@@ -434,7 +442,8 @@ def body(view):
                 else "nothing in the run waits on it"),
             "| `change <card> to <choice>` | a rework ticket in this run for that card; the rest are kept when you approve |",
             "| `change <card> to <choice>, a bug` | the same, and records a bug found at this gate in the card's ticket: tighten evidence for its areas at the retro (`--bug`); a redirect takes it too |",
-            "| `guardrail <card> <level> <reach>` | keeps the card and records it as a guardrail to make (level team, product or individual; reach ticket, area or everywhere) |"]
+            "| `guardrail <card> <level> <reach>` | keeps the card and records it as a guardrail to make (level team, product or individual; reach ticket, area or everywhere) |",
+            "| `triage card <n>` or `triage uncertainty <n>`, with the case and the harm | sends it to the Decision chat as an open decision (`gate-action.sh triage`); this gate stays approvable and nothing is reverted, but the end gate holds until it is ruled on |"]
     if any(not c.get("waiting_on") for c in view.get("human_checks") or []):
         out += ["| `check <n> pass` | the Human check passed: it closes, with the result posted (`gate.sh check <run-dir> <n> pass [--notes T]`); `pass all checks` passes every one here (`gate.sh check <run-dir> all pass --gate <issue>`) |",
                 "| `check <n> fail: <why>` | a bug in its agent ticket: a rework ticket in this run, as a redirect (`gate.sh check <run-dir> <n> fail --why W`; `--not-bug` when it isn't one) |",
@@ -458,6 +467,10 @@ def chat(view):
                 c["card"], c["ticket"], cell(c.get("question")), cell(c.get("choice")),
                 "**%s (low)**" % conf if is_low(c) else conf))
         out.append("")
+    if unsure:
+        out += ["| Uncertainty | Ticket | From | Unsure of |", "|---|---|---|---|"]
+        out += ["| %d | #%s | %s | %s |" % (i, t, who, cell(u)) for i, (t, who, u) in enumerate(unsure, 1)]
+        out.append("")
     checks = [c for c in view.get("human_checks") or [] if not c.get("waiting_on")]
     waiting = [c for c in view.get("human_checks") or [] if c.get("waiting_on")]
     if checks:
@@ -474,13 +487,17 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == "header":
         print(GATE_HEADER)
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "body", "chat", "risk", "checks"):
+    if len(sys.argv) != 2 or sys.argv[1] not in ("cards", "uncertainties", "body", "chat", "risk", "checks"):
         sys.stderr.write(__doc__)
         sys.exit(2)
     view = json.load(sys.stdin)
     cmd = sys.argv[1]
     if cmd == "cards":
         json.dump(cards(view), sys.stdout)
+        sys.stdout.write("\n")
+    elif cmd == "uncertainties":
+        json.dump([{"uncertainty": i, "ticket": t, "from": who, "text": u}
+                   for i, (t, who, u) in enumerate(uncertainties(view), 1)], sys.stdout)
         sys.stdout.write("\n")
     elif cmd == "checks":
         sys.stdout.write("\n".join(end_checks(view)) + "\n")

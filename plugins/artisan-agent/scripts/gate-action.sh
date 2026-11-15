@@ -33,6 +33,17 @@
 #       either kind: the dependents go ahead now; the gate stays open until
 #       the end gate (gate-action.sh deferred lists it there), where its cards
 #       can still be changed into rework tickets (gate.sh change).
+#   gate-action.sh triage <run-dir> <issue> (--card N | --uncertainty N)
+#                  --case C --harm H --recommendation R [--non-blocking] [--by NAME]
+#       a review gate: send one card, or one of the packet's numbered
+#       uncertainties, to the Decision chat as an open decision
+#       (references/open-decisions.md), filed through questions.sh as raised
+#       at a gate, naming the gate and the item (--split, or --non-blocking),
+#       and recorded on the item's ticket as a question (raised_at "gate"),
+#       so questions.sh sync reads its ruling. The gate stays open and
+#       approvable, and nothing is reverted; the end gate holds until it is
+#       ruled on. Prints the open decision's number; the same item again
+#       prints the same number and files nothing.
 #   gate-action.sh retry <run-dir> <issue> --notes TEXT [--by NAME] [--why W] [--bug]
 #   gate-action.sh take <run-dir> <issue> [--by NAME] [--why W] [--bug]
 #   gate-action.sh reslice|drop <run-dir> <issue> [--by NAME] [--why W]
@@ -540,6 +551,78 @@ cmd_defer() {
   record_answer deferred defer deferral "$extra" --arg t "$(g '.ticket // ""')" \
     --argjson rec "{\"released\": $released}"
   echo "deferred #$issue by $BY; it stays open until the end gate"
+}
+
+# ------------------------------------------------------------------ triage
+
+# The gate's numbered uncertainties, as the packet lists them: recorded when
+# it opened, or worked out the same way for a gate recorded before (#232).
+# The gate and the state grow with the run: they reach jq on stdin (#208).
+uncertainty_items() {
+  if [ "$(g 'has("uncertainties")')" = true ]; then
+    g -c '.uncertainties'
+  else
+    printf '%s\n' "$GATE" | jq -c --slurpfile s "$FILE" '{gate: ., state: $s[0]}' \
+      | python3 -I "$SCRIPT_DIR/lib/packet.py" uncertainties
+  fi
+}
+
+cmd_triage() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" what="" n="" case_="" harm="" rec="" mode=split item="" t="" at="" q="" label=""
+  shift 2
+  BY=Artisan
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --card | --uncertainty)
+        [ -z "$what" ] && [ $# -ge 2 ] && state_is_uint "$2" || usage
+        what=${1#--}; n=$2; shift 2 ;;
+      --case) [ $# -ge 2 ] || usage; case_=$2; shift 2 ;;
+      --harm) [ $# -ge 2 ] || usage; harm=$2; shift 2 ;;
+      --recommendation) [ $# -ge 2 ] || usage; rec=$2; shift 2 ;;
+      --non-blocking) mode=non-blocking; shift ;;
+      --by) [ $# -ge 2 ] && [ -n "$2" ] || usage; BY=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$what" ] || usage
+  find_gate "$issue"
+  [ "$KIND" != exception ] || refuse "#$issue is an exception gate: it has no cards or uncertainties to triage"
+  if [ "$what" = card ]; then
+    item=$(g -c --argjson n "$n" '(.cards // [])[] | select(.card == $n)')
+    [ -n "$item" ] || refuse "gate #$issue has no card $n"
+    label="Card $n"
+    at="review gate #$issue ($(g .title)), card $n on #$(jq -r .ticket <<<"$item"): $(jq -r '"\(.question // "a decision") → \(.choice // "-")"' <<<"$item")"
+  else
+    item=$(uncertainty_items | jq -c --argjson n "$n" '.[] | select(.uncertainty == $n)')
+    [ -n "$item" ] || refuse "gate #$issue has no uncertainty $n"
+    label="Uncertainty $n"
+    at="review gate #$issue ($(g .title)), uncertainty $n on #$(jq -r .ticket <<<"$item") (the $(jq -r .from <<<"$item")'s): $(jq -r .text <<<"$item")"
+  fi
+  t=$(jq -r .ticket <<<"$item")
+  # Once per item: the open decision it already went to.
+  q=$(get --arg g "$(g .id)" --arg w "$what" --argjson n "$n" \
+    '[.tickets[]?.questions[]? | select(.raised_at == "gate" and .gate == $g and .item[$w] == $n) | .ticket] | first // empty')
+  if [ -n "$q" ]; then
+    printf '%s\n' "$q"
+    return 0
+  fi
+  REDIRECT=
+  hold
+  # questions.sh refuses a filing with no case or harm, and files nothing.
+  q=$(ARTISAN_FINDINGS_FILE='' "$SCRIPT_DIR/questions.sh" file --ticket "$t" --criterion 8 --case "$case_" --harm "$harm" \
+        --recommendation "$rec" "--$mode" --raised-by gate --run "$RUN_DIR" --repo "$(repo)" --at "$at" </dev/null) || exit $?
+  comment "$issue" "$label sent to the Decision chat by $BY as open decision #$q. This gate can still be approved, and nothing is reverted; the end gate holds until #$q is ruled on."
+  apply '
+    (.review_gates | map(.issue | tostring) | index($issue)) as $x
+    | .review_gates[$x].id as $gid
+    | .tickets[$t].questions = ((.tickets[$t].questions // []) + [{ticket: $q, blocking: false, state: "open", at: $now,
+        raised_at: "gate", gate: $gid, gate_issue: ($issue | tonumber), item: {($w): $n}}])
+    | .review_gates[$x].triaged = ((.review_gates[$x].triaged // []) + [{($w): $n, ticket: $t, question: $q, by: $by, at: $now}])
+    | event({event: "gate-triaged", gate: $gid, issue: ($issue | tonumber), ($w): $n, ticket: $t, question: $q, by: $by}; $now)' \
+    --arg issue "$issue" --arg t "$t" --arg q "$q" --arg w "$what" --argjson n "$n" --arg by "$BY"
+  printf '%s\n' "$q"
 }
 
 dependents_line() {
@@ -1207,5 +1290,6 @@ case "$cmd" in
   chat) cmd_chat "$@" ;;
   list) cmd_list "$@" ;;
   deferred) cmd_deferred "$@" ;;
+  triage) cmd_triage "$@" ;;
   *) usage ;;
 esac

@@ -492,3 +492,47 @@ test_a_setup_that_cannot_start_at_the_end_gate_has_no_exit_status() {
   assert_contains "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .stderr')" "setsid: failed"
   assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "end-gate-setup: PR 1: \`touch deps-installed\` could not start"
 }
+
+# ------------------------------------------- open decisions raised at gates (#232)
+
+test_the_end_gate_waits_until_each_open_decision_raised_at_a_gate_is_ruled() {
+  setup_end
+  product_boundary ticket
+  local od=
+  od=$("$SCRIPTS/questions.sh" file --ticket 2 --criterion 8 --case invented --harm "Users see a name nobody chose" \
+         --recommendation "Ask product" --split --raised-by gate --run "$RUN_DIR")
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"].questions = [{ticket: $q, blocking: false, state: "open",
+      at: "2026-11-15T00:00:00Z", raised_at: "gate", gate: "slice-export", gate_issue: 9, item: {card: 1}}]' --arg q "$od"
+  "$E" open "$RUN_DIR" >/dev/null
+  local packet=
+  packet=$("$E" packet "$RUN_DIR")
+  assert_contains "$packet" "## Open decisions raised at gates"
+  assert_contains "$packet" "| #$od | #2 | gate #9 (slice-export) | card 1 |"
+  # Refused while it is open: no approval, no PR.
+  assert_status 6 "$E" approve "$RUN_DIR"
+  assert_contains "$("$E" approve "$RUN_DIR" 2>&1 || true)" "#$od"
+  assert_eq 0 "$(ls "$FAKE_GH_DIR"/pr-*.json 2>/dev/null | wc -l | tr -d ' ')"
+  # The Decision chat rules on the tracker; the end gate reads it and goes on as today.
+  printf 'Answer: Keep t2.txt.\nTook the recommendation: no\nNeeded the Decision chat: yes' >"$FAKE_GH_DIR/comments-$od.md"
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-$od.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$od.json"
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq answer "$(state_get '.tickets["2"].questions[0].ruling.kind')"
+  assert_contains "$("$E" packet "$RUN_DIR")" "None waiting"
+  cut_all
+  assert_eq 3 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
+}
+
+test_a_pr_is_not_cut_while_an_open_decision_raised_at_a_gate_waits() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  local od=
+  od=$("$SCRIPTS/questions.sh" file --ticket 1 --criterion 8 --case adr --harm "Settles the export format for good" \
+         --recommendation "Write the ADR" --split --raised-by gate --run "$RUN_DIR")
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].questions = [{ticket: $q, blocking: false, state: "open",
+      at: "2026-11-15T00:00:00Z", raised_at: "gate", gate: "slice-export", gate_issue: 9, item: {uncertainty: 2}}]' --arg q "$od"
+  echo body >"$TEST_TMPDIR/b.md"
+  assert_status 6 "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md"
+  assert_eq 0 "$(ls "$FAKE_GH_DIR"/pr-*.json 2>/dev/null | wc -l | tr -d ' ')"
+}
