@@ -11,7 +11,8 @@ Graph file:  {"tickets": {"<n>": {"title", "blocked_by": ["<n>"...],
               and needs no estimate.
 Plans file:  {"schema_version": 1, "budget_usd": 10,
               "plans": [{"slice": "...", "tickets": ["<n>"...], "issue": 7?}],
-              "human_check_overrides": [{"ticket", "criterion", "why"}]?}
+              "human_check_overrides": [{"ticket", "criterion", "why"}]?,
+              "merge_gate_overrides": [{"ticket", "criterion", "why"}]?}
 A plan's number is its position (1-based); the order is the order they run in.
 """
 import json
@@ -412,17 +413,42 @@ def human_check_flags(tickets, overrides, words=None):
     return out
 
 
+# An override's "kind" says which flag it answers, and where it is recorded.
+OVERRIDE_KEYS = {"human-check": "human_check_overrides", "merge-gate": "merge_gate_overrides"}
+
+
+# ---- Merge-gate flags (#213, references/human-checks.md) --------------------
+
+def merge_gate_flags(tickets, overrides):
+    """Each agent criterion that reads as needing CI, a pull request or the full
+    suite, which #174's rule doesn't leave to the merge gate, and is not
+    overridden: [{"ticket", "criterion", "needs"}]."""
+    out = []
+    for n in sorted(tickets, key=key):
+        if human_check_for(tickets, n):
+            continue
+        for c in tickets[n].get("acceptance") or []:
+            what = criteria.needs_merge_gate(c)
+            if what and not overridden(overrides, n, c):
+                out.append({"ticket": n, "criterion": c, "needs": what})
+    return out
+
+
 def add_overrides(plans, tickets, new):
     """Record the Artisan's overrides on the plan: each must name a criterion of
-    the ticket and carry a reason. A repeat replaces the reason."""
-    have = plans.setdefault("human_check_overrides", [])
+    the ticket and carry a reason. A repeat replaces the reason. An override's
+    "kind" ("human-check", the default, or "merge-gate") picks the list."""
     for o in new:
         n, c, why = str(o.get("ticket", "")).lstrip("#"), o.get("criterion", ""), str(o.get("why") or "").strip()
+        kind = o.get("kind") or "human-check"
+        if kind not in OVERRIDE_KEYS:
+            raise Refusal("unknown override kind %r" % kind)
         if not why:
             raise Refusal("an override of #%s needs --why: the reason the criterion stays" % n)
         if n not in tickets:
             raise Refusal("#%s is not in the graph" % n)
         c = match_criterion(tickets[n].get("acceptance") or [], c, n)
+        have = plans.setdefault(OVERRIDE_KEYS[kind], [])
         have[:] = [h for h in have if not (str(h.get("ticket")) == n and h.get("criterion") == c)]
         have.append({"ticket": n, "criterion": c, "why": why})
     return plans
@@ -554,7 +580,18 @@ def warnings(plans, graph):
         if ext:
             out.append((describe(tickets, n), "waits on #%s, which is outside these tickets and still open." % ", #".join(ext)))
     out += human_check_warnings(plans, tickets)
+    out += merge_gate_warnings(plans, tickets)
     return out
+
+
+def merge_gate_warnings(plans, tickets):
+    return [(describe(tickets, f["ticket"]),
+             "criterion \"%s\" reads as needing %s, which the merge gate already checks on every merge: "
+             "a worker can't meet it and the verifier would judge it. Drop it, or reword it to \"CI is green\" "
+             "or \"The PR shows ...\" (left to the merge gate), or override it with a reason "
+             "(`--override-merge-gate %s \"<criterion>\" --why ...`). "
+             "The plan can't be approved while this stands." % (f["criterion"], f["needs"], f["ticket"]))
+            for f in merge_gate_flags(tickets, plans.get("merge_gate_overrides"))]
 
 
 def human_check_warnings(plans, tickets):
@@ -567,15 +604,23 @@ def human_check_warnings(plans, tickets):
 
 
 def check(plans, graph):
-    """validate, then refuse approval while an agent criterion needs a person;
-    the flags go to stdout under "Needs your attention"."""
+    """validate, then refuse approval while an agent criterion needs a person,
+    or CI, a PR or the full suite; the flags go to stdout under "Needs your
+    attention"."""
     validate(plans, graph)
-    warn = human_check_warnings(plans, graph_tickets(graph))
-    if warn:
+    person = human_check_warnings(plans, graph_tickets(graph))
+    gate = merge_gate_warnings(plans, graph_tickets(graph))
+    if person or gate:
         print("\n".join(["## Needs your attention", "", "| About | Problem |", "|---|---|"]
-                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in warn]))
-        raise Refusal("not ready to approve: %d agent criteria read as needing a person; "
-                      "split each into a Human check or override it with --why" % len(warn))
+                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in person + gate]))
+        why = []
+        if person:
+            why.append("%d agent criteria read as needing a person; split each into a Human check "
+                       "or override it with --why" % len(person))
+        if gate:
+            why.append("%d agent criteria read as needing CI, a PR or the full suite, which the merge "
+                       "gate already checks; drop or reword each, or override it with --why" % len(gate))
+        raise Refusal("not ready to approve: " + "; ".join(why))
 
 
 def render(plans, graph):
@@ -609,6 +654,10 @@ def render(plans, graph):
     if overrides:
         lines += ["## Human-check overrides", "", "| Ticket | Criterion kept on the agent ticket | Why |", "|---|---|---|"]
         lines += ["| #%s | %s | %s |" % (cell(o["ticket"]), cell(o["criterion"]), cell(o["why"])) for o in overrides] + [""]
+    overrides = plans.get("merge_gate_overrides") or []
+    if overrides:
+        lines += ["## Merge-gate overrides", "", "| Ticket | Criterion kept for the verifier | Why |", "|---|---|---|"]
+        lines += ["| #%s | %s | %s |" % (cell(o["ticket"]), cell(o["criterion"]), cell(o["why"])) for o in overrides] + [""]
     warn = warnings(plans, graph)
     if warn:
         lines += ["## Needs your attention", "", "| About | Problem |", "|---|---|"]
@@ -631,15 +680,19 @@ def main(argv):
         plans = add_overrides(load(path), graph_tickets(graph), json.loads(rest[2]))
         save(path, plans)
     elif cmd == "flags":
-        # stdin {"tickets", "human_check_overrides"?}: the open flags (plan.sh build).
+        # stdin {"tickets", "human_check_overrides"?, "merge_gate_overrides"?}:
+        # the open flags, {human_check_flags, merge_gate_flags} (plan.sh build).
         data = json.load(sys.stdin)
         tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
-        print(json.dumps(human_check_flags(tickets, data.get("human_check_overrides"))))
+        print(json.dumps({"human_check_flags": human_check_flags(tickets, data.get("human_check_overrides")),
+                          "merge_gate_flags": merge_gate_flags(tickets, data.get("merge_gate_overrides"))}))
     elif cmd == "overrides":
-        # stdin {"tickets"}, argv overrides.json: checked overrides (plan.sh build).
+        # stdin {"tickets"}, argv overrides.json: checked overrides,
+        # {human_check_overrides, merge_gate_overrides} (plan.sh build).
         data = json.load(sys.stdin)
         tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
-        print(json.dumps(add_overrides({}, tickets, json.loads(rest[0]))["human_check_overrides"]))
+        ov = add_overrides({}, tickets, json.loads(rest[0]))
+        print(json.dumps({k: ov.get(k, []) for k in OVERRIDE_KEYS.values()}))
     elif cmd == "split-text":
         print(json.dumps(split_human_check(json.load(sys.stdin))))
     elif cmd == "split-files":

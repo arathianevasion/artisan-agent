@@ -6,6 +6,7 @@
 #   plan.sh build --draft FILE [--config FILE] [--history DIR] [--prices FILE]
 #                 [--standards FILE] [--set key=value]...
 #                 [--override-human-check <ticket> "<criterion>" --why TEXT]...
+#                 [--override-merge-gate <ticket> "<criterion>" --why TEXT]...
 #                                 print the plan (JSON) for state.sh init
 #   plan.sh render <plan.json>    print the approval: waves, models, estimates,
 #                                 Max Agents and every config number
@@ -43,6 +44,16 @@
 #                  plan is not approvable: render says so, state.sh init refuses.
 #   human_check_overrides  [{ticket, criterion, why}], one per
 #                  --override-human-check, the Artisan's reason recorded
+#   merge_gate_flags  each criterion, read as for human_check_flags, that reads
+#                  as needing CI, a pull request or the full suite but that
+#                  the verifier wouldn't leave to the merge gate (#213,
+#                  criteria.py needs_merge_gate): [{ticket, criterion, needs}].
+#                  The merge gate already checks it. While one stands the plan
+#                  is not approvable: drop it, reword it to a merge-gate
+#                  criterion ("CI is green", "The PR shows ...") and rebuild,
+#                  or override it:
+#   merge_gate_overrides  [{ticket, criterion, why}], one per
+#                  --override-merge-gate, the Artisan's reason recorded
 #   recorded_checks the recorded checks (checks.sh json over --standards,
 #                  default CODING_STANDARDS.md at the checkout's top):
 #                  {recorded, file, commands, suite} or {recorded: false, reason}
@@ -129,13 +140,13 @@ cmd_build() {
         [ $# -ge 2 ] || usage
         case "$2" in *=*) ;; *) die "--set needs key=value, got $2" ;; esac
         sets+=("$2"); shift 2 ;;
-      --override-human-check)
+      --override-human-check|--override-merge-gate)
         [ $# -ge 3 ] || usage
-        overrides=$(jq -c --arg t "$2" --arg c "$3" '. + [{ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$overrides")
+        overrides=$(jq -c --arg k "${1#--override-}" --arg t "$2" --arg c "$3" '. + [{kind: $k, ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$overrides")
         shift 3 ;;
       --why)
         [ $# -ge 2 ] || usage
-        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check it gives the reason for"
+        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check or --override-merge-gate it gives the reason for"
         overrides=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$overrides")
         shift 2 ;;
       *) usage ;;
@@ -265,23 +276,23 @@ cmd_build() {
       | .tickets[$t].acceptance_source = $c.source')
   done < <(printf '%s' "$out" | jq -r '.tickets | to_entries[] | select(.value.acceptance == null and (.value.human_check_for // null) == null) | .key')
   if [ -n "$unchecked" ]; then
-    printf 'plan.sh: could not read the issue for %s: those tickets'"'"' criteria were not checked for Human check flags\n' "$unchecked" >&2
+    printf 'plan.sh: could not read the issue for %s: those tickets'"'"' criteria were not checked for Human check or merge-gate flags\n' "$unchecked" >&2
   fi
   # A ticket that still has no criteria (neither the draft, the body nor an
   # Agent Brief comment gave any) can't be verified: the plan isn't approvable.
   out=$(printf '%s' "$out" | jq '.criteria_missing = [.tickets | to_entries[]
     | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
-  # Agent criteria that need a person (references/human-checks.md), less the
-  # Artisan's overrides.
-  ov='[]'
+  # Agent criteria that need a person (references/human-checks.md), or CI, a
+  # PR or the full suite (#213), less the Artisan's overrides.
+  ov='{"human_check_overrides": [], "merge_gate_overrides": []}'
   if [ "$(jq length <<<"$overrides")" -gt 0 ]; then
     ov=$(printf '%s' "$out" | python3 -I "$SCRIPT_DIR/lib/to-plan.py" overrides "$overrides" 2>&1) \
       || die "$(printf '%s' "$ov" | sed 's/^to-plan: //')"
   fi
-  out=$(printf '%s' "$out" | jq --argjson ov "$ov" '.human_check_overrides = $ov')
+  out=$(printf '%s' "$out" | jq --argjson ov "$ov" '. + $ov')
   flags=$(printf '%s' "$out" | TO_PLAN_EXTRA_PHRASES=$(printf '%s' "$out" | jq -c '.config.human_check_phrases // []') \
     python3 -I "$SCRIPT_DIR/lib/to-plan.py" flags 2>&1) || die "$(printf '%s' "$flags" | sed 's/^to-plan: //')"
-  out=$(printf '%s' "$out" | jq --argjson f "$flags" '.human_check_flags = $f')
+  out=$(printf '%s' "$out" | jq --argjson f "$flags" '. + $f')
   # The draft's one hands-on ticket, if it names one (human.sh annotate).
   if [ "$(jq -r '.hands_on != null' "$draft")" = true ]; then
     out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
@@ -341,6 +352,14 @@ cmd_render() {
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),
+      ( ($p.merge_gate_flags // []) | if length == 0 then empty else
+        "### Already checked by the merge gate",
+        "| Ticket | Criterion | Reads as needing |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \(.needs) |" ),
+        "",
+        "A worker runs no CI, opens no PR and runs only the tests that cover its change, so it can'"'"'t meet these, and the verifier would judge them. The merge gate already runs the suite on every merge. Drop it, or reword it to \"CI is green\" or \"The PR shows ...\", which the verifier leaves to the merge gate (in the ticket, then rebuild), or override it with a reason (`--override-merge-gate <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
+        "" end ),
       ( ($p.criteria_missing // []) | if length == 0 then empty else
         "### Tickets with no acceptance criteria",
         "| Ticket |",
@@ -352,6 +371,12 @@ cmd_render() {
       ( ($p.human_check_overrides // []) | if length == 0 then empty else
         "### Human-check overrides",
         "| Ticket | Criterion kept on the agent ticket | Why |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) | \(.criterion) | \(.why) |" ),
+        "" end ),
+      ( ($p.merge_gate_overrides // []) | if length == 0 then empty else
+        "### Merge-gate overrides",
+        "| Ticket | Criterion kept for the verifier | Why |",
         "|---|---|---|",
         ( .[] | "| \(ticket(.ticket)) | \(.criterion) | \(.why) |" ),
         "" end ),
@@ -393,8 +418,9 @@ cmd_render() {
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
       (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) ticket(s) with no acceptance criteria (above)."
-       elif ($p.human_check_flags // []) == [] then "Approve as shown, or name any number to change for this run only."
-       else "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)." end)
+       elif ($p.human_check_flags // []) != [] then "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)."
+       elif ($p.merge_gate_flags // []) != [] then "Not approvable yet: \($p.merge_gate_flags | length) criteria the merge gate already checks (above)."
+       else "Approve as shown, or name any number to change for this run only." end)
   ' "$plan"
 }
 
