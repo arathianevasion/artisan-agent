@@ -165,8 +165,9 @@ test_an_unknown_kind_is_refused_before_anything_is_created() {
 }
 
 # Every plugin issue is created through tracker.sh: no script creates one
-# with gh directly. upstream-check.sh files to the pipeline's own repo
-# (PIPELINE_REPO), never to the project, so it is not a project issue.
+# with gh directly. upstream-check.sh (and skills/retro/scripts/retro.sh,
+# outside scripts/) file to the pipeline's own repo
+# (PIPELINE_REPO), never to the project, so neither files a project issue.
 test_no_script_creates_an_issue_except_through_tracker_sh() {
   local hits=
   hits=$(grep -rn 'issue create' "$PLUGIN_ROOT/scripts" --include='*.sh' \
@@ -174,4 +175,29 @@ test_no_script_creates_an_issue_except_through_tracker_sh() {
     | grep -v '^[^:]*/scripts/upstream-check\.sh:' \
     | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' || true)
   assert_eq "" "$hits" "direct issue creation outside tracker.sh"
+}
+
+test_text_number_and_date_fields_are_set_as_what_their_value_reads_as() {
+  setup_board
+  jq '.fields += [{id: "F_due", name: "Due", type: "ProjectV2Field"}, {id: "F_size", name: "Size", type: "ProjectV2Field"},
+                  {id: "F_note", name: "Note", type: "ProjectV2Field"}]
+      | .items[0].values += {Due: "2026-12-01", Size: 3, Note: "see #5"}' \
+    "$FAKE_GH_DIR/project-someone-1.json" >"$TEST_TMPDIR/p" && mv "$TEST_TMPDIR/p" "$FAKE_GH_DIR/project-someone-1.json"
+  sed -i.bak 's/fields_at_filing: \[Area\]/fields_at_filing: [Area, Due, Size, Note]/' "$PROJECT/.artisan-agent/config.yml"
+  new_issue finding 5 >/dev/null
+  assert_eq '{"Area":"UI","Due":"2026-12-01","Size":3,"Note":"see #5"}' "$(board_item 7)"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "--field-id F_due --date 2026-12-01"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "--field-id F_size --number 3"
+}
+
+test_a_queued_add_that_keeps_failing_is_given_up_with_a_warning() {
+  setup_board
+  touch "$FAKE_GH_DIR/project-unavailable"
+  new_issue finding 5 >/dev/null 2>&1
+  ARTISAN_BOARD_TRIES=2 "$TRACKER" board-retry --project "$PROJECT" 2>/dev/null
+  assert_contains "$(cat "$PROJECT/.artisan-agent/runs/.board/pending.jsonl")" '"tries":1'
+  local err=
+  err=$(ARTISAN_BOARD_TRIES=2 "$TRACKER" board-retry --project "$PROJECT" 2>&1 >/dev/null)
+  assert_contains "$err" "Given up: add it by hand"
+  [ ! -s "$PROJECT/.artisan-agent/runs/.board/pending.jsonl" ] || fail "a given-up add is still queued"
 }

@@ -325,9 +325,13 @@ cmd_apply() {
   board=$(jq -c '.tracker_board // empty' "$answers")
   [ -n "$board" ] || board=$(board_convention "$wt")
   if [ -n "$board" ]; then
-    cur_board=$("$ROOT/scripts/config.sh" get tracker.board --file "$f" 2>/dev/null | jq -c . 2>/dev/null) || cur_board='{}'
-    [ -n "$cur_board" ] || cur_board='{}'
-    if [ "$(jq -cS . <<<"$cur_board")" = "$(jq -cS . <<<"$board")" ]; then
+    if [ ! -f "$f" ]; then cur_board='{}'
+    elif ! cur_board=$("$ROOT/scripts/config.sh" get tracker.board --file "$f" 2>/dev/null); then
+      cur_board=unreadable
+    fi
+    if [ "$cur_board" = unreadable ]; then
+      echo "kept: .artisan-agent/config.yml has a tracker.board config.sh cannot read; fix it by hand, or set it to $(jq -c . <<<"$board")"
+    elif [ "$(jq -cS . <<<"$cur_board")" = "$(jq -cS . <<<"$board")" ]; then
       echo "unchanged: tracker.board is $(jq -r '"\(.owner)/\(.number)"' <<<"$board")"
     elif [ "$cur_board" != '{}' ]; then
       echo "kept: .artisan-agent/config.yml has tracker.board $(jq -r '"\(.owner)/\(.number)"' <<<"$cur_board"); change it by hand if you want $(jq -r '"\(.owner)/\(.number)"' <<<"$board")"
@@ -336,14 +340,15 @@ cmd_apply() {
       if grep -q '^tracker:' "$f"; then
         # The template's "tracker:" block (board: {}) gives way to the board.
         awk -v blk="$tmp/board.yml" '
-          /^tracker:[[:space:]]*$/ { while ((getline l < blk) > 0) print l; skip = 1; next }
+          /^tracker:/ { while ((getline l < blk) > 0) print l; skip = 1; next }
           skip && /^[[:space:]]/ { next }
           { skip = 0; print }' "$f" >"$tmp/config.yml"
       else
         { cat "$f"; printf '\n'; cat "$tmp/board.yml"; } >"$tmp/config.yml"
       fi
       cp "$tmp/config.yml" "$f"
-      "$ROOT/scripts/config.sh" get tracker.board --file "$f" >/dev/null || die "the board did not read back from $f: $board"
+      [ "$("$ROOT/scripts/config.sh" get tracker.board --file "$f" 2>/dev/null | jq -cS .)" = "$(jq -cS . <<<"$board")" ] \
+        || die "tracker.board did not read back from $f as $board; set it by hand"
       echo "changed: tracker.board is $(jq -r '"\(.owner)/\(.number), fields at filing: \(.fields_at_filing | join(", "))"' <<<"$board")"
     fi
   fi

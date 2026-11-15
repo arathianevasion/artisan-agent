@@ -505,3 +505,23 @@ test_the_answers_name_a_board_the_doc_does_not_link() {
   branch_file .artisan-agent/config.yml >"$TEST_TMPDIR/config.yml"
   assert_eq 'org/2' "$("$PLUGIN_ROOT/scripts/config.sh" get tracker.board --file "$TEST_TMPDIR/config.yml" | jq -r '"\(.owner)/\(.number)"')"
 }
+
+test_an_inline_empty_tracker_map_is_replaced_by_the_board() {
+  seed
+  board_doc
+  mkdir -p "$P/.artisan-agent"
+  printf 'max_agents: 3\ntracker: {board: {}}\n' >"$P/.artisan-agent/config.yml"
+  git -C "$P" add -A && git -C "$P" commit -q -m config && git -C "$P" push -q origin main
+  assert_contains "$(run_setup)" "changed: tracker.board is someone/3"
+  branch_file .artisan-agent/config.yml >"$TEST_TMPDIR/config.yml"
+  assert_eq 'someone/3 3' "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$TEST_TMPDIR/config.yml" | jq -r '"\(.tracker.board.owner)/\(.tracker.board.number) \(.max_agents)"')"
+}
+
+test_an_unreadable_board_in_the_config_is_kept_and_named() {
+  seed
+  board_doc
+  mkdir -p "$P/.artisan-agent"
+  printf 'tracker:\n  board:\n    owner: other\n    number: x\n' >"$P/.artisan-agent/config.yml"
+  git -C "$P" add -A && git -C "$P" commit -q -m config && git -C "$P" push -q origin main
+  assert_contains "$(run_setup 2>&1)" "kept: .artisan-agent/config.yml has a tracker.board config.sh cannot read"
+}

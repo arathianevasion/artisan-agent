@@ -58,7 +58,7 @@
 #                         dispatch decides for the run's head SHA (so a real failure stays red)
 #   gh project view|field-list|item-list <n> --owner O --format json
 #   gh project item-add <n> --owner O --url <issue url> --format json
-#   gh project item-edit --id I --project-id P --field-id F (--single-select-option-id O | --text T | --number N)
+#   gh project item-edit --id I --project-id P --field-id F (--single-select-option-id O | --text T | --number N | --date D)
 #                         a board in project-<owner>-<n>.json the test writes (its shape is at the
 #                         handler); the file project-unavailable fails them all, like a missing scope
 # Anything else fails with exit 1. Needs jq (and git, for workflow run).
@@ -421,6 +421,7 @@ case "${1:-} ${2:-}" in
         --field-id) fid=$2; shift 2 ;;
         --text) text=$2; shift 2 ;;
         --number) numv=$2; shift 2 ;;
+        --date) text=$2; shift 2 ;;
         --single-select-option-id) opt=$2; shift 2 ;;
         -L|--limit) shift 2 ;;
         -*) echo "gh (fake): project $sub: unsupported: $1" >&2; exit 1 ;;

@@ -17,7 +17,9 @@
 #       queues the add for the next sweep and, with --run-dir, records a
 #       board-add-failed event in that run's state file.
 #   tracker.sh board-retry [--run-dir DIR] [--project DIR]
-#       tries every queued board add again; one that fails again stays queued.
+#       tries every queued board add again; one that fails again stays queued,
+#       until ARTISAN_BOARD_TRIES retries (default 10) have failed: then it is
+#       dropped with a warning to add it by hand.
 #       The orchestrator's sweep (sweep.sh) and the chats' sweep (chats.sh
 #       sweep) run it. With nothing queued it does nothing, offline.
 #
@@ -46,6 +48,8 @@ usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 warn() { printf 'tracker.sh: %s\n' "$*" >&2; }
 
 ON_BOARD=" plan finding human-check rework split "
+# A queued add that has failed this many retries is given up, with a warning.
+MAX_TRIES=${ARTISAN_BOARD_TRIES:-10}
 OFF_BOARD=" gate question "
 
 KIND= FROM= RUN_DIR=${ARTISAN_RUN_DIR:-} PROJECT=. FIELDS='{}'
@@ -116,7 +120,7 @@ board_add() {
   # The source ticket's values, read off the board (gh prints each under a
   # form of the field's name, so names compare without case or spaces).
   if [ -n "$from" ] && [ -n "$(jq -rn --argjson named "$named" '$ARGS.positional[] | select(. as $n | $named | has($n) | not)' --args "${names[@]}")" ]; then
-    if ! out=$(gh project item-list "$number" --owner "$owner" --format json --limit 1000 2>&1); then
+    if ! out=$(gh project item-list "$number" --owner "$owner" --format json --limit 10000 2>&1); then
       BOARD_ERR="gh project item-list: $out"; return 1
     fi
     values=$(jq -c --arg repo "$repo" --argjson n "$from" '
@@ -153,7 +157,13 @@ board_add() {
         out=$(gh project item-edit --id "$item" --project-id "$pid" --field-id "$fid" --number "$val" 2>&1) \
           || { BOARD_ERR="gh project item-edit ($field): $out"; return 1; } ;;
       ProjectV2Field:string)
-        out=$(gh project item-edit --id "$item" --project-id "$pid" --field-id "$fid" --text "$(jq -r . <<<"$val")" 2>&1) \
+        # field-list types text, number and date fields alike: a value that
+        # reads as a date or a number is set as one, anything else as text.
+        val=$(jq -r . <<<"$val")
+        if printf '%s' "$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then set -- --date "$val"
+        elif printf '%s' "$val" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; then set -- --number "$val"
+        else set -- --text "$val"; fi
+        out=$(gh project item-edit --id "$item" --project-id "$pid" --field-id "$fid" "$@" 2>&1) \
           || { BOARD_ERR="gh project item-edit ($field): $out"; return 1; } ;;
       *) warn "\"$field\" is a $ftype field the plugin does not set; left empty on #$issue" ;;
     esac
@@ -231,9 +241,11 @@ cmd_board_retry() {
     if board_add "$(jq -r .repo <<<"$line")" "$(jq -r .issue <<<"$line")" "$(jq -r .url <<<"$line")" \
          "$(jq -r '.from // ""' <<<"$line")" "$(jq -c '.fields // {}' <<<"$line")"; then
       echo "board: #$(jq -r .issue <<<"$line") added to $(jq -r '"\(.owner)/\(.number)"' <<<"$BOARD")"
+    elif [ "$(jq -r '(.tries // 0) + 1' <<<"$line")" -ge "$MAX_TRIES" ]; then
+      warn "#$(jq -r .issue <<<"$line") is still not on the board after $MAX_TRIES tries: $BOARD_ERR. Given up: add it by hand."
     else
       warn "#$(jq -r .issue <<<"$line") is still not on the board: $BOARD_ERR. The next sweep tries again."
-      printf '%s\n' "$line" >>"$q/pending.jsonl"
+      jq -c '.tries = ((.tries // 0) + 1)' <<<"$line" >>"$q/pending.jsonl"
     fi
   done <"$work"
   rm -f "$work"

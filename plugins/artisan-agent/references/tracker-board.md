@@ -37,9 +37,13 @@ Project setup learns it from the project's tracker doc, `docs/agents/issue-track
 
 An issue a chat files by hand that outlives the run goes through the helper too, with the kind it is: a finding filed between waves (`skills/implement-plan/SKILL.md`, step 7) is `--kind finding --from <ticket>`, and follow-up work the Artisan asks for at the end gate is `--kind split --from <ticket>`.
 
+`skills/retro/scripts/retro.sh` and `scripts/upstream-check.sh` file issues to the pipeline's own repo (`PIPELINE_REPO`), never to the project, so they are not plugin issues in the project and don't use the helper.
+
 ## Field types
 
-A single-select field is set by option name (an option the board lacks is warned about and left empty); a text field as text; a number field as a number. Other types (iteration, date) are warned about and left empty.
+A single-select field is set by option name (an option the board lacks is warned about and left empty). `gh project field-list` gives text, number and date fields one type, so a value that reads as a date (`YYYY-MM-DD`) is set as a date, one that reads as a number as a number, anything else as text. An iteration field is warned about and left empty.
+
+A queued add that fails `ARTISAN_BOARD_TRIES` retries (default 10) is dropped with a warning to add it by hand. The source ticket's values are read from the board's first 10000 items.
 
 ## Out of scope
 
