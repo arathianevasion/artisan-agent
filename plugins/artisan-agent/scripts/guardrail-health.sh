@@ -30,10 +30,12 @@
 #       decided that an agent would have needed) and whether to nudge (N runs, default 5, with none)
 #   guardrail-health.sh backstop --runs DIR... [--repo-dir D] [--main REF] [--since DATE]
 #       [--prs FILE] [--closed FILE] [--table]
-#       (pass --since: without it every ticket ever closed is checked)
+#       (pass --since: without it every ticket ever closed and every PR merged is checked)
 #       commits straight to main, PRs and merges with no run record, tickets
-#       closed outside a run. --prs and --closed are JSON files standing in for
-#       `gh pr list` and `gh issue list`.
+#       closed outside a run. A run's own gate and plan issues are closed in
+#       that run; its end-gate (pr/<run-id>/...) and retro (retro/<run-id>)
+#       branches are its record. --prs and --closed are JSON files standing in
+#       for `gh pr list` and `gh issue list`.
 #   guardrail-health.sh bugs --runs DIR... [--since DATE] [--issues FILE] [--bugs FILE] [--table]
 #       the retro's candidate bugs: `bug` issues opened since DATE (the last
 #       retro) whose title or body mentions a ticket a run closed (#<n>), each
