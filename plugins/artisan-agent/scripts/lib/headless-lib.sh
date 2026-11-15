@@ -29,3 +29,13 @@ headless_args() {
 headless_denials() {
   jq -r '(if type == "array" then .[-1] else . end) | (.permission_denials // [])[] | .tool_name' "$1" 2>/dev/null || true
 }
+
+# headless_denied_calls session-json: prints, one per line, each call the
+# session was denied as "<tool> <what it asked for>" (the file, URL, command,
+# search or pattern), so a report can name it (#245). Nothing when it was
+# denied none or the file is not JSON. Needs jq; the file reaches it on stdin.
+headless_denied_calls() {
+  jq -r '(if type == "array" then .[-1] else . end) | (.permission_denials // [])[]
+    | .tool_name + ((.tool_input // {}) | (.file_path // .url // .command // .query // .pattern // .path // "")
+                    | if . == "" then "" else " " + (tostring | gsub("\\s+"; " ")) end)' <"$1" 2>/dev/null || true
+}

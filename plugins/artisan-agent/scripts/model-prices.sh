@@ -20,7 +20,8 @@
 # Nothing changes until `apply`; the file is only ever rewritten with the Artisan's yes.
 # Environment: ARTISAN_PRICES_FILE (default references/model-prices.json),
 # ARTISAN_CLAUDE_BIN (stand-in), ARTISAN_PRICES_MODEL, ARTISAN_PRICES_BUDGET,
-# ARTISAN_TODAY (the date to record, default today). Exit: 0 ok, 1 failed, 2 bad usage,
+# ARTISAN_TODAY (the date to record, default today). Exit: 0 ok, 1 failed ("price check failed:"
+# and the denied calls when the agent gave no usable answer), 2 bad usage,
 # 10 prices differ. Portable to bash 3.2.
 
 set -euo pipefail
@@ -28,15 +29,33 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 PLUGIN_ROOT=$(cd "$HERE/.." && pwd)
 FILE=${ARTISAN_PRICES_FILE:-$PLUGIN_ROOT/references/model-prices.json}
+# Absolute, so the agent's grant names the file itself (#245).
+case "$FILE" in /*) ;; *) [ ! -d "$(dirname "$FILE")" ] || FILE="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")" ;; esac
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
 BRIEF="$PLUGIN_ROOT/skills/retro/PRICES.md"
 # shellcheck source=lib/headless-lib.sh
 . "$HERE/lib/headless-lib.sh"   # headless_args: never a permission prompt (#214)
-# What PRICES.md asks: read the recorded file, fetch the pricing page, write the answer file.
-PRICES_TOOLS="Read,WebFetch,WebSearch,Write"
+# The hosts Anthropic's pricing page is served from (its redirects included):
+# the only places the agent may fetch from (#245).
+PRICES_HOSTS="docs.anthropic.com docs.claude.com platform.claude.com www.anthropic.com anthropic.com www.claude.com claude.com"
+
+# prices_tools answer-file: the allowlist for what PRICES.md asks and nothing
+# wider (#245): read the recorded file, fetch the pricing page, write the
+# answer file. A "//" rule is an absolute path, so each grant is that one file
+# wherever the session runs; a bare Read or Write would still be refused
+# outside the session's folder, which is how the check was denied before.
+prices_tools() {
+  local tools="" host=""
+  tools="Read(/$FILE),Write(/$1),Edit(/$1)"
+  for host in $PRICES_HOSTS; do tools="$tools,WebFetch(domain:$host)"; done
+  printf '%s' "$tools"
+}
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'model-prices.sh: %s\n' "$*" >&2; exit 1; }
+# failed: the fetch got no usable answer. Said as a failed check (#245), so
+# the retro never reads it as "no change".
+failed() { die "price check failed: $*"; }
 command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 
 check_shape() { # file
@@ -56,14 +75,14 @@ cmd_fetch() {
 
 Recorded file: $FILE
 Write your answer to: $work/published.json"
-  headless_args "$PRICES_TOOLS"
+  headless_args "$(prices_tools "$work/published.json")"
   ( cd "$work" && ARTISAN_ROLE=prices-check "$CLAUDE" -p "$prompt" "${HEADLESS_ARGS[@]}" \
       --model "${ARTISAN_PRICES_MODEL:-claude-sonnet-5-5}" --max-budget-usd "${ARTISAN_PRICES_BUDGET:-0.50}" \
       --output-format json >"$work/prices-session.json" 2>"$work/prices-session.err" ) \
-    || die "the prices agent failed (see $work/prices-session.err)"
-  denied=$(headless_denials "$work/prices-session.json" | sort -u | tr '\n' ' ')
-  [ -s "$work/published.json" ] || die "the prices agent wrote no $work/published.json${denied:+ (denied tools: ${denied% })}"
-  check_shape "$work/published.json"
+    || failed "the prices agent failed (see $work/prices-session.err)"
+  denied=$(headless_denied_calls "$work/prices-session.json" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
+  [ -s "$work/published.json" ] || failed "the prices agent wrote no $work/published.json${denied:+ (denied tools: $denied)}"
+  ( check_shape "$work/published.json" ) 2>/dev/null || failed "the prices agent's answer $work/published.json is not {\"models\": {<id>: {input_per_mtok, output_per_mtok}}} with positive numbers"
 }
 
 cmd_compare() {

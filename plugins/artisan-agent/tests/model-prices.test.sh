@@ -92,7 +92,7 @@ while [ $# -gt 0 ]; do
   case "$1" in --permission-mode) mode=$2 ;; --allowedTools) tools=$2 ;; esac; shift
 done
 case ",$tools," in
-  *,Write,*) [ "$mode" = dontAsk ] && printf '%s' "$PUBLISHED_JSON" >"$PUBLISH_TO"; echo '{"result":"done"}' ;;
+  *",Write(/$PUBLISH_TO),"*) [ "$mode" = dontAsk ] && printf '%s' "$PUBLISHED_JSON" >"$PUBLISH_TO"; echo '{"result":"done"}' ;;
   *) echo '{"result":"stopped","permission_denials":[{"tool_name":"Write","tool_input":{}}]}' ;;
 esac
 S
@@ -108,9 +108,33 @@ test_the_price_agent_starts_in_dontask_with_an_allowlist_for_its_brief() {
   local args=; args=$(cat "$TEST_TMPDIR/claude.args")
   assert_contains "$args" "[--permission-mode]
 [dontAsk]"
-  assert_contains "$args" "[--allowedTools]
-[Read,WebFetch,WebSearch,Write]"
   [ -s "$TEST_TMPDIR/w/published.json" ] || fail "the agent could not write published.json with only the listed tools"
+}
+
+# #245: the allowlist names the prices file, the pricing page's hosts and the
+# answer file, each exactly; no bare tool that reaches anything else.
+test_the_price_agent_is_granted_the_prices_file_the_pricing_page_and_its_answer_file_only() {
+  setup_prices; allowlist_claude
+  export TEST_TMPDIR PUBLISHED_JSON; PUBLISHED_JSON=$(jq -c '{models}' "$ARTISAN_PRICES_FILE")
+  export PUBLISH_TO="$TEST_TMPDIR/w/published.json"
+  bash "$MP" fetch "$TEST_TMPDIR/w"
+  local tools= rule= expected=
+  tools=$(awk 'prev == "[--allowedTools]" { print; exit } { prev = $0 }' "$TEST_TMPDIR/claude.args" | sed 's/^\[//; s/\]$//')
+  expected="Read(/$ARTISAN_PRICES_FILE)
+Write(/$TEST_TMPDIR/w/published.json)
+Edit(/$TEST_TMPDIR/w/published.json)
+WebFetch(domain:docs.anthropic.com)
+WebFetch(domain:docs.claude.com)
+WebFetch(domain:platform.claude.com)
+WebFetch(domain:www.anthropic.com)
+WebFetch(domain:anthropic.com)
+WebFetch(domain:www.claude.com)
+WebFetch(domain:claude.com)"
+  assert_eq "$expected" "$(printf '%s' "$tools" | tr ',' '\n')" "the allowlist"
+  # Absolute paths are "//" rules, so the grant is the file itself, not one relative to a settings file.
+  case "$tools" in *"Read(//"*) ;; *) fail "the prices file is not granted by its absolute path: $tools" ;; esac
+  case ",$tools," in *,Read,*|*,Write,*|*,Edit,*|*,WebFetch,*|*WebSearch*|*Bash*) fail "a bare or unneeded tool is granted: $tools" ;; esac
+  case "$(cat "$TEST_TMPDIR/claude.args")" in *"[--add-dir]"*) fail "a whole folder is granted" ;; esac
 }
 
 test_a_denied_tool_under_the_shim_ends_the_price_check_promptly_with_the_denial_reported() {
@@ -128,4 +152,23 @@ test_a_denied_tool_under_the_shim_ends_the_price_check_promptly_with_the_denial_
   assert_contains "$out" "wrote no"
   assert_contains "$out" "denied tools: Bash"
   assert_eq shim "$(cat "$FAKE_SHIM_LOG")" "the shim started the session"
+}
+
+# #245: no answer is a failed check, never something that reads as "no change",
+# and it names each denied call with what it asked for.
+test_a_prices_run_that_writes_no_answer_reports_price_check_failed_with_the_denials() {
+  setup_prices
+  cat >"$TEST_TMPDIR/claude" <<'S'
+#!/bin/bash
+echo '{"type":"result","result":"could not","permission_denials":[{"tool_name":"Read","tool_input":{"file_path":"/p/model-prices.json"}},{"tool_name":"WebFetch","tool_input":{"url":"https://docs.anthropic.com/pricing","prompt":"x"}},{"tool_name":"Write","tool_input":{"file_path":"/r/retro/prices/published.json","content":"{}"}}]}'
+S
+  chmod +x "$TEST_TMPDIR/claude"; export ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/claude"
+  local out= rc=0
+  out=$(bash "$MP" run "$TEST_TMPDIR/w" 2>&1) || rc=$?
+  assert_eq 1 "$rc" "exit"
+  assert_contains "$out" "price check failed"
+  assert_contains "$out" "Read /p/model-prices.json"
+  assert_contains "$out" "WebFetch https://docs.anthropic.com/pricing"
+  assert_contains "$out" "Write /r/retro/prices/published.json"
+  case "$out" in *"no price change"*|*"no change"*) fail "a failed check reads as no change: $out" ;; esac
 }
