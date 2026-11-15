@@ -6,7 +6,9 @@
 #
 # Usage:
 #   to-plan.sh graph --repo owner/name <ticket>...     print the ticket graph (JSON): title,
-#                                  acceptance criteria and blocked_by within the set for each
+#                                  acceptance criteria (criteria.py ticket: the body's, else the
+#                                  newest triage comment's) with acceptance_source ("body" or
+#                                  the comment), and blocked_by within the set for each
 #                                  ticket, open blockers outside it as external_blockers, and
 #                                  human_check_for on a Human check (its body marker). The
 #                                  chat then adds each ticket's `slice` (a name for the
@@ -30,7 +32,8 @@
 #   to-plan.sh render  <plans.json> --graph FILE      the approval view (Markdown): a table of plans,
 #                                  then each plan's tickets with their acceptance criteria
 #   to-plan.sh split-human-check --repo owner/name [--graph FILE [--plans FILE]] <ticket> "<criterion>"
-#                                  move the criterion off the agent ticket into its Human check
+#                                  move the criterion off the agent ticket (its body, or the
+#                                  triage comment its criteria are in, edited in place) into its Human check
 #                                  ticket (references/human-checks.md): title "Human check: <the
 #                                  ticket's title> (#<ticket>)", the marker,
 #                                  ready-for-human, blocked by the ticket. Creates it, or adds to the
@@ -57,6 +60,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PY=$SCRIPT_DIR/lib/to-plan.py
 CRITERIA_PY=$SCRIPT_DIR/lib/criteria.py
+# shellcheck source=lib/criteria-lib.sh
+. "$SCRIPT_DIR/lib/criteria-lib.sh"   # criteria_read/criteria_write: criteria where they live (#215)
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'to-plan.sh: %s\n' "$*" >&2; exit 1; }
@@ -127,17 +132,18 @@ case "$cmd" in
     numbers=$(printf '%s\n' "${POS[@]}" | sed 's/^#//')
     out='{"tickets":{}}'
     for n in $numbers; do
-      issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state) || die "cannot read #$n"
+      issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state,comments) || die "cannot read #$n"
       deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of #$n (a missing edge could put a blocker after its dependent)"
-      # criteria.py's rule, the one the verifier reads a ticket by (#202).
-      crit=$(printf '%s' "$issue" | jq -r '.body // ""' | python3 -I "$CRITERIA_PY" extract) \
+      # criteria.py's rule, the one the verifier reads a ticket by (#202, #215).
+      crit=$(printf '%s\n' "$issue" | python3 -I "$CRITERIA_PY" ticket) \
         || die "cannot read the acceptance criteria of #$n"
       out=$(jq --arg n "$n" --argjson issue "$issue" --argjson deps "$deps" --argjson crit "$crit" \
             --arg set "$numbers" '
         ($set | split("\n") | map(select(. != ""))) as $in
         | .tickets[$n] = {
             title: $issue.title,
-            acceptance: $crit,
+            acceptance: $crit.criteria,
+            acceptance_source: $crit.source,
             blocked_by: [$deps[] | .number | tostring | select(. as $b | $in | index($b))],
             external_blockers: [$deps[] | select(.state == "open") | .number | tostring | select(. as $b | ($in | index($b)) | not)]
           }
@@ -180,15 +186,19 @@ case "$cmd" in
     agent=${POS[0]#\#}
     printf '%s' "$agent" | grep -Eq '^[0-9]+$' || die "the agent ticket must be a number, got \"${POS[0]}\""
     [ -z "$PLANS" ] || [ -f "$PLANS" ] || die "no such plans file: $PLANS"
-    issue=$(gh issue view "$agent" -R "$REPO" --json number,title,body) || die "cannot read #$agent"
+    issue=$(gh issue view "$agent" -R "$REPO" --json number,title) || die "cannot read #$agent"
+    # The agent ticket's criteria where they live: its body or its triage comment.
+    agent_text=$(mktemp "${TMPDIR:-/tmp}/to-plan-split.XXXXXX")
+    trap 'rm -f "$agent_text"' EXIT
+    where=$(criteria_read "$REPO" "$agent" "$agent_text") || die "cannot read #$agent"
     marker="<!-- artisan-agent:human-check-for #$agent -->"
     open=$(gh issue list -R "$REPO" --state open --limit 1000 --json number,title,body) \
       || die "cannot list the open issues to find #$agent's Human check"
     hc=$(jq -r --arg m "$marker" '[.[] | select((.body // "") | contains($m))] | sort_by(.number) | .[0].number // empty' <<<"$open")
     hc_body=null
     [ -z "$hc" ] || hc_body=$(jq --argjson n "$hc" '.[] | select(.number == $n) | .body // ""' <<<"$open")
-    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" \
-      '{agent: ($i.number | tostring), agent_title: $i.title, agent_body: ($i.body // ""),
+    req=$(jq -n --argjson i "$issue" --argjson hb "$hc_body" --arg c "${POS[1]}" --rawfile ab "$agent_text" \
+      '{agent: ($i.number | tostring), agent_title: $i.title, agent_body: $ab,
         criterion: $c, hc_body: $hb}')
     plan=$(py split-text <<<"$req") || exit 1
     crit=$(jq -r .criterion <<<"$plan")
@@ -213,7 +223,8 @@ case "$cmd" in
       esac
     fi
     if [ "$(jq -r '.agent_body != null' <<<"$plan")" = true ]; then
-      gh issue edit "$agent" -R "$REPO" --body "$(jq -r .agent_body <<<"$plan")" >/dev/null \
+      jq -j .agent_body <<<"$plan" >"$agent_text"
+      criteria_write "$REPO" "$agent" "$where" "$agent_text" \
         || die "could not take the criterion off #$agent (Human check #$hc has it); run split-human-check again"
     fi
     [ -z "$GRAPH" ] || py split-files "$GRAPH" "$PLANS" "$agent" "$hc" "$crit" "$title"
