@@ -27,7 +27,9 @@
 # The reconciler and findings.sh pass --no-guard: wave.sh status reads only.
 # The guard's refusal (12, 17, 18) is not the sweep's: it prints it and goes on.
 # Between the two, it tries again every board add that failed when its issue
-# was opened (tracker.sh board-retry, #146); its lines go to stderr.
+# was opened (tracker.sh board-retry, #146); its lines go to stderr. Then it
+# deletes on the remote the ticket branches the run pushed whose tickets are
+# done, retrying any delete that failed (pushed.sh prune, #211; stderr too).
 #
 # repair (#151) mends a run hit by the stream-json miscount: the runner found
 # a session's result event by the start of its line, current claude writes
@@ -348,6 +350,8 @@ fi
 state_with_lock "$RUN_DIR" sweep
 # Board adds that failed when their issue was opened (#146): tried again here.
 "$SCRIPT_DIR/tracker.sh" board-retry --run-dir "$RUN_DIR" >&2 || echo "sweep.sh: the board retry failed; the next sweep tries again" >&2
+# Pushed ticket branches whose tickets are done, and deletes that failed (#211).
+"$SCRIPT_DIR/pushed.sh" prune "$RUN_DIR" >&2 || echo "sweep.sh: pruning the pushed branches failed; the next sweep tries again" >&2
 if [ "$GUARD" -eq 1 ]; then
   guard_rc=0
   guard_out=$("$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" 2>&1) || guard_rc=$?

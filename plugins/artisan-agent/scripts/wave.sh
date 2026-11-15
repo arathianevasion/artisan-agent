@@ -174,7 +174,9 @@
 #   wave.sh close <run-dir> <ticket>
 #       post the evidence contract on the ticket (evidence.sh comment), tick
 #       its met criteria where they live (the body, or the triage comment
-#       they are in: lib/criteria-lib.sh), close it.
+#       they are in: lib/criteria-lib.sh), close it, then delete on the
+#       remote the ticket branches the run pushed whose tickets are done
+#       (pushed.sh prune, #211; a failed delete warns, the next sweep retries).
 #   wave.sh report <run-dir>
 #       the wave report (JSON) the orchestrator writes as its result file;
 #       ci_wait has the minutes each merge waited on CI and their total.
@@ -2231,6 +2233,12 @@ cmd_unpark_base() {
 
 # ------------------------------------------------------------------- close
 
+# The ticket branches the run pushed whose tickets are done are deleted on
+# the remote (pushed.sh, #211). A failure warns; the next sweep tries again.
+prune_pushed() {
+  "$SCRIPT_DIR/pushed.sh" prune "$RUN_DIR" >&2 || echo "wave.sh: could not prune the run's pushed branches; the next sweep tries again" >&2
+}
+
 cmd_close() {
   open_run "${1:-}"
   local t="${2:-}"
@@ -2239,6 +2247,7 @@ cmd_close() {
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
   if [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" = true ]; then
+    prune_pushed
     "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"
     return 0
   fi
@@ -2257,6 +2266,7 @@ cmd_close() {
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"
+  prune_pushed
   # The last merge of a slice opens its review gate before anything else
   # dispatches (gate.sh, references/review-gates.md).
   "$SCRIPT_DIR/gate.sh" sync "$RUN_DIR" >/dev/null || die "#$t is closed, but its slice gate could not be opened (gate.sh sync)"

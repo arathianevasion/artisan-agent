@@ -13,7 +13,9 @@
 #   move.sh out <run-dir> [--remote NAME] [--wait SECONDS]
 #       wait up to SECONDS (default 0) for idle, then push the integration
 #       branch, the run's unmerged ticket branches and the run's state folder
-#       to the runs/<run-id> branch (the folder is git-ignored, so the branch
+#       to the runs/<run-id> branch, recording each ticket branch pushed in
+#       the state's pushed (pushed.sh prunes it once its ticket closes or
+#       leaves the run, #211) (the folder is git-ignored, so the branch
 #       carries it as a snapshot commit on top of the integration tip). The
 #       run's `location` becomes "moved" here first (push pending), then the
 #       run branch is pushed: a refused push puts this copy back to live, and
@@ -224,10 +226,22 @@ cmd_out() {
     exit 5
   fi
 
+  # The unmerged ticket branches this move pushes: {ticket, branch, sha}.
+  local t= br= pushes="[]"
+  for t in $(jq -r '.tickets | to_entries[] | select(.value.status != "merged" and .value.status != "closed") | .key' "$(state_file "$rd")"); do
+    br=$(jq -r --arg t "$t" '.tickets[$t].branch' "$(state_file "$rd")")
+    git -C "$main" rev-parse -q --verify "refs/heads/$br" >/dev/null || continue
+    pushes=$(jq -c --arg t "$t" --arg b "$br" --arg s "$(git -C "$main" rev-parse "refs/heads/$br")" \
+      '. + [{ticket: $t, branch: $b, sha: $s}]' <<<"$pushes")
+  done
+
   if [ "$pending" = 0 ]; then
-    # The new state, then the snapshot commit carrying it.
-    jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
+    # The new state, then the snapshot commit carrying it. Each ticket branch
+    # pushed is recorded in pushed, so whichever machine closes its ticket
+    # deletes it on the remote (pushed.sh prune, #211).
+    jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" --arg r "$remote" --argjson p "$pushes" "$STATE_JQ_DEFS"'
         .halted = (if .halted.move == true then null else .halted end)
+        | reduce $p[] as $x (.; .pushed = ((.pushed // {}) + {($x.branch): {ticket: $x.ticket, remote: $r, sha: $x.sha, by: "move", at: $now}}))
         | .location = {status: "moved", machine: $m, branch: $b, at: $now}
         | event({event: "moved-out", from: $m, branch: $b}; $now)' "$(state_file "$rd")" >"$TMP_DIR/state.json"
     local parents="$tip"
@@ -239,10 +253,7 @@ cmd_out() {
   # Push the integration branch and the unmerged ticket branches first: a refusal
   # here changes nothing, because this copy is still live.
   git -C "$main" push -q "$remote" "refs/heads/$ib:refs/heads/$ib" 2>&1 || { [ "$pending" = 0 ] || out_undo "$rd" "$me"; echo "move.sh: the push of $ib was refused" >&2; exit 6; }
-  local t= br=
-  for t in $(jq -r '.tickets | to_entries[] | select(.value.status != "merged" and .value.status != "closed") | .key' "$(state_file "$rd")"); do
-    br=$(jq -r --arg t "$t" '.tickets[$t].branch' "$(state_file "$rd")")
-    git -C "$main" rev-parse -q --verify "refs/heads/$br" >/dev/null || continue
+  for br in $(jq -r '.[].branch' <<<"$pushes"); do
     git -C "$main" push -q "$remote" "refs/heads/$br:refs/heads/$br" 2>&1 || { [ "$pending" = 0 ] || out_undo "$rd" "$me"; echo "move.sh: the push of $br was refused" >&2; exit 6; }
   done
 
@@ -329,8 +340,9 @@ cmd_in() {
 
   # The claim comes first: one commit on top of runs/<id>, pushed fast-forward
   # only. Whoever's push lands is the run's one live machine.
-  printf '%s' "$rstate" | jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
+  printf '%s' "$rstate" | jq --arg m "$me" --arg b "runs/$id" --arg r "$remote" --argjson now "$(state_now)" "$STATE_JQ_DEFS"'
       .location = {status: "live", machine: $m, branch: $b, at: $now}
+      | (if .pushed then .pushed |= map_values(.remote = $r) else . end)
       | .halted = (if .halted.move == true then null else .halted end)
       | .tickets |= map_values(if has("worktree") then .worktree = null else . end)
       | .integration |= del(.worktree)

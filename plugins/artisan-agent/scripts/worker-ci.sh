@@ -30,6 +30,9 @@
 #       costs the attempt. A red record also holds failing_tests
 #       (merge-gate.sh failed-tests), one with no verdict a why. M defaults to
 #       ci_gate.timeout_minutes (30).
+#       Run by a run's worker (ARTISAN_RUN_DIR set), the push is noted in
+#       the run (pushed.sh note), which deletes B on R once its ticket
+#       closes or leaves the run (#211).
 #       Exit 0 green (success), 7 red (failure or timed_out), 19 no verdict
 #       (push or dispatch failed, none in time, any other conclusion), 16
 #       nothing to run on CI: the merge gate is local or every check runs
@@ -129,6 +132,12 @@ cmd_run() {
     if ! git -C "$dir" push -q --force "$remote" "$sha:refs/heads/$branch" >/dev/null 2>&1; then
       record '{}' "could not push $branch to $remote"
       return 19
+    fi
+    # A run's worker notes the push, so the run deletes the branch on the
+    # remote once its ticket closes or leaves the run (pushed.sh, #211).
+    if [ -n "${ARTISAN_RUN_DIR:-}" ] && [ -f "$ARTISAN_RUN_DIR/state.json" ]; then
+      "$SCRIPT_DIR/pushed.sh" note "$ARTISAN_RUN_DIR" "$branch" "$sha" --remote "$remote" --by worker-ci \
+        || echo "worker-ci.sh: could not note the push of $branch in $ARTISAN_RUN_DIR; the run will not delete it" >&2
     fi
     if ! gh workflow run "$wf" -R "$repo" --ref "$branch" ${fields[@]+"${fields[@]}"} >/dev/null 2>&1; then
       record '{}' "could not dispatch $wf on $branch (gh workflow run failed)"
