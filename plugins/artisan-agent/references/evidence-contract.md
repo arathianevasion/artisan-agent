@@ -40,6 +40,7 @@ The verifier's result file, `results/verify-<t>.<v>.result.json` (`<v>` counts t
 | `acceptance` | yes | one entry per criterion, in the ticket's order: `criterion` (verbatim), `met` (`true`, `false`, `"human"`: needs a human check, or `"gate"`: checked by the merge gate, both below), `evidence` (`tests`, `checks`, `diff`, and `why` when unmet), as in `evidence-record.md`; an unmet one may carry `guardrail`: the id of the guardrail it broke (`guardrails.sh resolve`), which `judge` logs as `guardrail-fired` for guardrail health; an unmet one the worker's record lists in `unmeetable` carries `unmeetable: true` when the verifier agrees no worker could meet it here, `false` when it doesn't (#186; `references/gate-actions.md`, "A criterion no worker can meet"), which the contract keeps as `unmeetable: {why, verifier_agrees}` |
 | `verdict` | no | `pass` or `fail`; advisory, since the contract recomputes it |
 | `unsure` | no | what the verifier was unsure of, one sentence each |
+| `open_decisions` | no | open decisions the verifier found while checking the criteria (#230; `references/open-decisions.md`): `[{case, harm, recommendation}]`, `case` one of `incomplete`, `misaligned`, `invented`, `adr`. They never change the verdict or the attempt's outcome: the sweep files each for the Decision chat, split, raised by the verifier, once, and never blocks the ticket on one. One without a case, harm or recommendation is not filed; the contract's `verifier.unsure` says so |
 | `notes` | no | one paragraph |
 
 `judge` trusts no count it can check. Each of the ticket's criteria takes the verdict entry with the same text (spaces and case aside), else the entry in its position when the counts agree; a criterion with no entry is unmet. The matching rule lives in one place, `scripts/lib/criteria.py` (`extract` reads the criteria from a body, `ticket` from an issue: the body's, else the newest triage "Agent Brief" comment's, the source kept in the plan as `acceptance_source`; `plan.sh build` lists a ticket with none in `criteria_missing` and `state.sh init` refuses that plan; `align` lines the verdict and the worker's claims up with them, the claims by the same rule: same text, else position when the worker's count matches the ticket's, else `claimed` stays null, never fuzzier, `tick` ticks the met ones on the ticket). The contract keeps the ticket's wording, so ticking the ticket's checkboxes always matches.
@@ -81,7 +82,7 @@ A criterion about CI, the merge gate or the PR ("CI's `check` job is green on th
 | `unsure` | what the worker was unsure of |
 | `decisions` | the decisions the worker made alone: its decision cards, as in `evidence-record.md` |
 | `cost` | `worker_usd` (every attempt, failed ones included), `verifier_usd` (every verifier), `total_usd` (the ticket's `cost_usd`), `estimate_usd` (the plan's) |
-| `verifier` | `attempt`, `model`, `unsure`, `notes` |
+| `verifier` | `attempt`, `model`, `unsure`, `notes`, `open_decisions` (the verdict's well-formed ones; `[]` when none) |
 | `verified_at` | epoch seconds |
 
 Each ticket's cost is logged in the state file: the worker's and verifier's sessions are both in `tickets.<t>.attempt_costs` (keys `<attempt>` and `verify.<v>`), summed into `cost_usd`, and so into `costs.workers_usd` and `costs.total_usd`. Actual against `estimate_usd` is a retro input.

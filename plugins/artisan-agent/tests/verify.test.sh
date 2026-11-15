@@ -547,3 +547,116 @@ test_v_a_bad_verifier_up_wait_is_a_usage_error() {
   out=$(ARTISAN_VERIFIER_UP_SECONDS=08 "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>&1) || status=$?
   assert_eq 0 "$status" "ARTISAN_VERIFIER_UP_SECONDS=08: $out"
 }
+
+# Open decisions a verifier names (#230; references/open-decisions.md): the
+# verdict is judged as without them, and the sweep files each one split,
+# raised by the verifier, once, never blocking the ticket.
+OPEN_HARM="The Export button offers PDF, and nothing can render a PDF yet"
+
+# A verifier that meets every criterion but VERIFIER_UNMET and names one
+# open decision, plus one with a blank harm that can't be filed.
+write_open_decision_verifier() {
+  cat >"$FAKE_CLAUDE_SCRIPT_VERIFIER" <<'SCRIPT'
+key=$(basename "$ARTISAN_RESULT_FILE" .result.json)
+jq --arg unmet "${VERIFIER_UNMET:-}" '{verdict: "pass",
+  acceptance: [.[] | {criterion: ., met: (. != $unmet), evidence: {why: "checked by behaviour"}}],
+  open_decisions: [
+    {case: "incomplete", harm: "The Export button offers PDF, and nothing can render a PDF yet",
+     recommendation: "Hide the PDF option until the renderer lands"},
+    {case: "invented", harm: "  ", recommendation: "Ask the Decision chat"}]}' \
+  "$ARTISAN_RUN_DIR/prompts/$key.criteria.json" >"$ARTISAN_RESULT_FILE"
+SCRIPT
+}
+
+issue_count() { ls "$FAKE_GH_DIR" | grep -c '^issue-' || true; }
+verifier_open_decision_events() {
+  state_get '[.events[] | select(.event == "guardrail-fired" and .guardrail == "open-decision")]'
+}
+
+test_v_an_open_decision_in_a_verdict_leaves_a_pass_a_pass() {
+  setup_wave
+  returned_ticket
+  write_open_decision_verifier
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "pass 2/2" "$JUDGE_OUT" "the same line as without it"
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq returned "$(state_get '.tickets["1"].status')"
+  assert_eq "incomplete|$OPEN_HARM|Hide the PDF option until the renderer lands" \
+    "$(state_get '.tickets["1"].evidence.verifier.open_decisions[] | "\(.case)|\(.harm)|\(.recommendation)"')"
+  assert_eq "1 null" "$(state_get '.tickets["1"].verifications[0].open_decisions | "\(length) \(.[0].question)"')" \
+    "kept on the verification, not filed yet"
+  assert_contains "$(state_get '.tickets["1"].evidence.verifier.unsure[]')" "not filed: no harm given"
+  assert_eq 2 "$(issue_count)" "judge files nothing"
+}
+
+test_v_an_open_decision_in_a_verdict_leaves_a_fail_a_fail() {
+  setup_wave
+  returned_ticket
+  write_open_decision_verifier
+  export VERIFIER_UNMET="It says hi"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  assert_eq "fail 1/2 retry: It says hi" "$JUDGE_OUT" "the same line as without it"
+  assert_eq 6 "$JUDGE_STATUS"
+  assert_eq queued "$(state_get '.tickets["1"].status')" "a failed attempt, with one left"
+  assert_eq 1 "$(state_get '.tickets["1"].failures | length')"
+}
+
+test_v_the_sweep_files_a_verdicts_open_decision_split_raised_by_the_verifier_once() {
+  setup_wave
+  returned_ticket
+  write_open_decision_verifier
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" 2>"$TEST_TMPDIR/sweep.err"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" 2>>"$TEST_TMPDIR/sweep.err"
+  assert_eq 3 "$(issue_count)" "one ticket, filed once"
+  local body=
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-3.json")
+  assert_eq '["needs-triage"]' "$(jq -c '[.labels[] | if type == "object" then .name else . end]' "$FAKE_GH_DIR/issue-3.json")"
+  assert_contains "$body" "Raised at: verifier, by the verifier of #1 (run r1)."
+  assert_contains "$body" "$OPEN_HARM"
+  assert_contains "$body" "Hide the PDF option until the renderer lands"
+  assert_contains "$body" "this open decision was split off"
+  assert_eq 3 "$(state_get '.tickets["1"].verifications[0].open_decisions[0].question')"
+  assert_eq "1 verifier incomplete 3" \
+    "$(verifier_open_decision_events | jq -r 'length as $n | .[0] | "\($n) \(.raised_by) \(.case) \(.question)"')"
+  assert_contains "$(cat "$TEST_TMPDIR/sweep.err")" "filed as #3, split"
+}
+
+test_v_a_ticket_whose_verdict_names_an_open_decision_is_never_blocked_by_it() {
+  setup_wave
+  returned_ticket
+  write_open_decision_verifier
+  export VERIFIER_UNMET="It says hi"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 1
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" 2>/dev/null
+  assert_eq queued "$(state_get '.tickets["1"].status')" "a retry, not blocked"
+  [ ! -f "$FAKE_GH_DIR/blocked_by-1.json" ] || assert_eq '[]' "$(cat "$FAKE_GH_DIR/blocked_by-1.json")"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "question")] | length')"
+  # Its next attempt passes; that verifier names the same open decision, and
+  # it is not filed again. The ticket merges.
+  unset VERIFIER_UNMET
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  wait_for "$RUN_DIR/results/1.2.exit.json" 30
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" 2>/dev/null
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  judge_verifier 2
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" 2>/dev/null
+  assert_eq 3 "$(issue_count)" "the same open decision is filed once"
+  assert_eq "3 3" "$(state_get '[.tickets["1"].verifications[].open_decisions[0].question] | join(" ")')"
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  [ ! -f "$FAKE_GH_DIR/blocked_by-1.json" ] || assert_eq '[]' "$(cat "$FAKE_GH_DIR/blocked_by-1.json")"
+}
+
+test_v_the_verifier_brief_and_the_orchestrator_reference_cite_criterion_8s_reference() {
+  local doc=
+  for doc in skills/implement-plan/references/verifier.md skills/implement-plan/references/orchestrator.md; do
+    assert_contains "$(cat "$PLUGIN_ROOT/$doc")" '${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md' "$doc"
+  done
+  assert_contains "$(cat "$PLUGIN_ROOT/skills/implement-plan/references/verifier.md")" '"open_decisions"'
+}
