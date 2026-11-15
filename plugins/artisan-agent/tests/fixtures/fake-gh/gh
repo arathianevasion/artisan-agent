@@ -13,15 +13,19 @@
 #   gh api repos/<o>/<r>/issues/<n>
 #   gh api repos/<o>/<r>/issues/<n>/dependencies/blocked_by
 #   gh issue view <n> [-R repo] [--json fields] [-q|--jq filter] [--comments]
-#   gh issue list [-R repo] [--state open|closed|all] [--json fields] [-q filter]
-#                         (an empty tracker lists [] and exits 0, as real gh does)
+#   gh issue list [-R repo] [--state open|closed|all] [--label L]... [--limit N] [--json fields] [-q filter]
+#                         newest first, only issues with every --label, at most N (default 30),
+#                         as real gh does (an empty tracker lists [] and exits 0)
 #   gh issue comment <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh api graphql --input FILE|-   the updateIssueComment mutation only: {query, variables:
 #                         {id, body}} replaces the comment with that node id (IC_<n>_<k>)
 #   gh issue edit <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue close <n> [-R repo] [--comment|-c TEXT]
-#   gh issue create [-R repo] --title T --body B [--label L]...   prints the new issue's URL;
-#                         numbers continue after the highest issue; id is 1000 + number
+#   gh issue create [-R repo] --title T (--body|-b B | --body-file|-F FILE) [--label L]...
+#                         prints the new issue's URL; numbers continue after the highest issue;
+#                         id is 1000 + number
+#   An issue or comment body over 65,536 characters fails, as on GitHub (FILE - is stdin);
+#   with the file comments-fail, every issue comment fails.
 #   gh api repos/<o>/<r>/issues/<n>/sub_issues                    the plan's sub-issues (sub_issues-<n>.json,
 #                         a list of numbers); POST --method with -F sub_issue_id=<id> adds one, failing
 #                         like GitHub when the child already has a parent (parent-<child>) unless
@@ -87,8 +91,14 @@ set_field() { # n jq-filter [args]
 bad_repo() { echo "gh: expected the \"[HOST/]OWNER/REPO\" format, got \"$1\"" >&2; exit 1; }
 check_repo() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || bad_repo "$1"; }
 
-# Common flags after the subcommand: -R, --json, -q/--jq, bodies.
-n= json= filter= body= body_set= comments= state=open
+# GitHub refuses an issue or comment body over 65,536 characters.
+check_body() { # body
+  [ "$(printf '%s' "$1" | jq -n --rawfile b /dev/stdin '$b | length')" -le 65536 ] \
+    || { echo "GraphQL: Body is too long (maximum is 65536 characters)" >&2; exit 1; }
+}
+
+# Common flags after the subcommand: -R, --json, -q/--jq, bodies, --label, --limit.
+n= json= filter= body= body_set= comments= state=open limit=30 labels_wanted='[]'
 parse() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -99,6 +109,8 @@ parse() {
       --body-file|-F) body=$(cat "$2"); body_set=1; shift 2 ;;
       --comments) comments=1; shift ;;
       --state|-s) state=$2; shift 2 ;;
+      --label|-l) labels_wanted=$(printf '%s' "$labels_wanted" | jq -c --arg l "$2" '. + [$l]'); shift 2 ;;
+      --limit|-L) limit=$2; shift 2 ;;
       --*) shift ;;
       *) [ -n "$n" ] || n=${1#\#}; shift ;;
     esac
@@ -249,8 +261,11 @@ case "${1:-} ${2:-}" in
   "issue list")
     shift 2; parse "$@"
     # A glob that matches nothing leaves the literal pattern: skip it, so an empty tracker lists [].
-    all=$(for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] || continue; cat "$f"; done | jq -s --arg s "$state" \
-      'map(select($s == "all" or .state == $s)) | sort_by(.number)')
+    all=$(for f in "$FAKE_GH_DIR"/issue-*.json; do [ -f "$f" ] || continue; cat "$f"; done \
+      | jq -s --arg s "$state" --argjson want "$labels_wanted" --argjson limit "$limit" '
+          map(select(($s == "all" or .state == $s)
+                     and ([(.labels // [])[].name] as $have | all($want[]; . as $l | $have | index($l)))))
+          | sort_by(-.number) | .[:$limit]')
     if [ -n "$json" ]; then emit "$all"
     else printf '%s' "$all" | jq -r '.[] | "\(.number)\t\(.state | ascii_upcase)\t\(.title)"'; fi ;;
   "issue create")
@@ -261,11 +276,13 @@ case "${1:-} ${2:-}" in
         -R|--repo) check_repo "$2"; shift 2 ;;
         --title|-t) title=$2; shift 2 ;;
         --body|-b) body=$2; shift 2 ;;
+        --body-file|-F) body=$(cat "$2"); shift 2 ;;
         --label|-l) labels=$(printf '%s' "$labels" | jq -c --arg l "$2" '. + [{name: $l}]'); shift 2 ;;
         *) shift ;;
       esac
     done
     [ -n "$title" ] || { echo "gh: a title is required" >&2; exit 1; }
+    check_body "$body"
     last=0
     for f in "$FAKE_GH_DIR"/issue-*.json; do
       [ -f "$f" ] || continue
@@ -278,12 +295,14 @@ case "${1:-} ${2:-}" in
   "issue comment")
     shift 2; parse "$@"; need_issue "$n"
     [ -n "$body_set" ] || { echo "gh: a comment needs --body or --body-file" >&2; exit 1; }
+    [ ! -e "$FAKE_GH_DIR/comments-fail" ] || { echo "gh: HTTP 502: Server Error" >&2; exit 1; }
+    check_body "$body"
     c="$FAKE_GH_DIR/comments-$n.md"
     [ ! -s "$c" ] || printf '\n---\n' >>"$c"
     printf '%s' "$body" >>"$c" ;;
   "issue edit")
     shift 2; parse "$@"; need_issue "$n"
-    [ -z "$body_set" ] || set_field "$n" --arg b "$body" '.body = $b'
+    [ -z "$body_set" ] || { check_body "$body"; set_field "$n" --arg b "$body" '.body = $b'; }
     while [ $# -gt 0 ]; do
       case "$1" in
         --add-label) set_field "$n" --arg l "$2" '.labels = ((.labels // []) | map(select(.name != $l)) + [{name: $l}])'; shift 2 ;;

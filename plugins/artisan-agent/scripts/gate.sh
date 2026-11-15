@@ -270,10 +270,10 @@ cmd_open() {
   body="$dir/$id.md"
   PACKET body <"$view" >"$body"
   title=$(jq -r .gate.title "$view")
-  num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title,labels \
+  num=$(gh issue list -R "$repo" --state open --limit 10000 --label review-gate --json number,title,labels \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
-    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$body")") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body-file "$body") \
       || die "could not open the review-gate issue for $id"
     num=${url##*/}
   fi
@@ -500,11 +500,11 @@ cmd_change() {
   t=$(jq -r .ticket <<<"$card")
   title="Rework #$t: $(jq -r '.question // "a decision"' <<<"$card")"
   # A call that crashed after opening the rework ticket left it open: reuse it.
-  num=$(gh issue list -R "$repo" --state open --label in-run --json number,title,body \
+  num=$(gh issue list -R "$repo" --state open --limit 10000 --label in-run --json number,title,body \
           | jq -r --arg t "$title" --arg mark "Review gate #$issue, card $n," \
               '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
   [ -z "$num" ] || url="/$num"
-  [ -n "$num" ] || url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$t" --run-dir "$RUN_DIR" -- -R "$repo" --title "$title" --label ready-for-agent --label in-run --body "$(
+  [ -n "$num" ] || url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$t" --run-dir "$RUN_DIR" -- -R "$repo" --title "$title" --label ready-for-agent --label in-run --body-file - <<<"$(
     jq -r --arg choice "$choice" --arg why "$WHY" --arg issue "$issue" --arg run "$RUN_ID" '
 "## Parent
 
@@ -688,11 +688,11 @@ check_one() { # ticket verdict notes not-bug want-gate
       ;;
     fail)
       title="Rework #$agent: Human check #$t failed"
-      num=$(gh issue list -R "$repo" --state open --label in-run --json number,title,body \
+      num=$(gh issue list -R "$repo" --state open --limit 10000 --label in-run --json number,title,body \
               | jq -r --arg t "$title" --arg mark "Human check #$t failed at $gid." \
                   '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
       if [ -z "$num" ]; then
-        url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$agent" --run-dir "$RUN_DIR" -- -R "$repo" --title "$title" --label ready-for-agent --label in-run --body "## Parent
+        url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$agent" --run-dir "$RUN_DIR" -- -R "$repo" --title "$title" --label ready-for-agent --label in-run --body-file - <<<"## Parent
 
 Human check #$t failed at $gid. In run $RUN_ID.
 

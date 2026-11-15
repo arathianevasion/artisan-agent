@@ -196,7 +196,7 @@ case "$cmd" in
     trap 'rm -f "$agent_text"' EXIT
     where=$(criteria_read "$REPO" "$agent" "$agent_text") || die "cannot read #$agent"
     marker="<!-- artisan-agent:human-check-for #$agent -->"
-    open=$(gh issue list -R "$REPO" --state open --limit 1000 --json number,title,body) \
+    open=$(gh issue list -R "$REPO" --state open --limit 10000 --json number,title,body) \
       || die "cannot list the open issues to find #$agent's Human check"
     hc=$(jq -r --arg m "$marker" '[.[] | select((.body // "") | contains($m))] | sort_by(.number) | .[0].number // empty' <<<"$open")
     hc_body=null
@@ -210,12 +210,12 @@ case "$cmd" in
     # The Human check first, then the edge, then the agent ticket: a run that
     # stops part way leaves the criterion in both places, and a repeat finishes it.
     if [ -z "$hc" ]; then
-      url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind human-check --from "$agent" -- -R "$REPO" --title "$title" --body "$(jq -r .hc_body <<<"$plan")" --label ready-for-human) \
+      url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind human-check --from "$agent" -- -R "$REPO" --title "$title" --body-file - <<<"$(jq -r .hc_body <<<"$plan")" --label ready-for-human) \
         || die "could not create the Human check for #$agent (does the ready-for-human label exist on $REPO?)"
       hc=${url##*/}
       printf '%s' "$hc" | grep -Eq '^[0-9]+$' || die "could not read the new issue number from: $url"
     elif [ "$(jq -r '.hc_body != null' <<<"$plan")" = true ]; then
-      gh issue edit "$hc" -R "$REPO" --body "$(jq -r .hc_body <<<"$plan")" >/dev/null \
+      gh issue edit "$hc" -R "$REPO" --body-file - <<<"$(jq -r .hc_body <<<"$plan")" >/dev/null \
         || die "could not add the criterion to Human check #$hc"
     fi
     aid=$(gh api "repos/$REPO/issues/$agent" | jq -r '.id // empty') && [ -n "$aid" ] \
@@ -264,7 +264,7 @@ case "$cmd" in
               | "- #\(.ticket): \"\(.criterion)\" stays on the agent ticket. Why: \(.why)"] | join("\n")) as $ov
           | (if $ov == "" then "" else "\n\n## Human-check overrides\n\($ov)" end) as $ov
           | "A plan: tickets the Artisan approved to run together, ending at a slice reviewable end to end.\n\nEnds at: \($p.slice)\n\n## Tickets\n\($list)\($ov)\n\nCreated by `/artisan-agent:to-plan`. Run it with `/artisan-agent:implement-plan`."' "$file")
-        url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "$(jq -r --argjson i "$i" '.plans[$i].tickets[0] // empty' "$file")" -- -R "$REPO" --title "$title" --body "$body" --label plan) \
+        url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "$(jq -r --argjson i "$i" '.plans[$i].tickets[0] // empty' "$file")" -- -R "$REPO" --title "$title" --body-file - <<<"$body" --label plan) \
           || die "could not create the plan issue (does the \`plan\` label exist on $REPO?)"
         num=${url##*/}
         printf '%s' "$num" | grep -Eq '^[0-9]+$' || die "could not read the new issue number from: $url"

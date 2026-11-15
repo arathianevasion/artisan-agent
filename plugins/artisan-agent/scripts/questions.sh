@@ -126,7 +126,7 @@ $effect
 Answer by commenting \`Answer: <the decision>\` and closing this ticket. Deferring it asks whether to pull #$ticket from the run or let it carry on."
   local rargs=()
   [ -z "$repo" ] || rargs=(-R "$repo")
-  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind question -- ${rargs[@]+"${rargs[@]}"} --title "$title" --body "$body" --label needs-triage) \
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind question -- ${rargs[@]+"${rargs[@]}"} --title "$title" --body-file - <<<"$body" --label needs-triage) \
     || die "could not file the question ticket"
   num=${url##*/}
   state_is_uint "$num" || die "gh gave no issue number: $url"

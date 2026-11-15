@@ -170,13 +170,13 @@ cmd_send() {
 "
   done
   title="Plan: send $(printf '#%s, ' "${nums[@]}" | sed 's/, $//') to engineering"
-  existing=$(gh issue list -R "$REPO" --limit 500 --state open --label plan --json number,title,labels \
+  existing=$(gh issue list -R "$REPO" --limit 10000 --state open --label plan --json number,title,labels \
     | jq -r --arg t "$title" '[.[] | select(.title == $t and any((.labels // [])[]; .name == "plan"))] | first | .number // empty')
   if [ -n "$existing" ]; then
     echo "$existing"
     return 0
   fi
-  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body "Sent from the Product chat for the Engineering chat's plan step. It waits here until Engineering plans it.
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body-file - <<<"Sent from the Product chat for the Engineering chat's plan step. It waits here until Engineering plans it.
 
 $list
 <!-- artisan-agent:sent-from-product -->") || die "could not create the plan issue"
@@ -229,7 +229,7 @@ cmd_approve_envelope() {
 
 # One JSON line per open review-gate issue: number, kind, role, job, run, title.
 gate_lines() {
-  gh issue list -R "$REPO" --limit 500 --state open --label review-gate --json number,title,body,labels \
+  gh issue list -R "$REPO" --limit 10000 --state open --label review-gate --json number,title,body,labels \
     | jq -c --arg header "$(python3 -I "$SCRIPT_DIR/lib/packet.py" header)" '.[] | select(any((.labels // [])[]; .name == "review-gate"))
       | (.body // "" | split("\n")) as $l
       | ($l | index($header)) as $i
@@ -344,7 +344,7 @@ sweep_closed_gates() {
       "$SCRIPT_DIR/gate.sh" sync "${run_dir%/}" >/dev/null 2>&1 || true
     done
   fi
-  closed=$(gh issue list -R "$REPO" --limit 500 --state closed --label review-gate --json number,labels \
+  closed=$(gh issue list -R "$REPO" --limit 10000 --state closed --label review-gate --json number,labels \
     | jq -r '.[] | select(any((.labels // [])[]; .name == "review-gate")) | .number')
   for n in $closed; do
     seen=$(mem_get --arg n "$n" '(.closed_announced // []) | index($n | tonumber) // empty')
@@ -397,7 +397,7 @@ sweep_changes() {
 # Open plan issues, oldest first, that haven't started: not in-run, not
 # blocked by an open plan, with at least one ticket not yet in a run.
 plan_rows() {
-  gh issue list -R "$REPO" --limit 500 --state open --label plan --json number,title,body,labels \
+  gh issue list -R "$REPO" --limit 10000 --state open --label plan --json number,title,body,labels \
     | jq -c '.[] | select(any((.labels // [])[]; .name == "plan")) | select(any((.labels // [])[]; .name == "in-run") | not) | {number, title, body}' \
     | jq -s 'sort_by(.number)[]' | jq -c .
 }

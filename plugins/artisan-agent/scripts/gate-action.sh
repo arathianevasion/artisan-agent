@@ -417,7 +417,7 @@ cmd_redirect() {
   hold
   title="Rework: $(g .title)"
   # A call that crashed after opening the rework ticket left it open: reuse it.
-  num=$(gh issue list -R "$(repo)" --state open --label in-run --json number,title,body \
+  num=$(gh issue list -R "$(repo)" --state open --limit 10000 --label in-run --json number,title,body \
           | jq -r --arg t "$title" --arg mark "Redirected at review gate #$issue." \
               '[.[] | select(.title == $t and (.body | contains($mark)))] | first | .number // empty')
   if [ -z "$num" ]; then
@@ -439,7 +439,7 @@ Redirected at review gate #\($issue). In run \($run).
 - [ ] " + (if $notes != "" then $notes | split("\n") | first else "The slice is as the Artisan wants it, by their own judgement" end) + "
 - [ ] The full suite passes
 "' <<<"$GATE")
-    url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$(g '.tickets[0]')" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label "$label" --label in-run --body "$body") \
+    url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind rework --from "$(g '.tickets[0]')" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label "$label" --label in-run --body-file - <<<"$body") \
       || die "could not open the rework ticket"
     num=${url##*/}
   fi
@@ -762,7 +762,7 @@ cmd_split() {
     title="Split off #$t: $(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')"
     mark="Split off #$t at exception gate #$issue."
     # A call that crashed after opening the new ticket left it open: reuse it.
-    num=$(gh issue list -R "$(repo)" --state open --label needs-triage --json number,title,body \
+    num=$(gh issue list -R "$(repo)" --state open --limit 10000 --label needs-triage --json number,title,body \
             | jq -r --arg t "$title" --arg mark "$mark" \
                 '[.[] | select(.title == $t and ((.body // "") | contains($mark)))] | first | .number // empty')
     if [ -z "$num" ]; then
@@ -778,7 +778,7 @@ cmd_split() {
 ## Acceptance criteria
 
 " + ($crit | map("- [ ] " + .) | join("\n")) + "\n"')
-      url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind split --from "$t" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label needs-triage --body "$body") \
+      url=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind split --from "$t" --run-dir "$RUN_DIR" -- -R "$(repo)" --title "$title" --label needs-triage --body-file - <<<"$body") \
         || die "could not open the new ticket for #$t's criteria"
       num=${url##*/}
     fi
@@ -1005,11 +1005,11 @@ open_exception() { # decision-json
      + (if $reason == "unmeetable" then {unmeetable: $u} else {} end)
      + (if ($dec.guardrail // "") == "" then {}
         else {guardrails: [{guardrail: $dec.guardrail} + (if ($dec.area // "") == "" then {} else {area: $dec.area} end)]} end)')
-  num=$(gh issue list -R "$(repo)" --state open --label review-gate --json number,title \
+  num=$(gh issue list -R "$(repo)" --state open --limit 10000 --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
     body=$(exception_body "$gate")
-    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$(repo)" --title "$title" --label review-gate --body "$body") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$(repo)" --title "$title" --label review-gate --body-file - <<<"$body") \
       || die "could not open the exception gate for #$t"
     num=${url##*/}
   fi

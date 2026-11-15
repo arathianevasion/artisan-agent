@@ -201,3 +201,96 @@ test_a_queued_add_that_keeps_failing_is_given_up_with_a_warning() {
   assert_contains "$err" "Given up: add it by hand"
   [ ! -s "$PROJECT/.artisan-agent/runs/.board/pending.jsonl" ] || fail "a given-up add is still queued"
 }
+
+# ------------------------------------------- bodies as files, whole (#209)
+
+plain_tracker() {
+  init_run
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker" FAKE_GH_REPO=owner/repo
+  mkdir -p "$FAKE_GH_DIR"
+  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
+  cd "$PROJECT"
+}
+
+test_a_body_on_stdin_under_the_limit_is_the_issue_body_and_nothing_more() {
+  plain_tracker
+  printf 'line one\nline two\n' | "$TRACKER" new-issue --kind gate -- -R owner/repo --title "A gate" --body-file - >/dev/null
+  assert_eq "line one"$'\n'"line two" "$(jq -r .body "$FAKE_GH_DIR/issue-1.json")"
+  [ ! -e "$FAKE_GH_DIR/comments-1.md" ] || fail "a short body was split"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "issue comment"
+}
+
+# A part break inside a code fence closes the fence, and the next part opens
+# it again, so every part renders on GitHub.
+test_a_long_fenced_block_is_split_with_every_part_opening_and_closing_its_fence() {
+  plain_tracker
+  { printf '## Card\n\n```json\n'
+    jq -nr '[range(0; 6000) | "{\"line\": \(.), \"text\": \"a decision the worker made alone\"}"] | join("\n")'
+    printf '```\n\nThe end.\n'; } >"$TEST_TMPDIR/body.md"
+  "$TRACKER" new-issue --kind gate -- -R owner/repo --title "A gate" --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  local parts=0 i=0
+  jq -r .body "$FAKE_GH_DIR/issue-1.json" >"$TEST_TMPDIR/part-0"
+  parts=$(jq -n --rawfile c "$FAKE_GH_DIR/comments-1.md" '$c | split("\n---\n") | length')
+  [ "$parts" -ge 3 ] || fail "expected at least 3 comments, got $parts"
+  while [ "$i" -lt "$parts" ]; do
+    i=$((i + 1))
+    jq -rn --rawfile c "$FAKE_GH_DIR/comments-1.md" --argjson i "$i" '$c | split("\n---\n")[$i - 1]' >"$TEST_TMPDIR/part-$i"
+  done
+  i=0
+  while [ "$i" -le "$parts" ]; do
+    assert_eq 0 "$(( $(grep -c '^```' "$TEST_TMPDIR/part-$i") % 2 ))" "fences balanced in part $i"
+    [ "$i" = 0 ] || assert_eq '```json' "$(sed -n 3p "$TEST_TMPDIR/part-$i")" "part $i opens the fence again"
+    i=$((i + 1))
+  done
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "The end."
+}
+
+# No plugin script passes an issue body to gh as a command-line argument:
+# GitHub caps a body at 65,536 characters and the OS caps an argument, so
+# every issue body goes as a file (--body-file, or - for stdin) through
+# tracker.sh, which splits one over the limit. Comments and PR bodies are
+# not issue bodies.
+test_no_script_passes_an_issue_body_to_gh_as_an_argument() {
+  local hits=
+  hits=$(find "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/skills" -name '*.sh' -path '*scripts*' -print0 \
+    | xargs -0 awk '
+        FNR == 1 { line = "" }
+        { line = line $0 }
+        /\\$/ { sub(/\\$/, "", line); next }
+        line !~ /^[[:space:]]*#/ && line ~ /(issue (create|edit)|tracker\.sh" new-issue)/ \
+          && line ~ /(^|[[:space:]])(--body|-b)[[:space:]=]/ { print FILENAME ":" FNR ": " line }
+        { line = "" }' | grep -v '/scripts/tracker\.sh:' || true)
+  assert_eq "" "$hits" "an issue body passed as an argument"
+}
+
+# Every lookup for an issue that may already exist sees every open issue
+# with its label: gh lists 30 unless told more. guardrail-health.sh reads a
+# bounded window of history on purpose; it looks nothing up.
+test_every_issue_list_in_scripts_reads_every_matching_issue() {
+  local hits=
+  hits=$(awk '
+      FNR == 1 { line = "" }
+      { line = line $0 }
+      /\\$/ { sub(/\\$/, "", line); next }
+      line !~ /^[[:space:]]*#/ && line ~ /gh issue list/ {
+        n = line; sub(/.*--limit[[:space:]]+/, "", n); sub(/[^0-9].*/, "", n)
+        if (line !~ /--limit/ || n + 0 < 10000) print FILENAME ":" FNR ": " line
+      }
+      { line = "" }' "$PLUGIN_ROOT"/scripts/*.sh "$PLUGIN_ROOT"/scripts/lib/*.sh \
+    | grep -v '/scripts/guardrail-health\.sh:' || true)
+  assert_eq "" "$hits" "a gh issue list that may miss an existing issue"
+}
+
+# A part that can't be posted fails the call, naming the missing parts, but
+# the issue it made still gets its URL printed and goes on the board.
+test_a_part_that_cannot_be_posted_fails_the_call_after_the_issue_reaches_the_board() {
+  setup_board
+  jq -nr '[range(0; 3000) | "line \(.) of a finding that keeps going for a while"] | join("\n")' >"$TEST_TMPDIR/body.md"
+  touch "$FAKE_GH_DIR/comments-fail"
+  local out="" status=0
+  out=$("$TRACKER" new-issue --kind finding --from 5 -- -R owner/repo --title "A finding" --body-file "$TEST_TMPDIR/body.md" 2>"$TEST_TMPDIR/err") || status=$?
+  assert_eq 1 "$status"
+  assert_eq "https://github.com/owner/repo/issues/7" "$out"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "parts 2 3 of 3 of its body were not posted"
+  assert_eq '{"Area":"UI"}' "$(board_item 7)"
+}
