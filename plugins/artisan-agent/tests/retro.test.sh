@@ -159,7 +159,7 @@ test_render_is_one_chat_round_with_batch_questions_signals_and_satisfaction() {
   assert_contains "$r" "### Judgement calls"
   assert_contains "$r" "**L2** Keep this lesson (does it generalise beyond this project?)?"
   assert_contains "$r" "| Focus shares |"
-  assert_contains "$r" "| Rubber-stamp rate at gates |"
+  assert_contains "$r" "| Rubber-stamp rate | 2 of 2 decisions unchanged (100%): 2 of 2 gate decisions approved unchanged, 0 of 0 rulings took the recommendation |"
   assert_contains "$r" "| Throughput | 2 merged in 2 h"
   assert_contains "$r" "| Cost per merged ticket | \$1.25 per merged ticket"
   assert_contains "$r" "1. Do you understand the problem this run solved"
@@ -552,4 +552,106 @@ test_the_packet_says_when_the_merge_gate_is_over_its_limit_and_proposes_a_ticket
   out=$("$RETRO" render "$RUN_DIR")
   assert_not_contains "$out" "over its time limit"
   assert_not_contains "$out" "back under"
+}
+
+# ---- the balance: open-decision rulings and the leverage line (#234)
+
+# with_rulings: three open decisions on the sample run, filed and ruled by
+# the Decision chat: #40 took the raiser's recommendation (20 minutes after
+# it was filed), #41 changed it (40 minutes), #42 recorded no verdict (10
+# minutes). #41 was deferred first and answered later: one wait, two rulings.
+with_rulings() {
+  local t0=1800000000
+  jq --argjson t0 "$t0" '
+    .events += [
+      {seq: 50, at: ($t0 + 600), event: "guardrail-fired", guardrail: "open-decision", ticket: "10", raised_by: "worker", case: "incomplete", question: "40"},
+      {seq: 51, at: ($t0 + 600), event: "asked", ticket: "10", question: "40"},
+      {seq: 52, at: ($t0 + 600 + 20 * 60), event: "ruled", ticket: "10", question: "40", ruling: "answer", took_recommendation: true, needed_decision_chat: true},
+      {seq: 53, at: ($t0 + 900), event: "asked", ticket: "11", question: "41"},
+      {seq: 54, at: ($t0 + 900 + 40 * 60), event: "ruled", ticket: "11", question: "41", ruling: "defer", took_recommendation: false, needed_decision_chat: true},
+      {seq: 55, at: ($t0 + 900 + 90 * 60), event: "ruled", ticket: "11", question: "41", ruling: "answer", took_recommendation: false, needed_decision_chat: true},
+      {seq: 56, at: ($t0 + 1200), event: "asked", ticket: "12", question: "42"},
+      {seq: 57, at: ($t0 + 1200 + 10 * 60), event: "ruled", ticket: "12", question: "42", ruling: "reject", took_recommendation: null, needed_decision_chat: null}]' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+}
+
+test_each_ruling_is_one_of_the_artisans_actions_and_one_that_took_the_recommendation_is_a_rubber_stamp() {
+  sample_run; with_rulings
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  # The sample's three decisions and one miss, plus four rulings (job 3).
+  assert_eq 8 "$(jq .actions.total <<<"$f")" "rulings are actions"
+  assert_eq 5 "$(jq .actions.counts.problem <<<"$f")" "the miss and each ruling (job 3) serve the problem"
+  # Two gates approved unchanged, one ruling that took the recommendation, of
+  # two gates and three rulings with a verdict (#42 has none).
+  assert_eq '2 3 3 5 60' "$(jq -r '.rubber_stamp | "\(.gates) \(.rulings) \(.unchanged) \(.decisions) \(.rate)"' <<<"$f")" "rubber stamp"
+  assert_eq '5 2 40 0 2 1' "$(jq -r '.leverage | "\(.decisions) \(.changed) \(.rate) \(.gates_changed) \(.rulings_changed) \(.rulings_unknown)"' <<<"$f")" "leverage"
+}
+
+test_the_signals_show_the_leverage_line_beside_throughput_and_the_waits_on_the_artisan() {
+  sample_run; gate_events; with_rulings; seed_lessons
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  # Each question from its filing to its first ruling: 20 + 40 + 10.
+  assert_eq '3 70 40' "$(jq -r '.open_decision_wait | "\(.rulings) \(.minutes) \(.longest_minutes)"' <<<"$f")" "open decisions waited"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Rubber-stamp rate | 3 of 5 decisions unchanged (60%): 2 of 2 gate decisions approved unchanged, 1 of 3 rulings took the recommendation |"
+  assert_contains "$out" "| Leverage | 40% of 5 decisions changed the outcome (gates 0 · rulings 2; 1 ruling with no verdict not counted) |"
+  assert_contains "$out" "| Throughput | 2 merged in"
+  assert_contains "$out" "| Waited on the Artisan | gates 107 min over 2 · open decisions 70 min over 3 (longest 40 min) |"
+  # In that order: the balance reads as one block.
+  local lev=; lev=$(printf '%s\n' "$out" | grep -n '^| Leverage |' | cut -d: -f1)
+  local tp=; tp=$(printf '%s\n' "$out" | grep -n '^| Throughput |' | cut -d: -f1)
+  local w=; w=$(printf '%s\n' "$out" | grep -n '^| Waited on the Artisan |' | cut -d: -f1)
+  [ "$lev" -lt "$tp" ] && [ "$tp" -lt "$w" ] || fail "leverage, throughput and waits not side by side: $lev $tp $w"
+}
+
+test_a_run_with_no_decisions_shows_no_leverage_and_no_waits() {
+  sample_run; seed_lessons
+  jq '.decisions = []' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Rubber-stamp rate | no gate decisions or rulings this run |"
+  assert_contains "$out" "| Leverage | no gate decisions or rulings this run |"
+  assert_contains "$out" "| Waited on the Artisan | - |"
+}
+
+test_the_leverage_trend_reads_earlier_runs_facts_from_the_satisfaction_record() {
+  sample_run; with_rulings; seed_lessons
+  # Earlier runs of this project, oldest first: r0a from before #234 (its
+  # facts have gates only: 2 decisions, none changed), r0b with a leverage
+  # line (2 of 4 changed); another project's run and a lesson line are not read.
+  {
+    echo '{"type":"answers","project":"owner/repo","run":"r0a","facts":{"rubber_stamp":{"gates":2,"unchanged":2,"rate":100}}}'
+    echo '{"type":"answers","project":"other/repo","run":"x9","facts":{"leverage":{"decisions":10,"changed":10,"rate":100}}}'
+    echo '{"type":"lesson","project":"owner/repo","run":"r0b","lesson":"x"}'
+    echo '{"type":"answers","project":"owner/repo","run":"r0b","facts":{"leverage":{"decisions":4,"changed":2,"rate":50}}}'
+  } >"$ARTISAN_HOME/satisfaction.jsonl"
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq 'r0a:0 r0b:50 r1:40' "$(jq -r '[.leverage.trend.runs[] | "\(.run):\(.rate)"] | join(" ")' <<<"$f")" "the runs, oldest first"
+  # Over the three runs: (0 + 2 + 2) of (2 + 4 + 5) decisions changed the outcome.
+  assert_eq 36 "$(jq .leverage.trend.rate <<<"$f")" "the trend"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "· trend 36% over 3 runs (0% → 50% → 40%) |"
+}
+
+test_the_trend_keeps_only_the_most_recent_runs() {
+  sample_run; with_rulings
+  local i=0
+  : >"$ARTISAN_HOME/satisfaction.jsonl"
+  while [ "$i" -lt 7 ]; do
+    printf '{"type":"answers","project":"owner/repo","run":"o%s","facts":{"leverage":{"decisions":1,"changed":1,"rate":100}}}\n' "$i" >>"$ARTISAN_HOME/satisfaction.jsonl"
+    i=$((i + 1))
+  done
+  assert_eq 'o3 o4 o5 o6 r1' "$(jq -r '[.leverage.trend.runs[].run] | join(" ")' <<<"$("$RETRO" facts "$RUN_DIR")")"
+}
+
+test_the_retro_skill_shows_guardrail_healths_open_decision_proposals_with_the_balance() {
+  local skill="$PLUGIN_ROOT/skills/retro/SKILL.md" signals=
+  signals=$(grep '^   - \*\*Signals\*\*' "$skill") || fail "no Signals step in the retro skill"
+  assert_contains "$signals" "leverage"
+  assert_contains "$signals" "rulings"
+  assert_contains "$signals" "open decisions waited on the Artisan"
+  assert_contains "$signals" "\`open-decision\`"
+  assert_contains "$signals" "guardrail health"
+  assert_contains "$signals" "criterion 8"
 }

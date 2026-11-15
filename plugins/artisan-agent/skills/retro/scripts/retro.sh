@@ -7,7 +7,8 @@
 #   retro.sh prepare <run-dir> [--chat-log FILE] [--model M] [--max-budget-usd N]
 #       gathers the run's inputs and runs a fresh headless session (PREPARE.md)
 #       that writes retro/lessons.json and retro/actions.jsonl; then facts and check
-#   retro.sh facts <run-dir>        the run's facts and signals -> retro/facts.json
+#   retro.sh facts <run-dir>        the run's facts and signals -> retro/facts.json (the
+#                                   leverage trend reads the satisfaction record's earlier runs)
 #   retro.sh check <run-dir>        lessons.json plus the Artisan's own lessons ->
 #                                   retro/checked.json (homes, questions); exit 1 lists problems
 #   retro.sh render <run-dir>       the chat round as Markdown: lessons, questions,
@@ -94,7 +95,8 @@ misses_since_last() { # main out
 cmd_facts() {
   local rd=; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
   misses_since_last "$(main_of "$rd")" "$rd/retro/misses.jsonl"
-  py facts "$rd/state.json" "$PLUGIN_ROOT/references/jobs.md" "$rd/retro/actions.jsonl" "$rd/retro/misses.jsonl" >"$rd/retro/facts.json.tmp"
+  py facts "$rd/state.json" "$PLUGIN_ROOT/references/jobs.md" "$rd/retro/actions.jsonl" "$rd/retro/misses.jsonl" \
+    "$HOME_DIR/satisfaction.jsonl" >"$rd/retro/facts.json.tmp"
   mv "$rd/retro/facts.json.tmp" "$rd/retro/facts.json"
   cat "$rd/retro/facts.json"
 }

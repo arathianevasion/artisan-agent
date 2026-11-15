@@ -3,8 +3,9 @@ the chat round, the satisfaction record and its triggers, and the edits a
 kept lesson makes. retro.sh calls it; nothing here touches git or the tracker.
 
 Usage (python3 -I retro.py <command> ...):
-  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>]
-      the run's facts and signals as JSON (below)
+  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>] [<satisfaction.jsonl>]
+      the run's facts and signals as JSON; the leverage trend reads earlier
+      runs' facts from the satisfaction record
   gate-costs <state.json>
       what the merge gates cost and how long gates waited on the Artisan,
       as the Markdown table the retro's Signals show (the run summary's)
@@ -235,7 +236,77 @@ def artisan_wait(s):
     return {"decisions": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
 
 
-def facts(state_path, jobs_md, actions_path=None, misses_path=None):
+def rulings(s):
+    """The Decision chat's rulings on open decisions: one per "ruled" event
+    questions.sh sync logged (references/state-file.md)."""
+    return [e for e in s.get("events") or [] if e.get("event") == "ruled"]
+
+
+def open_decision_wait(s):
+    """Minutes open decisions waited on the Artisan: each question from its
+    filing (the first "guardrail-fired" open-decision or "asked" event naming
+    it, else its record on the ticket) to its first ruling. None when the run
+    has no ruling it can time."""
+    events = s.get("events") or []
+    filed = {}
+    for e in events:
+        if "at" in e and e.get("question") is not None and (
+                e.get("event") == "asked"
+                or (e.get("event") == "guardrail-fired" and e.get("guardrail") == "open-decision")):
+            key = (str(e.get("ticket")), str(e["question"]))
+            filed[key] = min(filed.get(key, e["at"]), e["at"])
+    for n, t in (s.get("tickets") or {}).items():
+        for q in t.get("questions") or []:
+            if isinstance(q.get("at"), (int, float)) and q.get("ticket") is not None:
+                filed.setdefault((str(n), str(q["ticket"])), q["at"])
+    waits, seen = [], set()
+    for e in rulings(s):
+        key = (str(e.get("ticket")), str(e.get("question")))
+        if key in seen or key not in filed or "at" not in e:
+            continue
+        seen.add(key)
+        waits.append(max(0, e["at"] - filed[key]) / 60.0)
+    if not waits:
+        return {"rulings": 0, "minutes": None, "longest_minutes": None}
+    return {"rulings": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
+
+
+# The leverage trend: this run and the most recent earlier ones.
+TREND_RUNS = 5
+
+
+def earlier_leverage(f):
+    """An earlier run's leverage from its facts in the satisfaction record:
+    (decisions, changed). Facts from before #234 have gate decisions only."""
+    l = f.get("leverage")
+    if isinstance(l, dict) and isinstance(l.get("decisions"), int):
+        return l["decisions"], int(l.get("changed") or 0)
+    r = f.get("rubber_stamp")
+    if isinstance(r, dict) and isinstance(r.get("gates"), int):
+        return r["gates"], r["gates"] - int(r.get("unchanged") or 0)
+    return None
+
+
+def leverage_trend(history_path, project, run, leverage):
+    """The leverage line over this run and the earlier runs of the same
+    project in the satisfaction record, oldest first, with the share over all
+    of them pooled so one odd run doesn't move the line."""
+    rows = []
+    for h in lines(history_path) if history_path else []:
+        if h.get("type", "answers") != "answers" or h.get("project") != project or h.get("run") == run:
+            continue
+        got = earlier_leverage(h.get("facts") or {})
+        if got:
+            rows.append({"run": h.get("run"), "decisions": got[0], "changed": got[1]})
+    rows = rows[-(TREND_RUNS - 1):] + [{"run": run, "decisions": leverage["decisions"], "changed": leverage["changed"]}]
+    for r in rows:
+        r["rate"] = round(100.0 * r["changed"] / r["decisions"]) if r["decisions"] else None
+    decisions = sum(r["decisions"] for r in rows)
+    changed = sum(r["changed"] for r in rows)
+    return {"runs": rows, "rate": (round(100.0 * changed / decisions) if decisions else None)}
+
+
+def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
     plan = s.get("plan") or {}
@@ -275,6 +346,11 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
             actions.append({"what": d.get("kind", "decision"), "source": "decision", "kind": d.get("kind"),
                             "job": d.get("job"), "focus": d.get("focus"), "redirect": d.get("redirect"),
                             "choice": d.get("choice")})
+    # Each ruling on an open decision is one, resolving an open design question.
+    for r in rulings(s):
+        actions.append({"what": "ruled on an open decision", "source": "ruling", "kind": "ruling",
+                        "job": 3, "ruling": r.get("ruling"), "question": r.get("question"),
+                        "took_recommendation": r.get("took_recommendation")})
     misses = [m for m in (lines(misses_path) if misses_path else [])]
     for m in misses:
         actions.append({"what": "reversed a triage recommendation", "source": "triage-miss", "job": 18})
@@ -292,8 +368,18 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     gates = [a for a in actions if a.get("kind") in GATE_KINDS or a.get("job") == 13 or a.get("gate")]
     stamped = [g for g in gates if not g.get("redirect") and not g.get("changed")
                and APPROVALS.match(str(g.get("choice") or ""))]
-    rubber = {"gates": len(gates), "unchanged": len(stamped),
-              "rate": (round(100.0 * len(stamped) / len(gates)) if gates else None)}
+    # A ruling that took the raiser's recommendation is a rubber stamp; one
+    # that changed it changed the outcome. One with no verdict is neither.
+    ruled = [a for a in actions if a.get("source") == "ruling" and isinstance(a.get("took_recommendation"), bool)]
+    took = [a for a in ruled if a["took_recommendation"]]
+    decided = len(gates) + len(ruled)
+    unchanged = len(stamped) + len(took)
+    rubber = {"gates": len(gates), "rulings": len(ruled), "unchanged": unchanged, "decisions": decided,
+              "rate": (round(100.0 * unchanged / decided) if decided else None)}
+    leverage = {"decisions": decided, "changed": decided - unchanged,
+                "rate": (round(100.0 * (decided - unchanged) / decided) if decided else None),
+                "gates_changed": len(gates) - len(stamped), "rulings_changed": len(ruled) - len(took),
+                "rulings_unknown": len([a for a in actions if a.get("source") == "ruling"]) - len(ruled)}
 
     return {
         "run_id": s.get("run_id"), "repo": s.get("repo"),
@@ -311,8 +397,10 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "triage_misses": len(misses),
         "actions": {"total": n, "counts": counts, "shares_percent": shares},
         "rubber_stamp": rubber,
+        "leverage": dict(leverage, trend=leverage_trend(history_path, s.get("repo") or "unknown", s.get("run_id"), leverage)),
         "merge_gates": gate_limit(s, merge_gate_costs(s, len(merged))),
         "artisan_wait": artisan_wait(s),
+        "open_decision_wait": open_decision_wait(s),
     }
 
 
@@ -407,15 +495,57 @@ def signals_table(f):
     else:
         focus = "no actions recorded"
     r = f["rubber_stamp"]
-    rubber = ("%d of %d gate decisions approved unchanged (%d%%)" % (r["unchanged"], r["gates"], r["rate"])
-              if r["gates"] else "no gate decisions this run")
+    decisions = r.get("decisions", r["gates"])  # facts from before #234 count gates only
+    if not decisions:
+        rubber = lev = "no gate decisions or rulings this run"
+    else:
+        l = f.get("leverage") or {"gates_changed": r["gates"] - r["unchanged"], "rulings_changed": 0}
+        rulings = r.get("rulings", 0)
+        rubber = ("%d of %d decisions unchanged (%d%%): %d of %d gate decisions approved unchanged, "
+                  "%d of %d rulings took the recommendation" % (
+                      r["unchanged"], decisions, r["rate"], r["gates"] - l["gates_changed"], r["gates"],
+                      rulings - l["rulings_changed"], rulings))
+        lev = leverage_cell(f)
     tp = ("%d merged in %s h (%s per hour)" % (f["merged"], f["hours"], f["throughput_per_hour"])
           if f["hours"] else "%d merged" % f["merged"])
     cost = "%s per merged ticket (run %s against an estimate of %s)" % (
         money(f["cost_per_merged_usd"]), money(f["cost_usd"]), money(f["estimate_usd"]))
-    rows = [("Focus shares", focus), ("Rubber-stamp rate at gates", rubber),
-            ("Throughput", tp), ("Cost per merged ticket", cost)]
+    rows = [("Focus shares", focus), ("Rubber-stamp rate", rubber), ("Leverage", lev),
+            ("Throughput", tp), ("Waited on the Artisan", waited_cell(f)), ("Cost per merged ticket", cost)]
     return "| Signal | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
+
+
+def leverage_cell(f):
+    """The leverage line: the share of the Artisan's decisions that changed
+    the outcome, and its trend over earlier runs when the record has any."""
+    l = f.get("leverage")
+    if not l:
+        return "-"
+    out = "%d%% of %d decisions changed the outcome (gates %d · rulings %d" % (
+        l["rate"], l["decisions"], l["gates_changed"], l["rulings_changed"])
+    if l["rulings_unknown"]:
+        out += "; %d ruling%s with no verdict not counted" % (l["rulings_unknown"], "" if l["rulings_unknown"] == 1 else "s")
+    out += ")"
+    t = l.get("trend")
+    if t and len(t["runs"]) > 1 and t["rate"] is not None:
+        out += " · trend %d%% over %d runs (%s)" % (t["rate"], len(t["runs"]), " → ".join(
+            "-" if x["rate"] is None else "%d%%" % x["rate"] for x in t["runs"]))
+    return out
+
+
+def waited_cell(f):
+    """How long gates and open decisions waited on the Artisan, each on its
+    own; a dash when neither did."""
+    g = f.get("artisan_wait") or {}
+    o = f.get("open_decision_wait") or {}
+    if g.get("minutes") is None and o.get("minutes") is None:
+        return "-"
+    parts = []
+    if g.get("minutes") is not None:
+        parts.append("gates %s min over %d" % (g["minutes"], g["decisions"]))
+    if o.get("minutes") is not None:
+        parts.append("open decisions %s min over %d (longest %s min)" % (o["minutes"], o["rulings"], o["longest_minutes"]))
+    return " · ".join(parts)  # not summed: the two waits can overlap
 
 
 def dash(x):
@@ -701,8 +831,8 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 2
     cmd, args = argv[1], argv[2:]
-    if cmd == "facts" and 2 <= len(args) <= 4:
-        print(json.dumps(facts(*(args + [None] * (4 - len(args)))), indent=2))
+    if cmd == "facts" and 2 <= len(args) <= 5:
+        print(json.dumps(facts(*(args + [None] * (5 - len(args)))), indent=2))
         return 0
     if cmd == "gate-costs" and len(args) == 1:
         s = load(args[0])

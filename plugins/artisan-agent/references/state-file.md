@@ -357,6 +357,7 @@ A state file from before the log has no `events`; the first event starts it.
 Reading the log is how anyone checks that a ticket went dispatch, result, verify, verified, merge, closed, in that order.
 
 The retro's merge gate figures (`retro.py facts`, `merge_gates` and `artisan_wait`, #199) are read from `merge-gate`, `ci-wait`, `merge-gate-skipped`, `parked` (`reason: "base"`), `failed`, `blocked`, `merge`, `gate-opened` and the events that close a gate; `skills/retro/SKILL.md` says which figure comes from which.
+The retro's balance (`retro.py facts`, `rubber_stamp`, `leverage` and `open_decision_wait`, #234) counts each `ruled` event as one of the Artisan's actions, by its `took_recommendation`, and times each open decision from its first `guardrail-fired` (`guardrail: "open-decision"`) or `asked` event, else its `questions` entry, to its first `ruled` event.
 
 ## The sweep
 
