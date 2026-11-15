@@ -385,3 +385,87 @@ test_an_end_gate_doubling_as_the_slice_gate_shows_cards_over_128_kib() {
   assert_contains "$body" "Question 0: y"
   assert_contains "$body" "Question 299: y"
 }
+
+# ------------------------------------------------------------ worktree_setup at the end gate (#182)
+
+# #2 moves to its own slice, so both PRs are built in a worktree of their own
+# (cherry-picked), and the project's worktree_setup runs in each.
+setup_interleaved_cut() { # setup-command
+  setup_end
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["2"].slice = "billing" | .plan.tickets["3"].slice = "export"'
+  set_end_setup "$1"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" --boundary slice >/dev/null
+  printf 'Body.\n' >"$TEST_TMPDIR/body.md"
+}
+
+set_end_setup() { # shell command
+  printf "max_agents: 5\nworktree_setup: '%s'\n" "$(printf '%s' "$1" | sed "s/'/''/g")" >"$PROJECT/.artisan-agent/config.yml"
+}
+
+setup_decision() { state_get '[.decisions[] | select(.kind == "end-gate-setup")] | last | .id'; }
+
+test_a_failing_setup_at_the_end_gate_records_the_event_and_a_waiting_decision() {
+  setup_interleaved_cut 'echo first >&2; echo "npm ci: lockfile out of date" >&2; exit 3'
+  local err="" st=0
+  err=$("$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" 2>&1 >/dev/null) || st=$?
+  assert_eq 6 "$st"
+  assert_eq 1 "$(printf '%s\n' "$err" | wc -l | tr -d ' ')" "one line: $err"
+  assert_contains "$err" "exited 3"
+  assert_contains "$err" "lockfile out of date"
+  assert_contains "$err" "decision $(setup_decision) waits"
+  assert_eq "end-gate-setup-failed 1 3" "$(state_get '.events[] | select(.event == "end-gate-setup-failed") | "\(.event) \(.n) \(.exit)"')"
+  assert_eq 'waiting end 1 3 retry,bypass' "$(state_get '.decisions[] | select(.kind == "end-gate-setup")
+    | "\(.status) \(.gate) \(.pr) \(.exit) \(.options | join(","))"')"
+  assert_contains "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .command')" 'exit 3'
+  assert_contains "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .stderr')" "npm ci: lockfile out of date"
+  # No PR is cut, the run doesn't end, and status asks for the decision.
+  assert_eq 0 "$(ls "$FAKE_GH_DIR"/pr-*.json 2>/dev/null | wc -l | tr -d ' ')"
+  assert_eq "" "$(git -C "$PROJECT" branch --list 'pr/r1/*')"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "end-gate-setup: PR 1"
+  # Cutting again before the Artisan answers is refused, naming the decision.
+  err=$("$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" 2>&1 >/dev/null) || st=$?
+  assert_eq 6 "$st"
+  assert_contains "$err" "state.sh decide $RUN_DIR $(setup_decision) retry|bypass"
+}
+
+test_retry_after_fixing_the_setup_carries_on_with_the_end_gate() {
+  setup_interleaved_cut 'exit 3'
+  assert_status 6 "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md"
+  export SETUP_LOG="$TEST_TMPDIR/setup.log"
+  set_end_setup 'echo "$PWD" >>"$SETUP_LOG"'
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" "$(setup_decision)" retry >/dev/null
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  "$E" cut "$RUN_DIR" 2 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  assert_eq 2 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
+  assert_eq 2 "$(wc -l <"$SETUP_LOG" | tr -d ' ')" "the setup ran for each PR"
+  assert_eq "" "$(git -C "$PROJECT" diff "$M3" pr/r1/2)"
+  assert_eq true "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .applied')"
+  assert_not_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_bypassing_the_setup_cuts_that_pr_without_it() {
+  export SETUP_LOG="$TEST_TMPDIR/setup.log"
+  setup_interleaved_cut 'echo "$PWD" >>"$SETUP_LOG"; exit 3'
+  assert_status 6 "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md"
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" "$(setup_decision)" bypass >/dev/null
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  assert_eq 1 "$(wc -l <"$SETUP_LOG" | tr -d ' ')" "the bypassed cut ran no setup"
+  assert_eq "t2.txt" "$(git -C "$PROJECT" diff --name-only main pr/r1/1)"
+  # The bypass was for PR 1 alone: PR 2 runs the setup, which still fails.
+  assert_status 6 "$E" cut "$RUN_DIR" 2 --body-file "$TEST_TMPDIR/body.md"
+  assert_eq 2 "$(state_get '[.decisions[] | select(.kind == "end-gate-setup")] | last | .pr')"
+}
+
+test_a_passing_setup_at_the_end_gate_runs_once_in_each_pr_worktree() {
+  export SETUP_LOG="$TEST_TMPDIR/setup.log"
+  setup_interleaved_cut 'echo "$PWD $ARTISAN_MAIN" >>"$SETUP_LOG"'
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  assert_eq "$TEST_TMPDIR/project-wt/r1-pr-1 $(cd "$PROJECT" && pwd -P)" "$(sed "s#$(cd "$TEST_TMPDIR" && pwd -P)#$TEST_TMPDIR#" "$SETUP_LOG")"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "end-gate-setup")] | length')"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "end-gate-setup-failed")] | length')"
+}

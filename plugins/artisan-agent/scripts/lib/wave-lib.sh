@@ -37,10 +37,17 @@ get() { jq -r "$@" "$FILE"; }
 # "setup: setup timeout after <n>s: <command> ...: <stderr tail>". A leader
 # killed from outside has its group killed too; one that never came up (no
 # setsid, perl failed) returns 1 with "... could not start ...", not a timeout.
+#
+# A failure also sets SETUP_CMD (the command), SETUP_RC (its exit status; 124
+# for a timeout) and SETUP_TAIL (the last lines of its stderr), for a caller
+# that records them (end-gate.sh, #182).
 SETUP_ERR=
+SETUP_CMD=
+SETUP_RC=
+SETUP_TAIL=
 worktree_setup() {
   local wt="$1" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
-  SETUP_ERR=
+  SETUP_ERR= SETUP_CMD= SETUP_RC= SETUP_TAIL=
   conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
   cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
   [ -n "$cmd" ] || return 0
@@ -98,7 +105,9 @@ worktree_setup() {
     [ "$rc" -eq 0 ] || SETUP_ERR="setup: \`$cmd\` exited $rc in $wt: ${tail_:-no stderr}"
   fi
   rm -rf "$dir"
-  [ "$rc" -eq 0 ]
+  [ "$rc" -ne 0 ] || return 0
+  SETUP_CMD=$cmd SETUP_RC=$rc SETUP_TAIL=$tail_
+  return 1
 }
 
 writer() { printf '%s\n' "${ARTISAN_WRITER_PID:-$$}"; }

@@ -389,6 +389,14 @@ exit_decision_lines() {
        | "orchestrator-exit: \(.cause) in wave \(.wave)\(if (.tickets | length) > 0 then " (" + (.tickets | map("#" + .) | join(", ")) + ")" else "" end): \(.detail); decision \(.id) waits (resume, retry or halt)"'
 }
 
+# "end-gate-setup: PR <n>: `<command>` exited <status>: <stderr tail>; decision
+# <id> waits (retry or bypass)", one line per waiting end-gate-setup decision
+# (end-gate.sh cut, #182), for status.
+end_gate_setup_lines() {
+  get '.decisions[] | select(.kind == "end-gate-setup" and .status == "waiting")
+       | "end-gate-setup: PR \(.pr): `\(.command)` exited \(.exit): \(.stderr | gsub("\n"; " | ")); decision \(.id) waits (retry or bypass: state.sh decide, then end-gate.sh cut again)"'
+}
+
 # apply_exit_answers: carry out the Artisan's answers to orchestrator-exit
 # decisions (state.sh decide <run-dir> <id> resume|retry|halt), once each:
 # resume carries the wave on; retry sends the decision's tickets still
@@ -831,7 +839,7 @@ $reviews"
       ;;
   esac
   echo "next: $next"
-  [ "$next" != decide ] || exit_decision_lines
+  [ "$next" != decide ] || { exit_decision_lines; end_gate_setup_lines; }
   [ "$next" != parked ] || echo "$parked"
   [ "$next" = parked ] || [ "$(get '.base_park != null')" != true ] \
     || echo "parked base: $(base_red_line); merging waits, other work carries on; clear it with wave.sh unpark-base once the base is fixed"

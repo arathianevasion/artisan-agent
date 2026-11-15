@@ -218,8 +218,33 @@ cmd_prs() {
 git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email; } >/dev/null 2>&1 \
   || printf -- '-c user.name=Artisan-Agent -c user.email=artisan-agent@localhost'; }
 
-build_branch() { # pr-json: points pr/<run>/<n> at the group's work
-  local pr="$1" branch= base= tmp= c= ident=
+# setup_failed n branch: the project's worktree_setup failed in PR n's
+# worktree (#182). Records an end-gate-setup-failed event and a waiting
+# end-gate-setup decision (retry or bypass) naming the command, its exit
+# status and its stderr tail, then refuses (6) with one line. No PR is cut.
+setup_failed() {
+  local n="$1" branch="$2" id="" line=""
+  id=$(get '(.decisions | length) + 1')
+  apply '.decisions += [{id: $id, kind: "end-gate-setup", gate: "end", pr: $n, branch: $b,
+          question: "PR \($n)'"'"'s worktree_setup failed at the end gate: retry once the command is fixed, or bypass the setup for this PR?",
+          command: $cmd, exit: $rc, stderr: $tail, detail: $err, options: ["retry", "bypass"],
+          status: "waiting", at: $now}]
+    | event({event: "end-gate-setup-failed", n: $n, branch: $b, command: $cmd, exit: $rc, stderr: $tail, decision: $id}; $now)' \
+    --argjson id "$id" --argjson n "$n" --arg b "$branch" --arg cmd "$SETUP_CMD" --argjson rc "${SETUP_RC:-1}" \
+    --arg tail "$SETUP_TAIL" --arg err "$SETUP_ERR"
+  line=$(printf '%s' "$SETUP_ERR" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')
+  refuse "PR $n: $line; no PR is cut and decision $id waits: state.sh decide $RUN_DIR $id retry|bypass, then end-gate.sh cut again"
+}
+
+# setup_decision n status [choice]: the last end-gate-setup decision for PR n
+# with that status (and choice) not yet applied, or nothing.
+setup_decision() {
+  get --argjson n "$1" --arg st "$2" --arg c "${3:-}" '[.decisions[] | select(.kind == "end-gate-setup" and .pr == $n
+    and .status == $st and .applied != true and ($c == "" or .choice == $c))] | last | .id // empty'
+}
+
+build_branch() { # pr-json [bypass-setup]: points pr/<run>/<n> at the group's work
+  local pr="$1" bypass="${2:-}" branch="" base="" tmp="" c="" ident=""
   branch=$(jq -r .branch <<<"$pr")
   if [ "$(jq -r .consecutive <<<"$pr")" = true ]; then
     git -C "$MAIN" branch -f "$branch" "$(jq -r '.commits | last' <<<"$pr")" >/dev/null || die "could not create $branch"
@@ -230,9 +255,11 @@ build_branch() { # pr-json: points pr/<run>/<n> at the group's work
   tmp="$WT_ROOT/$RUN_ID-pr-$(jq -r .n <<<"$pr")"
   rm -rf "$tmp"; git -C "$MAIN" worktree prune
   git -C "$MAIN" worktree add -q --detach "$tmp" "$base" || die "could not make a worktree for $branch"
-  if ! worktree_setup "$tmp"; then
+  # The project's worktree_setup (#173), unless the Artisan bypassed it for
+  # this PR after it failed (#182).
+  if [ -z "$bypass" ] && ! worktree_setup "$tmp"; then
     git -C "$MAIN" worktree remove --force "$tmp" >/dev/null 2>&1 || true
-    die "$SETUP_ERR"
+    setup_failed "$(jq -r .n <<<"$pr")" "$branch"
   fi
   ident=$(git_id)
   for c in $(jq -r '.commits[]' <<<"$pr"); do
@@ -250,7 +277,7 @@ build_branch() { # pr-json: points pr/<run>/<n> at the group's work
 cmd_cut() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local n="$2" body= title= plan= pr= url= branch= base= repo=
+  local n="$2" body= title= plan= pr= url= branch= base= repo= d=""
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -271,8 +298,11 @@ cmd_cut() {
     [ -n "$(get -r --argjson p "$((n - 1))" '(.end_gate.prs // [])[] | select(.n == $p) | .url')" ] \
       || refuse "PR $n is stacked on PR $((n - 1)): cut that first"
   fi
+  # A failed worktree_setup waits for the Artisan: retry or bypass (#182).
+  d=$(setup_decision "$n" waiting)
+  [ -z "$d" ] || refuse "PR $n's worktree_setup failed and decision $d waits: state.sh decide $RUN_DIR $d retry|bypass, then end-gate.sh cut again"
   branch=$(jq -r .branch <<<"$pr"); base=$(jq -r .base <<<"$pr"); repo=$(get -r .repo)
-  build_branch "$pr"
+  build_branch "$pr" "$(setup_decision "$n" decided bypass)"
   if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
     git -C "$MAIN" push -q origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
   fi
@@ -281,6 +311,7 @@ cmd_cut() {
     || die "could not open the PR for $branch (the branch is kept)"
   url=$(printf '%s\n' "$url" | tail -1)
   apply '.end_gate.prs = ((.end_gate.prs // []) + [$pr + {url: $url, at: $now}])
+    | .decisions |= map(if .kind == "end-gate-setup" and .pr == $pr.n and .status == "decided" then .applied = true else . end)
     | event({event: "pr-cut", n: $pr.n, branch: $pr.branch, base: $pr.base, tickets: $pr.tickets, url: $url}; $now)' \
     --argjson pr "$(jq -c '{n, branch, base, tickets}' <<<"$pr")" --arg url "$url"
   echo "$url"
