@@ -237,10 +237,10 @@ parse_opts() { # --bug only where BUG_OK=1 (redirect, retry, take); the criterio
 # record, and the event. extra-filter runs first, for the ticket changes.
 # The events guardrail health reads go in the same write (#122): a bypass
 # of a gate a guardrail opened logs guardrail-bypassed per guardrail; a
-# redirect or bypass of a review gate answers the risk gates folded into it
-# the same way (answer_folded, #241; a deferred gate's wait for its approval); a
 # redirect logs gate-decision (outcome change, redirect true, the tickets'
-# areas); --bug logs bug-found for each of the gate's tickets.
+# areas); --bug logs bug-found for each of the gate's tickets. A redirect or
+# bypass of a review gate also answers the risk gates folded into it
+# (answer_folded, #241); a deferred gate's folded gates wait for its approval.
 record_answer() {
   local status="$1" choice="$2" field="$3" extra="$4" job=13
   shift 4
