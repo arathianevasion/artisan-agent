@@ -32,6 +32,7 @@ An exception gate covers what has no ticket to triage. It opens for every `excep
 |---|---|---|
 | the ticket failed its attempts (the sweep, `verify.sh judge` or `wave.sh merge` counted the last) | `Exception gate: run <id> gave up on #<t> after <n> attempts` | `gave-up` |
 | the suite went red after merging it (a check that won't go green) | `Exception gate: #<t>'s check won't go green (run <id>)` | `red-check` |
+| the worker said no worker could meet a criterion here and the verifier agrees (`verify.sh judge`, #186) | `Exception gate: #<t> has criteria no worker can meet (run <id>)` | `unmeetable` |
 | anything else that blocked it (an unresolved conflict, a result describing another commit, a diff missing its expected output) | `Exception gate: #<t> is blocked (run <id>)` | `blocked` |
 
 The overrun gate, the third kind of exception, is #72's.
@@ -52,6 +53,20 @@ The overrun gate, the third kind of exception, is #72's.
 | drop | `gate-action.sh drop <run> <issue>` | out of the run as `dropped`, `in-run` removed, left open, no new label | **leave with it** (see below) | closed |
 | bypass | `gate-action.sh bypass <run> <issue>` | out of the run as `bypassed`, `in-run` removed | **go ahead**: its native edges to them are removed (kept in `bypass.released`) | closed, who recorded |
 | defer | `gate-action.sh defer <run> <issue>` | `deferred`, still in the run's record | **go ahead** now, as for bypass | open until the end gate |
+
+### A criterion no worker can meet
+
+A worker that finds a criterion no worker could meet in this environment (it needs recorded fixtures that don't exist yet, or outside access) lists it in its record's `unmeetable` (`references/evidence-record.md`). The verifier says whether it agrees. If it does, `verify.sh judge` uses no further attempt: the ticket is `blocked` (`tickets.<t>.unmeetable`) and this gate opens, its body listing each criterion with the worker's and the verifier's reasons, and its own choices. If the verifier disagrees, the attempt fails as any other, and the retry's prompt says why.
+
+| The Artisan says | Call | The ticket | The gate |
+|---|---|---|---|
+| split into a Human check | `gate-action.sh split <run> <issue> --human [--criterion C]...` | the criteria move to its Human check (`to-plan.sh split-human-check`), which joins the run's scope; `returned`: a fresh verifier judges the same commit on the rest | closed |
+| split into a new ticket | `gate-action.sh split <run> <issue> --ticket [--criterion C]... [--why W]` | one new `needs-triage` ticket holds the criteria, outside the run; `returned`, as above | closed |
+| rewrite | `gate-action.sh rewrite <run> <issue> --as "…" [--criterion C]` | the criterion's new wording; `returned`: a fresh verifier judges the same commit against it | closed |
+| drop it | `gate-action.sh drop-criterion <run> <issue> --why W [--criterion C]...` | the criteria are dropped with the reason; `returned`, as above | closed |
+| retry anyway | `gate-action.sh retry <run> <issue> [--notes "…"]` | `queued` with one more attempt; the next worker is told the Artisan judges the criteria meetable, and the notes | closed |
+
+`--criterion` is a criterion's text or its number in the gate's list; with none, the choice takes every listed criterion (rewrite: the only one). Split, rewrite and drop never edit the ticket's criteria behind the verifier's back: each change is kept in `tickets.<t>.criteria_changes`, `verify.sh` reads the criteria through them (`lib/criteria.py change`), a later worker's prompt lists them, and a comment on the ticket says what changed (a split into a Human check also takes it off the ticket's body). Each logs `criterion-changed`. A choice on this gate decides its decision as job 15 with the choice's name. Bypass, defer, reslice, take and drop (the ticket) work here as on any exception gate; split, rewrite and drop-criterion are refused (6) on any other.
 
 **An exception gate the stream-json miscount opened (#151)** is not the Artisan's call: the ticket's attempts completed, but plugin 0.4.0 couldn't read their result. First run `sweep.sh repair <run> --dry-run` to see the plan, then `sweep.sh repair <run>` (`references/state-file.md`): it returns the ticket with its cost and prints each such gate. Then close each with `gate-action.sh repaired <run> <issue>` (`--by`, `--why`): the gate closes as `resolved`, its record under `resolution`, its decision decided as "resolved by repair" and the event `gate-resolved`. It is not a bypass: no `gate-bypassed` or `guardrail-bypassed`, the ticket stays in the run and keeps its own edges, and only the gate's issue stops blocking the dependents. It is refused (6) unless the repair returned the ticket. Don't close such a gate by hand on the tracker: `sync` would record that as a bypass.
 
