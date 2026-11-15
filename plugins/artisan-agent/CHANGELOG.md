@@ -2,6 +2,17 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.9.0 (2026-11-15)
+
+Open decisions: a worker, the verifier, the plan step or a gate can file a decision no ticket should settle on its own, and it reaches you in the Decision chat. The two chats are renamed the Decision chat and the Run chat.
+
+- **Filing open decisions:** criterion 8 lets a worker file an open decision with its case, harm and recommendation (`questions.sh file --criterion 8`; `references/open-decisions.md`). A worker's own is blocking or split, never non-blocking (#227). The verifier names open decisions in its verdict without changing the outcome, and the sweep files each one split, once (#230). One a worker finds in another ticket sits on that ticket without blocking it (#231).
+- **Rulings:** triage can rule Answer, Reject, Add ticket, Defer or Discard, and each ruling records both verdicts. An "Add the block:" ruling adds the blocking edge (#228, #231). A Defer or Discard on a non-blocking decision never pulls or redirects a ticket that already merged (#238).
+- **Plan step and gates:** the plan step flags each draft ticket's open decisions under Needs your attention, and `state.sh init` refuses while one stands; `--override-open-decision` keeps a ticket with a reason, and `plan.sh drop` files its decisions and removes it with its dependents (#229). A gate packet numbers its uncertainties; `gate-action.sh triage` files a card or uncertainty as an open decision, and the end gate cuts no PR until each is ruled (#232).
+- **Guardrail health:** a built-in open-decision guardrail. Decisions raised at a gate or after merge tighten it (#233).
+- **Retro:** the balance between autonomous throughput and your leverage: each ruling counts as one of your actions, one that took the recommendation is a rubber stamp, and gate and open-decision waits are shown side by side, with a trend over five runs (#234).
+- **Decision chat and Run chat:** every skill, reference, script message, template and the README use the new names. `chats.sh --chat decision|run` still accepts the old names, and a static test catches them (#235). The glossary and ADR 0002 define them.
+
 ## 0.8.1 (2026-11-15)
 
 Fixes for large runs, leftover worktrees and branches, criteria in triage comments, merge-gate reuse, and named sessions.
