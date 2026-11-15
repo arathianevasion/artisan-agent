@@ -312,8 +312,6 @@ cmd_build() {
   # Agent Brief comment gave any) can't be verified: the plan isn't approvable.
   out=$(printf '%s' "$out" | jq '.criteria_missing = [.tickets | to_entries[]
     | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
-  # Agent criteria that need a person (references/human-checks.md), or CI, a
-  # PR or the full suite (#213), less the Artisan's overrides.
   # Open decisions (criterion 8, references/open-decisions.md): each one the
   # draft records stands until the Artisan keeps its ticket with a reason
   # (--override-open-decision) or plan.sh drop takes the ticket out.
@@ -324,7 +322,7 @@ cmd_build() {
       | if type != "array" then error("open_decisions is a list of {ticket, case, harm, recommendation}") else . end
       | map(.ticket = ((.ticket // "") | tostring | ltrimstr("#"))) as $od
       | reduce $od[] as $o (.;
-          if ($input.scope | index($o.ticket)) == null then error("an open decision names #\($o.ticket), which is not in scope")
+          if ($input.scope | index($o.ticket)) == null then error("an open decision names #\($o.ticket), which is not in scope: take a ticket with an open decision out with plan.sh drop, which files it and takes its dependents too")
           elif (["incomplete", "misaligned", "invented", "adr"] | index($o.case)) == null
           then error("the open decision on #\($o.ticket) needs a case: incomplete, misaligned, invented or adr")
           elif ($o.harm | blank) then error("the open decision on #\($o.ticket) needs its concrete harm")
@@ -342,6 +340,8 @@ cmd_build() {
     die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
   fi
   overrides=$(jq -c '[.[] | select(.kind != "open-decision")]' <<<"$overrides")
+  # Agent criteria that need a person (references/human-checks.md), or CI, a
+  # PR or the full suite (#213), less the Artisan's overrides.
   ov='{"human_check_overrides": [], "merge_gate_overrides": []}'
   if [ "$(jq length <<<"$overrides")" -gt 0 ]; then
     ov=$(printf '%s' "$out" | python3 -I "$SCRIPT_DIR/lib/to-plan.py" overrides "$overrides" 2>&1) \
