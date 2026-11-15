@@ -348,13 +348,18 @@ cmd_backstop() {
     --slurpfile commits "$WORK/commits.json" --arg since "$since" '
     $states[0] as $states | $prs[0] as $prs | $closed[0] as $closed | $commits[0] as $commits
     | ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits
-    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]) as $branches
+    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]
+       + [$states[] | "retro/\(.run_id)", ((.end_gate.prs // [])[] | .branch // empty), ((.urgent_gates // {})[] | .pr.branch // empty)]) as $branches
+    | ([$states[] | "pr/\(.run_id)/"]) as $prprefixes
     | ([$prs[] | .mergeCommit.oid // .mergeCommit // empty]) as $prcommits
     | ([$states[] | (.tickets // {}) | to_entries[] | select(.value.status == "merged" or .value.status == "closed") | .key]
-       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]) as $inrun
+       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]
+       + [$states[] | ((.plans // [])[] | .number), ((.review_gates // [])[], (.exception_gates // [])[], (.overrun_gates // [])[],
+            (.end_gate // empty), (.urgent_gates // {})[] | .issue) | values | tostring]) as $inrun
     | { direct_commits: [$commits[] | select(.parents == 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
         unrecorded_merges: [$commits[] | select(.parents > 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
-        prs_without_run: [$prs[] | select((.headRefName | IN($branches[])) | not) | {number, headRefName}],
+        prs_without_run: [$prs[] | select($since == "" or (.mergedAt // "") >= $since) | .headRefName as $b
+          | select(($b | IN($branches[])) or any($prprefixes[]; . as $p | $b | startswith($p)) | not) | {number, headRefName}],
         tickets_closed_outside_run: [$closed[] | select(($since == "" or (.closedAt // "") >= $since) and ((.number | tostring) | IN($inrun[]) | not)) | .number] }')
   if [ "$TABLE" = 1 ]; then
     jq -r "$(state_jq_row_def)"'
