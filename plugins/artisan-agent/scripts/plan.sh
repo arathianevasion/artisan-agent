@@ -332,6 +332,92 @@ cmd_build() {
   printf '%s\n' "$out"
 }
 
+# out_of_run: the jq that names the ticket $t and every ticket in scope
+# that depends on it, through blocked_by or as its Human check, in scope order.
+OUT_OF_RUN_JQ='
+  def key: tostring | ltrimstr("#");
+  def leaving($set):
+    [.scope[] | key | select(. as $k | $set | index($k) | not)] as $rest
+    | [$rest[] as $k | (.tickets[$k] // {}) as $tk
+       | select(([$tk.blocked_by // [] | .[] | key] + [($tk.human_check_for // "") | key])
+                | any(. as $b | $set | index($b) != null))
+       | $k] as $new
+    | if $new == [] then $set else leaving($set + $new) end;
+  leaving([$t]) as $out | [.scope[] | key | select(. as $k | $out | index($k) != null)]'
+
+# write_draft draft filter [jq args]: rewrite the draft in one step.
+write_draft() {
+  local f="$1" filter="$2" tmp=""
+  shift 2
+  tmp="$f.tmp.$$"
+  jq "$filter" "$@" "$f" >"$tmp" || { rm -f "$tmp"; die "could not rewrite $f"; }
+  mv "$tmp" "$f"
+}
+
+# The plan step's open decisions (references/open-decisions.md): file each
+# one recorded on the ticket and on its dependents through questions.sh,
+# with no run, raised at the plan step and not blocking; then take them all
+# out of the draft. Each filing is written to the draft as it lands, so a
+# retry after a failure never files one twice.
+cmd_drop() {
+  local draft="" ticket="" repo="" out="" i="" n="" num="" field=""
+  local -a args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --draft) [ $# -ge 2 ] || usage; draft=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$ticket" ] || usage; ticket=${1#\#}; shift ;;
+    esac
+  done
+  [ -n "$draft" ] && [ -n "$ticket" ] || usage
+  [ -f "$draft" ] || die "no draft: $draft"
+  jq -e 'type == "object" and (.scope | type == "array")' "$draft" >/dev/null 2>&1 || die "draft is not a JSON object with a scope: $draft"
+  jq -e --arg t "$ticket" '.scope | map(tostring | ltrimstr("#")) | index($t) != null' "$draft" >/dev/null \
+    || die "#$ticket is not in the draft's scope"
+  jq -e --arg t "$ticket" '[.open_decisions // [] | .[] | select((.ticket // "" | tostring | ltrimstr("#")) == $t)] != []' "$draft" >/dev/null \
+    || die "the draft records no open decision on #$ticket: change its scope in the draft instead"
+  repo=$(jq -r '.repo // ""' "$draft")
+  out=$(jq -c --arg t "$ticket" "$OUT_OF_RUN_JQ" "$draft")
+  n=$(jq '.open_decisions | length' "$draft")
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if jq -e --argjson i "$i" --argjson out "$out" '.open_decisions[$i] | (.filed // null) == null
+         and ((.ticket // "" | tostring | ltrimstr("#")) as $k | $out | index($k) != null)' "$draft" >/dev/null; then
+      args=()
+      for field in ticket case harm recommendation; do
+        args+=("--$field" "$(jq -r --argjson i "$i" --arg f "$field" '.open_decisions[$i][$f] // "" | tostring' "$draft")")
+      done
+      [ -z "$repo" ] || args+=(--repo "$repo")
+      num=$(env -u ARTISAN_FINDINGS_FILE "$SCRIPT_DIR/questions.sh" file --criterion 8 --raised-by plan --non-blocking "${args[@]}") \
+        || die "could not file the open decision on #$(jq -r --argjson i "$i" '.open_decisions[$i].ticket' "$draft"); #$ticket stays in the draft, and a retry files only what is left"
+      write_draft "$draft" '.open_decisions[$i].filed = $q' --argjson i "$i" --arg q "$num"
+      printf 'filed #%s: the open decision on #%s\n' "$num" "$(jq -r --argjson i "$i" '.open_decisions[$i].ticket | tostring | ltrimstr("#")' "$draft")"
+    fi
+    i=$((i + 1))
+  done
+  write_draft "$draft" '
+    def key: tostring | ltrimstr("#");
+    def gone: key as $k | $out | index($k) != null;
+    . as $d
+    | ([.open_decisions // [] | .[] | select(.ticket | gone) | .filed] ) as $filed
+    | .dropped = ((.dropped // []) + [{ticket: $t, title: (.tickets[$t].title // null), filed: $filed,
+                                       dependents: [$out[] | select(. != $t)]}])
+    | .scope = [.scope[] | select(gone | not)]
+    | .waves = [(.waves // [])[] | map(select(gone | not)) | select(length > 0)]
+    | .tickets = ((.tickets // {}) | with_entries(select(.key | gone | not)))
+    | .open_decisions = [.open_decisions // [] | .[] | select(.ticket | gone | not)]
+    | .gates = [(.gates // [])[]
+        | if .tickets then .tickets = [.tickets[] | select(gone | not)] | select(.tickets != [])
+          elif .after then select(.after | gone | not)
+          elif .kind == "slice" and .slice then
+            .slice as $s | select([$d.scope[] | key | select(gone | not) | $d.tickets[.].slice] | index($s) != null)
+          else . end]
+    | if .hands_on and (.hands_on.ticket | gone) then del(.hands_on) else . end
+  ' --arg t "$ticket" --argjson out "$out"
+  printf 'dropped #%s with %s: out of the draft until the Decision chat rules; rebuild the plan\n' "$ticket" \
+    "$(jq -r --arg t "$ticket" '[.[] | select(. != $t) | "#" + .] | if . == [] then "no dependents" else join(", ") end' <<<"$out")"
+}
+
 cmd_render() {
   local plan="$1"
   [ -f "$plan" ] || die "no plan: $plan"
@@ -502,6 +588,7 @@ cmd=$1
 shift
 case "$cmd" in
   build) cmd_build "$@" ;;
+  drop) cmd_drop "$@" ;;
   render) [ $# -eq 1 ] || usage; cmd_render "$1" ;;
   *) usage ;;
 esac
