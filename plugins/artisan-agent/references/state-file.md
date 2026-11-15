@@ -79,6 +79,7 @@ Top level:
 | `relays` | top-level | each finding handled: `{from, seq, target, action: relay\|comment\|triage, issue, at}`, written by `findings.sh mark` (`references/findings.md`) |
 | `lessons` | top-level | lessons noted during the run for the retro: `{kind: "slicing", ticket, note, at}`, written by the sweep when a worker stops for a design question; `{kind: "guardrail", gate, card, ticket, choice, guardrail_level, reach, area, by, at}`, when the Artisan makes a card a guardrail at a gate |
 | `findings_read` | top-level | per ticket, how many complete lines of its findings file are already logged |
+| `pushed` | top-level | the ticket branches the plugin pushed to the project's remote, keyed by branch (#211): `{ticket, remote, sha, by: worker-ci\|move, at, failed?: {tries, why, at}}`. `move.sh out` records each branch it pushes; `worker-ci.sh run`, in a run's worker, leaves a note under `pushed/` that `pushed.sh prune` folds in (the newest push wins). `pushed.sh prune` (`wave.sh close`, every sweep) deletes a branch once its ticket is closed or has left the run, and only while its remote tip is `sha` or a commit merged into the integration branch; then the entry goes. A tip someone else moved is left on the remote and the entry goes with a warning; a failed delete stays with `failed` and the next sweep tries again. `move.sh in` sets each `remote` to the remote the run came through |
 | `costs` | top-level | `workers_usd` (sum of tickets' `cost_usd`), `orchestrator_usd`, `total_usd` |
 | `decisions` | top-level | the queue of decisions waiting for the Artisan: `{id, kind, ticket?, question, status: "waiting", at, ...}`; |
 | `waves` | top-level | per wave started: `{wave, started_at, plugin_version, guardrails: {team, product, individual}}`, each a source commit or `null` |
@@ -196,6 +197,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `orchestrators` | `[]`; `current_wave` is 0 |
 | `findings_read` | `{}`; no finding line is read yet |
 | `relays` | `[]` |
+| `pushed` | `{}`: no ticket branch pushed, nothing to delete |
 | `lessons` | `[]` |
 | `review_gates` | `[]` |
 | `end_gate` | absent: the end gate is not open |
@@ -282,6 +284,8 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `gate-decided` and `gate-resolved` (`gate`, `issue`, `kind`, `choice`, `by`)
 - `gate-empty` (the same, `issue: null`, plus `left_run`, `[{number, status, title}]`, and `why`: a slice gate whose tickets all left the run, closed by `gate.sh sync` with nothing to review, #164)
 - `repaired` (`ticket`, `attempt`, `cost_usd`, `failures_taken_back`: `sweep.sh repair`, #151)
+- `branch-deleted` (`branch`, `ticket`, `remote`, `sha`; `already: true` when it was gone from the remote already: `pushed.sh prune`, #211)
+- `branch-left` (`branch`, `ticket`, `remote`, `sha`, `tip`: a pushed branch someone else pushed to, left on the remote, #211)
 - `sent-back` (`ticket`, `from`, `by?`: a ticket left the run with its dropped or resliced blocker; `wave.sh status` says `next: stranded`, not `blocked`, when tickets are left waiting on one, `references/gate-actions.md`)
 - `decided` (`decision`, `kind`, `choice`, `by`)
 - and `parked` (`reason: "reviews"`, `detail`)
