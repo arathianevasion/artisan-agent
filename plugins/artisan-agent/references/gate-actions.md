@@ -84,7 +84,7 @@ The run **parks** when every ticket left (not merged, closed, or taken out of th
 parked: waiting on 2 reviews: Slice gate: greeting (run r1) #5, Exception gate: run r1 gave up on #3 after 2 attempts #6; 3 tickets wait behind them: #2, #3, #4
 ```
 
-followed by the decisions waiting. A `parked` event (`reason: "reviews"`, `detail`) is logged once per distinct line. Nothing launches until the Artisan answers one of the gates; the next `wave.sh status` carries on. Parking behind a hands-on ticket is `human.sh parked` (`skills/implement-plan/references/hands-on.md`).
+followed by the decisions waiting. Each queued ticket's blockers are read from the tracker whole, bodies included, and reach jq on stdin, so parking works however long the tickets are (#208). A `parked` event (`reason: "reviews"`, `detail`) is logged once per distinct line. Nothing launches until the Artisan answers one of the gates; the next `wave.sh status` carries on. Parking behind a hands-on ticket is `human.sh parked` (`skills/implement-plan/references/hands-on.md`).
 
 A deferred gate never parks the run: its dependents already went ahead.
 
