@@ -129,7 +129,7 @@ test_u_a_disagreed_unmeetable_criterion_fails_the_attempt_and_the_retry_is_told_
   assert_eq false "$(state_get '[.events[] | select(.event == "criterion-unmeetable")][0].verifier_agrees')"
   local prompt=
   prompt=$("$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null; cat "$RUN_DIR/prompts/1.2.md")
-  assert_contains "$prompt" "- The last worker said no worker could meet It says hi (it needs recorded fixtures that do not exist yet); the verifier disagrees, so meet it: the fixtures can be recorded from the sample data"
+  assert_contains "$prompt" "- The last worker said no worker could meet It says hi (it needs recorded fixtures that do not exist yet); the verifier did not agree, so meet it: the fixtures can be recorded from the sample data"
 }
 
 test_u_drop_criterion_drops_it_with_the_reason_and_the_same_commit_is_verified_again() {

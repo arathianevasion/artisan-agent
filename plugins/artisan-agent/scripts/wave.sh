@@ -1046,7 +1046,7 @@ failure_evidence() {
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.gate == true) | "- Checked by the merge gate, not yours to meet (verifier): \(.criterion)"),
       (.acceptance[] | select(.unmeetable != null and .unmeetable.verifier_agrees != true)
-        | "- The last worker said no worker could meet \(.criterion) (\(.unmeetable.why)); the verifier disagrees, so meet it: \(.evidence.why // "no reason given")"),
+        | "- The last worker said no worker could meet \(.criterion) (\(.unmeetable.why)); the verifier did not agree, so meet it: \(.evidence.why // "no reason given")"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
   # A red CI merge gate (#176): the tests it failed, read from the CI log.
