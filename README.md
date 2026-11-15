@@ -6,7 +6,7 @@ The end-to-end path work takes, from a request to merged code and the lessons ke
 
 ## Flow reference
 
-The revised-flow prototype is the reference for how the pipeline flows: seven stages (Enter, Understand, Specify, Plan, Run, Ship, Learn) plus the Product chat lane, each step with its colour, job, focus and reason, and the levers on a running run. It lives on its own branch and is not part of `main`:
+The revised-flow prototype is the reference for how the pipeline flows: seven stages (Enter, Understand, Specify, Plan, Run, Ship, Learn) plus the Decision chat lane, each step with its colour, job, focus and reason, and the levers on a running run. It lives on its own branch and is not part of `main`:
 
 [`prototypes/revised-flow/index.html` on `prototype/revised-flow`](https://github.com/arathianevasion/artisan-agent/blob/prototype/revised-flow/prototypes/revised-flow/index.html)
 
@@ -37,7 +37,7 @@ Then, from any project:
 - `/artisan-agent:grill`: understand the work. Grilling and domain modeling together, with `debate-me`, research and prototype variants on offer.
 - `/artisan-agent:debate-me`: in the Understand stage, have an agent argue its suggestion, with sources, until you decide.
 - `/artisan-agent:to-spec`: write the spec, showing the draft and every addition that didn't come from the conversation.
-- `/artisan-agent:triage`: sort incoming tickets in the Product chat; every outcome is yours to approve.
+- `/artisan-agent:triage`: sort incoming tickets in the Decision chat; every outcome is yours to approve.
 - `/artisan-agent:implement-plan`: run a defined set of work (a plan, several plans, individual tickets or a single ticket) to done.
 - `/artisan-agent:implement`: the worker skill each worker runs on one ticket (Claude-callable; you rarely type it).
 - `/artisan-agent:setup`: machine-level setup, once per machine (project-level setup comes later).

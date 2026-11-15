@@ -1,7 +1,7 @@
 # Static check (#235): the chats are the Decision chat and the Run chat. No
-# skill, reference, script message, template or test names them by the names
-# from before the rename; only the glossary's _Avoid_ lines and the changelog
-# may. The Product and Engineering roles keep their names and jobs.
+# skill, reference, script message, template, test or the root README names
+# them by the names from before the rename; only the glossary's _Avoid_ lines
+# and the changelog may. The Product and Engineering roles keep their names and jobs.
 # Bash 3.2-safe: grep and awk only.
 
 GLOSSARY="$PLUGIN_ROOT/../../GLOSSARY.md"
@@ -17,6 +17,13 @@ test_no_skill_reference_script_or_template_names_the_chats_by_their_old_names() 
   local hits=""
   hits=$(old_names_in "$PLUGIN_ROOT")
   [ -z "$hits" ] || fail "the old chat names are still used:
+$hits"
+}
+
+test_the_root_readme_names_the_chats_by_their_new_names() {
+  local hits=""
+  hits=$(grep -nIiE "$OLD_NAMES" "$PLUGIN_ROOT/../../README.md" || true)
+  [ -z "$hits" ] || fail "the root README uses an old chat name:
 $hits"
 }
 
