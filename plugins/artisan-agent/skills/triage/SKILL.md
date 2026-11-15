@@ -108,11 +108,22 @@ A deferred ticket doesn't come back through triage; the backlog review surfaces 
 
 ## Worker questions
 
-A `needs-triage` ticket a worker filed mid-run (its body: question, options, recommendation, criterion) is already controversial; it names its criterion, so don't re-derive it. The ticket it blocks is `in-run`, but the question ticket itself is yours to rule on. Present it with the options and the worker's recommendation. Record the ruling so the Engineering chat's `questions.sh sync` can read it (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`):
+A `needs-triage` ticket a worker filed mid-run (its body: question, options, recommendation, criterion) is already controversial; it names its criterion, so don't re-derive it. An **open decision** (criterion 8: its body holds the case, the harm and one recommendation, and where it was raised; `${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md`) is ruled on the same way; researching its options is your work here. The ticket it blocks is `in-run`, but the question ticket itself is yours to rule on. Present it with the options (for an open decision, the ones you researched) and the raiser's recommendation. Record the ruling so the Engineering chat's `questions.sh sync` can read it (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`):
 
 - **Answer** (Do): post a comment whose first line is `Answer: <the decision>`, then close the ticket. The blocked ticket is redispatched with it. An answer that adds scope is new work: file it as its own ticket for triage; it never rides in on the answer.
+- **Reject**: the original ticket can't be built as written. Post a comment whose first line is `Reject: <what the rewrite must settle>`, then close the ticket. The original leaves the run and comes back to `needs-triage` with the open decision noted, to be rewritten; its dependents wait. If its work has merged already, nothing is pulled and nothing is reverted: `sync` files a follow-up `needs-triage` ticket that corrects it.
+- **Add ticket**: the open decision is a case beside the original. File the case as its own ticket (it is triaged as usual), post a comment whose first line is `Add ticket: #<the new ticket>`, then close this one. The original is unblocked and carries on with the answer "not covered here". On an `incomplete` open decision, Add ticket is allowed only when the original doesn't expose the incomplete behaviour, or the new ticket lands before the run's end gate; otherwise rule Answer or Reject. Say which holds in the comment, after the ticket number.
 - **Defer**: as below, `deferred` with its `Return condition:` line. If the question blocks a running ticket, the Engineering chat then asks whether to pull that ticket from the run (it defers with this one) or let it carry on with "not now". That ticket's deferral comment uses the same `Return condition: blocked-by #<question>` format.
 - **Discard**: close with a reason; the Engineering chat sends the blocked ticket back to the Artisan.
+
+Every ruling records two verdicts, as their own lines in the ruling's comment (for a Defer, the deferral comment; for a Discard, the closing comment):
+
+```
+Took the recommendation: yes
+Needed the Decision chat: yes
+```
+
+"Took the recommendation" is `yes` when the ruling is what the raiser recommended, `no` when the Artisan changed it: the retro counts a `yes` like an unchanged gate approval and a `no` as changing the outcome. "Needed the Decision chat" is `no` when the raiser could have made the call itself: only that answer is evidence for loosening criterion 8 (`${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md`). Ask the Artisan for both with the ruling; `sync` records them in the run's state.
 
 ## Ending a turn
 

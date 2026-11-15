@@ -414,6 +414,6 @@ test_the_triage_skill_lists_the_five_rulings_with_add_tickets_limit_and_both_ver
   # Every ruling records both verdicts.
   assert_contains "$body" "Took the recommendation: yes"
   assert_contains "$body" "Needed the Decision chat: yes"
-  assert_contains "$body" "every ruling"
+  assert_contains "$body" "Every ruling records two verdicts"
   assert_contains "$body" '${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md'
 }

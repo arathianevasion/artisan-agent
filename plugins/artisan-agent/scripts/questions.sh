@@ -43,6 +43,15 @@
 #       a "defer-question" decision asks the Artisan whether to pull the
 #       ticket from the run or let it carry on), "closed #<t> #<q>" (closed
 #       with no Answer: line: a "question" decision), "open #<t> #<q>".
+#       An open decision's rulings too: "rejected #<t> #<q>" (Reject: the
+#       ticket leaves the run back to needs-triage, in-run off, status
+#       sent_back, its dependents waiting), "rejected #<t> #<q> follow-up
+#       #<n>" (Reject after its work merged: a follow-up needs-triage ticket,
+#       nothing pulled), "reject-waits #<t> #<q>" (an attempt still going),
+#       "added #<t> #<q> #<n>" (Add ticket: unblocked and queued with the
+#       answer "not covered here"). Every ruling's two verdicts ("Took the
+#       recommendation:", "Needed the Decision chat:") go on the question
+#       and in a "ruled" event, once per ruling.
 #   questions.sh deferred <run-dir> <ticket> (pull | carry)
 #       the Artisan's answer to a defer-question decision. pull: the ticket
 #       defers with the question (label deferred, Return condition:

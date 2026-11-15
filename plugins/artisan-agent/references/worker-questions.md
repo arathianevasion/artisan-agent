@@ -47,6 +47,10 @@ The Engineering chat runs `questions.sh sync $RUN` between waves (it is cheap: a
 | Answered | the ticket closed, with a comment line `Answer: <the decision>` | prints `answered #<t> #<q>`. Once every question of the ticket is answered it is `queued` again and `wave.sh dispatch` tells the new worker the answers (it is a continuation on the same branch, not a retry, and uses no attempt of the failed kind) |
 | Closed with no `Answer:` | the ticket closed without one | prints `closed …`, queues a `question` decision: the Artisan answers, redirects or defers the ticket |
 | Deferred | the ticket labelled `deferred` (its `Return condition:` is triage's, `skills/triage/SKILL.md`, "Defer") | prints `deferred …` and queues a `defer-question` decision |
+| Rejected | the ticket closed, with a comment line `Reject: <what the rewrite must settle>` | prints `rejected #<t> #<q>`. The ticket leaves the run as **pull** below takes one, but back to `needs-triage` (not `deferred`) with a comment noting the open decision: `in-run` off, status `sent_back`, off the run's scope, its native edges kept, so its dependents wait. If its work merged already, nothing is pulled or reverted: a follow-up `needs-triage` ticket that corrects it is filed instead (`rejected #<t> #<q> follow-up #<n>`). While an attempt is still going it prints `reject-waits …` and the next `sync` acts |
+| Add ticket | the ticket closed, with a comment line `Add ticket: #<n>` | prints `added #<t> #<q> #<n>`. The ticket is unblocked (the native edge comes off) and `queued` with the answer `not covered here`; #<n> is triaged as usual |
+
+Every ruling's comment carries two verdict lines, `Took the recommendation: yes|no` and `Needed the Decision chat: yes|no` (`skills/triage/SKILL.md`, "Worker questions"). `sync` records both on the question (`ruling`) and logs a `ruled` event, once per ruling, a Defer and a Discard included; a verdict not given is `null`. The retro reads them: the first for leverage, the second as the only loosen evidence for criterion 8.
 
 ### Deferring a finding that blocks a running ticket
 

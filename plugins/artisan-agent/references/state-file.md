@@ -157,7 +157,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 
 | Field | Meaning |
 |---|---|
-| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge), `deferred` (pulled from the run with a deferred question, `references/worker-questions.md`, or its exception gate deferred), `dropped`, `resliced`, `bypassed` (taken out of the run at its exception gate, `references/gate-actions.md`), `sent_back` (left the run with its dropped or resliced blocker, back in `needs-triage`; `sent_back: {from, at}`) |
+| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge), `deferred` (pulled from the run with a deferred question, `references/worker-questions.md`, or its exception gate deferred), `dropped`, `resliced`, `bypassed` (taken out of the run at its exception gate, `references/gate-actions.md`), `sent_back` (left the run with its dropped or resliced blocker, back in `needs-triage`; `sent_back: {from, at}`; or rejected at triage with an open decision, `sent_back: {from: <the question>, ruling: "reject", at}`) |
 | `extra_attempts`, `notes` | attempts the Artisan added at an exception gate ("retry with notes"; failed attempts allowed are `attempts_per_ticket` plus these), and the notes given to the next worker, `[{note, issue, by, at}]` |
 | `attempts` | dispatches so far |
 | `pid` | the worker's pid while `in_flight`, else `null` |
@@ -182,7 +182,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `context_risk` | `{percent, at}` when it merged while the orchestrator was at the review band (`drain.sh gate`): the fact that raises the risk gate `risk-context-<t>`, which holds its dependents like any review gate |
 | `risk_gate` | legacy, from before that gate was an issue: `{status, percent, at, cleared_at?}`; `waiting` still holds its dependents off the frontier and out of `wave.sh dispatch` until `cleared` (`drain.sh gate-cleared`). Nothing writes it now |
 | `human_check` | a Human check only (`references/human-checks.md`, "In a run"): `{for, state: open\|passed\|deferred, gate?, shown?, answers?: [{verdict: pass\|fail\|later, gate, by, at, notes?, why?, rework?}], deferral?: {by, why, return, at}}`. `for` is the agent ticket, from the plan graph's `human_check_for` (`state.sh init`) and the body marker (the reconciler), which agree; `gate` the gate that lists it now, `shown` every gate that has. Passed, the ticket is `closed`; deferred past the run, `deferred`. It is never dispatched, never on the frontier and never waited on |
-| `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
+| `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered|rejected, answer?, ruling?, added?, follow_up?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`). `ruling` (`{kind: answer|reject|add-ticket|defer|discard, took_recommendation, needed_decision_chat, at}`, each verdict `true`, `false` or `null` when not given) is the Decision chat's ruling as `questions.sh sync` read it; `added` the ticket an Add ticket ruling filed; `follow_up` the ticket a Reject filed for work that had merged |
 | `steering` | `[{attempt, note, at}]`, each time the Artisan stopped the worker and gave notes (`lever.sh steer`, `references/run-levers.md`). Not a failure: it is not in `failures` and uses none of the ticket's attempts; the notes go into the next worker's prompt |
 | `urgent` | `true` for an urgent ticket (`lever.sh urgent`): dispatched on the one extra slot above Max Agents, from `main`, never on the frontier or merged into the integration branch; it ships through its own end gate (`urgent_gates`) |
 | `shipped` | an urgent ticket once `end-gate.sh urgent-finish` has run: `{pr, main_merged_into, sync_commit, at}` |
@@ -271,6 +271,8 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `answered` (`ticket`, `question`, `next`)
 - `deferred-question`
 - `pulled` and `provisional-shown`
+- `ruled` (`ticket`, `question`, `ruling`, `took_recommendation`, `needed_decision_chat`) once per ruling `questions.sh sync` reads
+- `rejected` (`ticket`, `question`, `pulled`, `follow_up?`)
 - and for slice gates `gate-opened` (`gate`, `issue`, `tickets`, `dependents`)
 - `gate-decision` (`gate`, `card`, `by`, `outcome`, `redirect`, `areas`, `cards?`)
 - `rework` (`ticket`, `from`, `gate`, `card`)
