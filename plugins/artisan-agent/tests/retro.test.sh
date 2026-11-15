@@ -644,3 +644,14 @@ test_the_trend_keeps_only_the_most_recent_runs() {
   done
   assert_eq 'o3 o4 o5 o6 r1' "$(jq -r '[.leverage.trend.runs[].run] | join(" ")' <<<"$("$RETRO" facts "$RUN_DIR")")"
 }
+
+test_the_retro_skill_shows_guardrail_healths_open_decision_proposals_with_the_balance() {
+  local skill="$PLUGIN_ROOT/skills/retro/SKILL.md" signals=
+  signals=$(grep '^   - \*\*Signals\*\*' "$skill") || fail "no Signals step in the retro skill"
+  assert_contains "$signals" "leverage"
+  assert_contains "$signals" "rulings"
+  assert_contains "$signals" "open decisions waited on the Artisan"
+  assert_contains "$signals" "\`open-decision\`"
+  assert_contains "$signals" "guardrail health"
+  assert_contains "$signals" "criterion 8"
+}
