@@ -534,8 +534,8 @@ def leverage_cell(f):
 
 
 def waited_cell(f):
-    """How long gates and open decisions waited on the Artisan; a dash when
-    neither did."""
+    """How long gates and open decisions waited on the Artisan, each on its
+    own; a dash when neither did."""
     g = f.get("artisan_wait") or {}
     o = f.get("open_decision_wait") or {}
     if g.get("minutes") is None and o.get("minutes") is None:
@@ -545,7 +545,7 @@ def waited_cell(f):
         parts.append("gates %s min over %d" % (g["minutes"], g["decisions"]))
     if o.get("minutes") is not None:
         parts.append("open decisions %s min over %d (longest %s min)" % (o["minutes"], o["rulings"], o["longest_minutes"]))
-    return "%s min: %s" % (num((g.get("minutes") or 0) + (o.get("minutes") or 0)), " · ".join(parts))
+    return " · ".join(parts)  # not summed: the two waits can overlap
 
 
 def dash(x):

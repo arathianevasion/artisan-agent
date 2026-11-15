@@ -597,7 +597,7 @@ test_the_signals_show_the_leverage_line_beside_throughput_and_the_waits_on_the_a
   assert_contains "$out" "| Rubber-stamp rate | 3 of 5 decisions unchanged (60%): 2 of 2 gate decisions approved unchanged, 1 of 3 rulings took the recommendation |"
   assert_contains "$out" "| Leverage | 40% of 5 decisions changed the outcome (gates 0 · rulings 2; 1 ruling with no verdict not counted) |"
   assert_contains "$out" "| Throughput | 2 merged in"
-  assert_contains "$out" "| Waited on the Artisan | 177 min: gates 107 min over 2 · open decisions 70 min over 3 (longest 40 min) |"
+  assert_contains "$out" "| Waited on the Artisan | gates 107 min over 2 · open decisions 70 min over 3 (longest 40 min) |"
   # In that order: the balance reads as one block.
   local lev=; lev=$(printf '%s\n' "$out" | grep -n '^| Leverage |' | cut -d: -f1)
   local tp=; tp=$(printf '%s\n' "$out" | grep -n '^| Throughput |' | cut -d: -f1)
