@@ -553,3 +553,36 @@ test_the_packet_says_when_the_merge_gate_is_over_its_limit_and_proposes_a_ticket
   assert_not_contains "$out" "over its time limit"
   assert_not_contains "$out" "back under"
 }
+
+# ---- the balance: open-decision rulings and the leverage line (#234)
+
+# with_rulings: three open decisions on the sample run, filed and ruled by
+# the Decision chat: #40 took the raiser's recommendation (20 minutes after
+# it was filed), #41 changed it (40 minutes), #42 recorded no verdict (10
+# minutes). #41 was deferred first and answered later: one wait, two rulings.
+with_rulings() {
+  local t0=1800000000
+  jq --argjson t0 "$t0" '
+    .events += [
+      {seq: 50, at: ($t0 + 600), event: "guardrail-fired", guardrail: "open-decision", ticket: "10", raised_by: "worker", case: "incomplete", question: "40"},
+      {seq: 51, at: ($t0 + 600), event: "asked", ticket: "10", question: "40"},
+      {seq: 52, at: ($t0 + 600 + 20 * 60), event: "ruled", ticket: "10", question: "40", ruling: "answer", took_recommendation: true, needed_decision_chat: true},
+      {seq: 53, at: ($t0 + 900), event: "asked", ticket: "11", question: "41"},
+      {seq: 54, at: ($t0 + 900 + 40 * 60), event: "ruled", ticket: "11", question: "41", ruling: "defer", took_recommendation: false, needed_decision_chat: true},
+      {seq: 55, at: ($t0 + 900 + 90 * 60), event: "ruled", ticket: "11", question: "41", ruling: "answer", took_recommendation: false, needed_decision_chat: true},
+      {seq: 56, at: ($t0 + 1200), event: "asked", ticket: "12", question: "42"},
+      {seq: 57, at: ($t0 + 1200 + 10 * 60), event: "ruled", ticket: "12", question: "42", ruling: "reject", took_recommendation: null, needed_decision_chat: null}]' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+}
+
+test_each_ruling_is_one_of_the_artisans_actions_and_one_that_took_the_recommendation_is_a_rubber_stamp() {
+  sample_run; with_rulings
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  # The sample's three decisions and one miss, plus four rulings (job 3).
+  assert_eq 8 "$(jq .actions.total <<<"$f")" "rulings are actions"
+  assert_eq 5 "$(jq .actions.counts.problem <<<"$f")" "the miss and each ruling (job 3) serve the problem"
+  # Two gates approved unchanged, one ruling that took the recommendation, of
+  # two gates and three rulings with a verdict (#42 has none).
+  assert_eq '2 3 3 5 60' "$(jq -r '.rubber_stamp | "\(.gates) \(.rulings) \(.unchanged) \(.decisions) \(.rate)"' <<<"$f")" "rubber stamp"
+  assert_eq '5 2 40 0 2 1' "$(jq -r '.leverage | "\(.decisions) \(.changed) \(.rate) \(.gates_changed) \(.rulings_changed) \(.rulings_unknown)"' <<<"$f")" "leverage"
+}

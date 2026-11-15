@@ -235,6 +235,41 @@ def artisan_wait(s):
     return {"decisions": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
 
 
+def rulings(s):
+    """The Decision chat's rulings on open decisions: one per "ruled" event
+    questions.sh sync logged (references/state-file.md)."""
+    return [e for e in s.get("events") or [] if e.get("event") == "ruled"]
+
+
+def open_decision_wait(s):
+    """Minutes open decisions waited on the Artisan: each question from its
+    filing (the first "guardrail-fired" open-decision or "asked" event naming
+    it, else its record on the ticket) to its first ruling. None when the run
+    has no ruling it can time."""
+    events = s.get("events") or []
+    filed = {}
+    for e in events:
+        if "at" in e and e.get("question") is not None and (
+                e.get("event") == "asked"
+                or (e.get("event") == "guardrail-fired" and e.get("guardrail") == "open-decision")):
+            key = (str(e.get("ticket")), str(e["question"]))
+            filed[key] = min(filed.get(key, e["at"]), e["at"])
+    for n, t in (s.get("tickets") or {}).items():
+        for q in t.get("questions") or []:
+            if isinstance(q.get("at"), (int, float)) and q.get("ticket") is not None:
+                filed.setdefault((str(n), str(q["ticket"])), q["at"])
+    waits, seen = [], set()
+    for e in rulings(s):
+        key = (str(e.get("ticket")), str(e.get("question")))
+        if key in seen or key not in filed or "at" not in e:
+            continue
+        seen.add(key)
+        waits.append(max(0, e["at"] - filed[key]) / 60.0)
+    if not waits:
+        return {"rulings": 0, "minutes": None, "longest_minutes": None}
+    return {"rulings": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
+
+
 def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
@@ -275,6 +310,11 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
             actions.append({"what": d.get("kind", "decision"), "source": "decision", "kind": d.get("kind"),
                             "job": d.get("job"), "focus": d.get("focus"), "redirect": d.get("redirect"),
                             "choice": d.get("choice")})
+    # Each ruling on an open decision is one, resolving an open design question.
+    for r in rulings(s):
+        actions.append({"what": "ruled on an open decision", "source": "ruling", "kind": "ruling",
+                        "job": 3, "ruling": r.get("ruling"), "question": r.get("question"),
+                        "took_recommendation": r.get("took_recommendation")})
     misses = [m for m in (lines(misses_path) if misses_path else [])]
     for m in misses:
         actions.append({"what": "reversed a triage recommendation", "source": "triage-miss", "job": 18})
@@ -292,8 +332,18 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
     gates = [a for a in actions if a.get("kind") in GATE_KINDS or a.get("job") == 13 or a.get("gate")]
     stamped = [g for g in gates if not g.get("redirect") and not g.get("changed")
                and APPROVALS.match(str(g.get("choice") or ""))]
-    rubber = {"gates": len(gates), "unchanged": len(stamped),
-              "rate": (round(100.0 * len(stamped) / len(gates)) if gates else None)}
+    # A ruling that took the raiser's recommendation is a rubber stamp; one
+    # that changed it changed the outcome. One with no verdict is neither.
+    ruled = [a for a in actions if a.get("source") == "ruling" and isinstance(a.get("took_recommendation"), bool)]
+    took = [a for a in ruled if a["took_recommendation"]]
+    decided = len(gates) + len(ruled)
+    unchanged = len(stamped) + len(took)
+    rubber = {"gates": len(gates), "rulings": len(ruled), "unchanged": unchanged, "decisions": decided,
+              "rate": (round(100.0 * unchanged / decided) if decided else None)}
+    leverage = {"decisions": decided, "changed": decided - unchanged,
+                "rate": (round(100.0 * (decided - unchanged) / decided) if decided else None),
+                "gates_changed": len(gates) - len(stamped), "rulings_changed": len(ruled) - len(took),
+                "rulings_unknown": len([a for a in actions if a.get("source") == "ruling"]) - len(ruled)}
 
     return {
         "run_id": s.get("run_id"), "repo": s.get("repo"),
@@ -311,8 +361,10 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None):
         "triage_misses": len(misses),
         "actions": {"total": n, "counts": counts, "shares_percent": shares},
         "rubber_stamp": rubber,
+        "leverage": leverage,
         "merge_gates": gate_limit(s, merge_gate_costs(s, len(merged))),
         "artisan_wait": artisan_wait(s),
+        "open_decision_wait": open_decision_wait(s),
     }
 
 
