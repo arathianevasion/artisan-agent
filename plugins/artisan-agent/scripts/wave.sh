@@ -650,9 +650,10 @@ cmd_launch() {
   deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
 
-  # Its name (#189): a later attempt at the same wave says how it came.
+  # Its name (#189): a later attempt at the same wave says how it came; the
+  # attempt before it recorded a hand-off, however this launch was called.
   if [ "$attempt" -gt 1 ]; then
-    if [ "$handoff" -eq 1 ]; then
+    if [ "$(get --argjson w "$wave" '[(.orchestrators // [])[] | select(.wave == $w)] | last | .handoff != null')" = true ]; then
       again=" (handoff $(get --argjson w "$wave" '[(.orchestrators // [])[] | select(.wave == $w and .handoff != null)] | length'))"
     else
       again=" (resumed)"

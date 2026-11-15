@@ -315,6 +315,7 @@ Verify #5 · claudia-kerman · Wave 3" "$out"
   assert_eq "claudia-kerman · Wave 3 · Contracts" "$(head -1 <<<"$out")"
   out=$(session_names '{"run_id":"1038","repo":"me/claudia-kerman","plan":{}}' 2 " (handoff 1)")
   assert_eq "claudia-kerman · Wave 2 · run 1038 (handoff 1)" "$(head -1 <<<"$out")"
+  assert_eq "claudia-kerman run 1038" "$(sed -n 2p <<<"$out")" "no title: the prompt names the run once"
 }
 
 test_a_long_title_is_cut_at_a_word_boundary_to_sixty_characters() {
@@ -323,6 +324,10 @@ test_a_long_title_is_cut_at_a_word_boundary_to_sixty_characters() {
   name=$(head -1 <<<"$out")
   assert_eq "claudia-kerman · Wave 12 · Contract integration +1 (resumed)" "$name"
   [ "$(printf '%s' "$name" | jq -Rr length)" -le 60 ] || fail "longer than 60 characters: $name"
+  # A repo name that leaves the title no room: the whole name is cut instead.
+  out=$(session_names '{"run_id":"1","repo":"me/an-extremely-long-repository-name-for-the-panel","plan":{"plans":[{"title":"Plan: Contracts"}]}}' 3 " (resumed)")
+  name=$(head -1 <<<"$out")
+  assert_eq "an-extremely-long-repository-name-for-the-panel · Wave 3" "$name"
 }
 
 test_a_worker_that_paraphrases_every_criterion_still_closes_the_ticket_ticked() {

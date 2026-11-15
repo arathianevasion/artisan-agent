@@ -137,12 +137,15 @@ SESSION_JQ_DEFS='
 orchestrator_name() {
   get --argjson w "$1" --arg s "$2" --argjson max "$SESSION_NAME_MAX" "$SESSION_JQ_DEFS"'
     run_title as $t | "\(repo_short) · Wave \($w) · " as $head | ($t.more + $s) as $tail
-    | $head + ($t.title | cut($max - ($head | length) - ($tail | length))) + $tail'
+    | ($max - ($head | length) - ($tail | length)) as $room
+    | if $room >= 8 then $head + ($t.title | cut($room)) + $tail
+      else $head + $t.title + $tail | cut($max) end'
 }
 # run_label: "<repo> run <id> (<plan title>)", uncut, for the first line of
-# the orchestrator's prompt.
+# the orchestrator's prompt; just "<repo> run <id>" when the run has no title.
 run_label() {
-  get "$SESSION_JQ_DEFS"'run_title as $t | "\(repo_short) run \(.run_id) (\($t.title)\($t.more))"'
+  get "$SESSION_JQ_DEFS"'run_title as $t | "\(repo_short) run \(.run_id)"
+    + (if $t.title == "run \(.run_id)" then "" else " (\($t.title)\($t.more))" end)'
 }
 verifier_name() { # ticket
   get --arg t "$1" --argjson max "$SESSION_NAME_MAX" "$SESSION_JQ_DEFS"'
