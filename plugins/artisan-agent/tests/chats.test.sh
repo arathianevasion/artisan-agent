@@ -286,3 +286,40 @@ test_the_skills_name_each_call_inside_the_step_that_makes_it() {
   step5=$(awk '/^### 5\. Get approval/{f=1;next} /^### 6\./{f=0} f' "$tp")
   assert_contains "$step5" "chats.sh approve-envelope"
 }
+
+test_the_new_and_the_old_chat_names_sweep_the_same() {
+  # --chat decision|run, and the names from before the rename (#235).
+  setup_chats
+  "$SCRIPTS/state.sh" decision "$RUN_DIR" <(echo '{"id":1,"kind":"exception","question":"q","status":"waiting"}') >/dev/null
+  local out=""
+  out=$(sweep --chat run)
+  assert_contains "$out" "# Sweep (Run chat)"
+  assert_contains "$out" "Run r1 has 1 decision(s) waiting"
+  assert_eq "$out" "$(sweep --chat engineering)"
+  assert_eq "$out" "$(sweep)"
+  out=$(sweep --chat decision)
+  assert_contains "$out" "# Sweep (Decision chat)"
+  case "$out" in *"decision(s) waiting"*) fail "the Decision chat read the run's state file" ;; esac
+  assert_eq "$out" "$(sweep --chat product)"
+  # The old and the new name are one chat with one memory.
+  ARTISAN_NOW=1000 sweep --chat decision >/dev/null
+  assert_status 1 env ARTISAN_NOW=1200 "$C" due --chat product
+  assert_eq 1000 "$(jq .last_sweep "$PROJECT/.artisan-agent/runs/.chat/decision.json")"
+  [ "$(jq .last_sweep "$PROJECT/.artisan-agent/runs/.chat/run.json")" != 1000 ] || fail "the Decision chat's sweep wrote the Run chat's record"
+  assert_status 2 "$C" due --chat triage
+}
+
+test_a_sweep_record_from_before_the_rename_is_still_read() {
+  setup_chats
+  gate_issue 20 "Slice gate: export (run r1)" "Engineering (QA)"
+  local d="$PROJECT/.artisan-agent/runs/.chat"
+  mkdir -p "$d"
+  echo '{"last_sweep": 1000, "notified": ["gate-20"]}' >"$d/engineering.json"
+  echo '{"last_sweep": 1000}' >"$d/product.json"
+  assert_status 1 env ARTISAN_NOW=1200 "$C" due --chat run
+  assert_status 1 env ARTISAN_NOW=1200 "$C" due --chat decision
+  case "$(sweep --chat run --idle)" in *"notify:"*) fail "notified again for a gate the old record had notified" ;; esac
+  # The record moves to the new name; nothing is left under the old one.
+  assert_eq '["gate-20"]' "$(jq -c .notified "$d/run.json")"
+  [ ! -e "$d/engineering.json" ] || fail "the old record was left beside the new one"
+}

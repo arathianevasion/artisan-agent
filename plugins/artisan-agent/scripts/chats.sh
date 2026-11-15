@@ -25,7 +25,7 @@
 #       the open `review-gate` issues, read from the tracker, batched by job
 #       and role, as a Markdown table. Works across both chats and every run.
 #       --role keeps one role's gates (a pair splitting the roles by convention).
-#   chats.sh sweep --repo R [--chat engineering|product] [--role ROLE] [--idle]
+#   chats.sh sweep --repo R [--chat run|decision] [--role ROLE] [--idle]
 #                  [--no-fetch] [--project DIR]
 #       The cheap check each chat makes on every wake and at least every
 #       sweep_minutes: gates (above), gates closed by hand, guardrail changes,
@@ -44,7 +44,9 @@
 #
 # The sweep's own memory (last sweep, versions seen, what it announced) is the
 # chat's own: .artisan-agent/runs/.chat/<chat>.json (git-ignored). Nothing
-# else passes between the chats.
+# else passes between the chats. --chat is run (the default) or decision; the
+# names from before the rename, engineering and product, still work, and a
+# record kept under one of them moves to the new name on the next sweep.
 #
 # Exit status: 0 ok, 1 error, 2 usage, 6 refused.
 # Portable to bash 3.2 (macOS) and Linux. Needs jq, python3 and gh.
@@ -63,7 +65,7 @@ usage() { state_usage "$0"; }
 die() { state_die 1 "chats.sh: $*"; }
 
 REPO=${ARTISAN_REPO:-}
-CHAT=engineering
+CHAT=run
 IDLE=0
 ROLE=
 FETCH=1
@@ -83,8 +85,17 @@ parse() {
       *) ARGS+=("$1"); shift ;;
     esac
   done
-  case "$CHAT" in engineering|product) ;; *) usage ;; esac
+  # The names from before the rename (#235) still work: product is the
+  # Decision chat, engineering the Run chat.
+  case "$CHAT" in
+    decision|product) CHAT=decision ;;
+    run|engineering) CHAT=run ;;
+    *) usage ;;
+  esac
 }
+
+# The chat's name in a message: Decision chat or Run chat.
+chat_name() { case "$CHAT" in decision) echo "Decision chat" ;; *) echo "Run chat" ;; esac; }
 
 need_repo() {
   [ -n "$REPO" ] || REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) \
@@ -265,14 +276,30 @@ cmd_gates() {
 
 chat_dir() { printf '%s/.artisan-agent/runs/.chat\n' "$(main_checkout)"; }
 chat_file() { printf '%s/%s.json\n' "$(chat_dir)" "$CHAT"; }
+# The record a chat kept under its name from before the rename (#235).
+old_chat_file() {
+  local old=engineering
+  [ "$CHAT" = decision ] && old=product
+  printf '%s/%s.json\n' "$(chat_dir)" "$old"
+}
+# A record from before the rename moves to the chat's new name, once.
+adopt_old_record() {
+  local f="" old=""
+  f=$(chat_file)
+  old=$(old_chat_file)
+  [ ! -e "$f" ] && [ -s "$old" ] || return 0
+  mv "$old" "$f"
+}
 
 mem_get() { # jq filter [args]
   local f=
+  adopt_old_record
   f=$(chat_file)
   if [ -s "$f" ]; then jq -r "$@" "$f"; else echo ""; fi
 }
 mem_set() { # jq filter [args]: one-step rewrite
   local f= d=
+  adopt_old_record
   f=$(chat_file)
   d=$(dirname "$f")
   mkdir -p "$d"
@@ -337,7 +364,7 @@ sweep_gates() {
 sweep_closed_gates() {
   local main= run_dir= closed= n= j= line= carried= seen= out=""
   main=$(main_checkout)
-  if [ "$CHAT" = engineering ]; then
+  if [ "$CHAT" = run ]; then
     for run_dir in "$main"/.artisan-agent/runs/*/; do
       [ -f "$run_dir/state.json" ] || continue
       jq -e '(.review_gates // []) | any(.status == "open" or .status == "deferred")' "$run_dir/state.json" >/dev/null 2>&1 || continue
@@ -507,13 +534,13 @@ cmd_sweep() {
   WAITING_KEYS="" WAITING_TEXT="" URGENT_KEYS=""
   trap 'rm -f "$ACTIONS"' EXIT
   local key= fresh="" notified= urgent=0
-  echo "# Sweep ($CHAT chat)"
+  echo "# Sweep ($(chat_name))"
   echo
   sweep_gates
   echo
   sweep_closed_gates
   sweep_changes
-  if [ "$CHAT" = engineering ]; then
+  if [ "$CHAT" = run ]; then
     sweep_plans
     sweep_decisions
   fi
