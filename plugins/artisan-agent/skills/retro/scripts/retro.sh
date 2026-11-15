@@ -96,7 +96,7 @@ cmd_facts() {
   local rd=; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
   misses_since_last "$(main_of "$rd")" "$rd/retro/misses.jsonl"
   py facts "$rd/state.json" "$PLUGIN_ROOT/references/jobs.md" "$rd/retro/actions.jsonl" "$rd/retro/misses.jsonl" \
-    "$HOME_DIR/satisfaction.jsonl" >"$rd/retro/facts.json.tmp"
+    "$HOME_DIR/satisfaction.jsonl" "$rd/retro/denied.json" >"$rd/retro/facts.json.tmp"
   mv "$rd/retro/facts.json.tmp" "$rd/retro/facts.json"
   cat "$rd/retro/facts.json"
 }
@@ -199,8 +199,14 @@ cmd_prepare() {
     esac
   done
   main=$(main_of "$rd"); mkdir -p "$rd/retro"
-  rm -f "$rd/retro/lessons.json" "$rd/retro/actions.jsonl"
+  rm -f "$rd/retro/lessons.json" "$rd/retro/actions.jsonl" "$rd/retro/chat.md" "$rd/retro/denied.json"
   cmd_facts "$rd" >/dev/null
+  # The Artisan's turns go in the run folder, where the preparer may read
+  # them; it is never handed the transcript itself (#245).
+  if [ -n "$chat" ]; then
+    [ -r "$chat" ] || die "cannot read the chat log $chat"
+    py chat-turns "$chat" >"$rd/retro/chat.md" || die "could not take the Artisan's turns from $chat"
+  fi
   prompt="$rd/retro/prompt.md"
   {
     cat "$PLUGIN_ROOT/skills/retro/PREPARE.md"
@@ -208,7 +214,7 @@ cmd_prepare() {
     printf -- '- Run folder: `%s` (state file `state.json`; `results/`, `workers/`, `verify/`, `merges/`, `prompts/`)\n' "$rd"
     printf -- '- Facts and signals already computed: `%s`\n' "$rd/retro/facts.json"
     printf -- '- Triage misses since the last retro: `%s`\n' "$rd/retro/misses.jsonl"
-    if [ -n "$chat" ]; then printf -- '- Chat log: `%s`\n' "$chat"; else printf -- '- Chat log: none given\n'; fi
+    if [ -n "$chat" ]; then printf -- '- Chat log: `%s` (the turns the Artisan typed)\n' "$rd/retro/chat.md"; else printf -- '- Chat log: none given\n'; fi
     printf -- '- Project checkout (read only): `%s`; the plugin: `%s`\n' "$main" "$PLUGIN_ROOT"
     printf -- '- Evidence threshold: %s\n' "$(jq -r '.plan.config.evidence_threshold // 3' "$rd/state.json")"
     printf -- '- Write the lessons to `%s` and the Artisan'"'"'s actions to `%s`.\n' "$rd/retro/lessons.json" "$rd/retro/actions.jsonl"
@@ -216,9 +222,11 @@ cmd_prepare() {
   headless_args "$PREPARER_TOOLS"
   ( cd "$main" && ARTISAN_ROLE=retro ARTISAN_RUN_DIR=$rd "$CLAUDE" -p "$(cat "$prompt")" \
       --model "$model" --max-budget-usd "$budget" --output-format json \
-      "${HEADLESS_ARGS[@]}" \
+      "${HEADLESS_ARGS[@]}" --add-dir "$rd" \
       >"$rd/retro/session.json" 2>"$rd/retro/session.err" ) || true
   denied_tools "$rd/retro/session.json"
+  # What it was denied marks the focus shares incomplete (#245).
+  headless_denials "$rd/retro/session.json" | sort -u | jq -Rsc 'split("\n") | map(select(. != ""))' >"$rd/retro/denied.json"
   [ -f "$rd/retro/lessons.json" ] || die "the preparer wrote no lessons; its output is in $rd/retro/session.json"
   cmd_facts "$rd" >/dev/null
   cmd_check "$rd"

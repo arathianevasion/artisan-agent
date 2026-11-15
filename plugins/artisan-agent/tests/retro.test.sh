@@ -344,12 +344,59 @@ STUB
   for tool in 'Bash(ls:*)' 'Bash(head:*)' 'Bash(python3 -I:*)' 'Bash(jq:*)' Write; do
     assert_contains "$args" "$tool"
   done
-  assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "- Chat log: \`$TEST_TMPDIR/chat.jsonl\`
-"
+  assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "- Chat log: \`$RUN_DIR/retro/chat.md\`"
+  assert_contains "$(cat "$RUN_DIR/retro/chat.md")" "chat line"
   assert_contains "$(cat "$RUN_DIR/retro/prompt.md")" "Prepare the retro"
   assert_contains "$(cat "$RUN_DIR/retro/env")" "ROLE=retro"
   assert_eq 5 "$(jq .actions.total "$RUN_DIR/retro/facts.json")" "the chat's action counted with the decisions and the miss"
   assert_eq 1 "$(jq .actions.counts.chore "$RUN_DIR/retro/facts.json")" "the chat's chore"
+}
+
+# A Claude Code transcript: three turns the Artisan typed (a string, text
+# blocks, a slash command), and what is not theirs: a tool result, a meta
+# line, a command's output and the assistant.
+chat_transcript() {
+  cat >"$1" <<'JSONL'
+{"type":"user","timestamp":"2026-11-14T10:00:00Z","message":{"role":"user","content":"Approve the plan, but run #12 before #11"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Will do."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","timestamp":"2026-11-14T10:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"TOOL OUTPUT"}]}}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"META CAVEAT"}}
+{"type":"user","timestamp":"2026-11-14T10:05:00Z","message":{"role":"user","content":[{"type":"text","text":"Merge gate is red again:\nwhy?"}]}}
+{"type":"user","message":{"role":"user","content":"<local-command-stdout>COMMAND OUTPUT</local-command-stdout>"}}
+{"type":"user","timestamp":"2026-11-14T11:00:00Z","message":{"role":"user","content":"<command-name>/artisan-agent:retro</command-name>"}}
+JSONL
+}
+
+# #245: the preparer reads the Artisan's turns from a file in its own run
+# folder, so no shell read of the transcript is needed and none is denied.
+test_with_a_chat_log_the_preparer_counts_the_artisans_chat_actions_from_its_turns() {
+  sample_run
+  chat_transcript "$TEST_TMPDIR/transcript.jsonl"
+  cat >"$TEST_TMPDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '[%s]\n' "$@" >"$ARTISAN_RUN_DIR/retro/args"
+chat=$(printf '%s' "$*" | sed -n 's/^- Chat log: `\([^`]*\)`.*/\1/p' | head -1)
+case "$chat" in "$ARTISAN_RUN_DIR"/*) ;; *) echo "{\"type\":\"result\",\"permission_denials\":[{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$chat\"}}]}"; exit 0 ;; esac
+grep '^### ' "$chat" | while IFS= read -r _; do echo '{"what":"steered the run in chat","job":13,"focus":"pipeline"}'; done >"$ARTISAN_RUN_DIR/retro/actions.jsonl"
+echo '{"lessons":[]}' >"$ARTISAN_RUN_DIR/retro/lessons.json"
+echo '{"type":"result","permission_denials":[]}'
+STUB
+  chmod +x "$TEST_TMPDIR/bin/claude"
+  ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/bin/claude" "$RETRO" prepare "$RUN_DIR" --chat-log "$TEST_TMPDIR/transcript.jsonl" >/dev/null 2>"$TEST_TMPDIR/err"
+  local turns=; turns=$(cat "$RUN_DIR/retro/chat.md")
+  assert_contains "$turns" "Approve the plan, but run #12 before #11"
+  assert_contains "$turns" "Merge gate is red again:
+why?"
+  assert_contains "$turns" "/artisan-agent:retro"
+  local not=
+  for not in "TOOL OUTPUT" "META CAVEAT" "COMMAND OUTPUT" "Will do."; do
+    case "$turns" in *"$not"*) fail "the Artisan's turns hold what they didn't type: $not" ;; esac
+  done
+  assert_eq 3 "$(jq .actions.counts.pipeline "$RUN_DIR/retro/facts.json")" "one pipeline action per turn"
+  case "$(cat "$TEST_TMPDIR/err")" in *denied*) fail "the preparer was denied: $(cat "$TEST_TMPDIR/err")" ;; esac
+  assert_contains "$(cat "$RUN_DIR/retro/args")" "[--add-dir]
+[$RUN_DIR]"
+  assert_eq false "$(jq .actions.incomplete "$RUN_DIR/retro/facts.json")" "shares measured"
 }
 
 test_prepare_says_what_the_preparer_was_denied() {
@@ -363,6 +410,29 @@ STUB
   ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/bin/claude" "$RETRO" prepare "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || true
   assert_contains "$(cat "$TEST_TMPDIR/err")" "the preparer was denied these tool calls:
   Bash: for f in a; do ls \$f; done"
+}
+
+# #245: shares from a preparer that was denied a tool are not measured ones.
+test_a_preparer_run_with_a_denied_tool_marks_the_focus_shares_incomplete() {
+  sample_run
+  chat_transcript "$TEST_TMPDIR/transcript.jsonl"
+  cat >"$TEST_TMPDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo '{"lessons":[{"kind":"pipeline","lesson":"x","role":"engineering","scope":"this-project","why":"y","ticket":{"title":"t","body":"b"}}]}' >"$ARTISAN_RUN_DIR/retro/lessons.json"
+: >"$ARTISAN_RUN_DIR/retro/actions.jsonl"
+echo '{"type":"result","permission_denials":[{"tool_name":"Bash","tool_input":{"command":"jq -r . /home/x/transcript.jsonl"}},{"tool_name":"Read","tool_input":{"file_path":"/home/x/transcript.jsonl"}}]}'
+STUB
+  chmod +x "$TEST_TMPDIR/bin/claude"
+  ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/bin/claude" "$RETRO" prepare "$RUN_DIR" --chat-log "$TEST_TMPDIR/transcript.jsonl" >/dev/null 2>&1
+  assert_eq true "$(jq .actions.incomplete "$RUN_DIR/retro/facts.json")" "facts"
+  assert_eq '["Bash","Read"]' "$(jq -c .actions.denied "$RUN_DIR/retro/facts.json")" "the denied tools"
+  local row=
+  row=$("$RETRO" render "$RUN_DIR" | grep '^| Focus shares |')
+  assert_contains "$row" "incomplete"
+  assert_contains "$row" "the preparer was denied Bash, Read"
+  # A later facts (render, satisfaction) keeps the mark: it comes from the preparer's session.
+  "$RETRO" facts "$RUN_DIR" >/dev/null
+  assert_eq true "$(jq .actions.incomplete "$RUN_DIR/retro/facts.json")" "facts recomputed"
 }
 
 test_prepare_fails_when_the_preparer_writes_no_lessons() {

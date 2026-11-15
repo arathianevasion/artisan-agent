@@ -3,9 +3,13 @@ the chat round, the satisfaction record and its triggers, and the edits a
 kept lesson makes. retro.sh calls it; nothing here touches git or the tracker.
 
 Usage (python3 -I retro.py <command> ...):
-  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>] [<satisfaction.jsonl>]
+  facts <state.json> <jobs.md> [<actions.jsonl>] [<misses.jsonl>] [<satisfaction.jsonl>] [<denied.json>]
       the run's facts and signals as JSON; the leverage trend reads earlier
-      runs' facts from the satisfaction record
+      runs' facts from the satisfaction record; a non-empty denied.json (the
+      tools the preparer was denied) marks the focus shares incomplete
+  chat-turns <chat log>
+      the turns the Artisan typed in a Claude Code transcript, as Markdown
+      (one "### Turn" heading each); a log that is not a transcript is kept as it is
   gate-costs <state.json>
       what the merge gates cost and how long gates waited on the Artisan,
       as the Markdown table the retro's Signals show (the run summary's)
@@ -306,7 +310,7 @@ def leverage_trend(history_path, project, run, leverage):
     return {"runs": rows, "rate": (round(100.0 * changed / decisions) if decisions else None)}
 
 
-def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path=None):
+def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path=None, denied_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
     plan = s.get("plan") or {}
@@ -364,6 +368,9 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
         counts[a["focus"]] += 1
     n = len(actions)
     shares = dict((f, (round(100.0 * c / n) if n else None)) for f, c in counts.items())
+    # A preparer denied a tool may have missed the chat's actions: its shares
+    # are not measured ones (#245).
+    denied = load(denied_path, []) if denied_path else []
 
     gates = [a for a in actions if a.get("kind") in GATE_KINDS or a.get("job") == 13 or a.get("gate")]
     stamped = [g for g in gates if not g.get("redirect") and not g.get("changed")
@@ -395,7 +402,8 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
         "decisions_waiting": len([d for d in s.get("decisions") or [] if d.get("status") == "waiting"]),
         "slicing_lessons": len(s.get("lessons") or []),
         "triage_misses": len(misses),
-        "actions": {"total": n, "counts": counts, "shares_percent": shares},
+        "actions": {"total": n, "counts": counts, "shares_percent": shares,
+                    "incomplete": bool(denied), "denied": denied},
         "rubber_stamp": rubber,
         "leverage": dict(leverage, trend=leverage_trend(history_path, s.get("repo") or "unknown", s.get("run_id"), leverage)),
         "merge_gates": gate_limit(s, merge_gate_costs(s, len(merged))),
@@ -494,6 +502,9 @@ def signals_table(f):
             sh["problem"], sh["solution"], sh["pipeline"], sh["chore"], a["total"])
     else:
         focus = "no actions recorded"
+    if a.get("incomplete"):
+        focus = "incomplete: the preparer was denied %s, so actions from the chat log may be missing (counted so far: %s)" % (
+            ", ".join(a.get("denied") or []), focus)
     r = f["rubber_stamp"]
     decisions = r.get("decisions", r["gates"])  # facts from before #234 count gates only
     if not decisions:
@@ -826,14 +837,72 @@ def promote(path, section, line):
     return 0
 
 
+# Text the Artisan didn't type: a command's output, a reminder, a notification.
+NOT_TYPED = re.compile(r"^\s*<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr|"
+                       r"system-reminder|task-notification|user-prompt-submit-hook)>")
+REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+COMMAND = re.compile(r"<command-name>(.*?)</command-name>", re.S)
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+
+
+def typed_text(entry):
+    """What the Artisan typed in one transcript line, or None when it holds
+    nothing of theirs (the assistant, a tool result, a meta line, output)."""
+    if not isinstance(entry, dict) or entry.get("type") != "user" or entry.get("isMeta") or entry.get("isCompactSummary"):
+        return None
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = "\n".join(b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(content, str) or NOT_TYPED.match(content):
+        return None
+    name = COMMAND.search(content)
+    if name:
+        args = COMMAND_ARGS.search(content)
+        content = (name.group(1).strip() + " " + (args.group(1).strip() if args else "")).strip()
+    content = REMINDER.sub("", content).strip()
+    return content or None
+
+
+def chat_turns(path):
+    """The Artisan's turns from a chat log, as Markdown, so the preparer reads
+    one file in its run folder rather than the transcript (#245)."""
+    with open(path, errors="replace") as f:
+        raw = f.read()
+    entries = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            entries = None
+            break
+    print("# The Artisan's turns\n\nFrom the chat log `%s`." % path)
+    if entries is None:  # not a transcript: kept as it is
+        print("\n" + raw.rstrip("\n"))
+        return 0
+    n = 0
+    for e in entries:
+        text = typed_text(e)
+        if text is None:
+            continue
+        n += 1
+        print("\n### Turn %d%s\n\n%s" % (n, (" (%s)" % e["timestamp"]) if e.get("timestamp") else "", text))
+    if not n:
+        print("\nNo turns typed by the Artisan.")
+    return 0
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2
     cmd, args = argv[1], argv[2:]
-    if cmd == "facts" and 2 <= len(args) <= 5:
-        print(json.dumps(facts(*(args + [None] * (5 - len(args)))), indent=2))
+    if cmd == "facts" and 2 <= len(args) <= 6:
+        print(json.dumps(facts(*(args + [None] * (6 - len(args)))), indent=2))
         return 0
+    if cmd == "chat-turns" and len(args) == 1:
+        return chat_turns(args[0])
     if cmd == "gate-costs" and len(args) == 1:
         s = load(args[0])
         merged = len([t for t in (s.get("tickets") or {}).values() if t.get("status") == "merged"])
