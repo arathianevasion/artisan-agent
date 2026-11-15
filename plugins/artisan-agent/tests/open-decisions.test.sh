@@ -93,6 +93,8 @@ test_a_filing_with_no_case_or_no_harm_is_refused_and_files_nothing() {
   assert_status 1 "$Q" file --ticket 1 --criterion 8 --harm h --recommendation r --blocking --repo local/sample
   assert_status 1 "$Q" file --ticket 1 --criterion 8 --case adr --recommendation r --blocking --repo local/sample
   assert_status 1 "$Q" file --ticket 1 --criterion 8 --case adr --harm "" --recommendation r --split --repo local/sample
+  assert_status 1 "$Q" file --ticket 1 --criterion 8 --case adr --harm "  " --recommendation r --split --repo local/sample
+  assert_status 1 "$Q" file --ticket 1 --criterion 8 --case adr --harm h --recommendation " " --split --repo local/sample
   assert_eq "$before" "$(issue_count)"
 }
 
@@ -131,6 +133,8 @@ test_only_a_worker_blocks_its_own_ticket_and_a_finding_never_blocks() {
   assert_status 1 file_open 2 --split --raised-by finding --from 1
   assert_status 1 file_open 2 --non-blocking --raised-by finding
   assert_status 1 file_open 2 --split --raised-by somewhere
+  # A worker's own ticket blocks or splits; non-blocking is for another ticket's.
+  assert_status 1 file_open 1 --non-blocking
   # Non-blocking is criterion 8's form; criteria 1-7 keep blocking or split.
   assert_status 1 "$Q" file --ticket 1 --criterion 3 --question q --option a --option b --recommendation r \
     --non-blocking --repo local/sample

@@ -183,6 +183,9 @@ new_question_ticket() {
 file_open_decision() {
   local case_text="" raiser="" effect="" run_note="" run_id="" short="" title="" body="" num=""
   [ -n "$case_" ] || die "an open decision names its case: --case incomplete, misaligned, invented or adr"
+  # Blank is none: a harm or recommendation of only spaces names nothing.
+  case "$harm" in *[![:space:]]*) ;; *) harm="" ;; esac
+  case "$rec" in *[![:space:]]*) ;; *) rec="" ;; esac
   [ -n "$harm" ] || die "an open decision names its concrete harm (--harm); without one it is the execution agent's call"
   [ -n "$rec" ] || die "an open decision carries one recommendation (--recommendation)"
   [ -z "$question" ] && [ "${#options[@]}" -eq 0 ] \
@@ -212,6 +215,8 @@ file_open_decision() {
     || die "only a worker blocks on an open decision, and only its own ticket; file it --split or --non-blocking"
   [ "$raised_by" != finding ] || [ "$mode" = non-blocking ] \
     || die "an open decision found in another ticket is filed --non-blocking: it never blocks that ticket"
+  [ "$raised_by" != worker ] || [ "$mode" != non-blocking ] \
+    || die "a worker's open decision in its own ticket is --blocking or --split; one in another ticket is --raised-by finding --from <yours> --non-blocking"
   case "$mode" in
     blocking) effect="Blocked by this open decision until it is ruled on." ;;
     split) effect="The rest of #$ticket carries on; this open decision was split off." ;;
