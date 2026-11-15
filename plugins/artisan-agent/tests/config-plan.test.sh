@@ -548,21 +548,23 @@ MG_CRITERIA='["CI green on this ticket'"'"'s branch", "All tests pass on CI", "T
   "CI is green", "The PR shows the review notes",
   "`merge-gate.sh` prints the CI run'"'"'s URL", "the script'"'"'s CI mode prints the summary",
   "The existing plan, to-plan, gate and gate-action tests pass, changed only where they expect the removed line",
-  "No rework ticket the plugin opens contains a full-suite criterion"]'
+  "No rework ticket the plugin opens contains a full-suite criterion",
+  "The merge gate runs the full suite", "The docs describe the whole suite", "The PR is merged at the end gate",
+  "Tests pass on the PR", "The pull request description lists the tickets"]'
 
 test_build_flags_a_criterion_that_needs_ci_a_pr_or_the_full_suite_and_the_plan_is_not_approvable() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"
   jq --argjson c "$MG_CRITERIA" '.tickets["10"].acceptance = $c' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
-  assert_eq '[["CI green on this ticket'"'"'s branch","CI"],["All tests pass on CI","CI"],["The full suite passes","the full suite"]]' \
+  assert_eq '[["CI green on this ticket'"'"'s branch","CI"],["All tests pass on CI","CI"],["The full suite passes","the full suite"],["Tests pass on the PR","a pull request"]]' \
     "$(jq -c '[.merge_gate_flags[] | select(.ticket == "10") | [.criterion, .needs]]' "$TEST_TMPDIR/plan.json")"
   assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
   local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Already checked by the merge gate"
   assert_contains "$out" "| #10 (Retry failed uploads) | The full suite passes | the full suite |"
   assert_contains "$out" "Drop it, or reword it"
-  assert_contains "$out" "Not approvable yet: 3 criteria the merge gate already checks (above)."
+  assert_contains "$out" "Not approvable yet: 4 criteria the merge gate already checks (above)."
   assert_not_contains "$out" "Approve as shown"
   assert_status 1 "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json"
 }
