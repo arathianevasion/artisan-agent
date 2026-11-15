@@ -616,6 +616,89 @@ test_a_worker_starts_with_its_wave_and_worktree_already_recorded() {
   assert_eq merged "$(state_get '.tickets["1"].status')"
 }
 
+# #210: a dispatch stopped after `git worktree add` but before it recorded the
+# worktree and launched the worker leaves this attempt's worktree, and the
+# branch it made, with nothing in the state. leftover_dispatch makes that.
+LEFTOVER_WT=
+leftover_dispatch() {
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  LEFTOVER_WT="$TEST_TMPDIR/project-wt/r1-1.1"
+  mkdir -p "$TEST_TMPDIR/project-wt"
+  git -C "$PROJECT" worktree add -q -b agent/1 "$LEFTOVER_WT" run/r1 >/dev/null 2>&1
+}
+
+test_a_dispatch_picks_up_the_clean_worktree_a_stopped_dispatch_left() {
+  setup_wave
+  leftover_dispatch
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["1"].status')"
+  assert_eq "$LEFTOVER_WT" "$(state_get '.tickets["1"].worktree')"
+  wait_for "$RUN_DIR/results/1.1.exit.json" 60
+  # The worker ran in the worktree, on the branch the stopped dispatch made.
+  assert_eq "hi" "$(git -C "$PROJECT" show agent/1:hello.txt)"
+}
+
+test_a_stopped_dispatchs_worktree_with_uncommitted_work_blocks_the_ticket() {
+  setup_wave
+  leftover_dispatch
+  echo draft >"$LEFTOVER_WT/notes.txt"
+  local status=0
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 6 "$status"
+  assert_eq blocked "$(state_get '.tickets["1"].status')"
+  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "$LEFTOVER_WT"
+  assert_contains "$(state_get '.tickets["1"].blocked_reason')" "uncommitted work"
+  assert_eq draft "$(cat "$LEFTOVER_WT/notes.txt")"
+  [ ! -e "$RUN_DIR/workers/1.1" ] || fail "a worker was launched"
+}
+
+test_a_ticket_in_flight_is_refused_and_its_worktree_untouched() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  export WORKER_SLEEP=3
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  local wt="" status=0
+  wt=$(state_get '.tickets["1"].worktree')
+  echo draft >"$wt/notes.txt"
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "in_flight, not queued"
+  assert_eq in_flight "$(state_get '.tickets["1"].status')"
+  assert_eq draft "$(cat "$wt/notes.txt")"
+}
+
+# The worker for this attempt was launched (its runner is alive) though the
+# state never recorded it: its worktree is the sweep's to take in, not ours.
+test_a_stopped_dispatchs_worktree_with_a_launched_worker_is_untouched() {
+  setup_wave
+  leftover_dispatch
+  mkdir -p "$RUN_DIR/workers/1.1"
+  echo "$CHAT" >"$RUN_DIR/workers/1.1/runner.pid"
+  assert_status 8 "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1
+  assert_eq queued "$(state_get '.tickets["1"].status')"
+  assert_eq "refs/heads/agent/1" "$(git -C "$LEFTOVER_WT" symbolic-ref HEAD)"
+}
+
+# A path in the way that isn't this ticket's worktree on its branch.
+test_a_path_in_the_way_that_is_not_the_tickets_worktree_is_untouched() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  local wt="$TEST_TMPDIR/project-wt/r1-1.1"
+  mkdir -p "$wt"
+  echo mine >"$wt/keep.txt"
+  local status=0
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "not its worktree"
+  assert_eq mine "$(cat "$wt/keep.txt")"
+  # Nor a worktree of this repo on another branch.
+  rm -rf "$wt"
+  git -C "$PROJECT" worktree add -q -b other "$wt" run/r1 >/dev/null 2>&1
+  assert_status 1 "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1
+  assert_eq "refs/heads/other" "$(git -C "$wt" symbolic-ref HEAD)"
+  assert_eq queued "$(state_get '.tickets["1"].status')"
+}
+
 # #184: the orchestrator's runner judges its exit in its exit hook, so the
 # decision and its event never wait on the chat's `wave.sh wait` or status.
 assert_one_exit_decision_and_event() { # cause
