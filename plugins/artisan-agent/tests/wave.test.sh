@@ -324,8 +324,10 @@ test_killing_the_launching_process_stops_neither_orchestrator_nor_worker() {
   wait_for "$RUN_DIR/results/orchestrator-w1.1.exit.json" 60
   assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" orchestrator-w1 1)"
   assert_eq merged "$(state_get '.tickets["1"].status')"
-  # The orchestrator exited after writing state: its lock is stale, not held.
-  ! state_pid_alive "$orch" || fail "the orchestrator did not exit"
+  # The orchestrator exited after writing state and judging its exit (#184):
+  # its lock is stale, not held.
+  wait_for_runner_gone orchestrator-w1.1
+  assert_eq true "$(state_get '.orchestrators[0].exit.clean')"
 }
 
 test_a_ticket_whose_blocker_is_not_merged_is_refused_at_dispatch() {
@@ -560,7 +562,8 @@ test_a_worker_launched_by_an_orchestrator_stopped_mid_dispatch_is_still_named() 
   # The orchestrator's own steps, then it ends: wave.sh dispatch's first write
   # (the ticket's wave, worktree and base) and the worker's launch, and the
   # launch is never recorded.
-  export ORCH_STOP=mid-dispatch ORCH_MID_DISPATCH="$TEST_TMPDIR/mid-dispatch.sh"
+  # The worker is still running when the orchestrator's runner judges its exit.
+  export ORCH_STOP=mid-dispatch ORCH_MID_DISPATCH="$TEST_TMPDIR/mid-dispatch.sh" WORKER_SLEEP=3
   export MID_WT="$TEST_TMPDIR/project-wt/r1-1.1" MID_PROJECT="$PROJECT" MID_SCRIPTS="$SCRIPTS" \
     MID_PROMPT="$TEST_TMPDIR/prompt-1.md"
   printf 'Add hello.\n' >"$MID_PROMPT"

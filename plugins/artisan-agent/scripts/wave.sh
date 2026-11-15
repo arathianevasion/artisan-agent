@@ -72,7 +72,17 @@
 #       ticket with no verdict, or verified but not merged) queues an
 #       orchestrator-exit decision and event, and next is "decide" (after
 #       "halted" only), with an "orchestrator-exit: <cause> in wave <n>
-#       (<tickets>): <detail>" line.
+#       (<tickets>): <detail>" line. The orchestrator's runner judges it first
+#       in its exit hook (judge-exit, #184); whichever judges first, one exit
+#       gives one decision and one event.
+#
+# Usage, from the orchestrator's runner (run-ticket.sh's exit hook):
+#   wave.sh judge-exit <run-dir> <orchestrator-id> <attempt> --exit-record PATH
+#       sweep, then judge that orchestrator's exit as status does (#184),
+#       from its exit record at PATH (the runner's temp file, moved into
+#       place after), writing as the runner's pid, which holds the lock;
+#       print the orchestrator-exit line, if one waits. Nothing for an
+#       orchestrator already judged or handed off.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -299,13 +309,17 @@ exit_cause() { # classification
 # an earlier one and left over, still in flight,
 # returned with no passing verdict ("no-verdict"), or verified but not merged
 # ("unmerged"; not while the run is parked on CI, whose own decision holds it).
+# Two paths judge it (the runner's exit hook, judge-exit, and status or
+# launch, #184); the "not judged yet" test is made again inside the locked
+# write, so whichever comes second changes nothing: one decision, one event.
 check_orchestrator_exit() { # id attempt wave classification
   local code="" cause=""
-  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
-        | last | . != null and .exit == null and .handoff == null')" = true ] || return 0
-  code=$(jq -r '.exit_code // "none"' "$RUN_DIR/results/$1.$2.exit.json" 2>/dev/null || echo none)
+  orchestrator_unjudged "$1" "$2" || return 0
+  code=$(jq -r '.exit_code // "none"' "${EXIT_RECORD:-$RUN_DIR/results/$1.$2.exit.json}" 2>/dev/null || echo none)
   cause=$(exit_cause "$4")
   apply '
+    (.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+    | if $i == null or .orchestrators[$i].exit != null or .orchestrators[$i].handoff != null then . else
     . as $s
     | [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
      | ($k | verified_pass) as $passed
@@ -331,7 +345,36 @@ check_orchestrator_exit() { # id attempt wave classification
             question: "The orchestrator for wave \($w) exited without finishing its wave (\($c)): \($detail). Recommended: resume (the next orchestrator reconciles and carries the wave on, keeping the work already done); retry \(if ($ts | length) > 0 then ($ts | map("#" + .) | join(", ")) else "its tickets" end) with fresh workers only if that work looks wrong, as it throws it away; halt only if the cause looks shared and would fail the next orchestrator too. Resume, retry or halt?",
             status: "waiting", at: $now}]
         | event({event: "orchestrator-exit", id: $id, attempt: $a, wave: $w, cause: $c, tickets: $ts, detail: $detail}; $now)
-      end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+      end end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+}
+
+# orchestrator_unjudged id attempt: the orchestrator is recorded, its exit not
+# judged yet, and it did not hand its wave off.
+orchestrator_unjudged() {
+  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
+        | last | . != null and .exit == null and .handoff == null')" = true ]
+}
+
+# wave.sh judge-exit: the orchestrator's runner judges its own exit in its
+# exit hook (run-ticket.sh, #184), with its own pid as the writer, so the
+# decision and its event never wait on the chat's `wave.sh wait` or status.
+# The runner calls it with its exit record still a temp file (--exit-record)
+# and moves the record into place after, so the record landing still means
+# the runner is done and the lock free. It sweeps first, as status reconciles
+# first, so a worker launched but not recorded (#190) is named. Prints the
+# orchestrator-exit line, if one waits.
+EXIT_RECORD=
+cmd_judge_exit() {
+  open_run "${1:-}"
+  [ $# -eq 5 ] && [ "$4" = --exit-record ] && state_is_uint "$3" || usage
+  local id="$2" attempt="$3" wave="" cls=""
+  EXIT_RECORD=$5
+  orchestrator_unjudged "$id" "$attempt" || return 0
+  wave=$(get --arg id "$id" --argjson a "$attempt" '[.orchestrators[] | select(.id == $id and .attempt == $a)] | last | .wave')
+  "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard >/dev/null
+  cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$id" "$attempt" --exit-record "$EXIT_RECORD")
+  check_orchestrator_exit "$id" "$attempt" "$wave" "$cls"
+  exit_decision_lines
 }
 
 # The waiting orchestrator-exit decision's id, or nothing.
@@ -2187,6 +2230,7 @@ case "$cmd" in
   launch) cmd_launch "$@" ;;
   status) cmd_status "$@" ;;
   wait) cmd_wait "$@" ;;
+  judge-exit) cmd_judge_exit "$@" ;;
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
   resolved) cmd_resolved "$@" ;;

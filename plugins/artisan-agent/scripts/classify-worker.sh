@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Classify one attempt of a ticket's worker from the files it left.
 #
-# Usage: classify-worker.sh <run-dir> <ticket> [attempt]   (attempt defaults to 1)
+# Usage: classify-worker.sh <run-dir> <ticket> [attempt] [--exit-record PATH]
+#        (attempt defaults to 1; --exit-record reads the exit record from PATH
+#        instead of results/: an orchestrator's runner judging its exit before
+#        its record lands, wave.sh judge-exit, #184)
 #
 # Prints one line, "<status> <reason>":
 #
@@ -43,10 +46,18 @@ usage() { # print this header (the leading comment block) and exit 2
 }
 
 [ $# -ge 2 ] || usage
-run_dir=$1 ticket=$2 attempt=${3:-1}
+run_dir=$1 ticket=$2
+shift 2
+attempt=1 exit_record=
+if [ $# -gt 0 ] && [ "$1" != --exit-record ]; then attempt=$1; shift; fi
+case "$#:${1:-}" in
+  0:) ;;
+  2:--exit-record) exit_record=$2 ;;
+  *) usage ;;
+esac
 key=$ticket.$attempt
 worker_dir=$run_dir/workers/$key
-exit_record=$run_dir/results/$key.exit.json
+[ -n "$exit_record" ] || exit_record=$run_dir/results/$key.exit.json
 
 # Alive means a process that has not ended: a zombie is a finished runner.
 # (ps, not kill -0, so a test can stand in for the liveness check.)
