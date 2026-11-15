@@ -136,3 +136,30 @@ test_the_triage_skill_names_the_add_the_block_ruling_for_an_open_decision_in_ano
   assert_contains "$section" "Add the block:"
   assert_contains "$section" "Raised at: finding"
 }
+
+test_an_open_finding_decision_never_keeps_its_ticket_from_requeueing_on_its_own_answer() {
+  run_with_tracker
+  local own="" q=""
+  q=$(found 2)
+  own=$(ARTISAN_FINDINGS_FILE="$RUN_DIR/results/findings/2.jsonl" "$Q" file --ticket 2 --criterion 1 \
+    --question "Which store?" --option A --option B --recommendation A --blocking --repo local/sample)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"].status = "blocked" | .tickets["2"].attempts = 1'
+  "$SCRIPTS/sweep.sh" "$RUN_DIR" >/dev/null 2>&1
+  "$Q" block "$RUN_DIR" 2
+  comment "$own" "Answer: A"
+  jq '.state = "closed"' "$FAKE_GH_DIR/issue-$own.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$own.json"
+  assert_contains "$("$Q" sync "$RUN_DIR")" "answered #2 #$own"
+  assert_eq queued "$(state_get '.tickets["2"].status')"
+  assert_eq open "$(state_get '.tickets["2"].questions[0].state')"
+}
+
+test_a_block_ruling_on_a_merged_ticket_adds_nothing() {
+  run_with_tracker
+  local q=""
+  q=$(found 2)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["2"].status = "merged"'
+  comment "$q" "Add the block: wait for the formats."
+  assert_eq "open #2 #$q" "$("$Q" sync "$RUN_DIR")"
+  assert_not_contains "$(cat "$FAKE_GH_DIR/calls")" "dependencies/blocked_by"
+  assert_eq false "$(state_get '.tickets["2"].questions[0].blocking')"
+}

@@ -451,9 +451,14 @@ is_blocking() { # ticket question
 
 # add_the_block ticket question: the native edge, the question now blocking,
 # a queued ticket blocked (one in flight finishes its attempt; the edge holds
-# its dependents), and a "question" decision as `block` queues; once.
+# its dependents), and a "question" decision as `block` queues; once. A
+# merged or closed ticket gets nothing: the question stays open.
 add_the_block() {
   local t="$1" q="$2"
+  case "$(get --arg t "$t" '.tickets[$t].status // ""')" in
+    # Its work is done: nothing left to hold.
+    merged|closed) echo "open #$t #$q"; return 0 ;;
+  esac
   add_blocker "$t" "$q"
   apply '
     .tickets[$t].questions |= map(if .ticket == $q then .blocking = true | .block_added = $now else . end)
@@ -573,14 +578,15 @@ add_ticket() {
 }
 
 # record_answer ticket question answer: the answer is kept for the next
-# worker; once every question of the ticket is answered it is queued again.
+# worker; once every blocking question of the ticket is answered it is
+# queued again (one a finding raised that never blocked it doesn't hold it).
 record_answer() {
   apply '
     .tickets[$t].questions |= map(if .ticket == $q then .state = "answered" | .answer = $a else . end)
     | .tickets[$t].answers = ((.tickets[$t].answers // []) | map(select(.question != $q)) + [{question: $q, answer: $a}])
     | .decisions |= map(if .ticket == $t and .question_ticket == $q and .status == "waiting"
                           and (.kind == "question" or .kind == "defer-question") then .status = "resolved" else . end)
-    | if ([.tickets[$t].questions[] | select(.state != "answered")] | length) == 0 and .tickets[$t].status == "blocked"
+    | if ([.tickets[$t].questions[] | select(.blocking == true and .state != "answered")] | length) == 0 and .tickets[$t].status == "blocked"
       then .tickets[$t].status = "queued" | .tickets[$t].blocked_reason = null
            | event({event: "answered", ticket: $t, question: $q, next: "queued"}; $now)
       else event({event: "answered", ticket: $t, question: $q, next: .tickets[$t].status}; $now) end' \
