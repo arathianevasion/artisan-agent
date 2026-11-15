@@ -377,10 +377,10 @@ ensure_issue() {
   body="$dir/$id.md"
   [ -s "$body" ] || packet "$g" >"$body"
   repo=$(get '.repo')
-  num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title 2>/dev/null \
+  num=$(gh issue list -R "$repo" --state open --limit 10000 --label review-gate --json number,title 2>/dev/null \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty' 2>/dev/null || true)
   if [ -z "$num" ]; then
-    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$body")" 2>/dev/null) || {
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body-file "$body" 2>/dev/null) || {
       echo "budget.sh: could not open the overrun gate's issue; the gate holds dispatch all the same and the next guard tries again" >&2
       return 0
     }

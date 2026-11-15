@@ -278,7 +278,7 @@ cmd_report() {
       if [ "$n" -gt 0 ]; then printf '## Judgement check\n\n'; jq -r '.breaking[] | "- **\(.skill)**: \(.title). \(.why)"' "$j"; fi
     )
     ticket=$("$GH" issue create -R "$PIPELINE_REPO" --label needs-triage \
-      --title "Upstream $(short "$new") breaks the pipeline: fix before updating" --body "$body" | sed 's#.*/##')
+      --title "Upstream $(short "$new") breaks the pipeline: fix before updating" --body-file - <<<"$body" | sed 's#.*/##')
     mkdir -p "$HOME_DIR"
     jq -n --arg sha "$new" --arg ticket "$ticket" '{sha: $sha, ticket: $ticket}' >"$(block_file)"
     printf '**Breaking change.** Filed pipeline ticket #%s. The update offer is withheld until it is fixed.\n' "$ticket" >>"$work/report.md"
@@ -307,7 +307,7 @@ others() { # other plugins installed from this marketplace whose pinned commit m
 }
 
 file_ticket() { # label-for-output title body -> prints "<label> #<n>"
-  printf '%s #%s\n' "$1" "$("$GH" issue create -R "$PIPELINE_REPO" --label needs-triage --title "$2" --body "$3" | sed 's#.*/##')"
+  printf '%s #%s\n' "$1" "$("$GH" issue create -R "$PIPELINE_REPO" --label needs-triage --title "$2" --body-file - <<<"$3" | sed 's#.*/##')"
 }
 
 cmd_file_ports() {

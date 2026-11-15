@@ -501,10 +501,10 @@ cmd_open() {
   repo=$(get -r .repo); title="End gate: run $RUN_ID"
   dir="$RUN_DIR/gates"; mkdir -p "$dir"
   packet >"$dir/end.md"
-  num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title \
+  num=$(gh issue list -R "$repo" --state open --limit 10000 --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
-    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/end.md")") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body-file "$dir/end.md") \
       || die "could not open the end gate's issue"
     num=${url##*/}
   fi
@@ -644,10 +644,10 @@ cmd_urgent_open() {
   repo=$(get -r .repo); title="End gate: urgent #$U (run $RUN_ID)"
   dir="$RUN_DIR/gates"; mkdir -p "$dir"
   cmd_urgent_packet "$RUN_DIR" "$U" >"$dir/urgent-$U.md"
-  num=$(gh issue list -R "$repo" --state open --label review-gate --json number,title \
+  num=$(gh issue list -R "$repo" --state open --limit 10000 --label review-gate --json number,title \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty')
   if [ -z "$num" ]; then
-    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body "$(cat "$dir/urgent-$U.md")") \
+    url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind gate -- -R "$repo" --title "$title" --label review-gate --body-file "$dir/urgent-$U.md") \
       || die "could not open the urgent end gate's issue"
     num=${url##*/}
   fi

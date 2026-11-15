@@ -94,7 +94,7 @@ Needs triage before it can join any run."
       done < <(jq -r --arg f "$from" --argjson s "$seq" \
         '.findings[] | select(.from == $f and .seq == $s) | (.fields // {}) | objects | to_entries[] | select(.value | type == "string" and . != "") | "\(.key)=\(.value)"' "$FILE")
       issue=$(ARTISAN_WRITER_PID="$(state_writer_pid)" "$SCRIPT_DIR/tracker.sh" new-issue --kind finding --from "$from" --run-dir "$RUN_DIR" \
-        ${fargs[@]+"${fargs[@]}"} -- -R "$repo" --title "Finding from #$from: $title" --body "$body" --label needs-triage) \
+        ${fargs[@]+"${fargs[@]}"} -- -R "$repo" --title "Finding from #$from: $title" --body-file - <<<"$body" --label needs-triage) \
         || state_die 1 "could not file the finding for triage"
       gh issue comment "$from" -R "$repo" --body "Finding from #$from: $title. $why About finished #$target; filed for triage: $issue" >/dev/null || state_die 1 "could not comment on #$from"
       ;;

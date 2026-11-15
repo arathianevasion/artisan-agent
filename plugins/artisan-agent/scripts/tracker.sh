@@ -13,6 +13,12 @@
 #       field: from --field when one names it, else the value TICKET (the
 #       ticket the issue came from) has on the board, else left empty for
 #       triage. Priority, Status and any field not listed are never set.
+#       The body goes to gh as a file, never as an argument: give it as
+#       --body-file FILE (FILE - is stdin; --body TEXT still works, for a
+#       short one). A body over GitHub's 65,536-character limit is posted
+#       whole: the issue body holds what fits and says the rest follows,
+#       then each further part is a comment, in order, each under the limit
+#       (a code fence cut by a part break is closed and opened again).
 #       A board step that fails never fails the call: it warns on stderr,
 #       queues the add for the next sweep and, with --run-dir, records a
 #       board-add-failed event in that run's state file.
@@ -35,7 +41,9 @@
 # Callers that hold a run's state lock pass ARTISAN_WRITER_PID, so the event
 # is written under their lock.
 #
-# Exit status: 0 ok (board failures included), 2 usage, else gh's status.
+# Exit status: 0 ok (board failures included), 2 usage, else gh's status
+# (a part comment that fails after the issue was created: its URL is printed
+# first, and the missing parts are named on stderr).
 # Portable to bash 3.2 (macOS) and Linux. Needs gh, jq and git.
 
 set -euo pipefail
@@ -183,22 +191,128 @@ record_failure() { # entry-json why
     || warn "could not record the board-add-failed event in $RUN_DIR"
 }
 
+# GitHub refuses an issue or comment body over 65,536 characters. A part is
+# measured in UTF-8 bytes (never fewer than its characters), and keeps 1,024
+# of them for the part notice and a fence carried across the break.
+BODY_LIMIT=65536
+PART_ROOM=$((BODY_LIMIT - 1024))
+
+# split_body FILE DIR: writes DIR/part-1.md ... DIR/part-N.md, each under
+# BODY_LIMIT, which together hold FILE whole, and prints N. Parts break
+# between lines; a line too long for one part is cut between characters.
+# A part that ends inside a code fence closes it, and the next opens it again.
+split_body() {
+  local file="$1" dir="$2" n=0 i=0
+  # --rawfile, not -Rs: jq 1.7 -R breaks a character cut by its 4 KiB reads.
+  jq -n --rawfile body "$file" --argjson room "$PART_ROOM" '
+    def cpbytes: if . < 128 then 1 elif . < 2048 then 2 elif . < 65536 then 3 else 4 end;
+    # The longest head of the string, in characters, of at most $cap bytes.
+    def head_fits($cap):
+      . as $s | {n: ([length, $cap] | min)}
+      | until(($s[0:.n] | utf8bytelength) <= $cap;
+              .n = ([(.n * $cap / ($s[0:.n] | utf8bytelength) | floor), .n - 1] | min))
+      | .n;
+    # A line longer than $cap bytes, cut between characters into pieces.
+    def pieces($cap):
+      [{rest: .} | recurse(if .rest == "" then empty
+                           else (.rest | head_fits($cap)) as $n | {piece: .rest[0:$n], rest: .rest[$n:]} end)
+       | .piece // empty];
+    # The fence a line opens or closes: "```" or "~~~" runs, up to 3 spaces in.
+    def marker: (capture("^ {0,3}(?<m>`{3,}|~{3,})") | .m) // null;
+    def step($line):
+      ($line | marker) as $m
+      | if .fence == null then (if $m != null then .fence = $line | .mark = $m else . end)
+        elif $m != null and ($m[0:1] == .mark[0:1]) and ($m | length) >= (.mark | length)
+             and ($line | test("^ {0,3}[`~]+\\s*$")) then .fence = null | .mark = null
+        else . end;
+    def close_part:
+      .parts += [.cur + (if .fence != null then "\n" + .mark else "" end)]
+      | .cur = (if .fence != null then .fence else "" end)
+      | .b = (.cur | utf8bytelength) | .started = (.fence != null);
+    def add($line):
+      ($line | utf8bytelength) as $lb
+      | (step($line)) as $next
+      | (if $next.fence != null then ($next.mark | length) + 1 else 0 end) as $reserve
+      | if (if .started then .b + 1 else .b end) + $lb + $reserve <= $room then
+          .cur = (if .started then .cur + "\n" else .cur end) + $line
+          | .b = (if .started then .b + 1 else .b end) + $lb | .started = true
+          | .fence = $next.fence | .mark = $next.mark
+        elif .started and .cur != (.fence // "") then close_part | add($line)
+        else
+          # Too long for any part: cut it between characters, a part each.
+          (if .started then 1 else 0 end) as $sep
+          | (($room - .b - $sep - 64) | if . < 1024 then 1024 else . end) as $cap
+          | reduce ($line | pieces($cap) | to_entries[]) as $e (.;
+              (if $e.key > 0 then close_part else . end)
+              | .cur = (if .started then .cur + "\n" else .cur end) + $e.value
+              | .b = (.cur | utf8bytelength) | .started = true)
+          | .fence = $next.fence | .mark = $next.mark
+        end;
+    reduce ($body | split("\n"))[] as $line ({parts: [], cur: "", b: 0, started: false, fence: null, mark: null}; add($line))
+    | .parts + (if .started then [.cur] else [] end)' >"$dir/parts.json"
+  n=$(jq length "$dir/parts.json")
+  while [ "$i" -lt "$n" ]; do
+    jq -j --argjson i "$i" '.[$i]' "$dir/parts.json" >"$dir/part-$((i + 1)).md"
+    i=$((i + 1))
+  done
+  printf '%s\n' "$n"
+}
+
 cmd_new_issue() {
-  local url="" repo="" issue="" entry=""
+  local url="" repo="" issue="" entry="" tmp="" parts=1 k=0 tries=0 has_body=0 missing=""
+  local -a args=()
   case "$ON_BOARD$OFF_BOARD" in *" $KIND "*) ;; *) usage ;; esac
   if [ -n "$FROM" ] && ! state_is_uint "$FROM"; then
     warn "--from $FROM is not an issue number; no field is copied from it"
     FROM=
   fi
   [ $# -gt 0 ] || usage
-  url=$(gh issue create "$@") || exit $?
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/tracker.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  # The body, whichever way it came, goes to a file of its own.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --body|-b) [ $# -ge 2 ] || usage; printf '%s' "$2" >"$tmp/body.md"; has_body=1; shift 2 ;;
+      --body-file|-F)
+        [ $# -ge 2 ] || usage
+        if [ "$2" = - ]; then cat >"$tmp/body.md"; else cat -- "$2" >"$tmp/body.md"; fi || exit 1
+        has_body=1; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  if [ "$has_body" = 1 ]; then
+    if [ "$(wc -c <"$tmp/body.md")" -lt "$BODY_LIMIT" ]; then
+      cp "$tmp/body.md" "$tmp/part-1.md"
+    else
+      parts=$(split_body "$tmp/body.md" "$tmp")
+      printf '\n\n---\n\n*This packet is too long for one issue body: it continues in the comments below (part 1 of %s).*\n' \
+        "$parts" >>"$tmp/part-1.md"
+    fi
+    args+=(--body-file "$tmp/part-1.md")
+  fi
+  url=$(gh issue create ${args[@]+"${args[@]}"}) || exit $?
   printf '%s\n' "$url"
+  issue=${url##*/}
+  repo=$(printf '%s' "$url" | sed -n 's#^[a-z]*://[^/]*/\([^/]*/[^/]*\)/issues/[0-9][0-9]*$#\1#p')
+  k=2
+  while [ "$k" -le "$parts" ]; do
+    { printf '*Continued from the issue body (part %s of %s).*\n\n' "$k" "$parts"; cat "$tmp/part-$k.md"; } >"$tmp/comment-$k.md"
+    tries=0
+    until [ -n "$repo" ] && gh issue comment "$issue" -R "$repo" --body-file "$tmp/comment-$k.md" >/dev/null; do
+      tries=$((tries + 1))
+      if [ -z "$repo" ] || [ "$tries" -ge 3 ]; then
+        while [ "$k" -le "$parts" ]; do missing="$missing $k"; k=$((k + 1)); done
+        warn "#$issue was created, but parts$missing of $parts of its body were not posted as comments; post them by hand"
+        exit 1
+      fi
+    done
+    k=$((k + 1))
+  done
   case "$ON_BOARD" in *" $KIND "*) ;; *) return 0 ;; esac
   main_checkout
   read_board
   [ -n "$BOARD" ] || return 0
-  issue=${url##*/}
-  repo=$(printf '%s' "$url" | sed -n 's#^[a-z]*://[^/]*/\([^/]*/[^/]*\)/issues/[0-9][0-9]*$#\1#p')
   if [ -z "$repo" ] || ! state_is_uint "$issue"; then
     warn "cannot read the new issue from \"$url\"; add it to the board by hand"
     return 0
