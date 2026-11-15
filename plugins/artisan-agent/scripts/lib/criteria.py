@@ -170,9 +170,33 @@ def needs_merge_gate(text):
     if merge_gate_criterion(text) or SCRIPT.search(str(text)):
         return None
     bare = " ".join(QUOTED.sub("x", str(text)).split())
-    if IMPLEMENTATION.search(bare):
+    if IMPLEMENTATION.search(bare) or after_merge_criterion(text):
         return None
     return next((what for what, p in NEEDS_MERGE_GATE if p.search(bare)), None)
+
+
+# A fact measured on the run's PR or CI run after merge (#244): a PR run's
+# wall time or duration, its run id, a PR's CI timing. No one inside a run
+# can observe it (workers open no PR, the verifier runs before the merge), so
+# only a person checks it, after merge: the plan step flags it the way it
+# flags a Human check, and the verifier's verdict on it never fails an
+# attempt. It names the PR, a pull request or CI, and a measure of a run; one
+# that names a script or a condition is about code (merge_gate_criterion's
+# rule), and one merge_gate_criterion reads is the merge gate's.
+AFTER_MERGE_MEASURE = re.compile(r"\b(wall[\s-]+(clock\s+)?time|duration|timings?|run\s+ids?|run\s*time|runtime)\b", re.I)
+AFTER_MERGE_PLACE = re.compile(r"\b(pr|pull\s+request|ci)\b", re.I)
+
+
+def after_merge_criterion(text):
+    """The measure ("wall time", "run id", ...) when the criterion is a fact
+    measured on the run's PR or CI run after merge, else None."""
+    if merge_gate_criterion(text) or SCRIPT.search(str(text)):
+        return None
+    bare = " ".join(QUOTED.sub("x", str(text)).split())
+    if IMPLEMENTATION.search(bare) or not AFTER_MERGE_PLACE.search(bare):
+        return None
+    m = AFTER_MERGE_MEASURE.search(bare)
+    return " ".join(m.group(0).lower().split()) if m else None
 
 
 def merge_gate_lines(lines):

@@ -520,7 +520,7 @@ cmd_render() {
       ( ($p.human_check_flags // []) | if length == 0 then empty else
         "| Ticket | Criterion | Reads as needing a person |",
         "|---|---|---|",
-        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\"\(if .after_merge == true then " (measured after merge)" else "" end) |" ),
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),
