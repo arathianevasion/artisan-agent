@@ -337,7 +337,7 @@ A hands-on ticket carries `human: {worktree, branch, base, focus, started_at, do
 
 The retro's guardrail health reads:
 
-- `guardrail-fired` (`guardrail`, `area?`, `gate?`, `tickets?`; or from `sweep.sh` on a criterion-2 question finding, `guardrail: "scope-floor"`, `ticket`, `areas`, `question`; or from `verify.sh judge`, `ticket`, `attempt`, `criterion`, `by: "verifier"`)
+- `guardrail-fired` (`guardrail`, `area?`, `gate?`, `tickets?`; or from `sweep.sh` on a criterion-2 question finding, `guardrail: "scope-floor"`, `ticket`, `areas`, `question`; or from `verify.sh judge`, `ticket`, `attempt`, `criterion`, `by: "verifier"`; or for an open decision, from `questions.sh file --criterion 8 --run` or `sweep.sh` on its finding, `guardrail: "open-decision"`, `ticket`, `raised_by`, `case`, `question`, `areas`, `from?`)
 - `guardrail-bypassed` (`guardrail`, `area?`, `gate?`, `reason`, `by`)
 - `gate-decision` (its `outcome`, `redirect` and `areas`)
 - `bug-found` (`ticket`, `areas`, `where: "gate"`, `gate`, `by`, `why?`: a bug the Artisan flagged at a review gate)

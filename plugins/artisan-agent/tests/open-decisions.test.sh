@@ -206,6 +206,17 @@ test_a_criterion_8_card_is_never_a_provisional_card() {
   assert_contains "$(cat "$EVIDENCE")" "never \`provisional\`"
 }
 
+test_the_evidence_record_checker_refuses_a_provisional_criterion_8_card() {
+  local out="" status=0
+  awk '/^## Example/ { f = 1; next } f && /^```json/ { g = 1; next } g && /^```/ { exit } g' "$EVIDENCE" \
+    | jq '.decisions[0].criterion = "8" | .decisions[0].confidence = "provisional"' >card.json
+  out=$("$TESTS_DIR/implement/check-evidence-record.sh" card.json) || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$out" "decisions[0]: criterion 8 (an open decision) is never provisional"
+  jq '.decisions[0].confidence = "firm"' card.json >firm.json
+  "$TESTS_DIR/implement/check-evidence-record.sh" firm.json || fail "a firm criterion-8 card is a valid card"
+}
+
 # ------------------------------------------------------------------ static
 
 test_criterion_8_is_added_and_criteria_1_to_7_keep_their_numbers_and_wording() {

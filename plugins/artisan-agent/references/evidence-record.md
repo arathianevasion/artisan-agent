@@ -56,7 +56,7 @@ Each entry in `decisions` is a decision in the shape in `${CLAUDE_PLUGIN_ROOT}/r
 | `kind` | yes | `product taste`, `engineering taste` or `engineering` |
 | `criterion` | yes | The controversy criterion it meets, by number from `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md`, or `none` |
 
-For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decision would have been if a person had made it: a seam or other design question is job 3; a review remark left as is is job 13. A decision made alone is `provisional` unless a guardrail settles it.
+For a worker's decision, `by` is `worker <ticket>`. `job` is the job the decision would have been if a person had made it: a seam or other design question is job 3; a review remark left as is is job 13. A decision made alone is `provisional` unless a guardrail settles it. A card naming criterion 8 is never `provisional`: an open decision is filed, not picked for now (`${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md`); `questions.sh provisional` shows only criteria 4, 6 and 7, and the checker refuses a provisional criterion-8 card.
 
 ```json
 {

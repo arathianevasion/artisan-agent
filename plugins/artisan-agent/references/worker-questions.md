@@ -1,6 +1,6 @@
 # Decisions a worker may not make
 
-Nothing joins scope without the Artisan, and one question doesn't stall the run. When a worker would decide something that meets a controversy criterion, it files a question instead of deciding. The criteria are the seven in `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md` plus every "Always ask" item at each level (`PRODUCT_STANDARDS.md`, `CODING_STANDARDS.md`, the individual standards), **read again at the point of use**, not remembered from the start of the session.
+Nothing joins scope without the Artisan, and one question doesn't stall the run. When a worker would decide something that meets a controversy criterion, it files a question instead of deciding. The criteria are the eight in `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md` plus every "Always ask" item at each level (`PRODUCT_STANDARDS.md`, `CODING_STANDARDS.md`, the individual standards), **read again at the point of use**, not remembered from the start of the session.
 
 Skills cite this file rather than copying it. The script is `${CLAUDE_PLUGIN_ROOT}/scripts/questions.sh` (usage in its header; tests in `tests/questions.test.sh`).
 
@@ -9,6 +9,7 @@ Skills cite this file rather than copying it. The script is `${CLAUDE_PLUGIN_ROO
 | The decision | The worker |
 |---|---|
 | Meets criterion 1, 2, 3 or 5, or an "Always ask" item (not a new seam it introduces, which `/artisan-agent:implement` builds and records) | Files a question (below). Doesn't make the choice |
+| Is an open decision: criterion 8, with a case and a concrete harm it can name (`${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md`) | Files it with `--criterion 8`: the case, the harm and one recommendation, no options. `--blocking` and `--split` work as below; one in another ticket is `--non-blocking` |
 | Easy-to-reverse taste: criterion 4, 6 or 7 | May pick it **provisionally**: a decision card with `confidence: "provisional"` and the criterion (`references/evidence-record.md`). It comes to the Artisan as a "provisional" card at the next slice gate, in the packet |
 | Anything else | Decides, as `/artisan-agent:implement` says |
 
@@ -22,7 +23,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/questions.sh file --ticket <its ticket> --criterio
   --recommendation "<what it would choose, and why>" (--blocking | --split)
 ```
 
-It files a ticket labelled `needs-triage` holding the question, the options, the recommendation and the criterion that triggered it, and logs a `question` finding in the worker's findings file (`$ARTISAN_FINDINGS_FILE`). It prints the new ticket's number. A criterion-2 question is the scope floor firing: the sweep reads that finding once and logs `guardrail-fired` for `scope-floor` (ticket, areas, question number), for guardrail health (`references/guardrail-health.md`); other criteria log no guardrail event.
+It files a ticket labelled `needs-triage` holding the question, the options, the recommendation and the criterion that triggered it, and logs a `question` finding in the worker's findings file (`$ARTISAN_FINDINGS_FILE`). It prints the new ticket's number. A criterion-2 question is the scope floor firing: the sweep reads that finding once and logs `guardrail-fired` for `scope-floor` (ticket, areas, question number), for guardrail health (`references/guardrail-health.md`); a criterion-8 filing logs `guardrail-fired` for `open-decision` the same way (`references/open-decisions.md`); other criteria log no guardrail event.
 
 - `--blocking`: the worker's own ticket can't finish without the answer. The worker stops, commits what is safe, and ends with result status `blocked`; `unsure` names the question ticket.
 - `--split`: the question can be split off. The worker finishes every other criterion and ends `complete`, naming the question ticket in `unsure`. The ticket is **not** blocked.

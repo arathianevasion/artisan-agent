@@ -45,6 +45,8 @@ problems=$(jq -r '
     (need(.; ["job","choice","by","question","alternative","kind","criterion"]; "decisions[\($i)]")),
     (select(has("kind")) | oneof(.kind; ["product taste","engineering taste","engineering"]; "decisions[\($i)].kind")),
     (select(has("confidence")) | oneof(.confidence; ["firm","provisional"]; "decisions[\($i)].confidence")),
+    (select(((.criterion // "") | tostring) == "8" and .confidence == "provisional")
+     | "decisions[\($i)]: criterion 8 (an open decision) is never provisional; file it with questions.sh file --criterion 8"),
     (select(has("reach")) | oneof(.reach; ["ticket","area","everywhere"]; "decisions[\($i)].reach"))),
   (select(has("review")) | .review |
     (select((.ran | type) != "boolean") | "review: ran must be true or false"),
