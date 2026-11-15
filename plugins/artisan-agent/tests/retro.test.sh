@@ -159,7 +159,7 @@ test_render_is_one_chat_round_with_batch_questions_signals_and_satisfaction() {
   assert_contains "$r" "### Judgement calls"
   assert_contains "$r" "**L2** Keep this lesson (does it generalise beyond this project?)?"
   assert_contains "$r" "| Focus shares |"
-  assert_contains "$r" "| Rubber-stamp rate at gates |"
+  assert_contains "$r" "| Rubber-stamp rate | 2 of 2 decisions unchanged (100%): 2 of 2 gate decisions approved unchanged, 0 of 0 rulings took the recommendation |"
   assert_contains "$r" "| Throughput | 2 merged in 2 h"
   assert_contains "$r" "| Cost per merged ticket | \$1.25 per merged ticket"
   assert_contains "$r" "1. Do you understand the problem this run solved"
@@ -585,4 +585,32 @@ test_each_ruling_is_one_of_the_artisans_actions_and_one_that_took_the_recommenda
   # two gates and three rulings with a verdict (#42 has none).
   assert_eq '2 3 3 5 60' "$(jq -r '.rubber_stamp | "\(.gates) \(.rulings) \(.unchanged) \(.decisions) \(.rate)"' <<<"$f")" "rubber stamp"
   assert_eq '5 2 40 0 2 1' "$(jq -r '.leverage | "\(.decisions) \(.changed) \(.rate) \(.gates_changed) \(.rulings_changed) \(.rulings_unknown)"' <<<"$f")" "leverage"
+}
+
+test_the_signals_show_the_leverage_line_beside_throughput_and_the_waits_on_the_artisan() {
+  sample_run; gate_events; with_rulings; seed_lessons
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  # Each question from its filing to its first ruling: 20 + 40 + 10.
+  assert_eq '3 70 40' "$(jq -r '.open_decision_wait | "\(.rulings) \(.minutes) \(.longest_minutes)"' <<<"$f")" "open decisions waited"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Rubber-stamp rate | 3 of 5 decisions unchanged (60%): 2 of 2 gate decisions approved unchanged, 1 of 3 rulings took the recommendation |"
+  assert_contains "$out" "| Leverage | 40% of 5 decisions changed the outcome (gates 0 · rulings 2; 1 ruling with no verdict not counted) |"
+  assert_contains "$out" "| Throughput | 2 merged in"
+  assert_contains "$out" "| Waited on the Artisan | 177 min: gates 107 min over 2 · open decisions 70 min over 3 (longest 40 min) |"
+  # In that order: the balance reads as one block.
+  local lev=; lev=$(printf '%s\n' "$out" | grep -n '^| Leverage |' | cut -d: -f1)
+  local tp=; tp=$(printf '%s\n' "$out" | grep -n '^| Throughput |' | cut -d: -f1)
+  local w=; w=$(printf '%s\n' "$out" | grep -n '^| Waited on the Artisan |' | cut -d: -f1)
+  [ "$lev" -lt "$tp" ] && [ "$tp" -lt "$w" ] || fail "leverage, throughput and waits not side by side: $lev $tp $w"
+}
+
+test_a_run_with_no_decisions_shows_no_leverage_and_no_waits() {
+  sample_run; seed_lessons
+  jq '.decisions = []' "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "| Rubber-stamp rate | no gate decisions or rulings this run |"
+  assert_contains "$out" "| Leverage | no gate decisions or rulings this run |"
+  assert_contains "$out" "| Waited on the Artisan | - |"
 }

@@ -459,15 +459,57 @@ def signals_table(f):
     else:
         focus = "no actions recorded"
     r = f["rubber_stamp"]
-    rubber = ("%d of %d gate decisions approved unchanged (%d%%)" % (r["unchanged"], r["gates"], r["rate"])
-              if r["gates"] else "no gate decisions this run")
+    decisions = r.get("decisions", r["gates"])  # facts from before #234 count gates only
+    if not decisions:
+        rubber = lev = "no gate decisions or rulings this run"
+    else:
+        l = f.get("leverage") or {"gates_changed": r["gates"] - r["unchanged"], "rulings_changed": 0}
+        rulings = r.get("rulings", 0)
+        rubber = ("%d of %d decisions unchanged (%d%%): %d of %d gate decisions approved unchanged, "
+                  "%d of %d rulings took the recommendation" % (
+                      r["unchanged"], decisions, r["rate"], r["gates"] - l["gates_changed"], r["gates"],
+                      rulings - l["rulings_changed"], rulings))
+        lev = leverage_cell(f)
     tp = ("%d merged in %s h (%s per hour)" % (f["merged"], f["hours"], f["throughput_per_hour"])
           if f["hours"] else "%d merged" % f["merged"])
     cost = "%s per merged ticket (run %s against an estimate of %s)" % (
         money(f["cost_per_merged_usd"]), money(f["cost_usd"]), money(f["estimate_usd"]))
-    rows = [("Focus shares", focus), ("Rubber-stamp rate at gates", rubber),
-            ("Throughput", tp), ("Cost per merged ticket", cost)]
+    rows = [("Focus shares", focus), ("Rubber-stamp rate", rubber), ("Leverage", lev),
+            ("Throughput", tp), ("Waited on the Artisan", waited_cell(f)), ("Cost per merged ticket", cost)]
     return "| Signal | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
+
+
+def leverage_cell(f):
+    """The leverage line: the share of the Artisan's decisions that changed
+    the outcome, and its trend over earlier runs when the record has any."""
+    l = f.get("leverage")
+    if not l:
+        return "-"
+    out = "%d%% of %d decisions changed the outcome (gates %d · rulings %d" % (
+        l["rate"], l["decisions"], l["gates_changed"], l["rulings_changed"])
+    if l["rulings_unknown"]:
+        out += "; %d ruling%s with no verdict not counted" % (l["rulings_unknown"], "" if l["rulings_unknown"] == 1 else "s")
+    out += ")"
+    t = l.get("trend")
+    if t and len(t["runs"]) > 1 and t["rate"] is not None:
+        out += " · trend %d%% over %d runs (%s)" % (t["rate"], len(t["runs"]), " → ".join(
+            "-" if x["rate"] is None else "%d%%" % x["rate"] for x in t["runs"]))
+    return out
+
+
+def waited_cell(f):
+    """How long gates and open decisions waited on the Artisan; a dash when
+    neither did."""
+    g = f.get("artisan_wait") or {}
+    o = f.get("open_decision_wait") or {}
+    if g.get("minutes") is None and o.get("minutes") is None:
+        return "-"
+    parts = []
+    if g.get("minutes") is not None:
+        parts.append("gates %s min over %d" % (g["minutes"], g["decisions"]))
+    if o.get("minutes") is not None:
+        parts.append("open decisions %s min over %d (longest %s min)" % (o["minutes"], o["rulings"], o["longest_minutes"]))
+    return "%s min: %s" % (num((g.get("minutes") or 0) + (o.get("minutes") or 0)), " · ".join(parts))
 
 
 def dash(x):
