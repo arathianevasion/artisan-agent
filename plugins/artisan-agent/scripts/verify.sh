@@ -56,6 +56,15 @@
 #                                               verifier's findings
 #         fail <met>/<total> blocked: <first unmet> a failed attempt, the last:
 #                                               blocked, with a decision
+#         fail <met>/<total> unmeetable: <criterion>
+#                                               the worker listed it as one no
+#                                               worker could meet here and the
+#                                               verifier agrees (#186): blocked
+#                                               for an exception gate (reason
+#                                               "unmeetable"), no further
+#                                               attempt used until the Artisan
+#                                               answers (gate-action.sh split,
+#                                               rewrite, drop-criterion, retry)
 #         error <reason>                        the verifier itself failed
 #       With checks recorded, a verdict without their results is an error (the
 #       verifier did not run them), and a red one makes every criterion that
@@ -71,6 +80,10 @@
 #       A "gate" criterion is neither met nor unmet either: the verdict's
 #       "verified" event lists them (gate), and a red merge gate still fails
 #       the ticket, in wave.sh merge.
+#       Every criterion the worker's record lists in `unmeetable` logs
+#       criterion-unmeetable (ticket, attempt, criterion, why,
+#       verifier_agrees) in the verdict's write. One the verifier disagrees
+#       with fails as any unmet criterion, and the retry's notes say why.
 #       Exit 0 pass, 6 fail
 #       or a second verifier failure (blocked), 8 the verifier is still
 #       running, 14 the verifier failed once: start it again.
@@ -97,6 +110,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/headless-lib.sh
+. "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
 state_require_jq
 
 DEFAULT_MODEL=claude-sonnet-5-5
@@ -125,23 +140,30 @@ classify() {
   printf '%s\n' "$out"
 }
 
-# The ticket's acceptance criteria, verbatim, as a JSON array.
+# The ticket's acceptance criteria, verbatim, as a JSON array, with the
+# changes the Artisan made at an unmeetable-criterion exception gate (#186:
+# tickets.<t>.criteria_changes) applied.
 read_criteria() { # ticket
-  local path= body= issue=
+  local path= body= issue= crit= changes=
   path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
   if [ -n "$path" ]; then
     case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
     [ -f "$path" ] || die "no ticket file $path for #$1"
     body=$(cat "$path")
+    crit=$(printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract) || die "could not read #$1's criteria"
   else
     issue=$(gh issue view "$1" -R "$(get .repo)" --json body,comments) \
       || die "could not read #$1 from the tracker; not verifying blind"
     issue=$(printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket) \
       || die "could not read #$1's criteria; not verifying blind"
-    printf '%s' "$issue" | jq -c .criteria
-    return
+    crit=$(printf '%s' "$issue" | jq -c .criteria)
   fi
-  printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract
+  changes=$(get -c --arg t "$1" '.tickets[$t].criteria_changes // []')
+  if [ "$changes" = "[]" ]; then printf '%s\n' "$crit"; return 0; fi
+  mkdir -p "$RUN_DIR/verify"
+  printf '%s\n' "$changes" >"$RUN_DIR/verify/$1.criteria-changes.json"
+  printf '%s' "$crit" | python3 -I "$SCRIPT_DIR/lib/criteria.py" change "$RUN_DIR/verify/$1.criteria-changes.json" \
+    || die "could not apply #$1's criteria changes"
 }
 
 session_cost() { # id attempt -> the session's total_cost_usd, or nothing
@@ -297,6 +319,13 @@ cmd_start() {
       printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
     fi
     printf -- '- A criterion only a person can verify (play, eyes, a real device, outside access; never one merely hard to test): mark it "met": "human" with evidence.why saying what only a person can do. It moves to a Human check and does not fail the ticket.\n'
+    # The worker says no worker could meet these here (#186): the verifier
+    # says whether it agrees, and an agreed one sends the ticket to an
+    # exception gate instead of another attempt.
+    if jq -e '(.unmeetable // []) | type == "array" and length > 0' "$result" >/dev/null 2>&1; then
+      printf -- '- The worker says no worker could meet these criteria in this environment (its record'"'"'s unmeetable). For each one you find unmet, add "unmeetable": true to its entry if you agree that no worker could meet it here for the reason given (evidence.why says what stands in the way), or "unmeetable": false if a worker could (evidence.why says how). Never agree because it is hard or the worker ran out of time. Leave it out on a criterion you find met:\n'
+      jq -r '.unmeetable[] | objects | "  - \(.criterion // "?"): \(.why // "no reason given")"' "$result"
+    fi
     printf -- '- A criterion about CI, the merge gate or the PR ("CI green", "the PR shows / lists …", "merge gate green"): mark it "met": "gate" and don'"'"'t judge it. Workers never open PRs and the merge gate runs after you, so nothing in this checkout can show it; wave.sh merge'"'"'s gate is what satisfies it. Never for a criterion about code that runs CI or the merge gate: judge that one.\n'
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
@@ -326,10 +355,11 @@ cmd_start() {
     die "the verifier's worktree for #$t: $SETUP_ERR"
   fi
   read_extra_args
+  headless_args "$VERIFIER_TOOLS"
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" \
-    -- --permission-mode acceptEdits --allowedTools "$VERIFIER_TOOLS" --add-dir "$RUN_DIR" \
+    -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR" \
     ${EXTRA[@]+"${EXTRA[@]}"}); then
     remove_worktree "$wt"
     apply '.tickets[$t].verifications[-1] |= (.verdict = "error" | .reason = "could not launch")' --arg t "$t"
@@ -445,7 +475,8 @@ say_again() { # ticket
     | if $x.verdict == "error" then "error \($x.reason)"
       else $k.evidence as $e
         | "\($e.verdict) \($e.criteria_met)/\($e.criteria_total)"
-          + (if $e.verdict != "pass" then " \($x.next // "blocked"): \([$e.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"
+          + (if $e.verdict != "pass" then " \($x.next // "blocked"): \([$e.acceptance[] | select((.met | not) and .human != true and .gate != true)
+                 | select($x.next != "unmeetable" or .unmeetable.verifier_agrees == true) | .criterion] | first)"
              else (if ($e.criteria_human // 0) == 0 then ""
                elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
                else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
@@ -612,15 +643,15 @@ cmd_judge() {
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
              met: $ev[0].criteria_met, total: $ev[0].criteria_total}
              + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end); $now)
+    | reduce ($ev[0].acceptance[] | select(.unmeetable != null)) as $c (.;
+        event({event: "criterion-unmeetable", ticket: $t, attempt: $n, criterion: $c.criterion,
+               why: $c.unmeetable.why, verifier_agrees: $c.unmeetable.verifier_agrees}; $now))
     | reduce ($ev[0].acceptance[] | select((.met | not) and (.guardrail // "") != "")) as $c (.;
         event({event: "guardrail-fired", guardrail: $c.guardrail, ticket: $t, attempt: $n,
                criterion: $c.criterion, by: "verifier"}; $now))
     | if ($ev[0].human_check // null) == null then . else
         ($ev[0].human_check) as $h
-        | .plan.scope = ((.plan.scope + [$h]) | unique)
-        | .plan.tickets[$h] = ((.plan.tickets[$h] // {}) + {title: $title, human_check_for: $t})
-        | (if .tickets[$h] == null then .tickets[$h] = new_ticket($h) else . end)
-        | .tickets[$h].human_check = ((.tickets[$h].human_check // {state: "open"}) + {for: $t})
+        | join_human_check($h; $t; $title)
         | event({event: "human-check-split", ticket: $t, attempt: $n, human_check: $h,
                  criteria: [$ev[0].acceptance[] | select(.human == true) | .criterion]}; $now)
       end' \
@@ -641,6 +672,22 @@ cmd_judge() {
         | .tickets[$t].verifications[-1].next = "human"
         | event({event: "human-feedback", ticket: $t, attempt: $n}; $now)' \
         --arg t "$t" --argjson n "$n" --slurpfile e "$contract"
+    elif [ "$(jq '[.acceptance[] | select(.unmeetable.verifier_agrees == true)] | length' "$contract")" -gt 0 ]; then
+      # The worker said no worker could meet a criterion here and the
+      # verifier agrees (#186): another attempt would fail the same way. The
+      # ticket goes to an exception gate (reason "unmeetable") and uses no
+      # further attempt until the Artisan answers it.
+      apply '[$e[0].acceptance[] | select(.unmeetable.verifier_agrees == true)
+          | {criterion, why: .unmeetable.why, verifier_why: (.evidence.why // null)}] as $u
+        | ("the verifier agrees no worker can meet \($u | length) of \($e[0].criteria_total) criteria here, first: \($u[0].criterion)") as $r
+        | .tickets[$t] |= (.status = "blocked" | .pid = null | .blocked_reason = $r
+            | .unmeetable = {status: "open", attempt: $n, verifier: $v, criteria: $u})
+        | .tickets[$t].verifications[-1].next = "unmeetable"
+        | .decisions += [{id: ((.decisions | length) + 1), kind: "exception", reason: "unmeetable", ticket: $t,
+            question: "Ticket \($t): \($r). Split each into a Human check or a new ticket, rewrite it, drop it with a reason, or retry anyway; or bypass or defer its exception gate?",
+            status: "waiting", at: $now}]
+        | event({event: "blocked", ticket: $t, reason: $r}; $now)' \
+        --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile e "$contract"
     else
     apply 'failed_attempt($t; $r; $now)
       | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0) - (.criteria_gate // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"' "$contract")"

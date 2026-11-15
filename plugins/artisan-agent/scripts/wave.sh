@@ -72,7 +72,17 @@
 #       ticket with no verdict, or verified but not merged) queues an
 #       orchestrator-exit decision and event, and next is "decide" (after
 #       "halted" only), with an "orchestrator-exit: <cause> in wave <n>
-#       (<tickets>): <detail>" line.
+#       (<tickets>): <detail>" line. The orchestrator's runner judges it first
+#       in its exit hook (judge-exit, #184); whichever judges first, one exit
+#       gives one decision and one event.
+#
+# Usage, from the orchestrator's runner (run-ticket.sh's exit hook):
+#   wave.sh judge-exit <run-dir> <orchestrator-id> <attempt> --exit-record PATH
+#       sweep, then judge that orchestrator's exit as status does (#184),
+#       from its exit record at PATH (the runner's temp file, moved into
+#       place after), writing as the runner's pid, which holds the lock;
+#       print the orchestrator-exit line, if one waits. Nothing for an
+#       orchestrator already judged or handed off.
 #
 # Usage, from the orchestrator:
 #   wave.sh dispatch <run-dir> <ticket> [--brief TEXT]
@@ -204,6 +214,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/wave-lib.sh"
 # shellcheck source=lib/config-lib.sh
 . "$SCRIPT_DIR/lib/config-lib.sh"   # the template's defaults (orchestrator_turns)
+# shellcheck source=lib/headless-lib.sh
+. "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -297,13 +309,17 @@ exit_cause() { # classification
 # an earlier one and left over, still in flight,
 # returned with no passing verdict ("no-verdict"), or verified but not merged
 # ("unmerged"; not while the run is parked on CI, whose own decision holds it).
+# Two paths judge it (the runner's exit hook, judge-exit, and status or
+# launch, #184); the "not judged yet" test is made again inside the locked
+# write, so whichever comes second changes nothing: one decision, one event.
 check_orchestrator_exit() { # id attempt wave classification
   local code="" cause=""
-  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
-        | last | . != null and .exit == null and .handoff == null')" = true ] || return 0
-  code=$(jq -r '.exit_code // "none"' "$RUN_DIR/results/$1.$2.exit.json" 2>/dev/null || echo none)
+  orchestrator_unjudged "$1" "$2" || return 0
+  code=$(jq -r '.exit_code // "none"' "${EXIT_RECORD:-$RUN_DIR/results/$1.$2.exit.json}" 2>/dev/null || echo none)
   cause=$(exit_cause "$4")
   apply '
+    (.orchestrators | map(.id == $id and .attempt == $a) | index(true)) as $i
+    | if $i == null or .orchestrators[$i].exit != null or .orchestrators[$i].handoff != null then . else
     . as $s
     | [.tickets | to_entries[] | select((.value.wave // 0) > 0 and .value.wave <= $w) | .key as $t | .value as $k
      | ($k | verified_pass) as $passed
@@ -329,7 +345,36 @@ check_orchestrator_exit() { # id attempt wave classification
             question: "The orchestrator for wave \($w) exited without finishing its wave (\($c)): \($detail). Recommended: resume (the next orchestrator reconciles and carries the wave on, keeping the work already done); retry \(if ($ts | length) > 0 then ($ts | map("#" + .) | join(", ")) else "its tickets" end) with fresh workers only if that work looks wrong, as it throws it away; halt only if the cause looks shared and would fail the next orchestrator too. Resume, retry or halt?",
             status: "waiting", at: $now}]
         | event({event: "orchestrator-exit", id: $id, attempt: $a, wave: $w, cause: $c, tickets: $ts, detail: $detail}; $now)
-      end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+      end end' --arg id "$1" --argjson a "$2" --argjson w "$3" --arg cls "$4" --arg code "$code" --arg cause "$cause"
+}
+
+# orchestrator_unjudged id attempt: the orchestrator is recorded, its exit not
+# judged yet, and it did not hand its wave off.
+orchestrator_unjudged() {
+  [ "$(get --arg id "$1" --argjson a "$2" '[(.orchestrators // [])[] | select(.id == $id and .attempt == $a)]
+        | last | . != null and .exit == null and .handoff == null')" = true ]
+}
+
+# wave.sh judge-exit: the orchestrator's runner judges its own exit in its
+# exit hook (run-ticket.sh, #184), with its own pid as the writer, so the
+# decision and its event never wait on the chat's `wave.sh wait` or status.
+# The runner calls it with its exit record still a temp file (--exit-record)
+# and moves the record into place after, so the record landing still means
+# the runner is done and the lock free. It sweeps first, as status reconciles
+# first, so a worker launched but not recorded (#190) is named. Prints the
+# orchestrator-exit line, if one waits.
+EXIT_RECORD=
+cmd_judge_exit() {
+  open_run "${1:-}"
+  [ $# -eq 5 ] && [ "$4" = --exit-record ] && state_is_uint "$3" || usage
+  local id="$2" attempt="$3" wave="" cls=""
+  EXIT_RECORD=$5
+  orchestrator_unjudged "$id" "$attempt" || return 0
+  wave=$(get --arg id "$id" --argjson a "$attempt" '[.orchestrators[] | select(.id == $id and .attempt == $a)] | last | .wave')
+  "$SCRIPT_DIR/sweep.sh" "$RUN_DIR" --no-guard >/dev/null
+  cls=$("$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$id" "$attempt" --exit-record "$EXIT_RECORD")
+  check_orchestrator_exit "$id" "$attempt" "$wave" "$cls"
+  exit_decision_lines
 }
 
 # The waiting orchestrator-exit decision's id, or nothing.
@@ -595,11 +640,12 @@ EOF
   # The runner takes the lock over from this writer before its session
   # starts: the orchestrator is the writer for the wave.
   read_extra_args
+  headless_args "$SESSION_TOOLS"
   runner=$("$SCRIPT_DIR/run-ticket.sh" --role orchestrator --lock-from "$me" --run-dir "$RUN_DIR" --ticket "$id" \
     --attempt "$attempt" --prompt-file "$prompt" --workdir "$wt" --model "$model" \
     --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$deadline" \
     --max-turns "$turns" \
-    -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" \
+    -- "${HEADLESS_ARGS[@]}" \
     --add-dir "$MAIN" --add-dir "$WT_ROOT" \
     ${EXTRA[@]+"${EXTRA[@]}"} ${args[@]+"${args[@]}"}) || die "could not launch $id"
 
@@ -960,6 +1006,16 @@ EOF
     printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
     get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
   fi
+  # Criteria the Artisan changed at an unmeetable-criterion exception gate
+  # (#186): the verifier judges the ticket's criteria with these applied.
+  if [ "$(get --arg t "$t" '(.tickets[$t].criteria_changes // []) | length')" -gt 0 ]; then
+    printf -- '- The Artisan changed these acceptance criteria at an exception gate; the verifier judges the ticket with them applied, whatever the ticket still says:\n' >>"$prompt"
+    get --arg t "$t" '.tickets[$t].criteria_changes[]
+      | "  - \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
+          elif .action == "split" then "moved to #\(.to); not yours to meet"
+          else "dropped; not yours to meet" end)
+        + (if .why then " (\(.why))" else "" end)' >>"$prompt"
+  fi
   # Steering (lever.sh steer): the Artisan stopped the last attempt and gave notes.
   if [ "$(get --arg t "$t" '(.tickets[$t].steering // []) | length')" -gt 0 ]; then
     printf -- '- The Artisan stopped an earlier attempt to steer you. This is not a failed attempt: continue from the branch, and follow their notes:\n' >>"$prompt"
@@ -981,6 +1037,7 @@ EOF
     --arg t "$t" --arg wt "$wt" --arg base "$base"
 
   read_extra_args
+  headless_args "$SESSION_TOOLS"
   local caps=()
   [ -z "$turns" ] || caps+=(--max-turns "$turns")
   [ -z "$deadline" ] || caps+=(--deadline-seconds "$deadline")
@@ -988,7 +1045,7 @@ EOF
   pid=$("$SCRIPT_DIR/run-ticket.sh" --run-dir "$RUN_DIR" --ticket "$t" --attempt "$n" \
     --prompt-file "$prompt" --workdir "$wt" --estimate-usd "$estimate" --expected-minutes "$minutes" \
     ${caps[@]+"${caps[@]}"} \
-    -- --permission-mode acceptEdits --allowedTools "$SESSION_TOOLS" --add-dir "$RUN_DIR/results" \
+    -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR/results" \
     ${EXTRA[@]+"${EXTRA[@]}"}) || die "could not launch the worker for #$t"
 
   if [ -n "$deadline" ]; then
@@ -1035,6 +1092,8 @@ failure_evidence() {
       (.acceptance[] | select(.met != true and .human != true and .gate != true) | "- Unmet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.human == true) | "- Needs a human check, not yours to meet (verifier): \(.criterion) (\(.evidence.why // "no reason given"))"),
       (.acceptance[] | select(.gate == true) | "- Checked by the merge gate, not yours to meet (verifier): \(.criterion)"),
+      (.acceptance[] | select(.unmeetable != null and .unmeetable.verifier_agrees != true)
+        | "- The last worker said no worker could meet \(.criterion) (\(.unmeetable.why)); the verifier did not agree, so meet it: \(.evidence.why // "no reason given")"),
       ((.verifier.unsure // [])[] | "- The verifier was unsure: \(.)")' "$RUN_DIR/verify/$t.$p.evidence.json" 2>/dev/null || true
   fi
   # A red CI merge gate (#176): the tests it failed, read from the CI log.
@@ -2090,7 +2149,7 @@ cmd_unpark_ci() {
             + (if $p.batch then {tickets: $p.tickets, batch: $p.batch} else {} end); $now)
     | .ci_park = null' --arg by "$by"
   get -r '[.events[] | select(.event == "unparked" and .reason == "ci")] | last
-    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their batch is merged and gated afresh)"
+    | if .tickets then "unparked: merge \(.tickets | map("#" + .) | join(", ")) again (their merge batch is merged and gated afresh)"
       else "unparked: #\(.ticket) merges next with the gate retried" end'
 }
 
@@ -2183,6 +2242,7 @@ case "$cmd" in
   launch) cmd_launch "$@" ;;
   status) cmd_status "$@" ;;
   wait) cmd_wait "$@" ;;
+  judge-exit) cmd_judge_exit "$@" ;;
   dispatch) cmd_dispatch "$@" ;;
   merge) cmd_merge "$@" ;;
   resolved) cmd_resolved "$@" ;;

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# A stand-in for the cmux terminal's `claude` shim (#187): put this folder
+# first on PATH, the fake claude after it. Like the shim, it starts the next
+# `claude` on PATH with settings of its own: a PermissionRequest hook that,
+# in a cmux terminal, turns a permission request into a "needs input"
+# prompt. It records that it ran to $FAKE_SHIM_LOG, when set.
+
+[ -n "${FAKE_SHIM_LOG:-}" ] && echo shim >>"$FAKE_SHIM_LOG"
+here=$(cd "$(dirname "$0")" && pwd)
+next=
+IFS=: read -r -a dirs <<<"$PATH"
+for d in ${dirs[@]+"${dirs[@]}"}; do
+  [ -n "$d" ] && [ "$(cd "$d" 2>/dev/null && pwd)" != "$here" ] || continue
+  if [ -x "$d/claude" ]; then next=$d/claude; break; fi
+done
+[ -n "$next" ] || { echo "fake shim: no claude after it on PATH" >&2; exit 127; }
+exec "$next" --settings '{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":[{"type":"command","command":"cmux notify needs-input"}]}]}}' "$@"

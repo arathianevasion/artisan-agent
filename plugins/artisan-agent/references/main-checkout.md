@@ -13,7 +13,22 @@ Two rules keep `main` free of uncommitted surprises and runs from colliding. Thi
 | Git pre-commit hook (`guard/pre-commit.sh`, installed per repo by `guard/install-pre-commit.sh`, which project setup is to call) | refuses a commit in the main checkout | yes: plain git |
 | `implement-plan`'s own check (`scripts/run-lock.sh check`, its preconditions) | refuses to start while another run holds the lock, and leaves the request as a `plan` issue | yes: part of the skill |
 
-The edit rule applies to repos that have adopted the pipeline (a committed `.artisan-agent/config.yml`) and skips git-ignored paths such as `.artisan-agent/runs/`. A person can still use `git commit --no-verify`; the rule is a guardrail for agents, not a lock on the owner.
+The edit rule applies to repos that have adopted the pipeline (a committed `.artisan-agent/config.yml`) and skips git-ignored paths such as `.artisan-agent/runs/`, and paths under a folder the project config lists in `main_checkout_runtime`.
+A person can still use `git commit --no-verify`; the rule is a guardrail for agents, not a lock on the owner.
+
+## Runtime folders in the main checkout
+
+`main_checkout_runtime` in `.artisan-agent/config.yml` lists folders in the main checkout that sessions may write without a worktree (#191): paths relative to the repo root, each ending in `/`, empty by default.
+Use it for a folder that holds runtime files and has to stay untracked but not ignored, such as `.claude/orchestrator/`, whose result files `/move-session` carries because it is not ignored.
+The hook compares paths after resolving `..` and symlinks, so `.claude/orchestrator/../../src/x`, or a symlink in the folder that points out of it, is still refused.
+An entry that is absolute, or names the repo root or a folder outside it, allows nothing.
+
+**Runtime files only, never source.** A file written there skips the worktree, the review and the merge gate.
+An untracked path that isn't listed is still refused.
+
+```yaml
+main_checkout_runtime: [.claude/orchestrator/]
+```
 
 ## A chat changes a doc
 

@@ -8,6 +8,11 @@
 #     Markdown table. "body" is the table in the gate's issue body (its
 #     reslice and drop rows carry {{leaves}}, for the caller to fill in);
 #     "chat" is the shorter one gate-action.sh chat prints.
+#   unmeetable_choices_table body|chat: the choices of an exception gate
+#     whose ticket has a criterion no worker can meet (reason "unmeetable",
+#     #186), in the same two styles: split it into a Human check or a new
+#     ticket, rewrite it, drop it with a reason, or retry anyway; and bypass
+#     or defer, as on any exception gate.
 #
 # The slice gate's body header (| Gate | Role needed | Slice | Tickets blocked |)
 # is written by lib/packet.py, which owns it: `packet.py header` prints it.
@@ -33,5 +38,27 @@ drop@leaves the run; the ticket stays open{{leaves}}@out of the run; everything 
 bypass@leaves the run; its dependents go ahead without it; recorded with who@out of the run; its dependents go ahead
 defer@its dependents go ahead now; this gate stays open until the end gate@its dependents go ahead; the gate waits for the end gate
 retry or take, a bug@with retry with notes or take it myself, also records a bug found in the ticket at this gate, tighten evidence for its areas at the retro (`--bug`)@with retry or take: also records a bug found in the ticket
+ROWS
+}
+
+unmeetable_choices_table() { # body|chat
+  local style="$1" choice="" in_body="" in_chat="" head="Choice"
+  [ "$style" != body ] || head="Say"
+  printf '| %s | Does |\n|---|---|\n' "$head"
+  # choice @ text in the gate body @ text in the chat
+  while IFS='@' read -r choice in_body in_chat; do
+    if [ "$style" = body ]; then
+      printf '| %s | %s |\n' "$choice" "$in_body"
+    else
+      printf '| %s | %s |\n' "$choice" "$in_chat"
+    fi
+  done <<'ROWS'
+split into a Human check@the criterion moves to the ticket's Human check (`ready-for-human`, next slice gate); a fresh verifier judges the same commit on the rest (`split --human`)@to its Human check; the same commit verified again
+split into a new ticket@the criterion becomes a new `needs-triage` ticket, outside this run; a fresh verifier judges the same commit on the rest (`split --ticket`)@to a new needs-triage ticket; the same commit verified again
+rewrite@you give the criterion's new wording; a fresh verifier judges the same commit against it (`rewrite --as`)@your wording; the same commit verified again
+drop it@the criterion is dropped with your reason; a fresh verifier judges the same commit on the rest (`drop-criterion --why`)@dropped with your reason; the same commit verified again
+retry anyway@a fresh worker on the same branch, one more attempt, told you judge the criterion meetable and given your notes@a fresh worker, one more attempt
+bypass@leaves the run; its dependents go ahead without it; recorded with who@out of the run; its dependents go ahead
+defer@its dependents go ahead now; this gate stays open until the end gate@its dependents go ahead; the gate waits for the end gate
 ROWS
 }

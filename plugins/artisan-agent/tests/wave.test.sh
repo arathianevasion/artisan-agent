@@ -120,6 +120,8 @@ write_orchestrator_script() {
   cat >"$FAKE_CLAUDE_SCRIPT_ORCHESTRATOR" <<EOF
 set -euo pipefail
 [ "\${ORCH_STOP:-}" != fail ] || exit 1
+# ORCH_STOP=mid-dispatch runs the file ORCH_MID_DISPATCH names and ends at once.
+if [ "\${ORCH_STOP:-}" = mid-dispatch ]; then . "\$ORCH_MID_DISPATCH"; exit 1; fi
 S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
@@ -159,6 +161,19 @@ wait_for() { # path [seconds]
   while [ ! -e "$1" ]; do
     i=$((i + 1))
     [ "$i" -le "$limit" ] || fail "timed out waiting for $1"
+    sleep 0.1
+  done
+}
+
+# wait_for_runner_gone <id>.<attempt>: its exit record is written and its
+# runner, which judges an orchestrator's exit in its exit hook, has exited.
+wait_for_runner_gone() {
+  local i=0 pid=""
+  wait_for "$RUN_DIR/results/$1.exit.json" 60
+  pid=$(cat "$RUN_DIR/workers/$1/runner.pid")
+  while state_pid_alive "$pid"; do
+    i=$((i + 1))
+    [ "$i" -le 300 ] || fail "runner $pid of $1 never exited"
     sleep 0.1
   done
 }
@@ -221,6 +236,28 @@ test_a_one_ticket_run_ends_merged_green_and_closed() {
   assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse HEAD)" "main checkout's HEAD"
   assert_eq main "$(git -C "$PROJECT" symbolic-ref --short HEAD)"
   assert_eq "" "$(git -C "$PROJECT" status --porcelain)" "main checkout is clean"
+}
+
+# Every headless session starts with headless_args (#187): dontAsk and its
+# allowlist, never acceptEdits, so a tool outside it is denied, never asked.
+test_orchestrator_worker_and_verifier_start_in_dont_ask_mode() {
+  setup_wave
+  export FAKE_CLAUDE_ARGS_DIR="$TEST_TMPDIR/args"
+  mkdir -p "$FAKE_CLAUDE_ARGS_DIR"
+  start_and_launch
+  wait_for "$ORCH_EXIT" 60
+  local role= args=
+  for role in orchestrator worker verifier; do
+    [ -f "$FAKE_CLAUDE_ARGS_DIR/$role.args" ] || fail "no $role session started"
+    args=$(cat "$FAKE_CLAUDE_ARGS_DIR/$role.args")
+    assert_contains "$args" "[--permission-mode]
+[dontAsk]
+[--allowedTools]
+["
+    case "$args" in *acceptEdits*) fail "the $role still starts in acceptEdits" ;; esac
+  done
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/worker.args")" "[Bash,Read,Write,Edit,Glob,Grep,Skill,Agent]"
+  assert_contains "$(cat "$FAKE_CLAUDE_ARGS_DIR/verifier.args")" "[Bash,Read,Write,Glob,Grep]"
 }
 
 test_a_worker_that_paraphrases_every_criterion_still_closes_the_ticket_ticked() {
@@ -287,8 +324,10 @@ test_killing_the_launching_process_stops_neither_orchestrator_nor_worker() {
   wait_for "$RUN_DIR/results/orchestrator-w1.1.exit.json" 60
   assert_eq "completed -" "$("$SCRIPTS/classify-worker.sh" "$RUN_DIR" orchestrator-w1 1)"
   assert_eq merged "$(state_get '.tickets["1"].status')"
-  # The orchestrator exited after writing state: its lock is stale, not held.
-  ! state_pid_alive "$orch" || fail "the orchestrator did not exit"
+  # The orchestrator exited after writing state and judging its exit (#184):
+  # its lock is stale, not held.
+  wait_for_runner_gone orchestrator-w1.1
+  assert_eq true "$(state_get '.orchestrators[0].exit.clean')"
 }
 
 test_a_ticket_whose_blocker_is_not_merged_is_refused_at_dispatch() {
@@ -520,25 +559,33 @@ test_a_deadline_queues_the_decision_with_that_cause() {
 # launched, and the orchestrator is gone before the launch is recorded.
 test_a_worker_launched_by_an_orchestrator_stopped_mid_dispatch_is_still_named() {
   setup_wave
-  export ORCH_STOP=fail
+  # The orchestrator's own steps, then it ends: wave.sh dispatch's first write
+  # (the ticket's wave, worktree and base) and the worker's launch, and the
+  # launch is never recorded.
+  # The worker is still running when the orchestrator's runner judges its exit.
+  export ORCH_STOP=mid-dispatch ORCH_MID_DISPATCH="$TEST_TMPDIR/mid-dispatch.sh" WORKER_SLEEP=3
+  export MID_WT="$TEST_TMPDIR/project-wt/r1-1.1" MID_PROJECT="$PROJECT" MID_SCRIPTS="$SCRIPTS" \
+    MID_PROMPT="$TEST_TMPDIR/prompt-1.md"
+  printf 'Add hello.\n' >"$MID_PROMPT"
+  cat >"$ORCH_MID_DISPATCH" <<'EOF'
+base=$(git -C "$MID_PROJECT" rev-parse run/r1)
+"$MID_SCRIPTS/state.sh" update "$ARTISAN_RUN_DIR" '.tickets["1"] |= (.worktree = $wt | .base = $b | .wave = 1)' \
+  --arg wt "$MID_WT" --arg b "$base" >/dev/null
+git -C "$MID_PROJECT" worktree add -q -b agent/1 "$MID_WT" "$base" >/dev/null 2>&1
+"$MID_SCRIPTS/run-ticket.sh" --run-dir "$ARTISAN_RUN_DIR" --ticket 1 --attempt 1 --prompt-file "$MID_PROMPT" \
+  --workdir "$MID_WT" --estimate-usd 0.25 --expected-minutes 5 >/dev/null
+EOF
   start_and_launch
-  wait_for "$ORCH_EXIT" 60
-  local wt="$TEST_TMPDIR/project-wt/r1-1.1" base=""
-  base=$(git -C "$PROJECT" rev-parse run/r1)
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.worktree = $wt | .base = $b | .wave = 1)' \
-    --arg wt "$wt" --arg b "$base" >/dev/null
-  git_quiet -C "$PROJECT" worktree add -b agent/1 "$wt" "$base"
-  printf 'Add hello.\n' >"$TEST_TMPDIR/prompt-1.md"
-  "$SCRIPTS/run-ticket.sh" --run-dir "$RUN_DIR" --ticket 1 --attempt 1 --prompt-file "$TEST_TMPDIR/prompt-1.md" \
-    --workdir "$wt" --estimate-usd 0.25 --expected-minutes 5 >/dev/null
-  wait_for "$RUN_DIR/results/1.1.exit.json" 60
-  assert_eq queued "$(state_get '.tickets["1"].status')" "the launch was never recorded"
-  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
-  assert_eq returned "$(state_get '.tickets["1"].status')" "the sweep took the launched attempt in"
-  assert_eq 1 "$(state_get '.tickets["1"].attempts')"
+  wait_for_runner_gone orchestrator-w1.1
+  # The runner judged its own exit (#184), its sweep first taking the launch in.
+  assert_eq in_flight "$(state_get '.tickets["1"].status')" "the exit hook's sweep took the launched attempt in"
   assert_eq true "$(state_get '[.events[] | select(.event == "dispatch" and .ticket == "1")] | length == 1 and .[0].unrecorded')"
   assert_eq 120 "$(state_get '.tickets["1"].deadline_at - .tickets["1"].dispatched_at')" "the plan's deadline cap"
-  assert_exit_decision not-completed '["1"]' "#1 returned, no verdict"
+  wait_for "$RUN_DIR/results/1.1.exit.json" 60
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_eq returned "$(state_get '.tickets["1"].status')"
+  assert_eq 1 "$(state_get '.tickets["1"].attempts')"
+  assert_exit_decision not-completed '["1"]' "#1 in flight, no verdict"
   # Judged once: another status queues nothing more.
   assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "next: decide"
   assert_eq 1 "$(state_get '.decisions | length')"
@@ -553,6 +600,52 @@ test_a_worker_starts_with_its_wave_and_worktree_already_recorded() {
   exit_wave
   assert_eq "{\"wave\":1,\"worktree\":\"$TEST_TMPDIR/project-wt/r1-1.1\"}" "$(cat "$WORKER_SEES")"
   assert_eq merged "$(state_get '.tickets["1"].status')"
+}
+
+# #184: the orchestrator's runner judges its exit in its exit hook, so the
+# decision and its event never wait on the chat's `wave.sh wait` or status.
+assert_one_exit_decision_and_event() { # cause
+  assert_eq 1 "$(state_get '[.decisions[] | select(.kind == "orchestrator-exit")] | length')"
+  assert_eq 1 "$(state_get '[.events[] | select(.event == "orchestrator-exit")] | length')"
+  assert_eq "$1" "$(state_get '.decisions[] | select(.kind == "orchestrator-exit") | .cause')"
+  assert_eq "$1" "$(state_get '.orchestrators[0].exit.cause')"
+}
+
+test_the_runner_judges_error_max_turns_with_no_wait_or_status_running() {
+  setup_wave
+  export FAKE_CLAUDE_ORCHESTRATOR_END=turns
+  start_and_launch
+  wait_for_runner_gone orchestrator-w1.1
+  assert_one_exit_decision_and_event error_max_turns
+  assert_contains "$(cat "$RUN_DIR/workers/orchestrator-w1.1/runner.log")" "orchestrator-exit: error_max_turns in wave 1"
+  # Status finds it judged: still one of each, and it says decide.
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_one_exit_decision_and_event error_max_turns
+  assert_contains "$STATUS_OUT" "next: decide"
+  assert_contains "$STATUS_OUT" "orchestrator-exit: error_max_turns in wave 1"
+}
+
+test_wait_and_status_racing_the_runner_still_leave_one_decision_and_event() {
+  setup_wave
+  export FAKE_CLAUDE_ORCHESTRATOR_END=turns ARTISAN_WAIT_INTERVAL=1
+  start_and_launch
+  # Status straight after wait returns, while the runner may still be judging.
+  "$SCRIPTS/wave.sh" wait "$RUN_DIR" --timeout 60 >"$TEST_TMPDIR/wait.out"
+  STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$(cat "$TEST_TMPDIR/wait.out")" "orchestrator: failed turns"
+  assert_contains "$STATUS_OUT" "next: decide"
+  wait_for_runner_gone orchestrator-w1.1
+  "$SCRIPTS/wave.sh" status "$RUN_DIR" >/dev/null
+  assert_one_exit_decision_and_event error_max_turns
+}
+
+test_the_runner_queues_nothing_for_a_clean_exit() {
+  setup_wave
+  start_and_launch
+  wait_for_runner_gone orchestrator-w1.1
+  assert_eq true "$(state_get '.orchestrators[0].exit.clean')"
+  assert_eq 0 "$(state_get '.decisions | length')"
+  assert_eq 0 "$(state_get '[.events[] | select(.event == "orchestrator-exit")] | length')"
 }
 
 test_a_clean_wave_end_queues_nothing() {

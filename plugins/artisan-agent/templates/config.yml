@@ -184,3 +184,15 @@ worktree_setup:
 # attempt fails with the reason "setup", "setup timeout after <n>s" and its
 # stderr tail.
 worktree_setup_timeout: 900
+
+# Runtime folders in the main checkout that sessions may write (#191). The
+# main-checkout guard (guard/protect.sh main-edit) refuses Edit and Write in
+# the main checkout unless the path is git-ignored or under one of these
+# directories: paths relative to the repo root, each ending in /. Compared
+# after resolving .. and symlinks, so a path that only names a listed folder
+# on its way out of it is still refused. For runtime files only (result
+# files, logs), never source: anything written here skips the worktree, the
+# review and the merge gate. Empty means none.
+# Example (a folder kept untracked but not ignored, so /move-session carries it):
+#   main_checkout_runtime: [.claude/orchestrator/]
+main_checkout_runtime: []

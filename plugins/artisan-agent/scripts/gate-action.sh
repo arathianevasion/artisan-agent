@@ -45,6 +45,23 @@
 #       or through others, and whether each slice can still be reviewed end
 #       to end), then those dependents leave the run with it: back to
 #       needs-triage with a comment, native blockers kept (status sent_back).
+#   gate-action.sh split <run-dir> <issue> (--human | --ticket) [--criterion C]... [--by NAME] [--why W]
+#   gate-action.sh rewrite <run-dir> <issue> --as TEXT [--criterion C] [--by NAME] [--why W]
+#   gate-action.sh drop-criterion <run-dir> <issue> --why W [--criterion C]... [--by NAME]
+#       an exception gate whose ticket has a criterion no worker can meet
+#       (reason "unmeetable", #186; verify.sh judge opened it): the
+#       Artisan's call on the criteria. C is a criterion's text or its
+#       number in the gate's list; with none, every listed one (rewrite: the
+#       only one). split --human moves them into the ticket's Human check
+#       (to-plan.sh split-human-check), in the run's scope; split --ticket
+#       opens one new needs-triage ticket holding them, outside the run;
+#       rewrite gives the criterion new wording; drop-criterion drops them,
+#       with the reason. Each change is kept on the ticket
+#       (criteria_changes), which verify.sh reads the criteria through and
+#       a retry's prompt lists; the ticket goes back to returned, so a fresh
+#       verifier judges the same commit (no attempt used), and the gate
+#       closes. On this gate retry ("retry anyway") takes --notes as
+#       optional. reslice, take and drop work here too.
 #   gate-action.sh repaired <run-dir> <issue> [--by NAME] [--why W]
 #       an exception gate opened only because of the stream-json miscount
 #       (#151): once sweep.sh repair has taken the ticket's failed attempts
@@ -181,12 +198,15 @@ find_gate() { # issue
 
 g() { jq -r "$@" <<<"$GATE"; }
 
-BY=Artisan WHY= NOTES= MINE=0 BUG=0
-parse_opts() { # --bug only where BUG_OK=1 (redirect, retry, take)
-  BY=Artisan WHY= NOTES= MINE=0 BUG=0
+BY=Artisan WHY= NOTES= MINE=0 BUG=0 CRITS= AS= SPLIT_TO=
+parse_opts() { # --bug only where BUG_OK=1 (redirect, retry, take); the criterion options where CRIT_OK=1
+  BY=Artisan WHY= NOTES= MINE=0 BUG=0 CRITS= AS= SPLIT_TO=
   while [ $# -gt 0 ]; do
     case "$1" in
       --bug) [ "${BUG_OK:-0}" = 1 ] || usage; BUG=1; shift ;;
+      --criterion) [ "${CRIT_OK:-0}" = 1 ] && [ $# -ge 2 ] && [ -n "$2" ] || usage; CRITS="$CRITS$2"$'\n'; shift 2 ;;
+      --as) [ "${CRIT_OK:-0}" = 1 ] && [ $# -ge 2 ] && [ -n "$2" ] || usage; AS=$2; shift 2 ;;
+      --human | --ticket) [ "${CRIT_OK:-0}" = 1 ] && [ -z "$SPLIT_TO" ] || usage; SPLIT_TO=${1#--}; shift ;;
       --by) [ $# -ge 2 ] && [ -n "$2" ] || usage; BY=$2; shift 2 ;;
       --why) [ $# -ge 2 ] || usage; WHY=$2; shift 2 ;;
       --notes) [ $# -ge 2 ] && [ -n "$2" ] || usage; NOTES=$2; shift 2 ;;
@@ -543,15 +563,22 @@ cmd_retry() {
   local issue="$2" t=
   shift 2
   BUG_OK=1 parse_opts "$@"
-  [ -n "$NOTES" ] || usage
   exception_only "$issue"
+  local choice="retry with notes" say="Retry with notes"
+  if [ "$(g .reason)" = unmeetable ]; then
+    # Retry anyway (#186): the Artisan judges the criteria meetable.
+    choice="retry anyway" say="Retry anyway"
+    NOTES="The Artisan judges these criteria meetable, though the last worker said no worker could meet them: $(g '.unmeetable // [] | map(.criterion) | join("; ")'). Meet them; don't list them as unmeetable again.${NOTES:+ $NOTES}"
+  fi
+  [ -n "$NOTES" ] || usage
   t=$(g .ticket)
   REDIRECT=notes
   hold
-  close_exception "$issue" "Retry with notes, by $BY: #$t goes to a fresh worker with one more attempt.
+  close_exception "$issue" "$say, by $BY: #$t goes to a fresh worker with one more attempt.
 > $NOTES"
-  record_answer decided "retry with notes" outcome '
+  record_answer decided "$choice" outcome '
     .tickets[$t] |= (.status = "queued" | .pid = null | del(.blocked_reason)
+      | if .unmeetable then .unmeetable.status = "answered" else . end
       | .extra_attempts = ((.extra_attempts // 0) + 1)
       | .notes = ((.notes // []) + [{note: $notes, issue: ($issue | tonumber), by: $by, at: $now}]))' \
     --arg t "$t" --argjson rec '{}'
@@ -642,6 +669,158 @@ cmd_drop() {
   leave_run "$issue" drop dropped "" "dropped from the run; the ticket stays open."
 }
 
+# ------------------------------- a criterion no worker can meet (#186)
+
+unmeetable_only() { # issue
+  exception_only "$1"
+  [ "$(g '.reason // ""')" = unmeetable ] \
+    || refuse "#$1 is not about a criterion no worker can meet: answer it with retry, reslice, take, drop, bypass or defer"
+}
+
+# picked_criteria [one]: the gate's listed criteria that --criterion names
+# (its text, or its number in the gate's list), as a JSON array, in the
+# order named; every listed one when none is named. "one": exactly one.
+picked_criteria() {
+  local listed="" out='[]' c="" n=""
+  listed=$(g -c '[(.unmeetable // [])[] | .criterion]')
+  if [ -z "$CRITS" ]; then
+    out=$listed
+  else
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      n=$(jq -r --arg c "$c" '
+        def norm: [splits("\\s+") | select(. != "")] | join(" ") | ascii_downcase;
+        if ($c | test("^[0-9]+$")) and ($c | tonumber) >= 1 and ($c | tonumber) <= length then .[($c | tonumber) - 1]
+        else ([.[] | select(norm == ($c | norm))] | first // empty) end' <<<"$listed")
+      [ -n "$n" ] || refuse "\"$c\" is not a criterion gate #$(g .issue) lists: $(jq -r 'to_entries | map("\(.key + 1). \(.value)") | join("; ")' <<<"$listed")"
+      out=$(jq -c --arg n "$n" 'if index([$n]) then . else . + [$n] end' <<<"$out")
+    done <<<"$CRITS"
+  fi
+  [ "$(jq length <<<"$out")" -gt 0 ] || refuse "gate #$(g .issue) lists no criterion to change"
+  if [ "${1:-}" = one ] && [ "$(jq length <<<"$out")" -ne 1 ]; then
+    refuse "rewrite changes one criterion at a time; name it with --criterion (its text or number): $(jq -r 'to_entries | map("\(.key + 1). \(.value)") | join("; ")' <<<"$listed")"
+  fi
+  printf '%s\n' "$out"
+}
+
+# criteria_answer issue choice changes-json extra-filter [jq args]: the
+# changes go on the ticket (criteria_changes, read by verify.sh) and it goes
+# back to returned, so a fresh verifier judges the same commit against the
+# changed criteria: no worker attempt is used. The ticket and the gate say
+# so, and the gate closes. Each change logs criterion-changed.
+criteria_answer() {
+  local issue="$1" choice="$2" changes="$3" extra="$4" t="" say=""
+  shift 4
+  t=$(g .ticket)
+  say="At exception gate #$issue, $BY changed #$t's acceptance criteria:
+$(jq -r '.[] | "- \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
+    elif .action == "split" then "moved to #\(.to)" else "dropped" end) + (if .why then " (\(.why))" else "" end)' <<<"$changes")
+
+A fresh verifier judges the same commit against the changed criteria; no worker attempt is used."
+  comment "$t" "$say"
+  close_exception "$issue" "$say"
+  record_answer decided "$choice" outcome '
+    .tickets[$t] |= (.status = "returned" | .pid = null | del(.blocked_reason)
+      | (if .unmeetable then .unmeetable.status = "answered" else . end)
+      | .criteria_changes = ((.criteria_changes // []) + $ch))
+    | reduce $ch[] as $c (.; event({event: "criterion-changed", ticket: $t, gate: $gid} + $c; $now))
+    | '"$extra" \
+    --arg t "$t" --argjson ch "$changes" --arg gid "$(g .id)" \
+    --argjson rec "$(jq -c '{changes: .}' <<<"$changes")" "$@"
+}
+
+cmd_split() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" t="" crit="" changes="" num="" title="" url="" body="" mark="" extra='.' choice="" n=0 i=0 c="" out=""
+  shift 2
+  CRIT_OK=1 parse_opts "$@"
+  [ -n "$SPLIT_TO" ] || usage
+  unmeetable_only "$issue"
+  crit=$(picked_criteria)
+  t=$(g .ticket)
+  REDIRECT=
+  hold
+  if [ "$SPLIT_TO" = human ]; then
+    choice="split into a Human check"
+    n=$(jq length <<<"$crit")
+    while [ "$i" -lt "$n" ]; do
+      c=$(jq -r --argjson i "$i" '.[$i]' <<<"$crit")
+      out=$("$SCRIPT_DIR/to-plan.sh" split-human-check --repo "$(repo)" "$t" "$c") \
+        || die "could not split \"$c\" off #$t into its Human check; nothing recorded, answer again"
+      num=$(printf '%s\n' "$out" | sed -n 's/^Human check #\([0-9][0-9]*\) for .*/\1/p' | tail -1)
+      [ -n "$num" ] || die "split-human-check named no Human check for #$t ($out); answer again"
+      i=$((i + 1))
+    done
+    title="Human check: $(get --arg t "$t" '.plan.tickets[$t].title // "#\($t)"') (#$t)"
+    extra='join_human_check($to; $t; $title)
+      | event({event: "human-check-split", ticket: $t, attempt: .tickets[$t].attempts, human_check: $to,
+               criteria: [$ch[].criterion], gate: $gid}; $now)'
+  else
+    choice="split into a new ticket"
+    title="Split off #$t: $(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')"
+    mark="Split off #$t at exception gate #$issue."
+    # A call that crashed after opening the new ticket left it open: reuse it.
+    num=$(gh issue list -R "$(repo)" --state open --label needs-triage --json number,title,body \
+            | jq -r --arg t "$title" --arg mark "$mark" \
+                '[.[] | select(.title == $t and ((.body // "") | contains($mark)))] | first | .number // empty')
+    if [ -z "$num" ]; then
+      body=$(jq -rn --arg mark "$mark" --arg run "$RUN_ID" --arg by "$BY" --arg why "$WHY" --argjson crit "$crit" '
+"## Parent
+
+\($mark) In run \($run).
+
+## What to build
+
+\($by) split these acceptance criteria off: the run'"'"'s verifier agreed no worker could meet them in that run'"'"'s environment.
+" + (if $why != "" then "\nWhy: \($why)\n" else "" end) + "
+## Acceptance criteria
+
+" + ($crit | map("- [ ] " + .) | join("\n")) + "\n"')
+      url=$(gh issue create -R "$(repo)" --title "$title" --label needs-triage --body "$body") \
+        || die "could not open the new ticket for #$t's criteria"
+      num=${url##*/}
+    fi
+  fi
+  changes=$(jq -c --arg to "$num" --arg why "$WHY" \
+    'map({action: "split", criterion: ., to: $to} + (if $why != "" then {why: $why} else {} end))' <<<"$crit")
+  criteria_answer "$issue" "$choice" "$changes" "$extra" --arg to "$num" --arg title "$title"
+  echo "#$t: $(jq length <<<"$crit") criteria moved to #$num; a fresh verifier judges its commit again"
+}
+
+cmd_rewrite() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" crit="" changes=""
+  shift 2
+  CRIT_OK=1 parse_opts "$@"
+  [ -n "$AS" ] || usage
+  unmeetable_only "$issue"
+  crit=$(picked_criteria one)
+  REDIRECT=
+  hold
+  changes=$(jq -c --arg as "$AS" --arg why "$WHY" \
+    'map({action: "rewrite", criterion: ., as: $as} + (if $why != "" then {why: $why} else {} end))' <<<"$crit")
+  criteria_answer "$issue" rewrite "$changes" '.'
+  echo "#$(g .ticket): the criterion now reads \"$AS\"; a fresh verifier judges its commit again"
+}
+
+cmd_drop_criterion() {
+  [ $# -ge 2 ] || usage
+  open_run "$1"
+  local issue="$2" crit="" changes=""
+  shift 2
+  CRIT_OK=1 parse_opts "$@"
+  [ -n "$WHY" ] || usage
+  unmeetable_only "$issue"
+  crit=$(picked_criteria)
+  REDIRECT=
+  hold
+  changes=$(jq -c --arg why "$WHY" 'map({action: "drop", criterion: ., why: $why})' <<<"$crit")
+  criteria_answer "$issue" "drop the criterion" "$changes" '.'
+  echo "#$(g .ticket): $(jq length <<<"$crit") criteria dropped; a fresh verifier judges its commit again"
+}
+
 # repaired: the miscount (#151) opened this gate, and sweep.sh repair has
 # since returned the ticket. Close it as resolved, not as an Artisan bypass.
 cmd_repaired() {
@@ -727,13 +906,16 @@ cmd_stranded() {
 # Why a ticket stopped, as the exception gate's kind of exception.
 reason_of() { # ticket
   get --arg t "$1" '.tickets[$t] as $k
-    | if ($k.blocked_reason // "") | test("suite failed") then "red-check"
+    | if ($k.unmeetable.status? // "") == "open" then "unmeetable"
+      elif ($k.blocked_reason // "") | test("suite failed") then "red-check"
       elif ($k.failures | length) >= (.plan.attempts_per_ticket + ($k.extra_attempts // 0)) then "gave-up"
       else "blocked" end'
 }
 
 exception_body() { # gate-json
-  jq -rn --argjson gt "$1" --slurpfile s "$FILE" --arg tbl "$(exception_choices_table body)" '
+  local tbl=""
+  if [ "$(jq -r '.reason // ""' <<<"$1")" = unmeetable ]; then tbl=$(unmeetable_choices_table body); else tbl=$(exception_choices_table body); fi
+  jq -rn --argjson gt "$1" --slurpfile s "$FILE" --arg tbl "$tbl" '
     $s[0] as $s | $gt.ticket as $t | $s.tickets[$t] as $k | $s.plan.tickets[$t] as $p
     | ($gt.downstream // ($gt.dependents | map(.number))) as $dn
     | (if $dn == [] then "" else "; " + ($dn | map("#" + .) | join(", ")) + " (everything that depends on it, directly or through others) leave(s) the run with it and go back to `needs-triage`" end) as $leaves
@@ -753,6 +935,17 @@ exception_body() { # gate-json
     "|---|---|",
     (if ($k.failures // []) == [] then "| - | none failed: it was blocked |" else ($k.failures[] | "| \(.attempt) | \(.reason | gsub("\\|"; "/")) |") end),
     "",
+    # Criteria no worker can meet (#186): the worker said so and the verifier agrees.
+    (($gt.unmeetable // []) | select(length > 0)
+     | "## Criteria no worker can meet",
+       "",
+       "The worker said no worker could meet these here, and the verifier agrees. No further attempt is used until you answer. Name one with `--criterion` (its text or number); with none, a choice takes them all.",
+       "",
+       "| # | Criterion | The worker | The verifier |",
+       "|---|---|---|---|",
+       (to_entries[] | [(.key + 1 | tostring), .value.criterion, (.value.why // "-"), (.value.verifier_why // "-")]
+        | map(gsub("[|\n]"; " ")) | "| \(join(" | ")) |"),
+       ""),
     (if $k.suite.log then "The suite log: `\($k.suite.log)` in the run folder.\n" else empty end),
     # A red CI merge gate (#176): the tests its last failed attempt broke.
     (($k.failures // []) | last | select(.kind? == "ci") | .ci | (.failing_tests // {tests: []}) as $f
@@ -785,6 +978,8 @@ open_exception() { # decision-json
              headline="The run gave up on #$t after $attempts attempts." ;;
     red-check) title="Exception gate: #$t's check won't go green (run $RUN_ID)"
                headline="A check on #$t won't go green." ;;
+    unmeetable) title="Exception gate: #$t has criteria no worker can meet (run $RUN_ID)"
+                headline="The verifier agrees no worker can meet $(get --arg t "$t" '.tickets[$t].unmeetable.criteria | length') of #$t's criteria here; another attempt would fail the same way." ;;
     *) title="Exception gate: #$t is blocked (run $RUN_ID)"
        headline="#$t is blocked: $(get --arg t "$t" '.tickets[$t].blocked_reason // "see the run"')." ;;
   esac
@@ -803,8 +998,10 @@ open_exception() { # decision-json
   # `area`: the scope floor's is "scope-floor") is the one that opened it.
   gate=$(jq -nc --arg id "exception-$did" --arg t "$t" --arg title "$title" --arg headline "$headline" \
     --arg reason "$reason" --argjson deps "$deps" --argjson did "$did" --argjson dn "$downstream_t" --argjson dec "$dec" \
+    --argjson u "$(get -c --arg t "$t" '.tickets[$t].unmeetable.criteria // []')" \
     '{id: $id, kind: "exception", reason: $reason, title: $title, headline: $headline, ticket: $t,
       tickets: [$t], decision: $did, dependents: $deps, downstream: $dn, cards: []}
+     + (if $reason == "unmeetable" then {unmeetable: $u} else {} end)
      + (if ($dec.guardrail // "") == "" then {}
         else {guardrails: [{guardrail: $dec.guardrail} + (if ($dec.area // "") == "" then {} else {area: $dec.area} end)]} end)')
   num=$(gh issue list -R "$(repo)" --state open --label review-gate --json number,title \
@@ -923,6 +1120,12 @@ cmd_chat() {
     | "\(.title) #\(.issue)\(if .status == "deferred" then " (deferred)" else "" end): \(.headline) Holds \(if .dependents == [] then "nothing" else .dependents | map("#" + .number) | join(", ") end)."'
   echo
   exception_choices_table chat
+  if [ "$(get '[(.exception_gates // [])[] | select((.status == "open" or .status == "deferred") and .reason == "unmeetable")] | length')" -gt 0 ]; then
+    echo
+    echo "A gate whose ticket has criteria no worker can meet (gate-action.sh split, rewrite, drop-criterion, retry):"
+    echo
+    unmeetable_choices_table chat
+  fi
 }
 
 cmd_list() {
@@ -959,6 +1162,9 @@ case "$cmd" in
   reslice) cmd_reslice "$@" ;;
   take) cmd_take "$@" ;;
   drop) cmd_drop "$@" ;;
+  split) cmd_split "$@" ;;
+  rewrite) cmd_rewrite "$@" ;;
+  drop-criterion) cmd_drop_criterion "$@" ;;
   repaired) cmd_repaired "$@" ;;
   send-back) cmd_send_back "$@" ;;
   stranded) cmd_stranded "$@" ;;

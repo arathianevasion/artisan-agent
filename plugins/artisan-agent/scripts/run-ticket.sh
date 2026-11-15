@@ -47,7 +47,9 @@
 # starts.
 #
 # --role orchestrator launches a wave's orchestrator the same way (detached,
-# capped, always an exit record) instead of a worker. Its id must start with
+# capped, always an exit record) instead of a worker. Just before its exit
+# record lands, the runner judges the orchestrator's exit itself (wave.sh
+# judge-exit, #184), so an unclean exit's decision is queued at once. Its id must start with
 # "orchestrator-" (wave.sh uses orchestrator-w<wave>), it is not a ticket so
 # the scope check does not apply, and its session gets ARTISAN_WRITER_PID set
 # to the runner's PID: the long-lived pid that holds the state lock while the
@@ -57,6 +59,10 @@
 # ticket's verifier (verify.sh) the same way: its id starts with "verify-",
 # it is not a ticket either, and it never gets a writer pid. Every session
 # gets ARTISAN_ROLE (worker, orchestrator or verifier) and ARTISAN_RUN_DIR.
+#
+# The exit record counts the tool calls the session was denied
+# (permission_denials in its final result event; the calls are in
+# output.json): a denied tool shows in the evidence, not as a silent failure.
 #
 # A worker (not an orchestrator or verifier) is also started with
 #   --name worker-<ticket> --settings '{"crossSessionInbound":"accept"}'
@@ -194,16 +200,33 @@ if [ -z "$deadline_seconds" ]; then
 fi
 
 child= code= reason= recorded= stop_requested= deadline_now=
+denials=0   # tool calls the session was denied (its result's permission_denials, #187)
 
 write_exit_record() {
   [ -z "$recorded" ] || return 0
   recorded=1
   local tmp="$run_dir/results/.$key.exit.json.tmp"
-  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"}\n' \
+  mkdir -p "$run_dir/results"
+  printf '{"ticket":"%s","attempt":%s,"exit_code":%s,"reason":"%s","runner_pid":%s,"started_at":"%s","finished_at":"%s","max_budget_usd":"%s","max_turns":%s,"deadline_seconds":%s,"permission_denials":%s,"output":"workers/%s/output.json","result_file":"results/%s.result.json"}\n' \
     "$ticket" "$attempt" "${code:-255}" "${reason:-runner-error}" "$$" "$started_at" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$key" "$key" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$max_budget" "$max_turns" "$deadline_seconds" "$denials" "$key" "$key" \
     >"$tmp"
+  judge_exit "$tmp"
   mv "$tmp" "$exit_record"
+}
+
+# judge_exit tmp-record: an orchestrator's runner judges its exit itself
+# before its exit record lands (wave.sh judge-exit, #184): an unclean exit
+# queues its orchestrator-exit decision and event now, not when the chat next
+# looks, and the record landing still means the runner is done. It writes as
+# this runner, which holds the state lock while its wave runs, in a separate
+# process, so the state library's own EXIT trap never replaces this one. A
+# failure leaves the judging to wave.sh status and launch.
+judge_exit() {
+  [ "$role" = orchestrator ] && [ -f "$run_dir/state.json" ] || return 0
+  ARTISAN_WRITER_PID=$$ "$(dirname "$0")/wave.sh" judge-exit "$run_dir" "$ticket" "$attempt" --exit-record "$1" \
+    || echo "run-ticket.sh: could not judge $key's exit; wave.sh status will"
+  return 0
 }
 
 group_alive() { kill -0 "-$child" 2>/dev/null; }
@@ -218,8 +241,10 @@ stop_group() { # TERM the worker's process group, then KILL what is left
   kill -KILL "-$child" 2>/dev/null || true
 }
 
-# Whatever happens to the runner short of SIGKILL, leave an exit record.
-trap 'write_exit_record' EXIT
+# Whatever happens to the runner short of SIGKILL, leave an exit record (an
+# orchestrator's judged first). The runner keeps its own exit status: bash 3.2
+# would otherwise exit with the trap's (#126).
+trap 'trap_rc=$?; write_exit_record; exit "$trap_rc"' EXIT
 trap 'stop_requested=1' TERM INT
 trap 'deadline_now=1' ALRM
 
@@ -328,6 +353,8 @@ record_usage() {
 finish_output() {
   record_usage
   stream_result "$worker_dir/stream.jsonl" >"$worker_dir/output.json" || true
+  denials=$(jq '.permission_denials // [] | length' "$worker_dir/output.json" 2>/dev/null) || denials=0
+  [ -n "$denials" ] || denials=0
   return 0
 }
 

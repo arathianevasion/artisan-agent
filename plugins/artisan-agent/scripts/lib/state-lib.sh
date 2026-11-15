@@ -281,6 +281,8 @@ state_usage() {
 #     queued for a fresh worker, or blocked with an exception decision once it
 #     has used the run's attempts per ticket
 #   ticket_areas(ts): the areas of tickets ts (plan.tickets.<t>.areas), one list
+#   join_human_check(h; t; title): Human check h of agent ticket t joins the
+#     run's scope, open (verify.sh judge's split, gate-action.sh split --human)
 #   bug_found(t; gate; by; why; at): log a bug the Artisan found in ticket t at
 #     a review gate (#122): event bug-found, with t's areas and where "gate"
 #   guardrails_fired(gate; at): one guardrail-fired event per guardrail that
@@ -366,6 +368,11 @@ STATE_JQ_DEFS='
       else . end
     | event({event: "failed", ticket: $t, attempt: $tk.attempts, reason: $reason,
              next: .tickets[$t].status}; $at);
+  def join_human_check($h; $t; $title):
+    .plan.scope = ((.plan.scope + [$h]) | unique)
+    | .plan.tickets[$h] = ((.plan.tickets[$h] // {}) + {title: $title, human_check_for: $t})
+    | (if .tickets[$h] == null then .tickets[$h] = new_ticket($h) else . end)
+    | .tickets[$h].human_check = ((.tickets[$h].human_check // {state: "open"}) + {for: $t});
   def merged($t; $sha):
     .tickets[$t] |= (.status = "merged" | .merge_commit = $sha | .pid = null)
     | .integration.merges |= (map(select(.ticket != $t)) + [{ticket: $t, commit: $sha}]);

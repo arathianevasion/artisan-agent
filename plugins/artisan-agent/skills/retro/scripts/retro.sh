@@ -48,6 +48,12 @@ HOME_DIR=${ARTISAN_HOME:-${ARTISAN_INDIVIDUAL_HOME:-$CFG/artisan-agent}}
 PIPELINE_REPO=${ARTISAN_PIPELINE_REPO:-arathianevasion/artisan-agent}
 GH=${GH_BIN:-gh}
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
+# shellcheck source=../../../scripts/lib/headless-lib.sh
+. "$PLUGIN_ROOT/scripts/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
+# The preparer reads the run and writes two files. Its read-only Bash is what
+# it reaches for (#187); a `for` loop matches no rule, so PREPARE.md says to
+# use jq or one command per file instead.
+PREPARER_TOOLS="Read,Grep,Glob,Write,Edit,Bash(ls:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(python3 -I:*),Bash(git log:*),Bash(git show:*),Bash(jq:*),Bash(gh issue view:*),Bash(gh pr list:*)"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'retro.sh: %s\n' "$*" >&2; exit 1; }
@@ -171,6 +177,14 @@ cmd_motivation() {
     bash "$PLUGIN_ROOT/skills/setup/scripts/project-setup.sh" motivation update "$(main_of "$rd")"
 }
 
+# denied_tools session-json: says on stderr what the session was denied (its
+# result event's permission_denials), so a denial is seen, not silent.
+denied_tools() {
+  local denied=""
+  denied=$(jq -r '(.permission_denials // [])[]? | "  \(.tool_name): \(.tool_input.command // .tool_input.file_path // "")"' "$1" 2>/dev/null) || true
+  [ -z "$denied" ] || printf 'retro.sh: the preparer was denied these tool calls:\n%s\n' "$denied" >&2
+}
+
 cmd_prepare() {
   local rd= main= chat="" model=claude-sonnet-5-5 budget=1.00 prompt=
   rd=$(run_dir "$1"); shift
@@ -197,11 +211,12 @@ cmd_prepare() {
     printf -- '- Evidence threshold: %s\n' "$(jq -r '.plan.config.evidence_threshold // 3' "$rd/state.json")"
     printf -- '- Write the lessons to `%s` and the Artisan'"'"'s actions to `%s`.\n' "$rd/retro/lessons.json" "$rd/retro/actions.jsonl"
   } >"$prompt"
+  headless_args "$PREPARER_TOOLS"
   ( cd "$main" && ARTISAN_ROLE=retro ARTISAN_RUN_DIR=$rd "$CLAUDE" -p "$(cat "$prompt")" \
       --model "$model" --max-budget-usd "$budget" --output-format json \
-      --permission-mode acceptEdits \
-      --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git log:*),Bash(git show:*),Bash(jq:*),Bash(gh issue view:*),Bash(gh pr list:*)" \
+      "${HEADLESS_ARGS[@]}" \
       >"$rd/retro/session.json" 2>"$rd/retro/session.err" ) || true
+  denied_tools "$rd/retro/session.json"
   [ -f "$rd/retro/lessons.json" ] || die "the preparer wrote no lessons; its output is in $rd/retro/session.json"
   cmd_facts "$rd" >/dev/null
   cmd_check "$rd"
