@@ -896,6 +896,40 @@ check_blockers() { # ticket
   done
 }
 
+# is_attempt_worktree path branch: 0 when path is the root of a worktree of
+# this repo with branch checked out, the worktree a dispatch makes.
+is_attempt_worktree() {
+  local wt="$1" branch="$2" top="" common="" ours=""
+  top=$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$wt" && pwd -P)" ] || return 1
+  common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  ours=$(git -C "$MAIN" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ "$(cd "$common" && pwd -P)" = "$(cd "$ours" && pwd -P)" ] || return 1
+  [ "$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$branch" ]
+}
+
+# clear_leftover_worktree ticket attempt path branch: a dispatch stopped after
+# making this attempt's worktree but before recording it and launching the
+# worker leaves a worktree the state doesn't know of (#210). Removed when clean,
+# so the dispatch makes it again on the same branch; the ticket is blocked (6)
+# when it holds uncommitted work. Never touched: a worktree this attempt's
+# worker was launched in (8), or a path that isn't this ticket's worktree (1).
+clear_leftover_worktree() {
+  local t="$1" n="$2" wt="$3" branch="$4" rc=0
+  "$SCRIPT_DIR/classify-worker.sh" "$RUN_DIR" "$t" "$n" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    2) ;;
+    0) state_die 8 "wave.sh: #$t attempt $n's worker was launched in $wt; leaving it for the sweep to take in" ;;
+    *) state_die 1 "wave.sh: could not classify #$t attempt $n; run it again" ;;
+  esac
+  is_attempt_worktree "$wt" "$branch" \
+    || die "$wt is in the way of #$t attempt $n and is not its worktree on $branch; not touching it"
+  if ! git -C "$MAIN" worktree remove "$wt" 2>/dev/null; then
+    block "$t" "attempt $n's worktree $wt, left by a dispatch that stopped before launching its worker, has uncommitted work"
+    state_die 6 "wave.sh: #$t blocked: the worktree $wt a stopped dispatch left has uncommitted work"
+  fi
+}
+
 cmd_dispatch() {
   open_run "${1:-}"
   local t="${2:-}" brief=
@@ -966,6 +1000,11 @@ cmd_dispatch() {
       block "$t" "attempt $((n - 1))'s worktree $prev has uncommitted work, so no fresh worker can take the branch"
       state_die 6 "wave.sh: #$t blocked: the previous attempt's worktree $prev has uncommitted work"
     fi
+  fi
+  # This attempt's worktree already there (the previous one is gone by now):
+  # a dispatch stopped before recording it. Its branch is reused below.
+  if [ -e "$wt" ]; then
+    clear_leftover_worktree "$t" "$n" "$wt" "$branch"
   fi
   mkdir -p "$WT_ROOT"
   if git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then

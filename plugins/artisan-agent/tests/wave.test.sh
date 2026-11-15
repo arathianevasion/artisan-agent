@@ -616,6 +616,28 @@ test_a_worker_starts_with_its_wave_and_worktree_already_recorded() {
   assert_eq merged "$(state_get '.tickets["1"].status')"
 }
 
+# #210: a dispatch stopped after `git worktree add` but before it recorded the
+# worktree and launched the worker leaves this attempt's worktree, and the
+# branch it made, with nothing in the state. leftover_dispatch makes that.
+LEFTOVER_WT=
+leftover_dispatch() {
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  LEFTOVER_WT="$TEST_TMPDIR/project-wt/r1-1.1"
+  mkdir -p "$TEST_TMPDIR/project-wt"
+  git -C "$PROJECT" worktree add -q -b agent/1 "$LEFTOVER_WT" run/r1 >/dev/null 2>&1
+}
+
+test_a_dispatch_picks_up_the_clean_worktree_a_stopped_dispatch_left() {
+  setup_wave
+  leftover_dispatch
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  assert_eq in_flight "$(state_get '.tickets["1"].status')"
+  assert_eq "$LEFTOVER_WT" "$(state_get '.tickets["1"].worktree')"
+  wait_for "$RUN_DIR/results/1.1.exit.json" 60
+  # The worker ran in the worktree, on the branch the stopped dispatch made.
+  assert_eq "hi" "$(git -C "$PROJECT" show agent/1:hello.txt)"
+}
+
 # #184: the orchestrator's runner judges its exit in its exit hook, so the
 # decision and its event never wait on the chat's `wave.sh wait` or status.
 assert_one_exit_decision_and_event() { # cause
