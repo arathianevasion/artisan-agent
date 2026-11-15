@@ -882,6 +882,7 @@ test_mg_reuse_a_run_that_was_not_dispatched_runs_the_gate() {
   jq '.event = "pull_request"' "$FAKE_GH_DIR/run-9100.json" >"$TEST_TMPDIR/r" && mv "$TEST_TMPDIR/r" "$FAKE_GH_DIR/run-9100.json"
   skip_gate --reuse-run 9100 --reuse-sha "$RU_W"
   dispatched || fail "a pull request's run was reused"
+  assert_contains "$(cat "$TEST_TMPDIR/skip.err")" "not reusing run 9100: it was not a workflow_dispatch run"
 }
 
 # ---- a worker's CI run on its branch (#194)
