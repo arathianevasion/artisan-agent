@@ -353,7 +353,7 @@ repair() {
 # verifier, with the run named so questions.sh logs guardrail-fired; then its
 # number is recorded. A crash between the two files it again next sweep.
 file_verifier_open_decisions() {
-  local file="" pending="" t="" v="" k="" c="" h="" r="" q="" repo=""
+  local file="" pending="" t="" v="" k="" cj="" hj="" rj="" c="" h="" r="" q="" repo="" how=""
   file=$(state_file "$RUN_DIR")
   repo=$(jq -r '.repo // ""' "$file")
   pending=$(jq -r '.tickets | to_entries[] | .key as $t | (.value.verifications // [])[] | .attempt as $v
@@ -361,22 +361,27 @@ file_verifier_open_decisions() {
       | [$t, ($v | tostring), (.key | tostring), (.value.case | tojson), (.value.harm | tojson), (.value.recommendation | tojson)]
       | join("\t")' "$file") || return 0
   [ -n "$pending" ] || return 0
-  while IFS="$(printf '\t')" read -r t v k c h r; do
-    c=$(printf '%s' "$c" | jq -r .) h=$(printf '%s' "$h" | jq -r .) r=$(printf '%s' "$r" | jq -r .)
-    # The same open decision from an earlier verifier of the ticket: its number.
-    q=$(jq -r --arg t "$t" --arg c "$c" --arg h "$h" '[(.tickets[$t].verifications // [])[] | (.open_decisions // [])[]
-        | select(.question != null and .case == $c and .harm == $h) | .question] | first // ""' "$file")
+  # Each line is read on fd 3, so nothing the filing runs can eat the rest.
+  while IFS="$(printf '\t')" read -r t v k cj hj rj <&3; do
+    c=$(printf '%s' "$cj" | jq -r .) h=$(printf '%s' "$hj" | jq -r .) r=$(printf '%s' "$rj" | jq -r .)
+    # The same open decision from an earlier verifier of the ticket: its
+    # number (compared as JSON, so a trailing newline still matches).
+    q=$(jq -r --arg t "$t" --arg c "$c" --arg hj "$hj" '[(.tickets[$t].verifications // [])[] | (.open_decisions // [])[]
+        | select(.question != null and .case == $c and (.harm | tojson) == $hj) | .question] | first // ""' "$file")
+    how="already filed as #$q"
     if [ -z "$q" ]; then
+      how="filed as"
       q=$(ARTISAN_FINDINGS_FILE='' "$SCRIPT_DIR/questions.sh" file --ticket "$t" --criterion 8 --case "$c" --harm "$h" \
-            --recommendation "$r" --split --raised-by verifier --run "$RUN_DIR" ${repo:+--repo "$repo"}) \
+            --recommendation "$r" --split --raised-by verifier --run "$RUN_DIR" ${repo:+--repo "$repo"} </dev/null) \
         || { echo "sweep.sh: could not file the open decision #$t's verifier named; the next sweep tries again" >&2; continue; }
     fi
     state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" '.tickets[$t].verifications |= map(if .attempt == $v
         then .open_decisions[$k].question = $q else . end)' \
       --arg t "$t" --argjson v "$v" --argjson k "$k" --arg q "$q" \
-      || echo "sweep.sh: filed #$t's open decision as #$q but could not record it" >&2
-    echo "sweep.sh: #$t's verifier named an open decision; filed as #$q, split" >&2
-  done <<<"$pending"
+      || { echo "sweep.sh: #$t's open decision is #$q but could not be recorded; the next sweep may file it again" >&2; continue; }
+    [ "$how" = "filed as" ] && how="filed as #$q"
+    echo "sweep.sh: #$t's verifier named an open decision; $how, split" >&2
+  done 3<<<"$pending"
 }
 
 if [ "$MODE" = repair ] && [ "$DRY" -eq 1 ]; then
