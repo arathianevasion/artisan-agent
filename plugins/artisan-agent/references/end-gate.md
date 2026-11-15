@@ -69,11 +69,12 @@ When `wave.sh status` says `done`, run `end-gate.sh status <run>`. It says `due`
    - for a bug, **the failing test**: each ticket's `failing_test`, `proven` when a met criterion's evidence names it, else **needs you**;
    - when it doubles as the slice gate, the slice packet over every merged ticket (decision cards, uncertainties, evidence by criterion); otherwise the tickets and their outcomes;
    - **the deferred gates** of both kinds, still waiting here (`gate-action.sh deferred`);
+   - **the open decisions raised at gates** (`gate-action.sh triage`, #232) that the Decision chat hasn't ruled on: each with its ticket, its gate and the card or uncertainty it came from;
    - **the Human checks**: every one still open, with the build to try, and every one deferred past the run with who deferred it and why;
    - **the cards carried from gates closed on GitHub** (`gate.sh carried`, #73);
    - **the PRs to `main`**: the boundary and where it came from;
    - the overall action.
-3. **Deferred gates first.** `end-gate.sh approve` is refused (6) while any gate is still deferred. Answer each where it is: a review gate with `gate.sh approve` or `gate.sh change` (a finding becomes a rework ticket), an exception gate with `gate-action.sh` (`references/gate-actions.md`).
+3. **Deferred gates first.** `end-gate.sh approve` is refused (6) while any gate is still deferred. Answer each where it is: a review gate with `gate.sh approve` or `gate.sh change` (a finding becomes a rework ticket), an exception gate with `gate-action.sh` (`references/gate-actions.md`). It is refused (6) the same way while an open decision raised at a gate has no ruling, and `end-gate.sh cut` cuts no PR to `main` then either: nothing an open decision touches reaches `main` before it is ruled on (ADR 0002). Both run `questions.sh sync` first, so a ruling given on the tracker counts at once. Once each is ruled on (any ruling: Answer, Reject, Add ticket, Defer or Discard), approval and the PRs go on as before.
 4. **Human checks next.** `end-gate.sh approve` is refused (22) while a Human check is open and not deferred. Answer each with `gate.sh check <run> <n> pass|fail --why W`, or defer it past the run: `end-gate.sh defer-check <run> <n> --why W [--return CONDITION]` (the ticket stays open, labelled `deferred` with a return condition; event `human-check-deferred`). `references/human-checks.md`, "In a run".
 5. **Approve:** `end-gate.sh approve <run> [--boundary slice|plan|ticket] [--why W] [--changed]`. It closes the issue with the decision, decides the `end-gate` decision (job 13, `by`, `changed`) and records `end_gate.boundary`.
 

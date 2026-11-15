@@ -15,8 +15,24 @@ Answering needs only the choice. Why, guardrail level, reach and confidence are 
 | redirect: I'll do it myself | `gate-action.sh redirect <run> <issue> --mine [--notes "…"]` | closed, as `redirected` | wait for the rework ticket | the rework ticket labelled `ready-for-human`: held for the Artisan (`skills/implement-plan/references/hands-on.md`), never dispatched; decision `redirect: self` |
 | bypass | `gate-action.sh bypass <run> <issue> [--why W]` | closed unreviewed, a comment naming who | dispatch in the next wave | `bypass: {by, why, at}` on the gate; no card is kept or changed |
 | defer | `gate-action.sh defer <run> <issue> [--why W]` | **stays open** until the end gate | dispatch now: the gate's native edge to them is removed | `deferral: {by, why, at, released}`; listed by `gate-action.sh deferred` |
+| triage a card or an uncertainty | `gate-action.sh triage <run> <issue> (--card N \| --uncertainty N) --case C --harm H --recommendation R` | stays open, still to be answered | unchanged | an open decision for the Decision chat, raised at the gate (below); the end gate waits on its ruling |
 
 A card can still be changed or made a guardrail one at a time with `gate.sh change` and `gate.sh guardrail` (`references/review-gates.md`).
+
+### Triage: a card or an uncertainty to the Decision chat
+
+When a card or an uncertainty at a review gate is an **open decision** (criterion 8, `references/open-decisions.md`) every agent missed, the Artisan sends it to the Decision chat:
+
+```
+gate-action.sh triage <run> <issue> (--card N | --uncertainty N) --case incomplete|misaligned|invented|adr \
+  --harm "…" --recommendation "…" [--non-blocking] [--by NAME]
+```
+
+`N` is the card's number, or the uncertainty's number in the packet (`references/review-gates.md`). It files the open decision through `questions.sh file --criterion 8 --raised-by gate` with the run named, `--split` (or `--non-blocking`), and its body's `Raised at:` line names the gate and the item (`review gate #<issue> (<title>), card <n> on #<t>: <question> → <choice>`, or the uncertainty with whose it was). The filing logs `guardrail-fired` `open-decision` with `raised_by: "gate"`, as any filing in a run does; it is refused (1, nothing filed) without a case or a harm, and (6) on an exception gate or for an item the gate doesn't have. The gate's issue gets a comment naming the open decision. The item's ticket records it in its `questions` (`raised_at: "gate"`, `gate`, `gate_issue`, `item`), so `questions.sh sync` reads its ruling, and the gate in `triaged`; the event is `gate-triaged`. It prints the open decision's number; the same item again prints the same number and files nothing.
+
+**The gate stays approvable and nothing is reverted.** Triage changes neither the gate's status nor its cards, nor any merged work: answer the gate as usual. A ruling never means a revert: a Reject on work that merged files a follow-up ticket that corrects it (`references/worker-questions.md`).
+
+**The end gate holds until it is ruled on.** The end gate lists every open decision raised at a gate with no ruling yet, and won't approve or cut a PR to `main` while one is open (`references/end-gate.md`).
 
 **A redirect's rework ticket is a ticket of its own.** It joins `plan.scope` with its own `tickets` entry (attempts 0), the first gate ticket's model, caps and estimate, and `rework_of`. Its attempts never count against the original's, and the original's never against it. It is not a new scope decision: the gate's answer is the approval, as with `gate.sh change`. Its cost counts against the approved budget; raising the budget is the overrun gate's (#72).
 

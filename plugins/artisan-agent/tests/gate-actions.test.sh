@@ -1060,3 +1060,16 @@ test_triage_files_a_card_and_an_uncertainty_as_open_decisions_and_the_gate_stays
   # Once the gate is answered there is nothing to triage there.
   assert_status 6 "$A" triage "$RUN_DIR" "$num" --uncertainty 1 --case invented --harm x --recommendation y
 }
+
+test_gate_actions_md_documents_the_triage_action() {
+  local body=
+  body=$(cat "$PLUGIN_ROOT/references/gate-actions.md")
+  assert_contains "$body" "### Triage: a card or an uncertainty to the Decision chat"
+  assert_contains "$body" 'gate-action.sh triage <run> <issue> (--card N | --uncertainty N)'
+  assert_contains "$body" "references/open-decisions.md"
+  assert_contains "$body" "**The gate stays approvable and nothing is reverted.**"
+  assert_contains "$body" "**The end gate holds until it is ruled on.**"
+  assert_contains "$(cat "$PLUGIN_ROOT/references/end-gate.md")" "the open decisions raised at gates"
+  assert_contains "$(cat "$PLUGIN_ROOT/references/review-gates.md")" '`triage uncertainty <n>`'
+  assert_contains "$(sed -n '1,/^set -euo/p' "$A")" "gate-action.sh triage <run-dir> <issue> (--card N | --uncertainty N)"
+}
