@@ -154,6 +154,18 @@ _Avoid_: merge worktree
 The full suite after each merge into the integration branch: green keeps the merge, red undoes it and blocks the ticket. The machine chooses where it runs: locally in the integration worktree, or on CI, where the project's gate workflow runs on the merge commit itself. On CI only a failed or hung suite is red; a run CI never judged (unreachable, slow, cancelled) parks the run instead and leaves the ticket unblocked. Either way it runs detached from the orchestrator's call, which waits on it at most a minute; the orchestrator then waits for its result in one long wait, so a cut-off call never cuts the gate off.
 _Avoid_: post-merge check, CI check
 
+**Merge-gate criterion**:
+An acceptance criterion only the merge gate can check, such as "CI is green on the PR" or "the run's merge gate is green". The verifier marks it `gate` and doesn't judge it; the ticket's merge gate does: green ticks it with the met ones, red undoes the merge and blocks the ticket. A criterion about a script that runs CI is not one; the verifier judges that.
+_Avoid_: CI criterion, deferred criterion
+
+**Unmeetable criterion**:
+An acceptance criterion a worker says no worker could meet in this environment, such as one needing recorded fixtures that don't exist or outside access the run lacks. "Hard" or "ran out of time" never makes one. When the verifier agrees, the ticket uses no further attempt and is blocked, and its unmeetable gate opens. The gate is an exception gate: the Artisan chooses among its options, such as splitting the criterion into a Human check.
+_Avoid_: impossible criterion, unreachable criterion
+
+**Unmeetable gate**:
+The exception gate that opens on a ticket whose unmeetable criterion the verifier agreed with. Its body lists each criterion with the worker's and the verifier's reasons, beside its choices.
+_Avoid_: blocked gate
+
 **Wave digest**:
 What the Artisan sees after each wave: each ticket's status and verdict, what it cost against its estimate, and what runs next.
 _Avoid_: wave report, wave summary
