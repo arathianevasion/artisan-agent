@@ -2,6 +2,18 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.8.0 (2026-11-15)
+
+Headless steps that never hang on a prompt, exception gates for criteria no worker can meet, project boards for plugin issues, and setup and end-gate fixes.
+
+- **Headless steps:** every headless `claude -p` step (orchestrator, workers, verifier, retro preparer) launches through one helper in `--permission-mode dontAsk` with its allowlist, so a tool outside the list is denied at once instead of waiting on a prompt, even under a `claude` wrapper with hooks (the cmux shim). The exit record counts `permission_denials`. The retro preparer's allowlist covers its read-only commands (#187).
+- **Unmeetable criteria:** a worker may list a criterion no worker can meet. If the verifier agrees, the ticket goes to an exception gate instead of using another attempt: `split --human` or `--ticket`, `rewrite --as`, `drop-criterion --why`, or `retry`. After a change, a fresh verifier judges the same commit (#186).
+- **Project boards:** one helper, `tracker.sh new-issue`, opens every plugin issue. With `tracker.board` set (setup reads it from the tracker doc), Human checks, findings, rework, plan and split tickets go on the project with the source ticket's Area. A board failure leaves the issue created and the next sweep adds it (#146).
+- **`worktree_setup`:** a `worktree_setup_timeout` kills a hung setup command and its process group, failing the attempt with `setup timeout` (#181). At the end gate, a setup failure is recorded as a decision you can retry (#182).
+- **Orchestrator exits:** `run-ticket.sh`'s exit hook records an unclean orchestrator exit itself, once, whether or not `wave.sh wait` is running (#184).
+- **Main-checkout guard:** `main_checkout_runtime` lists folders sessions may write in the main checkout (this repo lists `.claude/orchestrator/`); `..` and symlinks can't escape them (#191).
+- **Fixes:** `split-human-check` and `to-plan.sh graph` read criteria under the triage template's `**Acceptance criteria:**` label as well as the heading (#202). An unpark message says "merge batch" (#183). `state-file.md` and `scripts/README.md` keep one entry per line, with a test, so parallel tickets stop conflicting (#207).
+
 ## 0.7.1 (2026-11-14)
 
 Fixes from riley's run p266-1114, and CI work: faster tests, flaky-test handling, smarter red merge gates and cheaper worker CI.
