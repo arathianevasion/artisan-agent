@@ -89,7 +89,8 @@ for n in "${NAMED[@]}"; do
     add_ticket "$n" "$(jq -r .title <<<"$issue")" "$(jq -r '.state | ascii_downcase' <<<"$issue")" ""
     continue
   fi
-  plans=$(jq -c --argjson i "$issue" '. + [$i | {number, title}]' <<<"$plans")
+  plan_ref=$(jq -c '{number, title}' <<<"$issue")
+  plans=$(jq -c --argjson i "$plan_ref" '. + [$i]' <<<"$plans")
   subs=$(gh api "repos/$REPO/issues/$n/sub_issues") || die "cannot read the sub-issues of plan #$n"
   members=$(jq -c '[.[] | {number, title, state: (.state | ascii_downcase)}]' <<<"$subs")
   if [ "$(jq length <<<"$members")" -eq 0 ]; then
