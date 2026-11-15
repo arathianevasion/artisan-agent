@@ -51,7 +51,12 @@
 #       nothing pulled; closed without a merge, only the record changes),
 #       "reject-waits #<t> #<q>" (an attempt still going),
 #       "added #<t> #<q> #<n>" (Add ticket: unblocked and queued with the
-#       answer "not covered here"). Every ruling's two verdicts ("Took the
+#       answer "not covered here"). An open decision a finding raised in
+#       <t> (filed --non-blocking; the sweep puts it on <t>) holds <t> only
+#       once a comment line "Add the block:" asks: "blocked #<t> #<q>" (the
+#       native edge on, a queued <t> blocked, a question decision), once;
+#       until then a Defer only marks it deferred and a Discard prints
+#       "discarded #<t> #<q>", nothing queued for the Artisan. Every ruling's two verdicts ("Took the
 #       recommendation:", "Needed the Decision chat:") go on the question
 #       and in a "ruled" event, once per ruling.
 #   questions.sh deferred <run-dir> <ticket> (pull | carry)
@@ -324,7 +329,7 @@ cmd_block() {
     | (.tickets[$t].questions // [] | map(.ticket)) as $have
     | [$f[] | select(. as $x | $have | index($x) | not)] | unique[]')
   if [ -z "$qs" ]; then
-    [ "$(get --arg t "$t" '[.tickets[$t].questions[]? | select(.state != "answered")] | length')" -gt 0 ] && return 0
+    [ "$(get --arg t "$t" '[.tickets[$t].questions[]? | select(.blocking == true and .state != "answered")] | length')" -gt 0 ] && return 0
     die "#$t has no blocking question filed; it is blocked for another reason"
   fi
   for q in $qs; do
@@ -402,6 +407,12 @@ cmd_sync() {
         *)
           # A ruling line sync can't read is not a Discard: no ruling is recorded.
           [ -n "$unread" ] || record_ruling "$t" "$q" discard "$ruling"
+          if [ -z "$unread" ] && ! is_blocking "$t" "$q"; then
+            # Discarding one that never blocked its ticket leaves nothing to decide.
+            apply '.tickets[$t].questions |= map(if .ticket == $q then .state = "discarded" else . end)' --arg t "$t" --arg q "$q"
+            echo "discarded #$t #$q"
+            continue
+          fi
           apply '
             if ([.decisions[] | select(.kind == "question" and .ticket == $t and .question_ticket == $q and .status == "waiting" and .closed_unanswered == true)] | length) > 0 then .
             else .decisions += [{id: ((.decisions | length) + 1), kind: "question", ticket: $t, question_ticket: $q, closed_unanswered: true,
@@ -409,8 +420,16 @@ cmd_sync() {
               status: "waiting", at: $now}] end' --arg t "$t" --arg q "$q" --arg u "$unread"
           echo "closed #$t #$q" ;;
       esac
+    elif ! is_blocking "$t" "$q" && jq -e "$BLOCK_RULING_JQ" <<<"$view" >/dev/null; then
+      add_the_block "$t" "$q"
     elif jq -e '.labels | map(.name) | index("deferred")' <<<"$view" >/dev/null; then
       record_ruling "$t" "$q" defer "$ruling"
+      if ! is_blocking "$t" "$q"; then
+        # Its ticket was never held: deferring the decision leaves it going.
+        apply '.tickets[$t].questions |= map(if .ticket == $q then .state = "deferred" else . end)' --arg t "$t" --arg q "$q"
+        echo "deferred #$t #$q"
+        continue
+      fi
       apply '
         .tickets[$t].questions |= map(if .ticket == $q then .state = "deferred" else . end)
         | if ([.decisions[] | select(.kind == "defer-question" and .ticket == $t and .question_ticket == $q and .status == "waiting")] | length) > 0 then .
@@ -423,6 +442,37 @@ cmd_sync() {
       echo "open #$t #$q"
     fi
   done 3<<<"$pairs"
+}
+
+# A non-blocking open decision (one a worker found in another ticket, #231)
+# holds its ticket only once the Decision chat asks for the block: a comment
+# line "Add the block: <why>", the question left open (the --jq for its view).
+BLOCK_RULING_JQ='[.comments[]?.body // "" | split("\n")[] | sub("\r$"; "") | select(test("^Add the block:"; "i"))] | length > 0'
+
+is_blocking() { # ticket question
+  [ "$(get --arg t "$1" --arg q "$2" '[.tickets[$t].questions[]? | select(.ticket == $q and .blocking == true)] | length')" -gt 0 ]
+}
+
+# add_the_block ticket question: the native edge, the question now blocking,
+# a queued ticket blocked (one in flight finishes its attempt; the edge holds
+# its dependents), and a "question" decision as `block` queues; once. A
+# merged or closed ticket gets nothing: the question stays open.
+add_the_block() {
+  local t="$1" q="$2"
+  case "$(get --arg t "$t" '.tickets[$t].status // ""')" in
+    # Its work is done: nothing left to hold.
+    merged|closed) echo "open #$t #$q"; return 0 ;;
+  esac
+  add_blocker "$t" "$q"
+  apply '
+    .tickets[$t].questions |= map(if .ticket == $q then .blocking = true | .block_added = $now else . end)
+    | if .tickets[$t].status == "queued"
+      then .tickets[$t].status = "blocked" | .tickets[$t].blocked_reason = "waiting on the answer to #\($q)" else . end
+    | .decisions += [{id: ((.decisions | length) + 1), kind: "question", ticket: $t, question_ticket: $q,
+        question: "Ticket \($t) waits on #\($q), an open decision another worker found in it; the Decision chat asked for the block. It is redispatched with the ruling.",
+        status: "waiting", at: $now}]
+    | event({event: "block-added", ticket: $t, question: $q, status: .tickets[$t].status}; $now)' --arg t "$t" --arg q "$q"
+  echo "blocked #$t #$q"
 }
 
 # record_ruling ticket question kind ruling-json: the ruling and both its
@@ -532,14 +582,15 @@ add_ticket() {
 }
 
 # record_answer ticket question answer: the answer is kept for the next
-# worker; once every question of the ticket is answered it is queued again.
+# worker; once every blocking question of the ticket is answered it is
+# queued again (one a finding raised that never blocked it doesn't hold it).
 record_answer() {
   apply '
     .tickets[$t].questions |= map(if .ticket == $q then .state = "answered" | .answer = $a else . end)
     | .tickets[$t].answers = ((.tickets[$t].answers // []) | map(select(.question != $q)) + [{question: $q, answer: $a}])
     | .decisions |= map(if .ticket == $t and .question_ticket == $q and .status == "waiting"
                           and (.kind == "question" or .kind == "defer-question") then .status = "resolved" else . end)
-    | if ([.tickets[$t].questions[] | select(.state != "answered")] | length) == 0 and .tickets[$t].status == "blocked"
+    | if ([.tickets[$t].questions[] | select(.blocking == true and .state != "answered")] | length) == 0 and .tickets[$t].status == "blocked"
       then .tickets[$t].status = "queued" | .tickets[$t].blocked_reason = null
            | event({event: "answered", ticket: $t, question: $q, next: "queued"}; $now)
       else event({event: "answered", ticket: $t, question: $q, next: .tickets[$t].status}; $now) end' \

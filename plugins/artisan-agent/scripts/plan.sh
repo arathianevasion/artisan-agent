@@ -7,7 +7,21 @@
 #                 [--standards FILE] [--set key=value]...
 #                 [--override-human-check <ticket> "<criterion>" --why TEXT]...
 #                 [--override-merge-gate <ticket> "<criterion>" --why TEXT]...
+#                 [--override-open-decision <ticket> --why TEXT]...
 #                                 print the plan (JSON) for state.sh init
+#   plan.sh drop --draft FILE <ticket>
+#                                 file each open decision the draft records on
+#                                 the ticket and on every ticket in scope that
+#                                 depends on it (blocked_by, or its Human check)
+#                                 through questions.sh (criterion 8, raised at
+#                                 the plan step, --non-blocking, no run), then
+#                                 take them all out of the draft: scope, waves,
+#                                 tickets, open_decisions, their gates and a
+#                                 hands-on pick. Records {ticket, title, filed,
+#                                 dependents} in the draft's `dropped`; each
+#                                 filing is written to the draft as it lands,
+#                                 so a retry files only what is left. 1: the
+#                                 ticket has no open decision, or a filing failed
 #   plan.sh render <plan.json>    print the approval: waves, models, estimates,
 #                                 Max Agents and every config number
 #
@@ -54,6 +68,18 @@
 #                  or override it:
 #   merge_gate_overrides  [{ticket, criterion, why}], one per
 #                  --override-merge-gate, the Artisan's reason recorded
+#   open_decision_flags  each open decision the draft's optional
+#                  `open_decisions` [{ticket, case, harm, recommendation}]
+#                  records (references/open-decisions.md; the case is
+#                  incomplete, misaligned, invented or adr; a blank harm or
+#                  recommendation, or a ticket outside scope, is refused),
+#                  less the overridden: listed first under "Needs your
+#                  attention". While one stands the plan is not approvable and
+#                  state.sh init refuses it. File it and take the ticket out
+#                  with its dependents (plan.sh drop), or override it:
+#   open_decision_overrides  [{ticket, why}], one per --override-open-decision,
+#                  the Artisan's reason for keeping that ticket's open
+#                  decisions in the run
 #   recorded_checks the recorded checks (checks.sh json over --standards,
 #                  default CODING_STANDARDS.md at the checkout's top):
 #                  {recorded, file, commands, suite} or {recorded: false, reason}
@@ -144,9 +170,13 @@ cmd_build() {
         [ $# -ge 3 ] || usage
         overrides=$(jq -c --arg k "${1#--override-}" --arg t "$2" --arg c "$3" '. + [{kind: $k, ticket: ($t | ltrimstr("#")), criterion: $c, why: ""}]' <<<"$overrides")
         shift 3 ;;
+      --override-open-decision)
+        [ $# -ge 2 ] || usage
+        overrides=$(jq -c --arg t "$2" '. + [{kind: "open-decision", ticket: ($t | ltrimstr("#")), why: ""}]' <<<"$overrides")
+        shift 2 ;;
       --why)
         [ $# -ge 2 ] || usage
-        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check or --override-merge-gate it gives the reason for"
+        [ "$(jq length <<<"$overrides")" -gt 0 ] || die "--why follows the --override-human-check, --override-merge-gate or --override-open-decision it gives the reason for"
         overrides=$(jq -c --arg w "$2" '.[-1].why = $w' <<<"$overrides")
         shift 2 ;;
       *) usage ;;
@@ -282,6 +312,34 @@ cmd_build() {
   # Agent Brief comment gave any) can't be verified: the plan isn't approvable.
   out=$(printf '%s' "$out" | jq '.criteria_missing = [.tickets | to_entries[]
     | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
+  # Open decisions (criterion 8, references/open-decisions.md): each one the
+  # draft records stands until the Artisan keeps its ticket with a reason
+  # (--override-open-decision) or plan.sh drop takes the ticket out.
+  if ! out=$(printf '%s' "$out" | jq --argjson ov "$(jq -c '[.[] | select(.kind == "open-decision") | {ticket, why}]' <<<"$overrides")" '
+      def blank: (. // "") | tostring | test("^\\s*$");
+      . as $input
+      | (.open_decisions // [])
+      | if type != "array" then error("open_decisions is a list of {ticket, case, harm, recommendation}") else . end
+      | map(.ticket = ((.ticket // "") | tostring | ltrimstr("#"))) as $od
+      | reduce $od[] as $o (.;
+          if ($input.scope | index($o.ticket)) == null then error("an open decision names #\($o.ticket), which is not in scope: take a ticket with an open decision out with plan.sh drop, which files it and takes its dependents too")
+          elif (["incomplete", "misaligned", "invented", "adr"] | index($o.case)) == null
+          then error("the open decision on #\($o.ticket) needs a case: incomplete, misaligned, invented or adr")
+          elif ($o.harm | blank) then error("the open decision on #\($o.ticket) needs its concrete harm")
+          elif ($o.recommendation | blank) then error("the open decision on #\($o.ticket) needs one recommendation")
+          else . end)
+      | reduce $ov[] as $v (.;
+          if ([$od[] | select(.ticket == $v.ticket)] | length) == 0
+          then error("--override-open-decision \($v.ticket): the draft records no open decision on #\($v.ticket)")
+          elif ($v.why | blank) then error("--override-open-decision \($v.ticket) needs --why: the Artisan'"'"'s reason")
+          else . end)
+      | $input + {open_decisions: $od, open_decision_overrides: $ov,
+                  open_decision_flags: [$od[] | select(.ticket as $t | [$ov[].ticket] | index($t) | not)
+                                        | {ticket, case, harm, recommendation}]}
+    ' 2>&1); then
+    die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
+  fi
+  overrides=$(jq -c '[.[] | select(.kind != "open-decision")]' <<<"$overrides")
   # Agent criteria that need a person (references/human-checks.md), or CI, a
   # PR or the full suite (#213), less the Artisan's overrides.
   ov='{"human_check_overrides": [], "merge_gate_overrides": []}'
@@ -298,6 +356,92 @@ cmd_build() {
     out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
   fi
   printf '%s\n' "$out"
+}
+
+# out_of_run: the jq that names the ticket $t and every ticket in scope
+# that depends on it, through blocked_by or as its Human check, in scope order.
+OUT_OF_RUN_JQ='
+  def key: tostring | ltrimstr("#");
+  def leaving($set):
+    [.scope[] | key | select(. as $k | $set | index($k) | not)] as $rest
+    | [$rest[] as $k | (.tickets[$k] // {}) as $tk
+       | select(([$tk.blocked_by // [] | .[] | key] + [($tk.human_check_for // "") | key])
+                | any(. as $b | $set | index($b) != null))
+       | $k] as $new
+    | if $new == [] then $set else leaving($set + $new) end;
+  leaving([$t]) as $out | [.scope[] | key | select(. as $k | $out | index($k) != null)]'
+
+# write_draft draft filter [jq args]: rewrite the draft in one step.
+write_draft() {
+  local f="$1" filter="$2" tmp=""
+  shift 2
+  tmp="$f.tmp.$$"
+  jq "$filter" "$@" "$f" >"$tmp" || { rm -f "$tmp"; die "could not rewrite $f"; }
+  mv "$tmp" "$f"
+}
+
+# The plan step's open decisions (references/open-decisions.md): file each
+# one recorded on the ticket and on its dependents through questions.sh,
+# with no run, raised at the plan step and not blocking; then take them all
+# out of the draft. Each filing is written to the draft as it lands, so a
+# retry after a failure never files one twice.
+cmd_drop() {
+  local draft="" ticket="" repo="" out="" i="" n="" num="" field=""
+  local -a args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --draft) [ $# -ge 2 ] || usage; draft=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$ticket" ] || usage; ticket=${1#\#}; shift ;;
+    esac
+  done
+  [ -n "$draft" ] && [ -n "$ticket" ] || usage
+  [ -f "$draft" ] || die "no draft: $draft"
+  jq -e 'type == "object" and (.scope | type == "array")' "$draft" >/dev/null 2>&1 || die "draft is not a JSON object with a scope: $draft"
+  jq -e --arg t "$ticket" '.scope | map(tostring | ltrimstr("#")) | index($t) != null' "$draft" >/dev/null \
+    || die "#$ticket is not in the draft's scope"
+  jq -e --arg t "$ticket" '[.open_decisions // [] | .[] | select((.ticket // "" | tostring | ltrimstr("#")) == $t)] != []' "$draft" >/dev/null \
+    || die "the draft records no open decision on #$ticket: change its scope in the draft instead"
+  repo=$(jq -r '.repo // ""' "$draft")
+  out=$(jq -c --arg t "$ticket" "$OUT_OF_RUN_JQ" "$draft")
+  n=$(jq '.open_decisions | length' "$draft")
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if jq -e --argjson i "$i" --argjson out "$out" '.open_decisions[$i] | (.filed // null) == null
+         and ((.ticket // "" | tostring | ltrimstr("#")) as $k | $out | index($k) != null)' "$draft" >/dev/null; then
+      args=()
+      for field in ticket case harm recommendation; do
+        args+=("--$field" "$(jq -r --argjson i "$i" --arg f "$field" '.open_decisions[$i][$f] // "" | tostring' "$draft")")
+      done
+      [ -z "$repo" ] || args+=(--repo "$repo")
+      num=$(env -u ARTISAN_FINDINGS_FILE "$SCRIPT_DIR/questions.sh" file --criterion 8 --raised-by plan --non-blocking "${args[@]}") \
+        || die "could not file the open decision on #$(jq -r --argjson i "$i" '.open_decisions[$i].ticket' "$draft"); #$ticket stays in the draft, and a retry files only what is left"
+      write_draft "$draft" '.open_decisions[$i].filed = $q' --argjson i "$i" --arg q "$num"
+      printf 'filed #%s: the open decision on #%s\n' "$num" "$(jq -r --argjson i "$i" '.open_decisions[$i].ticket | tostring | ltrimstr("#")' "$draft")"
+    fi
+    i=$((i + 1))
+  done
+  write_draft "$draft" '
+    def key: tostring | ltrimstr("#");
+    def gone: key as $k | $out | index($k) != null;
+    . as $d
+    | ([.open_decisions // [] | .[] | select(.ticket | gone) | .filed] ) as $filed
+    | .dropped = ((.dropped // []) + [{ticket: $t, title: (.tickets[$t].title // null), filed: $filed,
+                                       dependents: [$out[] | select(. != $t)]}])
+    | .scope = [.scope[] | select(gone | not)]
+    | .waves = [(.waves // [])[] | map(select(gone | not)) | select(length > 0)]
+    | .tickets = ((.tickets // {}) | with_entries(select(.key | gone | not)))
+    | .open_decisions = [.open_decisions // [] | .[] | select(.ticket | gone | not)]
+    | .gates = [(.gates // [])[]
+        | if .tickets then .tickets = [.tickets[] | select(gone | not)] | select(.tickets != [])
+          elif .after then select(.after | gone | not)
+          elif .kind == "slice" and .slice then
+            .slice as $s | select([$d.scope[] | key | select(gone | not) | $d.tickets[.].slice] | index($s) != null)
+          else . end]
+    | if .hands_on and (.hands_on.ticket | gone) then del(.hands_on) else . end
+  ' --arg t "$ticket" --argjson out "$out"
+  printf 'dropped #%s with %s: out of the draft until the Decision chat rules; rebuild the plan\n' "$ticket" \
+    "$(jq -r --arg t "$ticket" '[.[] | select(. != $t) | "#" + .] | if . == [] then "no dependents" else join(", ") end' <<<"$out")"
 }
 
 cmd_render() {
@@ -364,8 +508,16 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
+      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] then empty
+        else "### Needs your attention" end ),
+      ( ($p.open_decision_flags // []) | if length == 0 then empty else
+        "| Ticket | Open decision | Harm | Recommendation |",
+        "|---|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.case) | \(.harm) | \(.recommendation) |" ),
+        "",
+        "Any answer a worker could give here would leave the feature incomplete or misaligned, invent behaviour or settle an ADR (criterion 8, `references/open-decisions.md`), so the Decision chat rules on it. File it and take the ticket out of the run with its dependents (`plan.sh drop --draft <draft.json> <ticket>`), then rebuild, or keep the ticket in with a reason (`--override-open-decision <ticket> --why ...` on the build). Not approvable while one stands.",
+        "" end ),
       ( ($p.human_check_flags // []) | if length == 0 then empty else
-        "### Needs your attention",
         "| Ticket | Criterion | Reads as needing a person |",
         "|---|---|---|",
         ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
@@ -393,6 +545,18 @@ cmd_render() {
         "| Ticket | Criterion kept on the agent ticket | Why |",
         "|---|---|---|",
         ( .[] | "| \(ticket(.ticket)) | \(.criterion) | \(.why) |" ),
+        "" end ),
+      ( ($p.open_decision_overrides // []) | if length == 0 then empty else
+        "### Open-decision overrides",
+        "| Ticket | Kept in the run with its open decision | Why |",
+        "|---|---|---|",
+        ( .[] | . as $o | "| \(ticket(.ticket)) | \([$p.open_decisions[] | select(.ticket == $o.ticket) | "\(.case): \(.harm)"] | join("; ")) | \(.why) |" ),
+        "" end ),
+      ( ($p.dropped // []) | if length == 0 then empty else
+        "### Out of the run for the Decision chat",
+        "| Ticket | Open decision filed | Dependents out with it |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\(.title // "untitled")) | \(.filed | map(ticket(.)) | join(", ")) | \(if .dependents == [] then "none" else (.dependents | map(ticket(.)) | join(", ")) end) |" ),
         "" end ),
       ( ($p.merge_gate_overrides // []) | if length == 0 then empty else
         "### Merge-gate overrides",
@@ -438,6 +602,7 @@ cmd_render() {
         | "| \(.key) | \(if .value == null then "none" else .value end)\(if $ov | has($k) then " (this run only; project: \($ov[$k].project | if . == null then "none" else tostring end))" else "" end) |" ),
       "",
       (if ($p.criteria_missing // []) != [] then "Not approvable yet: \($p.criteria_missing | length) ticket(s) with no acceptance criteria (above)."
+       elif ($p.open_decision_flags // []) != [] then "Not approvable yet: \($p.open_decision_flags | length) open decision(s) (above)."
        elif ($p.human_check_flags // []) != [] then "Not approvable yet: \($p.human_check_flags | length) criteria need a person (above)."
        elif ($p.merge_gate_flags // []) != [] then "Not approvable yet: \($p.merge_gate_flags | length) criteria the merge gate already checks (above)."
        else "Approve as shown, or name any number to change for this run only." end)
@@ -449,6 +614,7 @@ cmd=$1
 shift
 case "$cmd" in
   build) cmd_build "$@" ;;
+  drop) cmd_drop "$@" ;;
   render) [ $# -eq 1 ] || usage; cmd_render "$1" ;;
   *) usage ;;
 esac

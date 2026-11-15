@@ -10,6 +10,10 @@
 #       reasons) or never fired, with its origin, and the moves its evidence
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
+#       The built-in open-decision guardrail (criterion 8) loosens only on a
+#       "didn't need the Decision chat" ruling, tightens on a filing raised at
+#       a gate or after its ticket merged, and counts plan-step filings on
+#       their own line (plan_step).
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
 #       --record keeps the report ({id, date, proposals}) as the latest one in
 #       ARTISAN_HEALTH_DIR (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health/latest.json):
@@ -122,9 +126,22 @@ def match($g): (.guardrail == $g.id)
   or (.guardrail == "defer-only" and ($g.defer_only // false))
   or ($g.area != null and (((.area // null) == $g.area) or ((.areas // []) | index($g.area) != null)));
 def hits($name; $g): [evs[] | select(.event == $name and match($g))];
+# The built-in open-decision guardrail (criterion 8, references/open-decisions.md):
+# its filings, each marked when its ticket had merged earlier in the run,
+# and its rulings. Only a "did not need the Decision chat" ruling loosens it;
+# a filing raised at a gate or after merge tightens it; a plan-step filing
+# is counted on its own, neither way.
+def od_filings: [.states[] | . as $s | (.events // []) | to_entries as $e | $e[]
+  | select(.value.event == "guardrail-fired" and .value.guardrail == "open-decision")
+  | .key as $i | ((.value.ticket // "") | tostring) as $t
+  | .value + {run: $s.run_id,
+      after_merge: ([$e[:$i][] | select(.value.event == "merge" and ((.value.ticket // "") | tostring) == $t)] | length > 0)}];
+def od_rulings: [evs[] | select(.event == "ruled")];
+def od_late: [od_filings[] | select(.raised_by == "gate" or .after_merge)];
 def decided($g): [evs[] | select(.event == "gate-decision" and match($g))];
 def row($g):
-  (hits("guardrail-fired"; $g)) as $fired
+  ($g.id == "open-decision") as $od
+  | (hits("guardrail-fired"; $g)) as $fired
   | (hits("guardrail-bypassed"; $g)) as $byp
   | ($byp | map(select((.reason // "") != ""))) as $reasoned
   | (decided($g) | map(select((.outcome // "keep") == "keep" and ((.redirect // false) | not)))) as $unchanged
@@ -133,24 +150,40 @@ def row($g):
   | ([.misses[] | select(match($g))]) as $misses
   | ([(evs[] | select((.event == "bug-found" or .event == "shipped-bug") and match($g))),
       (.bugs[] | select(match($g)))]) as $bugs
-  | (if ($fired | length) == 0 and ($byp | length) == 0 then ([.states[] | select([(.events // [])[] | select(.event == "guardrail-fired" or .event == "guardrail-bypassed")] | length > 0)] | length) else 0 end) as $never
-  | ([ ($reasoned | map({kind: "bypass", reason: .reason, run: .run})[]),
-       ($unchanged | map({kind: "gate approved unchanged", gate: .gate, run: .run})[]),
-       (if $never > 0 then {kind: "never fired", runs: $never} else empty end) ]) as $loosen
+  | (if $od then 0 elif ($fired | length) == 0 and ($byp | length) == 0 then ([.states[] | select([(.events // [])[] | select(.event == "guardrail-fired" or .event == "guardrail-bypassed")] | length > 0)] | length) else 0 end) as $never
+  | (if $od then
+      [od_rulings[] | select(.needed_decision_chat == false)
+        | {kind: "didn'"'"'t need the Decision chat", ticket, question, run}]
+    else
+      [ ($reasoned | map({kind: "bypass", reason: .reason, run: .run})[]),
+        ($unchanged | map({kind: "gate approved unchanged", gate: .gate, run: .run})[]),
+        (if $never > 0 then {kind: "never fired", runs: $never} else empty end) ]
+    end) as $loosen
   | ([ ($redirects | map({kind: "redirect at gate", gate: .gate, run: .run})[]),
        ($differently | map({kind: "spot-check: decided differently", ticket: .ticket, run: .run})[]),
        ($misses | map({kind: "triage miss", ticket: .ticket, criterion: (.criterion // null)})[]),
        ($bugs | map({kind: (if .where == "gate" then "bug found at a gate" else "shipped bug" end),
-                     ticket: .ticket, gate: (.gate // null), issue: (.issue // null), run: (.run // null)})[]) ]) as $tighten
+                     ticket: .ticket, gate: (.gate // null), issue: (.issue // null), run: (.run // null)})[]),
+       (if $od then od_late[] | {kind: (if .raised_by == "gate" then "raised at a gate" else "raised after merge" end),
+                                 ticket, question, raised_by, run} else empty end) ]) as $tighten
   | { id: $g.id, level: $g.level, key: $g.key, value: $g.value, area: $g.area,
       origin: $g.origin, protected: $g.protected,
       status: (if ($byp | length) > 0 then "bypassed" elif ($fired | length) > 0 then "fired" else "never fired" end),
       fired: ($fired | length),
       bypassed: ($byp | map({reason: (.reason // null), by: (.by // null), run: .run})),
-      loosen: {count: (if $never > 0 then $never else ($reasoned | length) + ($unchanged | length) end), evidence: $loosen},
-      tighten: {count: ($tighten | length), evidence: $tighten} };
+      loosen: {count: (if $od then ($loosen | length) elif $never > 0 then $never else ($reasoned | length) + ($unchanged | length) end), evidence: $loosen},
+      tighten: {count: ($tighten | length), evidence: $tighten} }
+    + (if $od then {plan_step: ([od_filings[] | select(.raised_by == "plan") | {ticket, question, run}]
+                                | {count: length, evidence: .})} else {} end);
+# The built-in row, when no level defines open-decision and the runs carry
+# a filing or a ruling: a run from before criterion 8 shows no new row.
+def builtin_rows: if ([.resolved.applied[] | select(.id == "open-decision")] | length) == 0
+    and ((od_filings | length) > 0 or (od_rulings | length) > 0)
+  then [{id: "open-decision", level: "built-in", key: "open-decision", value: null, area: null, protected: false,
+         origin: {reason: "controversy criterion 8: open decisions go to the Decision chat (docs/adr/0002)"}}]
+  else [] end;
 . as $in
-| [.resolved.applied[] | . as $g | $in | row($g)] as $rows
+| [(.resolved.applied + builtin_rows)[] | . as $g | $in | row($g)] as $rows
 | ($rows | map(
     if (.loosen.count >= $th and .tighten.count >= $th) then
       {id, move: "conflict", why: "evidence both ways: \(.loosen.count) to loosen, \(.tighten.count) to tighten; raised, neither proposed"}
@@ -165,7 +198,7 @@ def row($g):
 
 health_table() {
   jq -r "$(state_jq_row_def)"'
-    def origin: if .origin then "\(.origin.date // "?") \(.origin.who // "?"): \(.origin.reason // "")" else "no origin recorded" end;
+    def origin: if .level == "built-in" then "built in: \(.origin.reason)" elif .origin then "\(.origin.date // "?") \(.origin.who // "?"): \(.origin.reason // "")" else "no origin recorded" end;
     def st: if .status == "bypassed" then "bypassed (" + ([.bypassed[] | .reason // "no reason"] | join("; ")) + ")" else .status end;
     "Guardrail health over \(.runs) run(s); a move is proposed at \(.threshold) events.", "",
     "| Guardrail | Level | Status | Origin | Loosen evidence | Tighten evidence | Move |",
@@ -173,6 +206,10 @@ health_table() {
     (. as $r | .guardrails[] | . as $g
       | [.id, .level, st, origin, "\(.loosen.count)", "\(.tighten.count)",
          (([$r.proposals[] | select(.id == $g.id) | .move] | first) // (if ($r.never_loosen | index($g.id)) then "never loosens" else "none" end))] | row),
+    (.guardrails[] | select(.plan_step) | .plan_step
+      | "", "Open decisions caught at the plan step: \(.count)"
+            + (if .count > 0 then " (" + ([.evidence[] | "#\(.question) on #\(.ticket)"] | join(", ")) + ")" else "" end)
+            + "; counted on their own, neither loosen nor tighten evidence"),
     (if (.conflicts | length) > 0 then "", "Guardrail conflicts raised: " + (.conflicts | join(", ")) else empty end)' <<<"$1"
 }
 

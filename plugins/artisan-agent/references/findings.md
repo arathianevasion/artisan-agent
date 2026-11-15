@@ -21,6 +21,8 @@ After every wake, once the sweep has logged new findings (`wait-any.sh` reports 
 5. `mark` comments on both tickets and writes the state file's `relays` and a `finding` event, once; marking again does nothing.
 6. When a worker's result comes in, read its `notes` and `unsure` for facts it recorded but didn't act on. For each, `findings.sh add $RUN <from> "<title>" "<why>" <tickets it concerns>` logs it like any finding; then handle it as above.
 
+An **open decision a worker finds in another ticket** isn't a finding to relay or comment: the worker files it with `questions.sh file --ticket <that ticket> --criterion 8 … --non-blocking --raised-by finding --from <its own>` (`references/open-decisions.md`), whose findings line names no ticket in `blocks`. The sweep logs its `guardrail-fired` and, when that ticket is in the run, records the open decision on it (`tickets.<n>.questions`, not blocking) so `questions.sh sync` reads its ruling. Nothing blocks that ticket unless the Decision chat's ruling asks for the block (`Add the block:`), which `sync` then adds (`references/worker-questions.md`). Tested in `tests/finding-open-decisions.test.sh`.
+
 A finding that names no ticket in `blocks` isn't listed; it goes to triage between waves (`implement-plan` step 7), filed with `tracker.sh new-issue --kind finding --from <ticket>` (and `--field NAME=VALUE` for each of the finding's `fields`).
 
 ## Design stops
