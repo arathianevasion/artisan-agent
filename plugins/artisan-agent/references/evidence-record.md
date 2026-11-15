@@ -23,6 +23,7 @@ Skills cite this file rather than copying it: "write the evidence record as in `
 | `decisions` | yes | The notable decisions the worker made alone, each a decision card (below); `[]` if none |
 | `review` | yes | `{"ran": true, "remarks": [...]}`, every `mattpocock-skills:code-review` remark with what was done about it (below) |
 | `findings` | yes | Work found outside the ticket: `{"title", "why", "blocks": [ticket ids]}`; `[]` if none |
+| `unmeetable` | no | Criteria no worker could meet in this environment, whatever it did (#186): `[{"criterion": "verbatim", "why": "what stands in the way"}]`, each also `"met": false` in `acceptance`. Only for real impossibility (recorded fixtures that don't exist yet, outside access the run doesn't have), never for running out of time or a criterion that is hard. The verifier says whether it agrees; if it does, `verify.sh judge` sends the ticket to an exception gate (`${CLAUDE_PLUGIN_ROOT}/references/gate-actions.md`, "A criterion no worker can meet") instead of another attempt; if not, the attempt fails as usual and the retry is told why. Leave it out when there are none |
 | `design_question` | no | On a `blocked` record that stopped for a design or interface change another ticket owns: `{"question": "...", "recommendation": "..."}`. The sweep queues it as a `design` decision for the Artisan and notes a slicing lesson (`references/findings.md`) |
 | `notes` | no | Free text for late facts: anything the orchestrator should know that fits nowhere else. One paragraph |
 
