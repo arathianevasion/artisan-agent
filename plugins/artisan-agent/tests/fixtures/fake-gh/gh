@@ -5,7 +5,8 @@
 # The tracker, in $FAKE_GH_DIR:
 #   issue-<n>.json        {"number", "title", "body", "state": "open"|"closed", "labels": [{"name"}]}
 #   blocked_by-<n>.json   [<number>, ...] the issues blocking <n> (state read live)
-#   comments-<n>.md       comments, appended, separated by "---"
+#   comments-<n>.md       comments, appended, separated by "---"; the k-th (from 1) has
+#                         the node id IC_<n>_<k>, as --json comments shows it
 #   calls                 every call, one per line
 #
 # Answers:
@@ -15,6 +16,8 @@
 #   gh issue list [-R repo] [--state open|closed|all] [--json fields] [-q filter]
 #                         (an empty tracker lists [] and exits 0, as real gh does)
 #   gh issue comment <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
+#   gh api graphql --input FILE|-   the updateIssueComment mutation only: {query, variables:
+#                         {id, body}} replaces the comment with that node id (IC_<n>_<k>)
 #   gh issue edit <n> [-R repo] (--body|-b TEXT | --body-file|-F FILE)
 #   gh issue close <n> [-R repo] [--comment|-c TEXT]
 #   gh issue create [-R repo] --title T --body B [--label L]...   prints the new issue's URL;
@@ -113,7 +116,7 @@ outcome_for() {
   printf '%s\n' "$o"
 }
 
-api_method=GET api_fields=
+api_method=GET api_fields= api_input=
 if [ "${1:-}" = api ]; then
   shift
   api_args=("$@")
@@ -122,6 +125,7 @@ if [ "${1:-}" = api ]; then
     case "$1" in
       --method|-X) api_method=$2; shift 2 ;;
       -F|-f|--field|--raw-field) api_fields="$api_fields $2"; shift 2 ;;
+      --input) api_input=$2; shift 2 ;;
       -*) shift ;;
       *) path=$1; shift ;;
     esac
@@ -132,6 +136,22 @@ fi
 case "${1:-} ${2:-}" in
   "api "*)
     path=$2
+    if [ "$path" = graphql ]; then
+      req=$( [ "$api_input" = - ] && cat || cat "$api_input" )
+      printf '%s' "$req" | jq -e '.query | test("updateIssueComment")' >/dev/null 2>&1 \
+        || { echo "gh (fake): unsupported graphql query" >&2; exit 1; }
+      cid=$(printf '%s' "$req" | jq -r '.variables.id // ""')
+      n=${cid#IC_}; k=${n#*_}; n=${n%%_*}
+      c="$FAKE_GH_DIR/comments-$n.md"
+      if ! printf '%s' "$cid" | grep -Eq '^IC_[0-9]+_[0-9]+$' || [ ! -f "$c" ] \
+        || [ "$(jq -Rs --argjson k "$k" 'split("\n---\n") | length >= $k' "$c")" != true ]; then
+        echo "gh: Could not resolve to a node with the global id of '$cid'" >&2; exit 1
+      fi
+      jq -Rsj --argjson k "$k" --arg b "$(printf '%s' "$req" | jq -r .variables.body)" \
+        'split("\n---\n") | .[$k - 1] = $b | join("\n---\n")' "$c" >"$c.tmp" && mv "$c.tmp" "$c"
+      jq -cn --arg id "$cid" '{data: {updateIssueComment: {issueComment: {id: $id}}}}'
+      exit 0
+    fi
     if [ "$api_method" = DELETE ]; then
       case "$path" in
         */dependencies/blocked_by/*)
@@ -213,7 +233,8 @@ case "${1:-} ${2:-}" in
     f=$(issue_file "$n")
     if [ -n "$json" ]; then
       emit "$(jq -c --arg fields "$json" --arg c "$(cat "$FAKE_GH_DIR/comments-$n.md" 2>/dev/null || true)" '
-        . + {comments: (if $c == "" then [] else [$c | split("\n---\n")[] | {body: .}] end)}
+        . as $i | . + {comments: (if $c == "" then [] else [$c | split("\n---\n") | to_entries[]
+          | {id: "IC_\($i.number)_\(.key + 1)", body: .value}] end)}
         | with_entries(select(.key as $k | $fields | split(",") | index($k)))' "$f")"
     else
       jq -r '"title:\t\(.title)\nstate:\t\(.state | ascii_upcase)\nnumber:\t\(.number)\n--\n\(.body)"' "$f"

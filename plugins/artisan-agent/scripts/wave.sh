@@ -173,7 +173,8 @@
 #       the expected output): queues an exception decision, logs the event.
 #   wave.sh close <run-dir> <ticket>
 #       post the evidence contract on the ticket (evidence.sh comment), tick
-#       its met criteria, close it.
+#       its met criteria where they live (the body, or the triage comment
+#       they are in: lib/criteria-lib.sh), close it.
 #   wave.sh report <run-dir>
 #       the wave report (JSON) the orchestrator writes as its result file;
 #       ci_wait has the minutes each merge waited on CI and their total.
@@ -216,6 +217,8 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/lib/config-lib.sh"   # the template's defaults (orchestrator_turns)
 # shellcheck source=lib/headless-lib.sh
 . "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_args: never a permission prompt (#187)
+# shellcheck source=lib/criteria-lib.sh
+. "$SCRIPT_DIR/lib/criteria-lib.sh"   # criteria_read/criteria_write: criteria where they live (#215)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
@@ -2192,7 +2195,7 @@ cmd_close() {
   open_run "${1:-}"
   local t="${2:-}"
   [ -n "$t" ] || usage
-  local status= repo= body= newbody=
+  local status= repo= body= newbody= where=
   status=$(get --arg t "$t" '.tickets[$t].status // ""')
   [ "$status" = merged ] || die "#$t is ${status:-not in the run}, not merged; only merged work closes"
   if [ "$(get --arg t "$t" '.tickets[$t].tracker_closed // false')" = true ]; then
@@ -2207,10 +2210,10 @@ cmd_close() {
   gh issue comment "$t" -R "$repo" --body-file "$body" >/dev/null || die "could not comment on #$t"
   newbody="$RUN_DIR/merges/$t.body.md"
   get --arg t "$t" '.tickets[$t].evidence' >"$newbody.evidence.json"
-  if gh issue view "$t" -R "$repo" --json body -q .body >"$newbody.orig" 2>/dev/null \
+  if where=$(criteria_read "$repo" "$t" "$newbody.orig" 2>/dev/null) \
     && python3 -I "$SCRIPT_DIR/lib/criteria.py" tick "$newbody.evidence.json" <"$newbody.orig" >"$newbody" \
     && ! cmp -s "$newbody.orig" "$newbody"; then
-    gh issue edit "$t" -R "$repo" --body-file "$newbody" >/dev/null || die "could not tick the criteria on #$t"
+    criteria_write "$repo" "$t" "$where" "$newbody" || die "could not tick the criteria on #$t"
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"

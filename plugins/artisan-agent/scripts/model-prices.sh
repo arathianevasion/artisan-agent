@@ -30,6 +30,10 @@ PLUGIN_ROOT=$(cd "$HERE/.." && pwd)
 FILE=${ARTISAN_PRICES_FILE:-$PLUGIN_ROOT/references/model-prices.json}
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
 BRIEF="$PLUGIN_ROOT/skills/retro/PRICES.md"
+# shellcheck source=lib/headless-lib.sh
+. "$HERE/lib/headless-lib.sh"   # headless_args: never a permission prompt (#214)
+# What PRICES.md asks: read the recorded file, fetch the pricing page, write the answer file.
+PRICES_TOOLS="Read,WebFetch,WebSearch,Write"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'model-prices.sh: %s\n' "$*" >&2; exit 1; }
@@ -44,7 +48,7 @@ check_shape() { # file
 }
 
 cmd_fetch() {
-  local work=${1:-} prompt=
+  local work=${1:-} prompt= denied=
   [ -n "$work" ] || usage
   mkdir -p "$work"; work=$(cd "$work" && pwd)
   rm -f "$work/published.json"
@@ -52,11 +56,13 @@ cmd_fetch() {
 
 Recorded file: $FILE
 Write your answer to: $work/published.json"
-  ( cd "$work" && ARTISAN_ROLE=prices-check "$CLAUDE" -p "$prompt" \
+  headless_args "$PRICES_TOOLS"
+  ( cd "$work" && ARTISAN_ROLE=prices-check "$CLAUDE" -p "$prompt" "${HEADLESS_ARGS[@]}" \
       --model "${ARTISAN_PRICES_MODEL:-claude-sonnet-5-5}" --max-budget-usd "${ARTISAN_PRICES_BUDGET:-0.50}" \
       --output-format json >"$work/prices-session.json" 2>"$work/prices-session.err" ) \
     || die "the prices agent failed (see $work/prices-session.err)"
-  [ -s "$work/published.json" ] || die "the prices agent wrote no $work/published.json"
+  denied=$(headless_denials "$work/prices-session.json" | sort -u | tr '\n' ' ')
+  [ -s "$work/published.json" ] || die "the prices agent wrote no $work/published.json${denied:+ (denied tools: ${denied% })}"
   check_shape "$work/published.json"
 }
 
