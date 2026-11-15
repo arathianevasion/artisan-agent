@@ -43,6 +43,14 @@ CONFIG_JQ_DEFS='
         (if ($v | type) != "object" then error("estimate_multipliers must be a map of model to number")
          elif ([$v[] | select(type != "number" or . <= 0)] | length) > 0 then error("estimate_multipliers values must be positive numbers")
          else . end)
+      elif ($path == ["tracker", "board"]) then
+        (if ($v | type) != "object" then error("tracker.board must be a map: owner, number, fields_at_filing")
+         elif ($v | length) == 0 then .
+         elif (($v.owner // "") | type) != "string" or ($v.owner // "") == "" then error("tracker.board.owner must be the project owner'"'"'s login")
+         elif ($v.number | type) != "number" or $v.number < 1 or ($v.number | floor) != $v.number then error("tracker.board.number must be the project number, a whole number")
+         elif (($v.fields_at_filing // []) | type) != "array" or ([($v.fields_at_filing // [])[] | select(type != "string" or . == "")] | length) > 0 then error("tracker.board.fields_at_filing must be a list of field names")
+         elif ([$v | keys[] | select(IN("owner", "number", "fields_at_filing") | not)] | length) > 0 then error("tracker.board takes only owner, number and fields_at_filing")
+         else . end)
       elif ($d | type) == "object" then
         (if ($v | type) != "object" then error("\($path | join(".")) must be a map")
          else reduce ($v | keys_unsorted[]) as $k ($v;
@@ -84,7 +92,7 @@ CONFIG_JQ_DEFS='
       else . end;
   def settings_list:
     . as $c
-    | [leaves | select(.[0] != "areas" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases" and .[0] != "merge_gate_skip_paths" and .[0] != "main_checkout_runtime")
+    | [leaves | select(.[0] != "areas" and .[0] != "tracker" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases" and .[0] != "merge_gate_skip_paths" and .[0] != "main_checkout_runtime")
        | {key: join("."), value: (. as $p | $c | getpath($p))}]
     + (if ($c.areas | length) == 0 then [{key: "areas", value: "none"}]
        else [$c.areas | to_entries[] | {key: "areas.\(.key)", value: (.value | tojson)}] end)
@@ -92,5 +100,7 @@ CONFIG_JQ_DEFS='
        else [$c.estimate_multipliers | to_entries[] | {key: "estimate_multipliers.\(.key)", value: .value}] end)
     + [{key: "human_check_phrases", value: (($c.human_check_phrases // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}]
     + [{key: "merge_gate_skip_paths", value: (($c.merge_gate_skip_paths // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}]
+    + [{key: "tracker.board", value: (($c.tracker.board // {}) | if length == 0 then "none"
+        else "\(.owner)/\(.number), fields at filing: \((.fields_at_filing // []) | if length == 0 then "none" else join(", ") end)" end)}]
     + [{key: "main_checkout_runtime", value: (($c.main_checkout_runtime // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}];
 '

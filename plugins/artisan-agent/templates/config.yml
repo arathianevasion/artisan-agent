@@ -119,6 +119,24 @@ minimum_estimates:
 #   human_check_phrases: [in the editor, on the console]
 human_check_phrases: []
 
+# The project's board (#146): the GitHub Project every issue the plugin opens
+# that outlives the run goes on (plan issues, findings, Human checks, rework
+# and split tickets; never gates or worker questions). owner and number name
+# the project (github.com/users/<owner>/projects/<number>); fields_at_filing
+# are the fields whoever files an issue sets, each copied from the ticket the
+# issue came from (a worker may name a finding's own). The plugin never sets
+# Priority or Status. Project setup learns it from docs/agents/issue-tracker.md.
+# Empty, the default: nothing goes on a board.
+# Example:
+#   tracker:
+#     board:
+#       owner: arathianevasion
+#       number: 1
+#       fields_at_filing: [Area]
+# The rules: references/tracker-board.md.
+tracker:
+  board: {}
+
 # Whether runs live on an always-on host.
 host_configured: false
 

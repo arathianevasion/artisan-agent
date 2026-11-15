@@ -56,6 +56,11 @@
 #                         a new attempt of the run (attempt + 1, as GitHub numbers them), concluded
 #                         at once: the file ci-rerun-outcome if the test wrote one, else as the
 #                         dispatch decides for the run's head SHA (so a real failure stays red)
+#   gh project view|field-list|item-list <n> --owner O --format json
+#   gh project item-add <n> --owner O --url <issue url> --format json
+#   gh project item-edit --id I --project-id P --field-id F (--single-select-option-id O | --text T | --number N)
+#                         a board in project-<owner>-<n>.json the test writes (its shape is at the
+#                         handler); the file project-unavailable fails them all, like a missing scope
 # Anything else fails with exit 1. Needs jq (and git, for workflow run).
 
 set -euo pipefail
@@ -394,5 +399,76 @@ case "${1:-} ${2:-}" in
       (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
       | .attempt = ((.attempt // 1) + 1) | .updatedAt = $now | . + $s
       | .jobs = [.jobs[] | . + {status: $s.status, conclusion: $s.conclusion}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f" ;;
+  "project "*)
+    # A GitHub Project board (#146): project-<owner>-<number>.json, which the
+    # test writes: {id, fields: [{id, name, type, options?: [{id, name}]}],
+    # items: [{id, content: {type, number, repository, url}, values: {<field
+    # name>: value}}]}. The file project-unavailable fails every call, as a
+    # token without the project scope does.
+    sub=${2:-}
+    shift 2
+    if [ -e "$FAKE_GH_DIR/project-unavailable" ]; then
+      echo "gh: your authentication token is missing required scopes [project]" >&2; exit 1
+    fi
+    pnum= powner= purl= fmt= iid= pid= fid= text= numv= opt=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --owner) powner=$2; shift 2 ;;
+        --url) purl=$2; shift 2 ;;
+        --format) fmt=$2; shift 2 ;;
+        --id) iid=$2; shift 2 ;;
+        --project-id) pid=$2; shift 2 ;;
+        --field-id) fid=$2; shift 2 ;;
+        --text) text=$2; shift 2 ;;
+        --number) numv=$2; shift 2 ;;
+        --single-select-option-id) opt=$2; shift 2 ;;
+        -L|--limit) shift 2 ;;
+        -*) echo "gh (fake): project $sub: unsupported: $1" >&2; exit 1 ;;
+        *) pnum=$1; shift ;;
+      esac
+    done
+    if [ "$sub" = item-edit ]; then
+      pf=
+      for f in "$FAKE_GH_DIR"/project-*.json; do
+        [ -f "$f" ] || continue
+        [ "$(jq -r .id "$f")" != "$pid" ] || pf=$f
+      done
+      [ -n "$pf" ] || { echo "gh: project $pid not found" >&2; exit 1; }
+      jq -e --arg i "$iid" 'any(.items[]; .id == $i)' "$pf" >/dev/null || { echo "gh: item $iid not found" >&2; exit 1; }
+      fname=$(jq -r --arg f "$fid" '.fields[] | select(.id == $f) | .name' "$pf")
+      [ -n "$fname" ] || { echo "gh: field $fid not found" >&2; exit 1; }
+      if [ -n "$opt" ]; then
+        v=$(jq -c --arg f "$fid" --arg o "$opt" '[.fields[] | select(.id == $f) | .options[]? | select(.id == $o) | .name] | first // empty' "$pf")
+        [ -n "$v" ] || { echo "gh: option $opt not found" >&2; exit 1; }
+      elif [ -n "$numv" ]; then v=$numv
+      else v=$(jq -cn --arg t "$text" '$t'); fi
+      jq --arg i "$iid" --arg n "$fname" --argjson v "$v" \
+        '.items |= map(if .id == $i then .values = ((.values // {}) + {($n): $v}) else . end)' "$pf" >"$pf.tmp" && mv "$pf.tmp" "$pf"
+      exit 0
+    fi
+    pf="$FAKE_GH_DIR/project-$powner-$pnum.json"
+    [ -f "$pf" ] || { echo "gh: project $powner/$pnum not found" >&2; exit 1; }
+    [ "$fmt" = json ] || { echo "gh (fake): project $sub: only --format json" >&2; exit 1; }
+    case "$sub" in
+      view) jq -c '{id, number: '"$pnum"', title: (.title // "Board")}' "$pf" ;;
+      field-list) jq -c '{fields: .fields, totalCount: (.fields | length)}' "$pf" ;;
+      item-list)
+        # As gh prints them: each field value under the field's name in lower case.
+        jq -c '{items: [.items[] | {id, content} + ((.values // {}) | with_entries(.key |= ascii_downcase))],
+                totalCount: (.items | length)}' "$pf" ;;
+      item-add)
+        n=${purl##*/}
+        r=$(printf '%s' "$purl" | sed -n 's#^https://github.com/\([^/]*/[^/]*\)/issues/[0-9]*$#\1#p')
+        [ -n "$r" ] || { echo "gh: not an issue url: $purl" >&2; exit 1; }
+        existing=$(jq -r --arg u "$purl" '[.items[] | select(.content.url == $u) | .id] | first // empty' "$pf")
+        if [ -z "$existing" ]; then
+          existing="PVTI_$(jq '.items | length + 1' "$pf")"
+          jq --arg id "$existing" --arg u "$purl" --arg r "$r" --argjson n "$n" \
+            '.items += [{id: $id, content: {type: "Issue", number: $n, repository: $r, url: $u}, values: {}}]' "$pf" >"$pf.tmp" \
+            && mv "$pf.tmp" "$pf"
+        fi
+        jq -cn --arg id "$existing" '{id: $id, type: "Issue"}' ;;
+      *) echo "gh (fake): unsupported: project $sub" >&2; exit 1 ;;
+    esac ;;
   *) echo "gh (fake): unsupported: $*" >&2; exit 1 ;;
 esac
