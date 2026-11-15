@@ -27,6 +27,14 @@ config_yaml_json() {
 #     max_agents, attempts_per_ticket and budget_usd kept in step with the config.
 #   parse_value: a command-line string as a number, true/false, null or text.
 #   settings_list: every setting as [{key, value}], keys dotted, in file order.
+#   orchestrator_settings($defaults): from a plan's config (., null for none),
+#     orchestrator_turns and orchestrator_usd_per_turn, each key it lacks from
+#     $defaults (templates/config.yml): a plan from before a setting gets its default.
+#   orchestrator_turns_for($t; $ci): a wave orchestrator's --max-turns from the
+#     effective config (.): orchestrator_turns base + per_ticket x T + per_ci_gate
+#     x T when $ci is 1 (#175). $t is the tickets the wave can take.
+#   orchestrator_estimate_for($turns): its estimate in dollars with none given,
+#     $turns x orchestrator_usd_per_turn, to the cent and at least $0.01 (#216).
 CONFIG_JQ_DEFS='
   def strip_nulls: if type == "object" then with_entries(select(.value != null) | .value |= strip_nulls) else . end;
   def leaves: paths(type != "object" and type != "array");
@@ -90,6 +98,14 @@ CONFIG_JQ_DEFS='
     | if (.estimate_usd | type) == "number"
       then .budget_usd = ((.estimate_usd * (1 + .config.overrun_allowance_percent / 100) * 100 | round) / 100)
       else . end;
+  def orchestrator_settings($defaults):
+    . as $c
+    | {orchestrator_turns: ($defaults.orchestrator_turns + ($c.orchestrator_turns // {})),
+       orchestrator_usd_per_turn: ($c.orchestrator_usd_per_turn // $defaults.orchestrator_usd_per_turn)};
+  def orchestrator_turns_for($t; $ci):
+    .orchestrator_turns as $k | $k.base + $k.per_ticket * $t + $k.per_ci_gate * $t * $ci | ceil;
+  def orchestrator_estimate_for($turns):
+    [($turns * .orchestrator_usd_per_turn * 100 | round) / 100, 0.01] | max;
   def settings_list:
     . as $c
     | [leaves | select(.[0] != "areas" and .[0] != "tracker" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases" and .[0] != "merge_gate_skip_paths" and .[0] != "main_checkout_runtime")

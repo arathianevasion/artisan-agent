@@ -278,6 +278,41 @@ test_the_approval_shows_waves_models_estimates_max_agents_and_every_number() {
   done
 }
 
+# Each wave's orchestrator, as wave.sh launch sizes it (#216): two waves of one
+# ticket, Max Agents 5, a local merge gate. Wave 1 can take both tickets (20 +
+# 2 x 12 = 44 turns), wave 2 the one left (32); at the template's $0.025 a turn.
+test_the_approval_shows_each_waves_orchestrator_estimate_and_cap() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Orchestrators"
+  assert_contains "$out" "| Orchestrator | Turn limit | Estimate | Cap | From |"
+  assert_contains "$out" '| wave 1 | 44 | $1.10 | $2.20 | 44 turns x $0.025 a turn |'
+  assert_contains "$out" '| wave 2 | 32 | $0.80 | $1.60 | 32 turns x $0.025 a turn |'
+  # The rate is a setting, shown with the others and overridable for the run.
+  assert_contains "$out" "| orchestrator_usd_per_turn |"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --set orchestrator_usd_per_turn=0.05) >"$TEST_TMPDIR/plan2.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan2.json")" '| wave 1 | 44 | $2.20 | $4.40 | 44 turns x $0.05 a turn |'
+}
+
+test_the_approval_shows_the_plans_own_orchestrator_estimate_when_it_sets_one() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.orchestrator = {estimate_usd: 0.4}' "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "| wave 1 | 44 | \$0.40 | \$0.80 | the plan's orchestrator.estimate_usd |"
+  assert_contains "$out" "| wave 2 | 32 | \$0.40 | \$0.80 | the plan's orchestrator.estimate_usd |"
+}
+
+test_a_plan_from_before_the_rate_shows_the_templates_rate() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") | jq 'del(.config.orchestrator_usd_per_turn)' >"$TEST_TMPDIR/plan.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" '| wave 1 | 44 | $1.10 | $2.20 | 44 turns x $0.025 a turn |'
+}
+
 test_the_approval_shows_expected_files_and_warns_once_per_ticket_without_them() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"

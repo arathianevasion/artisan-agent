@@ -14,6 +14,9 @@
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
 #       Its --max-turns scales with the wave (#175): orchestrator_turns.base
 #       + per_ticket x T + per_ci_gate x G (orchestrator_max_turns, below).
+#       Its estimate is --estimate-usd, else the plan's orchestrator.estimate_usd,
+#       else its turns x orchestrator_usd_per_turn (#216); run-ticket.sh caps it
+#       at twice that. Launch prints its turns, estimate and cap on stderr.
 #       The state lock passes to the orchestrator's runner for the wave.
 #       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
@@ -224,7 +227,6 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 state_require_jq
 
 DEFAULT_ORCHESTRATOR_MODEL=claude-sonnet-5-5
-DEFAULT_ORCHESTRATOR_ESTIMATE_USD=1
 SESSION_TOOLS="Bash,Read,Write,Edit,Glob,Grep,Skill,Agent"
 
 usage() { state_usage "$0"; }
@@ -238,23 +240,39 @@ esac
 
 # ----------------------------------------------------------------- helpers
 
+# orchestrator_config: the plan's orchestrator settings as JSON
+# (orchestrator_settings: templates/config.yml's for any the plan lacks).
+orchestrator_config() {
+  local defaults=""
+  defaults=$(config_yaml_json "$CONFIG_TEMPLATE") || die "unreadable defaults: $CONFIG_TEMPLATE"
+  get -c --argjson d "$defaults" "$CONFIG_JQ_DEFS"'.plan.config | orchestrator_settings($d)'
+}
+
 # orchestrator_max_turns: the --max-turns launch gives a wave's orchestrator
 # (#175): base + per_ticket x T + per_ci_gate x G. T is the tickets the wave
 # can take: the scope's tickets not merged or blocked, at most Max Agents, at
 # least 1. G is T when this machine's merge gate runs on CI, else 0. The three
 # numbers are the plan's config orchestrator_turns, else templates/config.yml's.
 orchestrator_max_turns() {
-  local defaults="" mode="" ci=0
-  defaults=$(config_yaml_json "$CONFIG_TEMPLATE" | jq -c '.orchestrator_turns') \
-    || die "unreadable defaults: $CONFIG_TEMPLATE"
+  local cfg="" mode="" ci=0
+  cfg=$(orchestrator_config) || exit 1
   mode=$("$SCRIPT_DIR/merge-gate.sh" mode 2>/dev/null) || mode=local
   [ "$mode" != ci ] || ci=1
-  get --argjson d "$defaults" --argjson ci "$ci" '
-    ($d + (.plan.config.orchestrator_turns // {})) as $k
-    | ([.plan.scope[] as $t | .tickets[$t].status // "queued"
-        | select(. != "merged" and . != "blocked")] | length) as $open
+  get --argjson c "$cfg" --argjson ci "$ci" "$CONFIG_JQ_DEFS"'
+    ([.plan.scope[] as $t | .tickets[$t].status // "queued"
+      | select(. != "merged" and . != "blocked")] | length) as $open
     | ([[$open, (.plan.max_agents // 5)] | min, 1] | max) as $t
-    | $k.base + $k.per_ticket * $t + $k.per_ci_gate * $t * $ci | ceil'
+    | $c | orchestrator_turns_for($t; $ci)'
+}
+
+# orchestrator_estimate turns: the orchestrator's estimate in dollars when
+# neither --estimate-usd nor the plan's orchestrator.estimate_usd gives one
+# (#216): its turn limit x orchestrator_usd_per_turn, so its dollar cap
+# (twice the estimate, run-ticket.sh) grows with its turn limit.
+orchestrator_estimate() { # turns
+  local cfg=""
+  cfg=$(orchestrator_config) || exit 1
+  jq -rn --argjson c "$cfg" --argjson turns "$1" "$CONFIG_JQ_DEFS"'$c | orchestrator_estimate_for($turns)'
 }
 
 # halt_if_wave_failed: once nothing in the current wave is still in flight,
@@ -607,13 +625,16 @@ cmd_launch() {
   fi
 
   [ -n "$model" ] || model=$(get --arg d "$DEFAULT_ORCHESTRATOR_MODEL" '.plan.orchestrator.model // $d')
-  [ -n "$estimate" ] || estimate=$(get --arg d "$DEFAULT_ORCHESTRATOR_ESTIMATE_USD" '.plan.orchestrator.estimate_usd // $d')
+  turns=$(orchestrator_max_turns) || exit 1
+  # The estimate: --estimate-usd, else the plan's, else from the turn limit
+  # (#216), so the dollar cap (twice it) grows with the turns.
+  [ -n "$estimate" ] || estimate=$(get '.plan.orchestrator.estimate_usd // ""')
+  [ -n "$estimate" ] || estimate=$(orchestrator_estimate "$turns") || exit 1
   estimate=$(clamp_estimate "$estimate")
   # The orchestrator outlives every worker it waits on: its deadline is the
   # longest worker deadline plus half an hour.
   deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
-  turns=$(orchestrator_max_turns)
 
   mkdir -p "$RUN_DIR/prompts"
   prompt="$RUN_DIR/prompts/$id.$attempt.md"
@@ -664,6 +685,8 @@ EOF
 
   [ "$(state_lock_holder "$RUN_DIR")" = "$runner" ] \
     || die "$id started (pid $runner) but did not take the state lock; see $RUN_DIR/workers/$id.$attempt/runner.log"
+  awk -v id="$id" -v t="$turns" -v e="$estimate" \
+    'BEGIN { printf "wave.sh: %s has %d turns and an estimate of $%.2f (cap $%.2f)\n", id, t, e, e * 2 }' >&2
   printf '%s %s %s\n' "$id" "$attempt" "$runner"
 }
 

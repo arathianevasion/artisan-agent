@@ -149,7 +149,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `suite_source` | where the suite came from (`plan.sh build`): `recorded` (the project's recorded checks), `changed` (the Artisan approved another command), `discovered` (no recorded checks; found by the chat) or `none` |
 | `recorded_checks` | the recorded checks at plan time (`checks.sh json`): `{recorded, file, commands, suite}`, or `{recorded: false, reason}`; `references/checks.md` |
 | `checks` | `[{command, covers, proven_to_fail}]`: the checks the plan step proved capable of failing, shown in each gate's packet |
-| `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, $1, the longest ticket deadline plus 30 minutes) |
+| `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, the wave's turn limit x config `orchestrator_usd_per_turn` (#216), the longest ticket deadline plus 30 minutes) |
 
 `tickets.<n>`:
 

@@ -64,6 +64,16 @@ orchestrator_turns:
   per_ticket: 12
   per_ci_gate: 10
 
+# The orchestrator's estimate per turn, in dollars (#216). With no estimate in
+# the plan (orchestrator.estimate_usd) or on the command line (--estimate-usd),
+# wave.sh launch estimates a wave's orchestrator at its --max-turns x this rate,
+# and run-ticket.sh caps it at twice the estimate, so a wave with more turns
+# gets a higher dollar cap. Source: recorded waves cost about $0.30-0.60 at 40
+# turns, at most $0.015 a turn; 0.025 leaves headroom and keeps a 40-turn
+# wave's estimate at the old flat $1 (a $2.00 cap), while a 130-turn wave gets
+# $3.25 (a $6.50 cap).
+orchestrator_usd_per_turn: 0.025
+
 # Deferred gates come back for review after this many days.
 deferral_review_days: 30
 

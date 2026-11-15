@@ -53,6 +53,65 @@ test_ot_a_plan_from_before_the_setting_gets_the_template_defaults() {
   assert_eq 64 "$(orchestrator_max_turns)"
 }
 
+# ------------------------------------- the dollar cap follows the turns (#216)
+
+# The dollar cap (max_budget_usd) the last launched orchestrator was given.
+orchestrator_cap() { jq -r .max_budget_usd "$RUN_DIR/results/orchestrator-w1.1.exit.json"; }
+
+# A two-ticket local wave whose orchestrator gets base + 2 x 12 turns, with no
+# estimate in the plan and the template's orchestrator_usd_per_turn.
+setup_unestimated() { # base
+  setup_wave '["1","2"]'
+  export ARTISAN_MERGE_GATE=local
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.orchestrator_turns = {base: $b, per_ticket: 12, per_ci_gate: 10}
+    | del(.plan.orchestrator) | del(.plan.config.orchestrator_usd_per_turn)' --argjson b "$1" >/dev/null
+}
+
+test_ot_the_template_documents_the_per_turn_rate() {
+  assert_eq 0.025 "$(python3 -I "$SCRIPTS/lib/yaml-subset.py" "$PLUGIN_ROOT/templates/config.yml" | jq -r .orchestrator_usd_per_turn)"
+  assert_contains "$(cat "$SCRIPTS/README.md")" "| orchestrator dollar cap (#216) | \`orchestrator_usd_per_turn\` | 0.025:"
+}
+
+test_ot_with_no_estimate_a_40_turn_wave_is_capped_at_twice_40_turns_at_the_rate() {
+  setup_unestimated 16
+  ORCH_STOP=fail start_and_launch 2>"$TEST_TMPDIR/launch.err"
+  wait_for "$ORCH_EXIT" 30
+  assert_eq 40 "$(orchestrator_max_turns)"
+  assert_eq 2.00 "$(orchestrator_cap)" "40 turns x \$0.025 = \$1.00, capped at twice that"
+  assert_contains "$(cat "$TEST_TMPDIR/launch.err")" 'orchestrator-w1 has 40 turns and an estimate of $1.00 (cap $2.00)'
+}
+
+test_ot_with_no_estimate_a_130_turn_wave_gets_a_higher_cap() {
+  setup_unestimated 106
+  launch_and_end
+  assert_eq 130 "$(orchestrator_max_turns)"
+  assert_eq 6.50 "$(orchestrator_cap)" "130 turns x \$0.025 = \$3.25, capped at twice that"
+}
+
+test_ot_the_rate_is_the_plans_config_setting() {
+  setup_unestimated 16
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.orchestrator_usd_per_turn = 0.05' >/dev/null
+  launch_and_end
+  assert_eq 4.00 "$(orchestrator_cap)" "40 turns x \$0.05, doubled"
+}
+
+test_ot_the_plans_orchestrator_estimate_still_sets_the_cap() {
+  setup_unestimated 106
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.orchestrator.estimate_usd = 0.4' >/dev/null
+  launch_and_end
+  assert_eq 0.80 "$(orchestrator_cap)" "the plan's \$0.40 wins over 130 turns' worth"
+}
+
+test_ot_estimate_usd_on_the_command_line_still_sets_the_cap() {
+  setup_unestimated 106
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.orchestrator.estimate_usd = 0.4' >/dev/null
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >"$TEST_TMPDIR/start.out"
+  ORCH_STOP=fail "$SCRIPTS/wave.sh" launch "$RUN_DIR" --estimate-usd 0.3 >"$TEST_TMPDIR/launch.out"
+  ORCH_EXIT="$RUN_DIR/results/orchestrator-w1.1.exit.json"
+  wait_for "$ORCH_EXIT" 30
+  assert_eq 0.60 "$(orchestrator_cap)" "--estimate-usd \$0.30 wins over the plan's and the turns'"
+}
+
 # ------------------------------------------- a 5-ticket wave with 2 CI gates
 
 # A CI run over tickets 1-5, none blocking another, Max Agents 5. Each worker

@@ -303,7 +303,9 @@ cmd_build() {
 cmd_render() {
   local plan="$1"
   [ -f "$plan" ] || die "no plan: $plan"
-  jq -r "$CONFIG_JQ_DEFS"'
+  local defaults=""
+  defaults=$(config_yaml_json "$CONFIG_TEMPLATE") || die "unreadable defaults: $CONFIG_TEMPLATE"
+  jq -r --argjson defaults "$defaults" "$CONFIG_JQ_DEFS"'
     def money: "$" + (. * 100 | round | tostring | if length < 3 then ("00" + .)[-3:] else . end
                       | .[:-2] + "." + .[-2:]);
     def ticket($t): "#\($t)";
@@ -335,6 +337,24 @@ cmd_render() {
             | if ($bare | length) > 0 then "" else empty end ),
           ( .value[] as $t | select(($p.tickets[$t].expected_files // []) == [])
             | "\(ticket($t)) runs alone: no expected files, so it'"'"'s treated as touching everything. Name its files to let it share a wave." ),
+          "" ),
+      # Each wave'"'"'s orchestrator as wave.sh launch sizes it once the waves
+      # before it have merged: its turn limit, and its estimate (the plan'"'"'s,
+      # else turns x orchestrator_usd_per_turn, #216); its cap is twice that.
+      ( ($p.config | orchestrator_settings($defaults)) as $oc
+        | (if ($p.merge_gate.mode // "") == "ci" then 1 else 0 end) as $ci
+        | "### Orchestrators",
+          "| Orchestrator | Turn limit | Estimate | Cap | From |",
+          "|---|---|---|---|---|",
+          ( range(0; $waves | length) as $i
+            | ([$waves[$i:][][]] | length) as $open
+            | ([[$open, ($p.max_agents // 5)] | min, 1] | max) as $t
+            | ($oc | orchestrator_turns_for($t; $ci)) as $turns
+            | ($p.orchestrator.estimate_usd // null) as $set
+            | (if $set != null then $set else ($oc | orchestrator_estimate_for($turns)) end) as $e
+            | "| wave \($i + 1) | \($turns) | \($e | money) | \($e * 2 | money) | "
+              + (if $set != null then "the plan'"'"'s orchestrator.estimate_usd"
+                 else "\($turns) turns x $\($oc.orchestrator_usd_per_turn) a turn" end) + " |" ),
           "" ),
       ( $p.hands_on // null | if . == null then empty else
         "### Hands-on ticket",

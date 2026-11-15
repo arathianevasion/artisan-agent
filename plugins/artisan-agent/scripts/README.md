@@ -156,6 +156,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | evidence threshold | `evidence_threshold` | 3 |
 | hands-on nudge | `hands_on_nudge_runs` | 5 |
 | orchestrator turn budget (#175) | `orchestrator_turns.base`, `orchestrator_turns.per_ticket`, `orchestrator_turns.per_ci_gate` | 20, 12, 10: `wave.sh launch` gives each wave's orchestrator `--max-turns` base + per_ticket x T + per_ci_gate x G, T the scope's tickets not merged or blocked (at most Max Agents, at least 1), G = T when the merge gate runs on CI, else 0 (source in `templates/config.yml`) |
+| orchestrator dollar cap (#216) | `orchestrator_usd_per_turn` | 0.025: with no estimate from `--estimate-usd` or the plan's `orchestrator.estimate_usd`, `wave.sh launch` estimates a wave's orchestrator at its `--max-turns` x this rate and `run-ticket.sh` caps it at twice that, so a 40-turn wave gets $1.00 ($2.00 cap) and a 130-turn wave $3.25 ($6.50 cap); recorded waves cost about $0.30-0.60 at 40 turns, at most $0.015 a turn; the plan's approval shows each wave's orchestrator turns, estimate and cap (source in `templates/config.yml`) |
 | a worker's CI run inputs (#194) | `ci_gate.worker_inputs` (a map; each passed as `gh workflow run -f key=value`) | none: a worker's branch run is the gate's own run, which the merge gate may reuse; set, it never reuses it |
 | areas, per-area gates | `areas` (`<name>: {paths, gates}`) | none |
 | team guardrails repo | `team_guardrails_repo` | none |
