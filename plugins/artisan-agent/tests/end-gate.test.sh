@@ -469,3 +469,26 @@ test_a_passing_setup_at_the_end_gate_runs_once_in_each_pr_worktree() {
   assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "end-gate-setup")] | length')"
   assert_eq 0 "$(state_get '[.events[] | select(.event == "end-gate-setup-failed")] | length')"
 }
+
+test_a_setup_timeout_at_the_end_gate_records_exit_124_and_its_stderr() {
+  setup_interleaved_cut 'echo "installing deps" >&2; sleep 30'
+  printf 'worktree_setup_timeout: 1\n' >>"$PROJECT/.artisan-agent/config.yml"
+  local err="" st=0
+  err=$("$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" 2>&1 >/dev/null) || st=$?
+  assert_eq 6 "$st"
+  assert_contains "$err" "setup timeout after 1s"
+  assert_eq 124 "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .exit')"
+  assert_contains "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .stderr')" "installing deps"
+  assert_eq 124 "$(state_get '.events[] | select(.event == "end-gate-setup-failed") | .exit')"
+}
+
+test_a_setup_that_cannot_start_at_the_end_gate_has_no_exit_status() {
+  setup_interleaved_cut 'touch deps-installed'
+  mkdir -p "$TEST_TMPDIR/nosetsid"
+  printf '#!/bin/sh\necho "setsid: failed" >&2\nexit 1\n' >"$TEST_TMPDIR/nosetsid/setsid"
+  chmod +x "$TEST_TMPDIR/nosetsid/setsid"
+  assert_status 6 env PATH="$TEST_TMPDIR/nosetsid:$PATH" "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md"
+  assert_eq null "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .exit')"
+  assert_contains "$(state_get '.decisions[] | select(.kind == "end-gate-setup") | .stderr')" "setsid: failed"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "end-gate-setup: PR 1: \`touch deps-installed\` could not start"
+}

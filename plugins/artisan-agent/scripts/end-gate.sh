@@ -229,15 +229,18 @@ git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email
 # end-gate-setup decision (retry or bypass) naming the command, its exit
 # status and its stderr tail, then refuses (6) with one line. No PR is cut.
 setup_failed() {
-  local n="$1" branch="$2" id="" line=""
-  id=$(get '(.decisions | length) + 1')
-  apply '.decisions += [{id: $id, kind: "end-gate-setup", gate: "end", pr: $n, branch: $b,
+  local n="$1" branch="$2" id="" line="" rc="null"
+  state_is_uint "${SETUP_RC:-}" && rc=$SETUP_RC
+  # The id is the decision count inside the locked write, as everywhere else.
+  apply '((.decisions | length) + 1) as $id
+    | .decisions += [{id: $id, kind: "end-gate-setup", gate: "end", pr: $n, branch: $b,
           question: "PR \($n)'"'"'s worktree_setup failed at the end gate: retry once the command is fixed, or bypass the setup for this PR?",
           command: $cmd, exit: $rc, stderr: $tail, detail: $err, options: ["retry", "bypass"],
           status: "waiting", at: $now}]
     | event({event: "end-gate-setup-failed", n: $n, branch: $b, command: $cmd, exit: $rc, stderr: $tail, decision: $id}; $now)' \
-    --argjson id "$id" --argjson n "$n" --arg b "$branch" --arg cmd "$SETUP_CMD" --argjson rc "${SETUP_RC:-1}" \
+    --argjson n "$n" --arg b "$branch" --arg cmd "$SETUP_CMD" --argjson rc "$rc" \
     --arg tail "$SETUP_TAIL" --arg err "$SETUP_ERR"
+  id=$(setup_decision "$n" waiting)
   line=$(printf '%s' "$SETUP_ERR" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')
   refuse "PR $n: $line; no PR is cut and decision $id waits: state.sh decide $RUN_DIR $id retry|bypass, then end-gate.sh cut again"
 }

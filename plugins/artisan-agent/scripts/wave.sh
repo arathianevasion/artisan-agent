@@ -394,7 +394,7 @@ exit_decision_lines() {
 # (end-gate.sh cut, #182), for status.
 end_gate_setup_lines() {
   get '.decisions[] | select(.kind == "end-gate-setup" and .status == "waiting")
-       | "end-gate-setup: PR \(.pr): `\(.command)` exited \(.exit): \(.stderr | gsub("\n"; " | ")); decision \(.id) waits (retry or bypass: state.sh decide, then end-gate.sh cut again)"'
+       | "end-gate-setup: PR \(.pr): `\(.command)` \(if .exit == null then "could not start" else "exited \(.exit)" end): \(.stderr | gsub("\n"; " | ")); decision \(.id) waits (retry or bypass: state.sh decide, then end-gate.sh cut again)"'
 }
 
 # apply_exit_answers: carry out the Artisan's answers to orchestrator-exit

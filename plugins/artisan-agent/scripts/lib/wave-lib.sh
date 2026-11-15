@@ -39,7 +39,7 @@ get() { jq -r "$@" "$FILE"; }
 # setsid, perl failed) returns 1 with "... could not start ...", not a timeout.
 #
 # A failure also sets SETUP_CMD (the command), SETUP_RC (its exit status; 124
-# for a timeout) and SETUP_TAIL (the last lines of its stderr), for a caller
+# for a timeout; empty when it never started) and SETUP_TAIL (the last lines of its stderr), for a caller
 # that records them (end-gate.sh, #182).
 SETUP_ERR=
 SETUP_CMD=
@@ -107,6 +107,8 @@ worktree_setup() {
   rm -rf "$dir"
   [ "$rc" -ne 0 ] || return 0
   SETUP_CMD=$cmd SETUP_RC=$rc SETUP_TAIL=$tail_
+  # One that never started has no exit status of its own.
+  [ "${SETUP_ERR#*could not start in }" = "$SETUP_ERR" ] || SETUP_RC=
   return 1
 }
 

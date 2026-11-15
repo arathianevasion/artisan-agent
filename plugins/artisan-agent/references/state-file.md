@@ -105,7 +105,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 - and `overrun` (`gate`, `issue`, `gate_actions: ["defer"]`, `options`) and `usage` (`window`, `resets_at`, `options`)
 - and `base-red` (#195: merging is parked on a red base, `base_park`; decided by `wave.sh unpark-base` with `choice: "base fixed"`)
 - and `orchestrator-exit` (#171: the orchestrator exited without finishing its wave; `cause`: `nonzero-exit`, `error_max_turns`, `budget`, `deadline`, `not-completed`, `no-verdict` or `unmerged`; `wave`, `tickets` (its wave's unfinished tickets), `detail`, `orchestrator`, `attempt`, `options: ["resume", "retry", "halt"]`, and `applied` once `wave.sh status` or `launch` carried the answer out).
-- and `end-gate-setup` (#182: the project's `worktree_setup` failed in a PR's worktree at `end-gate.sh cut`; `gate: "end"`, `pr`, `branch`, `question`, `command`, `exit` (124 for a timeout), `stderr` (its last lines), `detail`, `options: ["retry", "bypass"]`, and `applied` once that PR is cut)
+- and `end-gate-setup` (#182: the project's `worktree_setup` failed in a PR's worktree at `end-gate.sh cut`; `gate: "end"`, `pr`, `branch`, `question`, `command`, `exit` (124 for a timeout, `null` when it never started), `stderr` (its last lines), `detail`, `options: ["retry", "bypass"]`, and `applied` once that PR is cut)
 - Answered, it is `status: "decided"` with `decided_at` and the decision record's fields (`choice`, `by`, `job?`, `why?`, `guardrail_level?`, `reach?`, `area?`, `confidence?`, `redirect?`): `state.sh decide`, or the gate action that answered it
 
 `merge_gate`, continued:
