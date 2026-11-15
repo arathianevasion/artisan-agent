@@ -128,7 +128,7 @@ prune() {
     [ -n "$br" ] || continue
     ev=$(jq -nc --arg b "$br" --arg t "$t" --arg r "$remote" --arg s "$sha" '{branch: $b, ticket: $t, remote: $r, sha: $s}')
     if ! tip=$(git -C "$main" ls-remote --heads "$remote" "refs/heads/$br" 2>/dev/null); then
-      failed "$br" "could not delete $br on $remote (could not read $remote)"
+      failed "$br" "could not delete $br on $remote: $remote could not be read"
       continue
     fi
     tip=${tip%%[[:space:]]*}

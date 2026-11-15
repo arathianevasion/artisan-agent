@@ -13,10 +13,10 @@
 #   move.sh out <run-dir> [--remote NAME] [--wait SECONDS]
 #       wait up to SECONDS (default 0) for idle, then push the integration
 #       branch, the run's unmerged ticket branches and the run's state folder
-#       to the runs/<run-id> branch, recording each ticket branch pushed in
-#       the state's pushed (pushed.sh prunes it once its ticket closes or
-#       leaves the run, #211) (the folder is git-ignored, so the branch
-#       carries it as a snapshot commit on top of the integration tip). The
+#       to the runs/<run-id> branch (the folder is git-ignored, so the branch
+#       carries it as a snapshot commit on top of the integration tip). Each
+#       ticket branch pushed is recorded in the state's pushed, so
+#       pushed.sh prunes it once its ticket closes or leaves the run (#211). The
 #       run's `location` becomes "moved" here first (push pending), then the
 #       run branch is pushed: a refused push puts this copy back to live, and
 #       a death in between is finished or undone by running `out` again. At
