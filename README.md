@@ -78,13 +78,22 @@ plugins/artisan-agent/
 The pipeline's scripts are tested on macOS and Linux. Tests are `test_*` functions in `plugins/artisan-agent/tests/*.test.sh`, using the assertions in `tests/lib.sh`. Each test runs in its own bash process under `set -euo pipefail`, in a fresh scratch directory (`$TEST_TMPDIR`), with `$PLUGIN_ROOT` pointing at the plugin.
 
 ```bash
-plugins/artisan-agent/tests/run.sh          # every test in tests/
-plugins/artisan-agent/tests/run.sh <dir>    # every test in another directory
+plugins/artisan-agent/tests/run.sh [-j N] [--shard i/n] [--rerun-failed] [dir]
+plugins/artisan-agent/tests/run.sh --check-quarantine [dir]
 ```
+
+With no `dir` it runs every test in `tests/`. Options:
+
+- `-j N` runs up to N tests at once. Output order, format and exit status are those of a serial run.
+- `--shard i/n` runs only every n-th test, starting at the i-th, so n machines split the suite between them. A shard with no test exits 2.
+- `--rerun-failed` runs each failed test once more on its own. One that then passes is printed on a `FLAKY` line and doesn't fail the suite.
+- `--check-quarantine` runs no test: it checks that every entry in `tests/quarantine.txt` names an open issue.
+
+To quarantine a flaky test, add a line `<file>: <test> #<issue> <why>` to `tests/quarantine.txt` (`<file>` as on the FAIL line, without `.test.sh`). The test still runs but is printed on a `QUARANTINED` line and can't fail the suite. Tie it to the open issue that will fix it: CI's quarantine job fails once that issue is closed, and then the line comes out.
 
 The scripts need `jq`, `python3`, `perl` (to detach workers on macOS, which has no `setsid`) and git 2.31 or later.
 
-It exits 0 when every test passes, 1 when any fails, and 2 when it finds no tests. Scripts must run on macOS's `/bin/bash` 3.2 as well as Linux, so avoid bash 4 features (`mapfile`, associative arrays, `${var,,}`) and GNU-only flags. The [Script tests workflow](.github/workflows/script-tests.yml) runs the suite on Linux, in an Ubuntu container on a self-hosted runner. macOS and `/bin/bash` 3.2 are checked locally before each merge.
+It exits 0 when every test passes, 1 when any fails, and 2 when it finds no tests. Scripts must run on macOS's `/bin/bash` 3.2 as well as Linux, so avoid bash 4 features (`mapfile`, associative arrays, `${var,,}`) and GNU-only flags. The [Script tests workflow](.github/workflows/script-tests.yml) runs on pull requests and on demand, never on a plain push. Linux is one job, on a GitHub-hosted runner by default or on Ubicloud when dispatched with `runner: ubicloud`. macOS (and so `/bin/bash` 3.2) is three jobs, shards 1, 2 and 3 of 3 on `macos-latest`; a dispatch with `macos: false` leaves them out. Every test job passes `--rerun-failed`, and a separate job runs `--check-quarantine`. Flaky and quarantined tests are listed in the run's step summary.
 
 ## Releasing
 
