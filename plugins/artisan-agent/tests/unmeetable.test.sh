@@ -88,8 +88,9 @@ criteria_in_triage_comment() {
 
 # #220: the gate's choice ($1: rewrite | drop | split; $2: body | comment),
 # then a fresh verifier finds the rest met, and the ticket merges and closes.
-# CHANGED_TO is the ticket a split opened.
-CHANGED_TO=
+# CHANGED_TO is the ticket a split opened; AT_GATE, where the criteria live
+# ($2) as the gate's answer left them, before the ticket closes.
+CHANGED_TO= AT_GATE=
 change_then_close() {
   setup_wave
   [ "$2" = body ] || criteria_in_triage_comment
@@ -102,11 +103,16 @@ change_then_close() {
   GATE_ISSUE=$(state_get '.exception_gates[0].issue')
   [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != null ] || fail "no exception gate opened"
   unset VERIFIER_UNMET VERIFIER_UNMEETABLE
+  cp "$FAKE_GH_DIR/issue-1.json" "$TEST_TMPDIR/issue-1.before-gate.json"
   case "$1" in
-    rewrite) "$A" rewrite "$RUN_DIR" "$GATE_ISSUE" --as "It says hi in hello.txt" >/dev/null ;;
+    rewrite) "$A" rewrite "$RUN_DIR" "$GATE_ISSUE" --as "hello.txt greets with hi" >/dev/null ;;
     drop) "$A" drop-criterion "$RUN_DIR" "$GATE_ISSUE" --why "Fixtures come in #9" >/dev/null ;;
-    split) "$A" split "$RUN_DIR" "$GATE_ISSUE" --ticket >/dev/null; CHANGED_TO=$((GATE_ISSUE + 1)) ;;
+    split) "$A" split "$RUN_DIR" "$GATE_ISSUE" --ticket >/dev/null
+           CHANGED_TO=$(state_get '.tickets["1"].criteria_changes[0].to') ;;
   esac
+  AT_GATE=$(criteria_text "$2")
+  # UNWRITTEN: a ticket answered before the gate wrote its changes on.
+  [ -z "${UNWRITTEN:-}" ] || cp "$TEST_TMPDIR/issue-1.before-gate.json" "$FAKE_GH_DIR/issue-1.json"
   reverify
   case "$JUDGE_OUT" in pass*) ;; *) fail "the fresh verifier did not pass: $JUDGE_OUT" ;; esac
   merge_and_close
@@ -117,8 +123,10 @@ test_u_a_rewritten_criterion_closes_ticked_in_its_new_wording() {
   local body=""
   body=$(criteria_text)
   assert_contains "$body" "- [x] hello.txt exists"
-  assert_contains "$body" "- [x] It says hi in hello.txt"
-  assert_not_contains "$body" "- [ ] It says hi"
+  assert_contains "$body" "- [x] hello.txt greets with hi"
+  assert_not_contains "$body" "It says hi"
+  assert_contains "$AT_GATE" "- [ ] hello.txt greets with hi" "the gate rewrote the line at once"
+  assert_not_contains "$AT_GATE" "It says hi"
 }
 
 test_u_a_dropped_criterion_closes_marked_dropped_at_its_gate() {
@@ -128,6 +136,7 @@ test_u_a_dropped_criterion_closes_marked_dropped_at_its_gate() {
   assert_contains "$body" "- [x] hello.txt exists"
   assert_contains "$body" "- ~~It says hi~~ (dropped at exception gate #$GATE_ISSUE: Fixtures come in #9)"
   assert_not_contains "$body" "- [ ] It says hi"
+  assert_contains "$AT_GATE" "- ~~It says hi~~ (dropped at exception gate #$GATE_ISSUE: Fixtures come in #9)" "marked at the gate"
 }
 
 test_u_a_criterion_split_into_a_new_ticket_closes_marked_moved() {
@@ -136,6 +145,18 @@ test_u_a_criterion_split_into_a_new_ticket_closes_marked_moved() {
   body=$(criteria_text)
   assert_contains "$body" "- [x] hello.txt exists"
   assert_contains "$body" "- ~~It says hi~~ (moved to #$CHANGED_TO at exception gate #$GATE_ISSUE)"
+  assert_not_contains "$body" "- [ ] It says hi"
+  assert_contains "$AT_GATE" "- ~~It says hi~~ (moved to #$CHANGED_TO at exception gate #$GATE_ISSUE)" "marked at the gate"
+}
+
+# A ticket whose gate was answered before the gate wrote its changes on:
+# wave.sh close writes them on, with the gate's number from its event.
+test_u_close_writes_on_the_changes_a_gate_answered_earlier_left_off_the_ticket() {
+  UNWRITTEN=1 change_then_close drop body
+  local body=""
+  body=$(criteria_text)
+  assert_contains "$body" "- [x] hello.txt exists"
+  assert_contains "$body" "- ~~It says hi~~ (dropped at exception gate #$GATE_ISSUE: Fixtures come in #9)"
   assert_not_contains "$body" "- [ ] It says hi"
 }
 
@@ -149,17 +170,20 @@ assert_closed_triage_comment() {
 
 test_u_a_rewritten_criterion_in_the_triage_comment_closes_ticked_there() {
   change_then_close rewrite comment
-  assert_closed_triage_comment rewrite "- [x] It says hi in hello.txt"
+  assert_closed_triage_comment rewrite "- [x] hello.txt greets with hi"
+  assert_contains "$AT_GATE" "- [ ] hello.txt greets with hi" "the gate rewrote the triage comment's line at once"
 }
 
 test_u_a_dropped_criterion_in_the_triage_comment_closes_marked_there() {
   change_then_close drop comment
   assert_closed_triage_comment drop "- ~~It says hi~~ (dropped at exception gate #$GATE_ISSUE: Fixtures come in #9)"
+  assert_contains "$AT_GATE" "- ~~It says hi~~ (dropped at exception gate #$GATE_ISSUE" "marked in the triage comment at the gate"
 }
 
 test_u_a_criterion_split_off_the_triage_comment_closes_marked_moved_there() {
   change_then_close split comment
   assert_closed_triage_comment split "- ~~It says hi~~ (moved to #$CHANGED_TO at exception gate #$GATE_ISSUE)"
+  assert_contains "$AT_GATE" "- ~~It says hi~~ (moved to #$CHANGED_TO at exception gate #$GATE_ISSUE)" "marked in the triage comment at the gate"
 }
 
 # #220: the changes are marked on the criteria lines only, in order, each

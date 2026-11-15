@@ -13,7 +13,7 @@ Skills cite this file rather than copying it.
 | Wait | orchestrator | `wait-any.sh` | the verifier's exit record | |
 | Judge | orchestrator | `verify.sh judge <run> <t>` | the verdict file | the evidence contract in `tickets.<t>.evidence`; costs; event `verified`; a fail is a failed attempt (retried with the verifier's findings, or blocked after the last) and its contract is posted on the ticket |
 | Merge | orchestrator | `wave.sh merge` | `tickets.<t>.evidence` | refuses (13) without a `pass` for this attempt at the branch tip; then the serial merge and the suite, as `skills/implement-plan/references/parallel-waves.md` says |
-| Close | orchestrator | `wave.sh close` | `tickets.<t>.evidence` | the comment (`evidence.sh comment`), the criteria changes made at an unmeetable-criterion gate written on (`criteria.py mark`, #220) and the met criteria ticked (where they live: the body or the triage comment), closed |
+| Close | orchestrator | `wave.sh close` | `tickets.<t>.evidence` | the comment (`evidence.sh comment`), the criteria changes made at an unmeetable-criterion gate written on again (`criteria.py mark`, #220) and the met criteria ticked (where they live: the body or the triage comment), closed |
 | Report | chat | `evidence.sh digest <run>` | the state file | the wave digest |
 
 A ticket that misses a criterion is never merged; it is a failed attempt like any other (two at most). A fail's evidence comment is posted on the ticket, which stays open. `judge` prints one line, which is all the orchestrator reads:

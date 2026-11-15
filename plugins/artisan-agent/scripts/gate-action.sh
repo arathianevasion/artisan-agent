@@ -56,8 +56,10 @@
 #       (to-plan.sh split-human-check), in the run's scope; split --ticket
 #       opens one new needs-triage ticket holding them, outside the run;
 #       rewrite gives the criterion new wording; drop-criterion drops them,
-#       with the reason. Each change is kept on the ticket
-#       (criteria_changes), which verify.sh reads the criteria through and
+#       with the reason. Each change is written onto the ticket's criteria
+#       where they live (rewritten, or struck through as dropped or moved
+#       with the gate's number: lib/criteria.py mark, #220) and kept in the
+#       state (criteria_changes), which verify.sh reads the criteria through and
 #       a retry's prompt lists; the ticket goes back to returned, so a fresh
 #       verifier judges the same commit (no attempt used), and the gate
 #       closes. On this gate retry ("retry anyway") takes --notes as
@@ -115,6 +117,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/wave-lib.sh"
 # shellcheck source=lib/gate-lib.sh
 . "$SCRIPT_DIR/lib/gate-lib.sh"
+# shellcheck source=lib/criteria-lib.sh
+. "$SCRIPT_DIR/lib/criteria-lib.sh"   # criteria_read/criteria_write: criteria where they live (#215)
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -703,15 +707,38 @@ picked_criteria() {
   printf '%s\n' "$out"
 }
 
+# mark_ticket issue changes-json: the changes written onto the ticket's
+# criteria where they live, the body or the triage comment (#220:
+# lib/criteria.py mark, lib/criteria-lib.sh): a rewritten line takes its new
+# wording, a dropped or moved one is struck through with the gate's number.
+# Runs before anything is recorded, so a failure leaves the answer to give
+# again; a repeat changes nothing more.
+mark_ticket() {
+  local t="" tmp="" where="" err=""
+  t=$(g .ticket)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/gate-action-mark.XXXXXX") || die "no temp file to change #$t's criteria"
+  jq -c --arg g "$1" 'map(. + {gate: $g})' <<<"$2" >"$tmp.changes.json"
+  if where=$(criteria_read "$(repo)" "$t" "$tmp.orig") \
+    && python3 -I "$SCRIPT_DIR/lib/criteria.py" mark "$tmp.changes.json" <"$tmp.orig" >"$tmp"; then
+    cmp -s "$tmp.orig" "$tmp" || criteria_write "$(repo)" "$t" "$where" "$tmp" || err="could not write"
+  else
+    err="could not read"
+  fi
+  rm -f "$tmp" "$tmp.orig" "$tmp.changes.json"
+  [ -z "$err" ] || die "$err #$t's criteria to change them on the ticket; nothing recorded, answer again"
+}
+
 # criteria_answer issue choice changes-json extra-filter [jq args]: the
-# changes go on the ticket (criteria_changes, read by verify.sh) and it goes
-# back to returned, so a fresh verifier judges the same commit against the
-# changed criteria: no worker attempt is used. The ticket and the gate say
-# so, and the gate closes. Each change logs criterion-changed.
+# changes are written onto the ticket's criteria (mark_ticket) and kept on
+# it (criteria_changes, read by verify.sh), and it goes back to returned, so
+# a fresh verifier judges the same commit against the changed criteria: no
+# worker attempt is used. The ticket and the gate say so, and the gate
+# closes. Each change logs criterion-changed.
 criteria_answer() {
   local issue="$1" choice="$2" changes="$3" extra="$4" t="" say=""
   shift 4
   t=$(g .ticket)
+  mark_ticket "$issue" "$changes"
   say="At exception gate #$issue, $BY changed #$t's acceptance criteria:
 $(jq -r '.[] | "- \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
     elif .action == "split" then "moved to #\(.to)" else "dropped" end) + (if .why then " (\(.why))" else "" end)' <<<"$changes")

@@ -2287,6 +2287,8 @@ cmd_close() {
   # The Artisan's changes at an unmeetable-criterion gate (#186), each with
   # the gate's issue number (its criterion-changed event names the gate),
   # are written onto the criteria first (#220), so the rewritten ones tick.
+  # The gate's answer wrote them already; this catches a ticket answered
+  # before it did, and leaves a line already written as it is.
   get --arg t "$t" '[.events[]? | select(.event == "criterion-changed" and .ticket == $t)] as $ev
     | (.exception_gates // []) as $gates
     | [(.tickets[$t].criteria_changes // [])[] as $c
@@ -2296,7 +2298,7 @@ cmd_close() {
     && python3 -I "$SCRIPT_DIR/lib/criteria.py" mark "$newbody.changes.json" <"$newbody.orig" \
        | python3 -I "$SCRIPT_DIR/lib/criteria.py" tick "$newbody.evidence.json" >"$newbody" \
     && ! cmp -s "$newbody.orig" "$newbody"; then
-    criteria_write "$repo" "$t" "$where" "$newbody" || die "could not tick the criteria on #$t"
+    criteria_write "$repo" "$t" "$where" "$newbody" || die "could not mark and tick the criteria on #$t"
   fi
   gh issue close "$t" -R "$repo" >/dev/null || die "could not close #$t"
   "$SCRIPT_DIR/state.sh" closed "$RUN_DIR" "$t"

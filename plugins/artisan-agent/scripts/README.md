@@ -251,7 +251,7 @@ The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `gu
 | `merge-gate.sh minutes --repo --workflow` / `workflow-check FILE` | `plan.sh build` / project setup | expected CI minutes per merge from recent runs; whether a workflow has a `workflow_dispatch` trigger | 0, 1 |
 | `wave-width.sh pick <run-dir>` / `check <run-dir> <ticket>` | orchestrator | the tickets to dispatch now: the smallest of Max Agents less those in flight, the frontier, and tickets with non-overlapping `expected_files`, after one pending urgent ticket while the extra slot above Max Agents is free (#205); `check` is dispatch's overlap refusal | 0, 10 |
 | `wave.sh block <run-dir> <ticket> <reason>` | orchestrator | blocks a returned ticket it won't merge (the diff misses its expected output): an exception decision for the Artisan and a `blocked` event | 0, 4 |
-| `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence contract (`evidence.sh comment`), writes the Artisan's changes at an unmeetable-criterion gate onto the criteria (a rewritten one takes its new wording; a dropped or moved one loses its box and is struck through with the gate's number: `lib/criteria.py mark`, #220) and ticks the ones the verifier found met, where they live, the body or the triage comment (`lib/criteria.py tick`, `lib/criteria-lib.sh`), closes the ticket | 0, 1 |
+| `wave.sh close <run-dir> <ticket>` | orchestrator | merged tickets only: posts the evidence contract (`evidence.sh comment`), ticks the criteria the verifier found met where they live, the body or the triage comment (`lib/criteria.py tick`, `lib/criteria-lib.sh`), closes the ticket | 0, 1 |
 | `wave.sh report <run-dir>` | orchestrator | halts the run if every ticket dispatched in the wave ended blocked and none passed verification, then the wave report, JSON, for its result file | 0 |
 | `human.sh suggest --draft F` / `annotate --draft F` | Engineering chat (`annotate`: `plan.sh build`) | the one hands-on candidate table, off the critical path; the plan's `hands_on` with its focus and delay (1: more than one, outside the scope, no focus) | 0, 1 |
 | `human.sh sync\|setup\|start\|take <run-dir>` | orchestrator, chat | worktrees from the integration tip for `ready-for-human` tickets (never a Human check), which are never dispatched; takes the ones the Artisan finished as `returned` | 0, 1, 4, 5 |
@@ -270,6 +270,10 @@ The rest of the `merge-gate.sh ci` row, one clause per line:
 - the run is read from GitHub (#212): it must be a `workflow_dispatch` run of the gate workflow
 - and its name must show at least one `key=value` input, each at the default the workflow file declares at W
 - otherwise the gate logs `not reusing run ID: <why>` on stderr and runs CI
+
+The rest of the `wave.sh close <run-dir> <ticket>` row, one clause per line:
+
+- before ticking, it writes the Artisan's changes at an unmeetable-criterion gate onto the criteria again, so a ticket answered before the gate wrote them (#220) closes the same way: a rewritten one takes its new wording and ticks when met; a dropped or moved one loses its box and is struck through with the gate's number (`lib/criteria.py mark`, the number from the change's `criterion-changed` event); one already written is left as it is
 
 The rest of the `wave.sh merge <run-dir> <ticket>...` row, one clause per line:
 
