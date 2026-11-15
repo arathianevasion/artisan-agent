@@ -2,6 +2,18 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.8.1 (2026-11-15)
+
+Fixes for large runs, leftover worktrees and branches, criteria in triage comments, merge-gate reuse, and named sessions.
+
+- **Large runs:** JSON that grows with the run reaches jq on stdin, never as an argument past Linux's 128 KiB limit, with no temporary files left in the checkout or run folder (#208). A gate packet over GitHub's 65,536-character body limit opens as one issue whose body and numbered comments hold it whole, and every lookup for an existing issue reads all of them, not the first 30 (#209).
+- **Criteria where they live:** `to-plan.sh graph`, `split-human-check`, `wave.sh close` and the unmeetable gate read and write a ticket's criteria in its body or its triage comment (#215). Criteria changed at an unmeetable gate show on the closed ticket: rewritten, or struck through as dropped or moved with the gate's number (#220). The plan step flags criteria that need CI, a PR or the full suite, which the merge gate already checks, and rework tickets no longer add "The full suite passes" (#213).
+- **Cleanup:** a dispatch stopped after making its worktree leaves one the retry reuses, or blocks on if it holds work (#210). Ticket branches the plugin pushes are deleted from the remote once their ticket is done, unless someone else pushed to them; a failed delete is retried by the next sweep (#211).
+- **Merge gate:** reusing a worker's green CI run checks the run itself: the gate workflow, dispatched with default inputs shown in its run name, on the same tree (#212).
+- **Orchestrator:** its dollar cap scales with its turn limit (`orchestrator_usd_per_turn`, default 0.025: $2.00 at 40 turns, $6.50 at 130; #216). Orchestrator and verifier sessions are named by repo, wave and plan, such as "claudia-kerman · Wave 3 · Contract integration" (#189).
+- **Headless steps:** the retro's upstream judge and price check launch with the headless permission arguments, and a test fails any `claude -p` launch without them (#214).
+- **Docs:** README's Script tests section matches `tests/run.sh` and the CI jobs; the glossary defines merge-gate and unmeetable criteria; a tracked `.pyc` file is gone and ignored (#217).
+
 ## 0.8.0 (2026-11-15)
 
 Headless steps that never hang on a prompt, exception gates for criteria no worker can meet, project boards for plugin issues, and setup and end-gate fixes.
