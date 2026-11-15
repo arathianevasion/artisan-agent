@@ -600,6 +600,8 @@ cmd_triage() {
     label="Uncertainty $n"
     at="review gate #$issue ($(g .title)), uncertainty $n on #$(jq -r .ticket <<<"$item") (the $(jq -r .from <<<"$item")'s): $(jq -r .text <<<"$item")"
   fi
+  # One line on the filed ticket's "Raised at:", whatever the item's text holds.
+  at=$(printf '%s' "$at" | tr '\n\r\t' '   ')
   t=$(jq -r .ticket <<<"$item")
   # Once per item: the open decision it already went to.
   q=$(get --arg g "$(g .id)" --arg w "$what" --argjson n "$n" \

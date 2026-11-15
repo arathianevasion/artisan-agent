@@ -515,9 +515,10 @@ test_the_end_gate_waits_until_each_open_decision_raised_at_a_gate_is_ruled() {
   # The Decision chat rules on the tracker; the end gate reads it and goes on as today.
   printf 'Answer: Keep t2.txt.\nTook the recommendation: no\nNeeded the Decision chat: yes' >"$FAKE_GH_DIR/comments-$od.md"
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-$od.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$od.json"
+  # The packet reads the ruling too.
+  assert_contains "$("$E" packet "$RUN_DIR")" "None waiting"
   "$E" approve "$RUN_DIR" >/dev/null
   assert_eq answer "$(state_get '.tickets["2"].questions[0].ruling.kind')"
-  assert_contains "$("$E" packet "$RUN_DIR")" "None waiting"
   cut_all
   assert_eq 3 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
 }

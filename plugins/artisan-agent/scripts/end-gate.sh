@@ -204,9 +204,7 @@ pr_plan() { # boundary-value
 }
 
 need_prs_allowed() {
-  [ -z "$(unruled)" ] || sync_unruled
-  [ -z "$(unruled)" ] \
-    || refuse "open decisions raised at a gate wait for the Decision chat's ruling: $(unruled). No PR to main is cut until each is ruled on"
+  need_ruled "No PR to main is cut"
   case "$(status_word)" in
     approved) ;;
     ended) ;;
@@ -396,6 +394,7 @@ packet() {
     echo "- **a bug in #$URGENT**: say so with either answer; it is recorded as a bug found at this gate (\`gate.sh bug <run-dir> $URGENT --gate urgent-$URGENT\`), tighten evidence for the ticket's areas at the retro."
     return 0
   fi
+  [ -z "$(unruled)" ] || sync_unruled >/dev/null
   echo "## Deferred gates"
   echo
   echo "Still waiting here. Answer each before approving: a review gate with \`gate.sh approve\` or \`gate.sh change\`, an exception gate with \`gate-action.sh\` (references/gate-actions.md)."
@@ -428,15 +427,26 @@ packet() {
 cmd_packet() { [ $# -eq 1 ] || usage; open_run "$1"; packet; }
 
 # The open decisions raised at a gate (gate-action.sh triage, #232) that the
-# Decision chat hasn't ruled on: no ruling read by questions.sh sync yet.
+# Decision chat hasn't ruled on: no ruling read by questions.sh sync yet. Any
+# ruling counts, Defer and Discard too: the Decision chat has decided what
+# happens to it. Each is {in: the ticket it is in} + its question record.
 UNRULED_JQ='[.tickets | to_entries[] | .key as $t | (.value.questions // [])[]
-  | select(.raised_at == "gate" and .ruling == null and (.state == "open" or .state == "deferred")) | {t: $t} + .]'
+  | select(.raised_at == "gate" and .ruling == null) | {in: $t} + .]'
 unruled() { get -r "$UNRULED_JQ"' | map("#\(.ticket)") | join(", ")'; }
 
-# Read the rulings first, so one given on the tracker counts at once.
+# Read the rulings first, so one given on the tracker counts at once. A
+# tracker that can't be read leaves the state as it was: the hold stands.
 sync_unruled() {
   [ -n "$(unruled)" ] || return 0
-  "$SCRIPT_DIR/questions.sh" sync "$RUN_DIR" >/dev/null || die "could not read the open decisions' rulings (questions.sh sync)"
+  "$SCRIPT_DIR/questions.sh" sync "$RUN_DIR" >/dev/null \
+    || echo "end-gate.sh: could not read the open decisions' rulings (questions.sh sync); going by the state file" >&2
+}
+
+# No PR to main while one is open: approve and cut both refuse (6).
+need_ruled() { # what is refused
+  sync_unruled
+  [ -z "$(unruled)" ] \
+    || refuse "open decisions raised at a gate wait for the Decision chat's ruling: $(unruled). $1 until each is ruled on"
 }
 
 open_decisions_section() {
@@ -450,7 +460,7 @@ open_decisions_section() {
   echo
   echo "| Open decision | Ticket | Raised at | Item |"
   echo "|---|---|---|---|"
-  get -r "$UNRULED_JQ"'[] | "| #\(.ticket) | #\(.t) | gate #\(.gate_issue // "-") (\(.gate // "-")) | \(.item | to_entries | map("\(.key) \(.value)") | join(", ")) |"'
+  get -r "$UNRULED_JQ"'[] | "| #\(.ticket) | #\(.in) | gate #\(.gate_issue // "-") (\(.gate // "-")) | \(.item | to_entries | map("\(.key) \(.value)") | join(", ")) |"'
 }
 
 # ------------------------------------------------------------ Human checks
@@ -576,9 +586,7 @@ cmd_approve() {
   [ "$st" = not-due ] || [ -z "$(open_deferred)" ] \
     || refuse "deferred gates are still waiting here; answer each first: $(open_deferred)"
   # Nothing an open decision touches reaches main before it is ruled on.
-  [ "$st" = not-due ] || sync_unruled
-  [ "$st" = not-due ] || [ -z "$(unruled)" ] \
-    || refuse "open decisions raised at a gate wait for the Decision chat's ruling: $(unruled). Once each is ruled on, approve again"
+  [ "$st" = not-due ] || need_ruled "The end gate can't be approved"
   # No PR is cut while a Human check is open, unless it is deferred past the run.
   [ "$st" = not-due ] || [ -z "$(open_checks)" ] \
     || state_die 22 "end-gate.sh: Human checks are still open: $(open_checks). Answer each (gate.sh check $RUN_DIR <n> pass|fail --why W) or defer it past the run (end-gate.sh defer-check $RUN_DIR <n> --why W)"

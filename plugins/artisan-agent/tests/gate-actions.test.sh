@@ -994,7 +994,7 @@ open_gate_with_uncertainties() {
     .tickets["1"] |= (.status = "merged" | .merge_commit = "abcdef1234567" | .attempts = 1
       | .evidence = {ticket: "1", verdict: "pass",
           acceptance: [{criterion: "t1.txt exists", met: true, evidence: {tests: ["check.sh"]}}],
-          unsure: ["Is the greeting localised?"],
+          unsure: ["Is the greeting localised?\nOr English only?"],
           verifier: {unsure: ["Does the export offer PDF?"]},
           decisions: [{job: 3, question: "Which file name?", choice: "t1.txt",
             alternative: "T.TXT", by: "worker 1", kind: "engineering taste", confidence: "provisional"}]})'
@@ -1009,7 +1009,7 @@ test_the_gate_packet_numbers_its_uncertainties() {
   local num=
   num=$(open_gate_with_uncertainties)
   assert_contains "$(body_of "$num")" "| Uncertainty | Ticket | From | Unsure of |"
-  assert_contains "$(body_of "$num")" "| 1 | #1 | worker | Is the greeting localised? |"
+  assert_contains "$(body_of "$num")" "| 1 | #1 | worker | Is the greeting localised? Or English only? |"
   assert_contains "$(body_of "$num")" "| 2 | #1 | verifier | Does the export offer PDF? |"
   assert_contains "$(body_of "$num")" '`triage card <n>` or `triage uncertainty <n>`'
   # Recorded on the gate as numbered, so triage names the same one later.
@@ -1033,11 +1033,17 @@ test_triage_files_a_card_and_an_uncertainty_as_open_decisions_and_the_gate_stays
          --recommendation "Hide PDF" --non-blocking --by Andrew)
   assert_contains "$(body_of "$q2")" "uncertainty 2 on #1 (the verifier's): Does the export offer PDF?"
   assert_contains "$(body_of "$q2")" "Filed without blocking #1"
+  # No harm: refused, nothing filed (questions.sh's refusal).
+  assert_status 1 "$A" triage "$RUN_DIR" "$num" --uncertainty 1 --case invented --recommendation y
+  # An item's text with a line break stays on the one "Raised at:" line.
+  local q3=
+  q3=$("$A" triage "$RUN_DIR" "$num" --uncertainty 1 --case invented --harm "Unasked locales" --recommendation "English only")
+  assert_contains "$(body_of "$q3")" "uncertainty 1 on #1 (the worker's): Is the greeting localised? Or English only?."
   # Recorded on the item's ticket as questions raised at the gate, for questions.sh sync and the end gate.
-  assert_eq "[\"$q1 gate slice-1 $num card\",\"$q2 gate slice-1 $num uncertainty\"]" \
+  assert_eq "[\"$q1 gate slice-1 $num card\",\"$q2 gate slice-1 $num uncertainty\",\"$q3 gate slice-1 $num uncertainty\"]" \
     "$(state_get '[.tickets["1"].questions[] | "\(.ticket) \(.raised_at) \(.gate) \(.gate_issue) \(.item | keys[0])"]' | jq -c .)"
-  assert_eq "gate-triaged Andrew 2" "$(state_get '[.events[] | select(.event == "gate-triaged")][-1] | "\(.event) \(.by) \(.uncertainty)"')"
-  assert_eq "gate gate" "$(state_get '[.events[] | select(.event == "guardrail-fired" and .guardrail == "open-decision") | .raised_by] | join(" ")')"
+  assert_eq "gate-triaged Andrew 2" "$(state_get '[.events[] | select(.event == "gate-triaged")][1] | "\(.event) \(.by) \(.uncertainty)"')"
+  assert_eq "gate gate gate" "$(state_get '[.events[] | select(.event == "guardrail-fired" and .guardrail == "open-decision") | .raised_by] | join(" ")')"
   assert_contains "$(cat "$FAKE_GH_DIR/comments-$num.md")" "Card 1 sent to the Decision chat by Artisan as open decision #$q1"
   # The same item again files nothing new.
   before=$(issue_count)
@@ -1046,7 +1052,6 @@ test_triage_files_a_card_and_an_uncertainty_as_open_decisions_and_the_gate_stays
   # Refused, nothing filed: no such item, no harm, an unknown option.
   assert_status 6 "$A" triage "$RUN_DIR" "$num" --card 9 --case invented --harm x --recommendation y
   assert_status 6 "$A" triage "$RUN_DIR" "$num" --uncertainty 3 --case invented --harm x --recommendation y
-  assert_status 1 "$A" triage "$RUN_DIR" "$num" --uncertainty 1 --case invented --recommendation y
   assert_status 2 "$A" triage "$RUN_DIR" "$num" --case invented --harm x --recommendation y
   assert_eq "$before" "$(issue_count)"
   # The gate is still open, and approves as before; nothing is reverted.
