@@ -10,6 +10,10 @@
 #       reasons) or never fired, with its origin, and the moves its evidence
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
+#       The built-in open-decision guardrail (criterion 8) loosens only on a
+#       "didn't need the Decision chat" ruling, tightens on a filing raised at
+#       a gate or after its ticket merged, and counts plan-step filings on
+#       their own line (plan_step).
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
 #       --record keeps the report ({id, date, proposals}) as the latest one in
 #       ARTISAN_HEALTH_DIR (default ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent-health/latest.json):
@@ -194,7 +198,7 @@ def builtin_rows: if ([.resolved.applied[] | select(.id == "open-decision")] | l
 
 health_table() {
   jq -r "$(state_jq_row_def)"'
-    def origin: if .origin then "\(.origin.date // "?") \(.origin.who // "?"): \(.origin.reason // "")" else "no origin recorded" end;
+    def origin: if .level == "built-in" then "built in: \(.origin.reason)" elif .origin then "\(.origin.date // "?") \(.origin.who // "?"): \(.origin.reason // "")" else "no origin recorded" end;
     def st: if .status == "bypassed" then "bypassed (" + ([.bypassed[] | .reason // "no reason"] | join("; ")) + ")" else .status end;
     "Guardrail health over \(.runs) run(s); a move is proposed at \(.threshold) events.", "",
     "| Guardrail | Level | Status | Origin | Loosen evidence | Tighten evidence | Move |",
@@ -202,6 +206,10 @@ health_table() {
     (. as $r | .guardrails[] | . as $g
       | [.id, .level, st, origin, "\(.loosen.count)", "\(.tighten.count)",
          (([$r.proposals[] | select(.id == $g.id) | .move] | first) // (if ($r.never_loosen | index($g.id)) then "never loosens" else "none" end))] | row),
+    (.guardrails[] | select(.plan_step) | .plan_step
+      | "", "Open decisions caught at the plan step: \(.count)"
+            + (if .count > 0 then " (" + ([.evidence[] | "#\(.question) on #\(.ticket)"] | join(", ")) + ")" else "" end)
+            + "; counted on their own, neither loosen nor tighten evidence"),
     (if (.conflicts | length) > 0 then "", "Guardrail conflicts raised: " + (.conflicts | join(", ")) else empty end)' <<<"$1"
 }
 
