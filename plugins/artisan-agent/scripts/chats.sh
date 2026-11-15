@@ -187,7 +187,7 @@ cmd_send() {
     echo "$existing"
     return 0
   fi
-  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body-file - <<<"Sent from the Decision chat for the Run chat's plan step. It waits here until Engineering plans it.
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body-file - <<<"Sent from the Decision chat for the Run chat's plan step. It waits here until the Run chat plans it.
 
 $list
 <!-- artisan-agent:sent-from-product -->") || die "could not create the plan issue"

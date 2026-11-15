@@ -6,7 +6,7 @@
 
 GLOSSARY="$PLUGIN_ROOT/../../GLOSSARY.md"
 # Split so this file never matches itself.
-OLD_NAMES='(Product|Engineering)[ -]'"chats?"'|(Product|Engineering) and (Product|Engineering) '"chats"
+OLD_NAMES='(Product|Engineering)[ -]'"chats?"'|(Product|Engineering) ?(and|/) ?(Product|Engineering) '"chats?"
 
 # old_names_in dir: "file:line: text" for each old chat name outside the changelog.
 old_names_in() {
@@ -34,11 +34,13 @@ test_the_check_catches_an_old_name() {
   mkdir -p "$d/skills/x"
   echo "Ask the Product"" chat." >"$d/skills/x/SKILL.md"
   echo "the Engineering""-chat's sweep" >"$d/skills/x/more.md"
+  echo "the Product/Engineering"" chat" >"$d/skills/x/slash.md"
   echo "was the Product"" chat" >"$d/CHANGELOG.md"
   local hits=""
   hits=$(old_names_in "$d")
   assert_contains "$hits" "SKILL.md:1:"
   assert_contains "$hits" "more.md:1:"
+  assert_contains "$hits" "slash.md:1:"
   case "$hits" in *CHANGELOG*) fail "the changelog was checked" ;; esac
 }
 

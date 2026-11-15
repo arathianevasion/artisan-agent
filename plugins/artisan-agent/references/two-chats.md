@@ -23,9 +23,9 @@ Either chat can approve a plan or act on a gate. The Decision chat never reads a
 
 A ticket leaves the run by its own rules (`deferred`, closed); the label is not the Decision chat's to remove.
 
-## Sending work to Engineering
+## Sending work to the Run chat
 
-"Send #345 and #346 to engineering" in the Decision chat: `chats.sh send --repo R 345 346`. It creates a `plan` issue (title `Plan: send #345, #346 to engineering`) with those tickets as sub-issues and nothing else: no models, estimate or gates, because the plan step is Engineering's. It refuses (6) a ticket that is `in-run`, closed or missing, and reuses the open plan with the same title. Tell the Artisan the plan's number and ring the doorbell if the Run chat is awake ("plan #347 waits for you").
+"Send #345 and #346 to engineering" in the Decision chat: `chats.sh send --repo R 345 346`. It creates a `plan` issue (title `Plan: send #345, #346 to engineering`) with those tickets as sub-issues and nothing else: no models, estimate or gates, because the plan step is the Run chat's. It refuses (6) a ticket that is `in-run`, closed or missing, and reuses the open plan with the same title. Tell the Artisan the plan's number and ring the doorbell if the Run chat is awake ("plan #347 waits for you").
 
 ## The sweep
 
@@ -38,8 +38,8 @@ It prints, in order:
 | Review gates | yes | open `review-gate` issues from the tracker, batched by job and role (`--role` keeps one role's, for a pair) |
 | Gates closed on GitHub | yes | the one-line announcement below, once per chat |
 | Changes | yes | a changed guardrail source (team, product or individual) or a newly installed plugin version, as "applies from the next wave". The first sweep records the baseline and announces nothing |
-| Plans waiting for Engineering | Engineering | `plan` issues not yet in a run, oldest first |
-| Decisions waiting | Engineering | the waiting decisions in a run's state file |
+| Plans waiting for Engineering | Run chat only | `plan` issues not yet in a run, oldest first |
+| Decisions waiting | Run chat only | the waiting decisions in a run's state file |
 
 Then `ACTION` lines for the chat to act on (`gates`, `announce-changes`, `start-plan <issue> approve-envelope|envelope-approved`), and, with `--idle`, a `notify: <text>` line when a decision waits that no earlier sweep notified (a gate, a plan needing its envelope approved, a run's decision). An orchestrator that exited without finishing its wave (an `orchestrator-exit` decision, #171) is notified at once, `--idle` or not, the text naming its cause and tickets. Send the text with the PushNotification tool. When the sweep surfaces something only the Artisan can decide (a gate, a plan needing its envelope approved, a run's decision, a worker question), the chat ends its turn with the `Waiting on you:` line ([Waiting on you](#waiting-on-you)). The sweep remembers what it has notified in `.artisan-agent/runs/.chat/<chat>.json` (git-ignored, each chat's own) and forgets it once the decision is answered.
 
