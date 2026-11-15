@@ -679,3 +679,73 @@ test_with_a_board_the_rework_goes_on_it_and_the_gate_does_not() {
   assert_eq absent "$(on_board "$num" local/sample)" "the review gate"
   assert_eq '{"Area":"UI"}' "$(on_board "$rw" local/sample)" "the rework ticket"
 }
+
+# ------------------------------------------- big packets, busy trackers (#209)
+
+# open_issues label count: that many more open issues with the label, numbered
+# after the highest, so the ones before them fall past gh's first 30.
+open_issues() {
+  local label=$1 count=$2 last=0 f= k= i=0
+  for f in "$FAKE_GH_DIR"/issue-*.json; do
+    k=$(jq -r .number "$f"); [ "$k" -le "$last" ] || last=$k
+  done
+  while [ "$i" -lt "$count" ]; do
+    i=$((i + 1))
+    jq -n --argjson n "$((last + i))" --arg l "$label" \
+      '{number: $n, title: "Other \($n)", body: "", state: "open", labels: [{name: $l}]}' >"$FAKE_GH_DIR/issue-$((last + i)).json"
+  done
+}
+
+# in_order want got: every non-empty line of want appears in got, in order.
+in_order() {
+  jq -rn --rawfile want "$1" --rawfile got "$2" '
+    ($got | split("\n")) as $have
+    | reduce ($want | split("\n") | map(select(. != "")))[] as $l ({i: 0, miss: null};
+        if .miss != null then . else ($have[.i:] | index([$l])) as $k
+          | if $k == null then .miss = $l else .i += $k + 1 end end)
+    | .miss // "ok"'
+}
+
+# The fake gh refuses any issue or comment body over 65,536 characters, as
+# GitHub does, so a packet that opens at all was posted in parts under it.
+test_a_200000_character_packet_opens_as_one_issue_whose_body_and_comments_hold_it_whole() {
+  setup_gate
+  merged_with_evidence 1
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].evidence.unsure +=
+    [range(0; 400) | "Uncertainty \(.): " + ("whether the greeting reads well " * 16)]'
+  local num= packet="$RUN_DIR/gates/slice-1.md"
+  num=$("$G" open "$RUN_DIR" slice-1)
+  [ "$(jq -n --rawfile p "$packet" '$p | length')" -ge 200000 ] || fail "the packet is under 200,000 characters"
+  assert_eq 1 "$(jq -r 'select(.title == "Slice gate: greeting (run r1)") | .number' "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "one issue"
+  jq -r .body "$FAKE_GH_DIR/issue-$num.json" >"$TEST_TMPDIR/got"
+  [ "$(jq -n --rawfile b "$TEST_TMPDIR/got" '$b | length')" -le 65536 ] || fail "the body is over the limit"
+  assert_contains "$(cat "$TEST_TMPDIR/got")" "it continues in the comments below (part 1 of 4)"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-$num.md")" "*Continued from the issue body (part 4 of 4).*"
+  cat "$FAKE_GH_DIR/comments-$num.md" >>"$TEST_TMPDIR/got"
+  assert_eq ok "$(in_order "$packet" "$TEST_TMPDIR/got")" "every line of the packet, in order"
+}
+
+test_a_crashed_calls_review_gate_past_the_first_30_is_reused() {
+  setup_gate
+  merged_with_evidence 1
+  jq -n '{number: 5, title: "Slice gate: greeting (run r1)", body: "the packet", state: "open", labels: [{name: "review-gate"}]}' \
+    >"$FAKE_GH_DIR/issue-5.json"
+  open_issues review-gate 39
+  assert_eq 5 "$("$G" open "$RUN_DIR" slice-1)"
+  assert_eq 44 "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "nothing opened"
+}
+
+test_a_crashed_calls_rework_ticket_past_the_first_30_in_run_issues_is_reused() {
+  setup_gate
+  merged_with_evidence 1
+  local num= rw=
+  num=$("$G" open "$RUN_DIR" slice-1)
+  rw=$((num + 1))
+  jq -n --argjson n "$rw" --arg mark "Review gate #$num, card 1, on #1." \
+    '{number: $n, title: "Rework #1: Which file name?", body: "## Parent\n\n\($mark)", state: "open", labels: [{name: "in-run"}]}' \
+    >"$FAKE_GH_DIR/issue-$rw.json"
+  open_issues in-run 35   # 40 open in-run issues: tickets 1-4, the rework, 35 more
+  assert_eq 40 "$(jq -r 'select(.labels | map(.name) | index("in-run")) | .number' "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')"
+  assert_eq "$rw" "$("$G" change "$RUN_DIR" "$num" 1 "Name it greeting.txt")"
+  assert_eq 41 "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "nothing opened"
+}

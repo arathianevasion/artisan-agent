@@ -257,3 +257,22 @@ test_u_the_worker_brief_limits_unmeetable_to_real_impossibility() {
   assert_contains "$(cat "$skill")" "ran out of time or budget, or because it is hard"
   assert_contains "$(cat "$rec")" '| `unmeetable` | no |'
 }
+
+# #209: the split ticket a crashed call opened is found among 40 open
+# needs-triage issues, past gh's first 30, and nothing new is opened.
+test_u_a_crashed_calls_split_ticket_past_the_first_30_needs_triage_issues_is_reused() {
+  open_unmeetable_gate
+  local n=$((GATE_ISSUE + 1)) i=0 count=
+  jq -n --argjson n "$n" --arg mark "Split off #1 at exception gate #$GATE_ISSUE." \
+    '{number: $n, title: "Split off #1: Add hello", body: "## Parent\n\n\($mark) In run r1.", state: "open", labels: [{name: "needs-triage"}]}' \
+    >"$FAKE_GH_DIR/issue-$n.json"
+  while [ "$i" -lt 39 ]; do
+    i=$((i + 1))
+    jq -n --argjson k "$((n + i))" '{number: $k, title: "Other \($k)", body: "", state: "open", labels: [{name: "needs-triage"}]}' \
+      >"$FAKE_GH_DIR/issue-$((n + i)).json"
+  done
+  count=$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')
+  "$A" split "$RUN_DIR" "$GATE_ISSUE" --ticket --why "Needs the fixture recorder" >/dev/null
+  assert_eq "$count" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "nothing opened"
+  assert_eq "split $n" "$(state_get '.tickets["1"].criteria_changes[0] | "\(.action) \(.to)"')"
+}
