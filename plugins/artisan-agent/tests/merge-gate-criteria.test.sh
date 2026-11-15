@@ -199,3 +199,29 @@ test_g_the_shipped_ticket_writing_guidance_suggests_no_pr_or_ci_criterion() {
     assert_contains "$(cat "$PLUGIN_ROOT/$g")" "docs/review/<n>/" "$g"
   done
 }
+
+# #244: a CI outcome for the merged work, in other common forms, is the
+# merge gate's too; the same verbs on a ticket's branch or bare stay the
+# verifier's to judge (or the plan step's to flag, #213).
+test_g_a_ci_outcome_for_the_merged_work_in_other_forms_is_the_merge_gates() {
+  local c=
+  for c in "CI check job is green on the merged commit" "the CI build passes on the merge commit" \
+    "CI checks pass for the merged change"; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "1" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
+  done
+  for c in "CI checks pass" "the CI build passes on this ticket's branch" "CI green on this ticket's branch" \
+    "wave.sh merge blocks the ticket when the CI build passes on the merge commit"; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "0" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
+  done
+}
+
+test_g_a_ticket_whose_only_unmet_criterion_is_ci_on_the_merged_commit_passes() {
+  gate_ticket "CI check job is green on the merged commit"
+  export VERIFIER_UNMET="CI check job is green on the merged commit"
+  judge_once
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq "pass 2/3, 1 to the merge gate" "$JUDGE_OUT"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures | tostring')"
+}

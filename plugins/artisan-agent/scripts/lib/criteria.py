@@ -117,9 +117,15 @@ def extract(lines):
 # "the run's merge gate is green", "the PR shows ..."); one about code that
 # runs CI or a merge gate ("wave.sh merge blocks the ticket when CI is not
 # green") never does: the verifier judges that, or marks it "gate" itself.
+_GATE_SUBJECT = r"^(the\s+)?(run'?s\s+)?(ci|merge\s+gate)('s)?(\s+[\w'-]+){0,2}\s+"
+# The merged work (#244): "on the merged commit", "for the merged change",
+# "on the merge commit". A ticket's branch is not it: a worker's branch is
+# the verifier's to judge, or the plan step's to flag (#213).
+_MERGED = r"(on|in|for)\s+(the|this|its)\s+(merged?\s+(commit|change|work|branch|result)s?|merge)"
+_ON_PR = r"(on|in)\s+the\s+(pr|pull\s+request)"
 MERGE_GATE_OUTCOMES = [
-    re.compile(r"^(the\s+)?(run'?s\s+)?(ci('s\s+(\S+\s+)?job)?|ci\s+run|merge\s+gate)\s+(is|are|goes|stays|turns)\s+green"
-               r"(\s+(on|in)\s+the\s+(pr|pull\s+request))?\W*$", re.I),
+    re.compile(_GATE_SUBJECT + r"(is|are|goes|stays|turns)\s+green(\s+(" + _ON_PR + "|" + _MERGED + r"))?\W*$", re.I),
+    re.compile(_GATE_SUBJECT + r"(pass(es)?|succeeds?|(is|are)\s+passing)\s+" + _MERGED + r"\W*$", re.I),
     re.compile(r"^(the\s+)?(pr|pull\s+request)\s+(shows|lists)\b", re.I),
 ]
 IMPLEMENTATION = re.compile(r"\.(sh|py)\b|\b(when|if|unless|blocks?|fails?)\b", re.I)
