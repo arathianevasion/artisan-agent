@@ -373,3 +373,27 @@ test_every_report_reads_a_run_state_over_1_mib() {
   assert_eq "[]" "$(jq -c '.tickets_closed_outside_run' <<<"$("$H" backstop --runs "$(R r1)" --repo-dir "$PROJECT" --main main --prs "$TEST_TMPDIR/prs.json" --closed "$TEST_TMPDIR/closed.json")")"
   assert_eq "90 91" "$(jq -r '[.candidates[].issue] | join(" ")' <<<"$("$H" bugs --runs "$(R r1)" --since 2026-03-01 --issues "$TEST_TMPDIR/issues.json")")"
 }
+
+# The built-in open-decision guardrail (criterion 8, #233): a filing as
+# questions.sh and the sweep log it, and a ruling as questions.sh sync logs it.
+od() { # raised_by ticket question
+  jq -nc --arg r "$1" --arg t "$2" --arg q "$3" \
+    '{event: "guardrail-fired", guardrail: "open-decision", ticket: $t, raised_by: $r, case: "incomplete", question: $q, areas: []}'
+}
+ruled() { # question took needed (true, false or null)
+  jq -nc --arg q "$1" --argjson took "$2" --argjson needed "$3" \
+    '{event: "ruled", ticket: "5", question: $q, ruling: "answer", took_recommendation: $took, needed_decision_chat: $needed}'
+}
+od_row() { jq -c '.guardrails[] | select(.id == "open-decision")' <<<"$1"; }
+
+test_only_a_didnt_need_the_decision_chat_ruling_is_loosen_evidence_for_open_decisions() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(od worker 5 40), $(od worker 5 41), $(od worker 5 42), $(od worker 5 43),
+    $(ruled 40 true false), $(ruled 41 false false), $(ruled 42 true true), $(ruled 43 false true)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "built-in fired 2 0" "$(od_row "$out" | jq -r '"\(.level) \(.status) \(.loosen.count) \(.tighten.count)"')"
+  assert_eq "40 41" "$(od_row "$out" | jq -r '[.loosen.evidence[].question] | join(" ")')"
+  assert_eq none "$(proposal "$out" open-decision)"
+  run r2 "[$(ruled 50 true false)]"
+  assert_eq loosen "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)")" open-decision)"
+}
