@@ -175,9 +175,11 @@
 #       block a returned ticket the orchestrator won't merge (its diff misses
 #       the expected output): queues an exception decision, logs the event.
 #   wave.sh close <run-dir> <ticket>
-#       post the evidence contract on the ticket (evidence.sh comment), tick
-#       its met criteria where they live (the body, or the triage comment
-#       they are in: lib/criteria-lib.sh), close it, then delete on the
+#       post the evidence contract on the ticket (evidence.sh comment), write
+#       the Artisan's criteria changes at an unmeetable gate onto its criteria
+#       (rewritten, or struck through as dropped or moved: criteria.py mark,
+#       #220) and tick its met ones, where they live (the body, or the triage
+#       comment they are in: lib/criteria-lib.sh), close it, then delete on the
 #       remote the ticket branches the run pushed whose tickets are done
 #       (pushed.sh prune, #211; a failed delete warns, the next sweep retries).
 #   wave.sh report <run-dir>
@@ -2282,8 +2284,17 @@ cmd_close() {
   gh issue comment "$t" -R "$repo" --body-file "$body" >/dev/null || die "could not comment on #$t"
   newbody="$RUN_DIR/merges/$t.body.md"
   get --arg t "$t" '.tickets[$t].evidence' >"$newbody.evidence.json"
+  # The Artisan's changes at an unmeetable-criterion gate (#186), each with
+  # the gate's issue number (its criterion-changed event names the gate),
+  # are written onto the criteria first (#220), so the rewritten ones tick.
+  get --arg t "$t" '[.events[]? | select(.event == "criterion-changed" and .ticket == $t)] as $ev
+    | (.exception_gates // []) as $gates
+    | [(.tickets[$t].criteria_changes // [])[] as $c
+       | ([$ev[] | select(.action == $c.action and .criterion == $c.criterion) | .gate] | last) as $gid
+       | $c + {gate: ([$gates[] | select(.id == $gid) | .issue] | first // null)}]' >"$newbody.changes.json"
   if where=$(criteria_read "$repo" "$t" "$newbody.orig" 2>/dev/null) \
-    && python3 -I "$SCRIPT_DIR/lib/criteria.py" tick "$newbody.evidence.json" <"$newbody.orig" >"$newbody" \
+    && python3 -I "$SCRIPT_DIR/lib/criteria.py" mark "$newbody.changes.json" <"$newbody.orig" \
+       | python3 -I "$SCRIPT_DIR/lib/criteria.py" tick "$newbody.evidence.json" >"$newbody" \
     && ! cmp -s "$newbody.orig" "$newbody"; then
     criteria_write "$repo" "$t" "$where" "$newbody" || die "could not tick the criteria on #$t"
   fi

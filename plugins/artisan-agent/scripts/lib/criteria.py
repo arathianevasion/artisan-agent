@@ -46,6 +46,16 @@ Usage:
       exception gate applied in order (#186): each {action, criterion, as?};
       "drop" and "split" take the criterion off, "rewrite" puts "as" in its
       place. A change naming no criterion here changes nothing.
+  python3 -I criteria.py mark <changes.json> < body.md > body.md
+      the body (or triage comment) with those changes written onto its
+      criterion lines (extract's rule), in order and matched as change
+      matches them (#220): a "rewrite" line keeps its box and reads "as"; a
+      "drop" or "split" line loses its box and is struck through, saying
+      where it went: "- ~~<criterion>~~ (dropped at exception gate #<gate>:
+      <why>)" or "(moved to #<to> at exception gate #<gate>)", "gate" being
+      the gate's issue number ("an exception gate" without one). A struck
+      line is no longer a criterion, so marking twice changes nothing more.
+      wave.sh close marks a ticket's criteria_changes, then ticks it.
   python3 -I criteria.py tick <evidence.json> < body.md > body.md
       the body with "- [ ] <criterion>" turned into "- [x] <criterion>" for
       every criterion the evidence (a contract or a record) marks met, or
@@ -225,6 +235,42 @@ def change(criteria, changes):
     return out
 
 
+BOXED = re.compile(r"^(\s*[-*]\s+)(\[[ xX]\]\s+)(.*\S)(\s*)$")
+
+
+def marked(text, ch):
+    """A struck-through criterion saying where it went (see mark)."""
+    gate = str(ch.get("gate") or "").strip()
+    at = f"exception gate #{gate}" if gate else "an exception gate"
+    if ch.get("action") == "split":
+        to = str(ch.get("to") or "").strip()
+        note = (f"moved to #{to} at " if to else "moved off at ") + at
+    else:
+        why = str(ch.get("why") or "").strip()
+        note = f"dropped at {at}" + (f": {why}" if why else "")
+    return f"~~{text}~~ ({note})"
+
+
+def mark(changes, body):
+    lines = body.split("\n")
+    live = [i for i, _ in extract_lines(lines)]
+    for ch in changes if isinstance(changes, list) else []:
+        if not isinstance(ch, dict) or ch.get("action") not in ("rewrite", "drop", "split"):
+            continue
+        key = norm(ch.get("criterion", ""))
+        at = next((i for i in live if norm(BOXED.match(lines[i]).group(3)) == key), None)
+        if at is None:
+            continue
+        bullet, box, text, tail = BOXED.match(lines[at]).groups()
+        if ch["action"] == "rewrite":
+            if str(ch.get("as") or "").strip():
+                lines[at] = bullet + box + str(ch["as"]).strip() + tail
+        else:
+            lines[at] = bullet + marked(text, ch)
+            live.remove(at)
+    return "\n".join(lines)
+
+
 def align(criteria, verdict, record):
     given, claims = entries(verdict), entries(record)
     listed = unmeetable_claims(record)
@@ -317,6 +363,8 @@ def main(argv):
         print(json.dumps(change(criteria, load(argv[2]))))
     elif cmd == "merge-gate" and len(argv) == 2:
         print(json.dumps(merge_gate_lines(sys.stdin.read().split("\n"))))
+    elif cmd == "mark" and len(argv) == 3:
+        sys.stdout.write(mark(load(argv[2]), sys.stdin.read()))
     elif cmd == "tick" and len(argv) == 3:
         sys.stdout.write(tick(load(argv[2]), sys.stdin.read()))
     else:
