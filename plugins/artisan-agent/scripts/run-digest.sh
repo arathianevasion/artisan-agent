@@ -18,6 +18,9 @@
 #                      ticket table
 #   what's waiting     the decisions waiting for the Artisan, as a table
 #   what changed       the events since the chat last saw the digest, as a table
+#   the wait step      while the orchestrator runs and no wave.sh wait waits
+#                      on it (its waiter.pid, #237): start one in the
+#                      background, then end the turn (--line says so too)
 # and marks those events seen (.digest-seen in the run folder) unless --peek.
 # --line prints one line instead ("run <id> is open: ..."), always peeking.
 #
@@ -72,12 +75,15 @@ get() { jq -r "$@" "$FILE"; }
 
 # The orchestrator's state, from its exit record (classify-worker.sh only reads).
 orch="no orchestrator yet"
+nowaiter=0
 last=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt) \(.wave)"')
 if [ -n "$last" ]; then
   set -- $last
   cls=$("$SCRIPT_DIR/classify-worker.sh" "$run_dir" "$1" "$2" 2>/dev/null || echo "unknown classifier-error")
   case "$cls" in
-    running*) orch="wave $3 running (orchestrator attempt $2)" ;;
+    running*) orch="wave $3 running (orchestrator attempt $2)"
+              # Nothing waits on it (#237): the chat is never woken when it ends.
+              state_waiter_running "$run_dir" "$1" "$2" || nowaiter=1 ;;
     completed*) orch="wave $3 finished" ;;
     *) orch="wave $3's orchestrator ended without finishing (${cls}): launching again carries it on" ;;
   esac
@@ -92,8 +98,9 @@ waiting=$(get '[.decisions[]? | select(.status == "waiting")] | length')
 run_id=$(get '.run_id')
 
 if [ "$line" -eq 1 ]; then
-  printf 'run %s is open: %s; %s; %s\n' "$run_id" "$orch" "$summary" \
-    "$(if [ "$waiting" -gt 0 ]; then echo "$waiting decision(s) waiting for you"; else echo "nothing waiting for you"; fi)"
+  printf 'run %s is open: %s; %s; %s%s\n' "$run_id" "$orch" "$summary" \
+    "$(if [ "$waiting" -gt 0 ]; then echo "$waiting decision(s) waiting for you"; else echo "nothing waiting for you"; fi)" \
+    "$(if [ "$nowaiter" -eq 1 ]; then echo "; no waiter running: start wave.sh wait $run_dir in the background"; fi)"
   exit 0
 fi
 
@@ -161,6 +168,7 @@ else
   echo "Nothing new since you last looked."
 fi
 echo
+[ "$nowaiter" -eq 0 ] || echo "No \`wave.sh wait\` is running for this wave: start \`$SCRIPT_DIR/wave.sh wait $run_dir\` as a background task, then end the turn."
 echo "Carry on with \`/artisan-agent:implement-plan\`: it checks the wave (\`wave.sh status\`) and launches the next one."
 
 if [ "$peek" -eq 0 ]; then
