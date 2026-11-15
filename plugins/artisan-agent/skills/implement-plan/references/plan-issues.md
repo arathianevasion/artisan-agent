@@ -12,7 +12,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-scope.sh --repo <owner/name> <issue>...
 | a ticket | itself |
 | several | each ticket once, in the order named (a ticket named twice, or reached by two plans, appears once) |
 
-The output is JSON: `tickets` (number, title, and `from`, the plan it came through), `skipped` (closed tickets, left out), and `outside_blockers`.
+The output is JSON: `tickets` (number, title, and `from`, the plan it came through), `skipped` (closed tickets, left out), `outside_blockers`, and `plans` and `spec` (the plan issues named and the spec they came from, copied into the draft: they name the run's orchestrator sessions).
 
 ## What to do with the result
 
