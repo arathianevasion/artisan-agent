@@ -126,6 +126,8 @@ test_redirect_with_notes_reworks_in_the_same_run_counted_separately() {
   # A rework ticket of its own, in scope and queued, for an agent.
   assert_eq "in-run,ready-for-agent" "$(labels "$rw")"
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$rw.json")" "- [ ] Greet by name"
+  # The merge gate runs the suite on every merge: no full-suite criterion (#213).
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$rw.json")" "full suite"
   assert_eq "queued 0" "$(state_get ".tickets[\"$rw\"] | \"\(.status) \(.attempts)\"")"
   assert_eq true "$(state_get ".plan.scope | index(\"$rw\") != null")"
   assert_eq "1" "$(state_get ".plan.tickets[\"$rw\"].rework_of")"

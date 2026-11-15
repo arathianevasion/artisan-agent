@@ -174,6 +174,8 @@ test_check_fail_logs_a_bug_and_sends_the_agent_ticket_to_rework() {
   assert_contains "$(state_get '.plan.scope | join(" ")')" "$r"
   assert_eq queued "$(jq -r --arg r "$r" '.tickets[$r].status' "$RUN_DIR/state.json")"
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$r.json")" "The greeting wraps onto two lines"
+  # The merge gate runs the suite on every merge: no full-suite criterion (#213).
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$r.json")" "full suite"
   assert_contains "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$r.json")" "ready-for-agent"
   # The gate's dependents wait for the rework, as with a redirect.
   assert_contains "$(jq -c . "$FAKE_GH_DIR/blocked_by-2.json")" "$r"
