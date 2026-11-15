@@ -82,6 +82,12 @@
 #       A "gate" criterion is neither met nor unmet either: the verdict's
 #       "verified" event lists them (gate), and a red merge gate still fails
 #       the ticket, in wave.sh merge.
+#       Open decisions the verdict names (open_decisions: case, harm,
+#       recommendation; references/open-decisions.md) change nothing about
+#       the verdict or the attempt: the contract keeps them
+#       (verifier.open_decisions), the verification keeps them unfiled
+#       (question null) and the sweep files each, split (#230). One without
+#       a case, harm or recommendation goes to the verifier's unsure, unfiled.
 #       Every criterion the worker's record lists in `unmeetable` logs
 #       criterion-unmeetable (ticket, attempt, criterion, why,
 #       verifier_agrees) in the verdict's write. One the verifier disagrees
@@ -436,6 +442,13 @@ split_human_check() { # ticket criteria-json
 # worker's claims ($acc, lib/criteria.py align), the worker's evidence record
 # ($record), the verdict ($verdict) and the state file.
 CONTRACT_FILTER='
+  # The open decisions the verifier named (#230; references/open-decisions.md):
+  # each with a case, a harm and a recommendation. They never change the
+  # verdict; the sweep files the well-formed ones, split.
+  def named_open_decisions: [($verdict.open_decisions // []) | if type == "array" then .[] else . end | objects
+    | {case: (.case // "" | tostring), harm: (.harm // "" | tostring), recommendation: (.recommendation // "" | tostring)}];
+  def well_formed: .case as $c | (["incomplete", "misaligned", "invented", "adr"] | index($c)) != null
+    and (.harm | test("\\S")) and (.recommendation | test("\\S"));
   def nums: [to_entries[] | select(.key | test("^[0-9]+$")) | .value] | add // 0;
   def vers: [to_entries[] | select(.key | startswith("verify.")) | .value] | add // 0;
   . as $s | $s.tickets[$t] as $k
@@ -463,7 +476,10 @@ CONTRACT_FILTER='
               total_usd: ($k.cost_usd // 0),
               estimate_usd: ($s.plan.tickets[$t].estimate_usd // null) },
       verifier: { attempt: $v, model: $model,
-                  unsure: ($verdict.unsure // []), notes: ($verdict.notes // null) },
+                  unsure: (($verdict.unsure // []) + [named_open_decisions[] | select(well_formed | not)
+                    | "The verifier named an open decision without a case (incomplete, misaligned, invented or adr), a harm and a recommendation, so it was not filed: \(.harm | if test("\\S") then . else "no harm given" end)"]),
+                  notes: ($verdict.notes // null),
+                  open_decisions: [named_open_decisions[] | select(well_formed)] },
       verified_at: $now }
   | if $met > 0 or .verdict != "pass" or ($human + $gate) == 0 then .
     elif $gate == 0
@@ -643,7 +659,9 @@ cmd_judge() {
   fi
 
   apply '.tickets[$t].evidence = $ev[0]
-    | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict)
+    | .tickets[$t].verifications[-1] |= (.verdict = $ev[0].verdict
+        | if ($ev[0].verifier.open_decisions | length) == 0 then .
+          else .open_decisions = [$ev[0].verifier.open_decisions[] | . + {question: null}] end)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
              met: $ev[0].criteria_met, total: $ev[0].criteria_total}
              + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end); $now)

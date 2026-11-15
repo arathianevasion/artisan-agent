@@ -157,7 +157,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 
 | Field | Meaning |
 |---|---|
-| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge), `deferred` (pulled from the run with a deferred question, `references/worker-questions.md`, or its exception gate deferred), `dropped`, `resliced`, `bypassed` (taken out of the run at its exception gate, `references/gate-actions.md`), `sent_back` (left the run with its dropped or resliced blocker, back in `needs-triage`; `sent_back: {from, at}`) |
+| `status` | `queued` (waiting for the frontier), `in_flight` (a worker is on it), `returned` (result in, awaiting verification and merge), `merged`, `blocked` (needs the Artisan or a decision), `closed` (closed on the tracker without a merge), `deferred` (pulled from the run with a deferred question, `references/worker-questions.md`, or its exception gate deferred), `dropped`, `resliced`, `bypassed` (taken out of the run at its exception gate, `references/gate-actions.md`), `sent_back` (left the run with its dropped or resliced blocker, back in `needs-triage`; `sent_back: {from, at}`; or rejected at triage with an open decision, `sent_back: {from: <the question>, ruling: "reject", at}`) |
 | `extra_attempts`, `notes` | attempts the Artisan added at an exception gate ("retry with notes"; failed attempts allowed are `attempts_per_ticket` plus these), and the notes given to the next worker, `[{note, issue, by, at}]` |
 | `attempts` | dispatches so far |
 | `pid` | the worker's pid while `in_flight`, else `null` |
@@ -165,7 +165,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `dispatched_at`, `deadline_at` | epoch seconds of the last dispatch and its wall-clock deadline |
 | `result` | from the current attempt's result file: `{status, commit, notes, file}` |
 | `evidence` | the ticket's evidence contract, written by `verify.sh judge` (`references/evidence-contract.md`); `wave.sh merge` needs its `verdict` to be `pass` for the current attempt and commit |
-| `verifications` | `[{attempt, worker_attempt, commit, base, model, worktree, name, started_at, verdict, reason?}]` (`name` the verifier's session name, `Verify #<t> · <repo> · Wave <n>`, #189), one per verifier started; `verdict` is `null` until judged, then `pass`, `fail` or `error` |
+| `verifications` | `[{attempt, worker_attempt, commit, base, model, worktree, name, started_at, verdict, reason?, open_decisions?}]` (`name` the verifier's session name, `Verify #<t> · <repo> · Wave <n>`, #189), one per verifier started; `verdict` is `null` until judged, then `pass`, `fail` or `error`; `open_decisions` (#230), written by `verify.sh judge` when the verdict names any: `[{case, harm, recommendation, question}]`, `question` `null` until the sweep files it, then the question ticket's number |
 | `merge_commit` | the merge commit on the integration branch |
 | `cost_usd` | the sum of `attempt_costs`: per attempt, from the result file's `cost_usd`, else the session's `total_cost_usd` in its JSON output (recorded by the sweep, and again by `verify.sh judge` and `wave.sh merge` once the session has ended); verifiers included |
 | `failures` | `[{attempt, reason, at}]`, one per failed attempt; one a red CI merge gate charged (#176) adds `kind: "ci"` and `ci: {run_id, url, conclusion, failing_tests}` (`merge-gate.sh failed-tests`; since #195 only the failures new against a red base), which the next worker's notes and the exception gate list |
@@ -182,7 +182,7 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `context_risk` | `{percent, at}` when it merged while the orchestrator was at the review band (`drain.sh gate`): the fact that raises the risk gate `risk-context-<t>`, which holds its dependents like any review gate |
 | `risk_gate` | legacy, from before that gate was an issue: `{status, percent, at, cleared_at?}`; `waiting` still holds its dependents off the frontier and out of `wave.sh dispatch` until `cleared` (`drain.sh gate-cleared`). Nothing writes it now |
 | `human_check` | a Human check only (`references/human-checks.md`, "In a run"): `{for, state: open\|passed\|deferred, gate?, shown?, answers?: [{verdict: pass\|fail\|later, gate, by, at, notes?, why?, rework?}], deferral?: {by, why, return, at}}`. `for` is the agent ticket, from the plan graph's `human_check_for` (`state.sh init`) and the body marker (the reconciler), which agree; `gate` the gate that lists it now, `shown` every gate that has. Passed, the ticket is `closed`; deferred past the run, `deferred`. It is never dispatched, never on the frontier and never waited on |
-| `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered, answer?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`) |
+| `questions`, `answers` | the questions its worker filed for triage, `[{ticket, blocking, state: open|deferred|answered|rejected, answer?, ruling?, added?, follow_up?, at}]`, and the answers given to its next worker, `[{question, answer}]` (`questions.sh`, `references/worker-questions.md`). `ruling` (`{kind: answer|reject|add-ticket|defer|discard, took_recommendation, needed_decision_chat, at}`, each verdict `true`, `false` or `null` when not given) is the Decision chat's ruling as `questions.sh sync` read it; `added` the ticket an Add ticket ruling filed; `follow_up` the ticket a Reject filed for work that had merged |
 | `steering` | `[{attempt, note, at}]`, each time the Artisan stopped the worker and gave notes (`lever.sh steer`, `references/run-levers.md`). Not a failure: it is not in `failures` and uses none of the ticket's attempts; the notes go into the next worker's prompt |
 | `urgent` | `true` for an urgent ticket (`lever.sh urgent`): dispatched on the one extra slot above Max Agents, from `main`, never on the frontier or merged into the integration branch; it ships through its own end gate (`urgent_gates`) |
 | `shipped` | an urgent ticket once `end-gate.sh urgent-finish` has run: `{pr, main_merged_into, sync_commit, at}` |
@@ -271,6 +271,8 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `answered` (`ticket`, `question`, `next`)
 - `deferred-question`
 - `pulled` and `provisional-shown`
+- `ruled` (`ticket`, `question`, `ruling`, `took_recommendation`, `needed_decision_chat`) once per ruling `questions.sh sync` reads
+- `rejected` (`ticket`, `question`, `pulled`, `follow_up?`)
 - and for slice gates `gate-opened` (`gate`, `issue`, `tickets`, `dependents`)
 - `gate-decision` (`gate`, `card`, `by`, `outcome`, `redirect`, `areas`, `cards?`)
 - `rework` (`ticket`, `from`, `gate`, `card`)
@@ -365,6 +367,8 @@ The retro's merge gate figures (`retro.py facts`, `merge_gates` and `artisan_wai
 A failed attempt appends to `failures` and sends the ticket back to `queued`, or, once `attempts` reaches `attempts_per_ticket`, to `blocked` with an `exception` decision queued for the Artisan. The sweep then logs new complete lines of every findings file and recomputes `costs`.
 
 After the state is written, the sweep tries again every board add that failed when its issue was opened (`tracker.sh board-retry`, `references/tracker-board.md`, #146); the queue is the project's, not the run's, so nothing in the state file changes.
+
+Then it files each open decision a verifier named (#230; `verifications[].open_decisions` with `question: null`) through `questions.sh file --criterion 8 --split --raised-by verifier --run`, which logs `guardrail-fired`, and records the question's number on it, so the next sweep files nothing. One the same ticket's verifiers already filed (same case and harm) takes that number. It never blocks the ticket or changes its verdict; a filing that fails is tried again at the next sweep.
 
 **Repair (#151).** Plugin 0.4.0 found a session's `result` event by the start of its line, and current `claude -p` writes `"type"` after other keys, so `output.json` came out empty: every finished worker was judged `failed crashed`, its cost was lost, and after two such attempts an exception gate opened. `sweep.sh repair <run-dir>` mends such a run, once, under the lock:
 

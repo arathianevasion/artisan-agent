@@ -43,6 +43,16 @@
 #       a "defer-question" decision asks the Artisan whether to pull the
 #       ticket from the run or let it carry on), "closed #<t> #<q>" (closed
 #       with no Answer: line: a "question" decision), "open #<t> #<q>".
+#       An open decision's rulings too: "rejected #<t> #<q>" (Reject: the
+#       ticket leaves the run back to needs-triage, in-run off, status
+#       sent_back, its dependents waiting), "rejected #<t> #<q> follow-up
+#       #<n>" (Reject after its work merged: a follow-up needs-triage ticket,
+#       nothing pulled; closed without a merge, only the record changes),
+#       "reject-waits #<t> #<q>" (an attempt still going),
+#       "added #<t> #<q> #<n>" (Add ticket: unblocked and queued with the
+#       answer "not covered here"). Every ruling's two verdicts ("Took the
+#       recommendation:", "Needed the Decision chat:") go on the question
+#       and in a "ruled" event, once per ruling.
 #   questions.sh deferred <run-dir> <ticket> (pull | carry)
 #       the Artisan's answer to a defer-question decision. pull: the ticket
 #       defers with the question (label deferred, Return condition:
@@ -327,33 +337,76 @@ cmd_block() {
 
 # -------------------------------------------------------------------- sync
 
-# The text after "Answer:" in the last comment that has such a line.
-answer_of() { # json array of comments
-  jq -r '[.[] | .body | select(test("(^|\n)Answer:"))] | last // "" | split("Answer:")[1:] | join("Answer:") | sub("^[ \t]+"; "") | sub("[ \t\n]+$"; "")' <<<"$1"
-}
+# The Decision chat's ruling, read from the question ticket's comments (a
+# JSON array on stdin): {kind, text, took, needed}. kind is "answer",
+# "reject" or "add-ticket" from the first ruling line ("Answer:", "Reject:",
+# "Add ticket:") of the last comment holding one, else null; text is what
+# follows it, the verdict lines left out. took and needed are the verdicts
+# "Took the recommendation: yes|no" and "Needed the Decision chat: yes|no"
+# (true, false, or null when not given), from the ruling's comment, or with
+# no ruling line (a Defer or a Discard) from the last comment holding one.
+RULING_JQ='
+  def verdict_line: test("^(Took the recommendation|Needed the Decision chat):"; "i");
+  def verdict($name):
+    [.[] | split("\n")[] | sub("\r$"; "") | select(test("^" + $name + ":"; "i"))
+     | sub("^[^:]*:[ \t]*"; "") | ascii_downcase] | last
+    | if . == null then null elif test("^yes\\b") then true elif test("^no\\b") then false else null end;
+  def ruling_line: test("^(Answer|Reject|Add ticket):");
+  [.[] | .body // "" | gsub("\r"; "")] as $all
+  | ([$all[] | select(split("\n") | any(ruling_line))] | last) as $c
+  | (if $c == null then [$all[] | select(split("\n") | any(verdict_line))] | last else $c end) as $v
+  | ($c // "" | split("\n") | map(select(verdict_line | not))) as $ls
+  | ([$ls | to_entries[] | select(.value | ruling_line) | .key] | first) as $i
+  | (if $i == null then null else $ls[$i] | capture("^(?<k>Answer|Reject|Add ticket):(?<r>.*)$") end) as $m
+  | {kind: (if $m == null then null else $m.k | ascii_downcase | gsub(" "; "-") end),
+     text: (if $m == null then "" else [$m.r] + $ls[($i + 1):] | join("\n") | sub("^[ \t\n]+"; "") | sub("[ \t\n]+$"; "") end),
+     took: ([$v // empty] | verdict("Took the recommendation")),
+     needed: ([$v // empty] | verdict("Needed the Decision chat"))}'
 
 cmd_sync() {
   open_run "${1:-}"
-  local pairs= t= q= view= state= ans=
+  local pairs="" t="" q="" view="" state="" ruling="" kind="" text="" added="" unread=""
   pairs=$(get '.tickets | to_entries[] | .key as $t | (.value.questions // [])[] | select(.state == "open" or .state == "deferred") | "\($t) \(.ticket)"')
   [ -n "$pairs" ] || return 0
-  while read -r t q; do
+  # On fd 3: nothing the loop runs can read the list away.
+  while read -r t q <&3; do
     view=$(gh issue view "$q" -R "$(repo_of)" --json state,labels,comments) || die "could not read #$q from the tracker"
     state=$(jq -r '.state | ascii_downcase' <<<"$view")
+    ruling=$(jq -c '.comments // []' <<<"$view" | jq -c "$RULING_JQ")
+    kind=$(jq -r '.kind // ""' <<<"$ruling")
+    text=$(jq -r '.text' <<<"$ruling")
     if [ "$state" = closed ]; then
-      ans=$(answer_of "$(jq -c '.comments' <<<"$view")")
-      if [ -n "$ans" ]; then
-        record_answer "$t" "$q" "$ans"
-        echo "answered #$t #$q"
-      else
-        apply '
-          if ([.decisions[] | select(.kind == "question" and .ticket == $t and .question_ticket == $q and .status == "waiting" and .closed_unanswered == true)] | length) > 0 then .
-          else .decisions += [{id: ((.decisions | length) + 1), kind: "question", ticket: $t, question_ticket: $q, closed_unanswered: true,
-            question: "#\($q) was closed with no Answer: line, so ticket \($t) has no answer. Answer it, or redirect or defer ticket \($t)?",
-            status: "waiting", at: $now}] end' --arg t "$t" --arg q "$q"
-        echo "closed #$t #$q"
-      fi
+      added=""
+      unread=""
+      case "$kind" in
+        answer) [ -n "$text" ] || kind="" ;;
+        add-ticket)
+          added=$(printf '%s\n' "$text" | sed -n '1s/^#\{0,1\}\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$added" ]; then kind=""; unread="an Add ticket: line that names no ticket"; fi ;;
+      esac
+      case "$kind" in
+        answer)
+          record_ruling "$t" "$q" answer "$ruling"
+          record_answer "$t" "$q" "$text"
+          echo "answered #$t #$q" ;;
+        reject)
+          record_ruling "$t" "$q" reject "$ruling"
+          reject_question "$t" "$q" "$text" ;;
+        add-ticket)
+          record_ruling "$t" "$q" add-ticket "$ruling"
+          add_ticket "$t" "$q" "$added" ;;
+        *)
+          # A ruling line sync can't read is not a Discard: no ruling is recorded.
+          [ -n "$unread" ] || record_ruling "$t" "$q" discard "$ruling"
+          apply '
+            if ([.decisions[] | select(.kind == "question" and .ticket == $t and .question_ticket == $q and .status == "waiting" and .closed_unanswered == true)] | length) > 0 then .
+            else .decisions += [{id: ((.decisions | length) + 1), kind: "question", ticket: $t, question_ticket: $q, closed_unanswered: true,
+              question: "#\($q) was closed with \(if $u == "" then "no Answer: line" else $u end), so ticket \($t) has no answer. Answer it, or redirect or defer ticket \($t)?",
+              status: "waiting", at: $now}] end' --arg t "$t" --arg q "$q" --arg u "$unread"
+          echo "closed #$t #$q" ;;
+      esac
     elif jq -e '.labels | map(.name) | index("deferred")' <<<"$view" >/dev/null; then
+      record_ruling "$t" "$q" defer "$ruling"
       apply '
         .tickets[$t].questions |= map(if .ticket == $q then .state = "deferred" else . end)
         | if ([.decisions[] | select(.kind == "defer-question" and .ticket == $t and .question_ticket == $q and .status == "waiting")] | length) > 0 then .
@@ -365,7 +418,113 @@ cmd_sync() {
     else
       echo "open #$t #$q"
     fi
-  done <<<"$pairs"
+  done 3<<<"$pairs"
+}
+
+# record_ruling ticket question kind ruling-json: the ruling and both its
+# verdicts on the question, and a "ruled" event; one event per ruling (a
+# deferred question answered later records the answer too). A verdict
+# written after the ruling (a deferral comment posted after the label) is
+# filled in on the question and on that ruling's event, not logged again.
+record_ruling() {
+  apply '
+    ([.tickets[$t].questions[]? | select(.ticket == $q)] | first | .ruling) as $had
+    | {took_recommendation: (if $took == null then $had.took_recommendation else $took end),
+       needed_decision_chat: (if $needed == null then $had.needed_decision_chat else $needed end)} as $v
+    | if ($had.kind // null) == $k then
+        if $had.took_recommendation == $v.took_recommendation and $had.needed_decision_chat == $v.needed_decision_chat then .
+        else .tickets[$t].questions |= map(if .ticket == $q then .ruling += $v else . end)
+          | ([.events | to_entries[] | select(.value.event == "ruled" and .value.ticket == $t and .value.question == $q) | .key] | last) as $i
+          | if $i == null then . else .events[$i] += $v end
+        end
+      else .tickets[$t].questions |= map(if .ticket == $q
+             then .ruling = {kind: $k, took_recommendation: $took, needed_decision_chat: $needed, at: $now} else . end)
+        | event({event: "ruled", ticket: $t, question: $q, ruling: $k, took_recommendation: $took, needed_decision_chat: $needed}; $now)
+      end' --arg t "$1" --arg q "$2" --arg k "$3" \
+    --argjson took "$(jq -c '.took' <<<"$4")" --argjson needed "$(jq -c '.needed' <<<"$4")"
+}
+
+# resolve_waiting: the filter that settles ticket $t's waiting decisions on
+# question $q.
+RESOLVE_WAITING='.decisions |= map(if .ticket == $t and .question_ticket == $q and .status == "waiting"
+                    and (.kind == "question" or .kind == "defer-question") then .status = "resolved" else . end)'
+
+# reject_question ticket question ruling-text: Reject. Before the ticket's
+# work merged it leaves the run as `deferred … pull` takes one: back to
+# needs-triage with the open decision noted on it, in-run off, off the
+# scope (status sent_back), its native edges kept, so its dependents wait.
+# After its work merged nothing is pulled: a follow-up needs-triage ticket
+# corrects it; closed without a merge, nothing is done but the record.
+# While an attempt is still going it waits for the next sync.
+reject_question() {
+  local t="$1" q="$2" text="$3" st="" title="" body="" url="" num="" ruling_note=""
+  st=$(get --arg t "$t" '.tickets[$t].status // ""')
+  [ -z "$text" ] || ruling_note="
+
+The ruling: $text"
+  case "$st" in
+    in_flight|returned)
+      echo "reject-waits #$t #$q" ;;
+    closed)
+      # Closed without a merge: out of the run, nothing shipped to correct.
+      apply '
+        .tickets[$t].questions |= map(if .ticket == $q then .state = "rejected" else . end)
+        | '"$RESOLVE_WAITING"'
+        | event({event: "rejected", ticket: $t, question: $q, pulled: false}; $now)' --arg t "$t" --arg q "$q"
+      echo "rejected #$t #$q" ;;
+    merged)
+      title="Follow-up to #$t: correct it for open decision #$q"
+      body="> *Filed during run $RUN_ID when the Decision chat rejected open decision #$q after #$t's work merged: an agent-filed follow-up, not yet triaged.*
+
+#$t merged before open decision #$q was ruled on, and the Decision chat ruled Reject. A ruling never reverts merged work, so this ticket corrects #$t instead.
+
+## The ruling
+
+${text:-Reject (no reason given on #$q).}
+
+## The open decision
+
+#$q"
+      url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind finding --from "$t" --run-dir "$RUN_DIR" -- -R "$(repo_of)" \
+        --title "$title" --body-file - <<<"$body" --label needs-triage) || die "could not file the follow-up to #$t"
+      num=${url##*/}
+      state_is_uint "$num" || die "gh gave no issue number: $url"
+      apply '
+        .tickets[$t].questions |= map(if .ticket == $q then .state = "rejected" | .follow_up = $n else . end)
+        | '"$RESOLVE_WAITING"'
+        | event({event: "rejected", ticket: $t, question: $q, pulled: false, follow_up: $n}; $now)' \
+        --arg t "$t" --arg q "$q" --arg n "$num"
+      echo "rejected #$t #$q follow-up #$num" ;;
+    *)
+      gh issue edit "$t" -R "$(repo_of)" --add-label needs-triage --remove-label in-run >/dev/null \
+        || die "could not label #$t on the tracker"
+      gh issue comment "$t" -R "$(repo_of)" --body-file - >/dev/null <<EOF || die "could not comment on #$t"
+> *This was generated by AI during a run.*
+
+Taken out of run $RUN_ID: the Decision chat rejected open decision #$q, so this ticket goes back to needs-triage to be rewritten with it. Its blockers are kept, and its dependents wait for it.$ruling_note
+EOF
+      apply '
+        .tickets[$t] |= (.status = "sent_back" | .pid = null | .blocked_reason = null
+                         | .sent_back = {from: $q, ruling: "reject", at: $now}
+                         | .questions |= map(if .ticket == $q then .state = "rejected" else . end))
+        | .plan.scope |= map(select(. != $t))
+        | '"$RESOLVE_WAITING"'
+        | event({event: "rejected", ticket: $t, question: $q, pulled: true}; $now)' --arg t "$t" --arg q "$q"
+      echo "rejected #$t #$q" ;;
+  esac
+}
+
+# add_ticket ticket question added: Add ticket. The case is its own ticket
+# (#added, triaged as usual); the original is unblocked and carries on with
+# the answer "not covered here".
+add_ticket() {
+  local t="$1" q="$2" n="$3"
+  if [ "$(get --arg t "$t" --arg q "$q" '[.tickets[$t].questions[]? | select(.ticket == $q and .blocking == true)] | length')" -gt 0 ]; then
+    remove_blocker "$t" "$q"
+  fi
+  apply '.tickets[$t].questions |= map(if .ticket == $q then .added = $n else . end)' --arg t "$t" --arg q "$q" --arg n "$n"
+  record_answer "$t" "$q" "not covered here"
+  echo "added #$t #$q #$n"
 }
 
 # record_answer ticket question answer: the answer is kept for the next
