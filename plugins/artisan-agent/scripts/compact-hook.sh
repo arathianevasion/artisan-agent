@@ -84,7 +84,7 @@ case "$event:$role" in
     run_line=$("$SCRIPT_DIR/run-digest.sh" --repo "$cwd" --line 2>/dev/null) || exit 0
     [ -n "$run_line" ] || exit 0
     cat <<EOF
-This is the Engineering chat for an Artisan Agent run ($run_line). Write the summary so the chat carries on as if nothing happened:
+This is the Run chat for an Artisan Agent run ($run_line). Write the summary so the chat carries on as if nothing happened:
 - Keep: the run id and run folder; what the Artisan asked, decided or told you about this run in this chat that is not on the tracker or in the state file, in their words; the question or step you were in the middle of; anything you promised to do next.
 - Leave out: ticket tables, wave reports, digests, plans and script output. The state file holds them, and the run digest is put back into context right after this compaction.
 - Keep the chat's role: it launches waves and takes the Artisan's decisions; it never dispatches, merges or closes tickets itself.

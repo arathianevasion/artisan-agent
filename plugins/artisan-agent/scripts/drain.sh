@@ -41,7 +41,7 @@
 #       "none" when nothing in scope is queued, in flight or returned (write
 #       the wave report and exit as usual).
 #   drain.sh chat <run-dir> --transcript FILE
-#       the Engineering chat's context, which never asks the Artisan to compact
+#       the Run chat's context, which never asks the Artisan to compact
 #       (Claude Code compacts it at chat_context.compact_percent, default 40,
 #       through CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in the project settings).
 #       Prints "<state> <percent>%" with state

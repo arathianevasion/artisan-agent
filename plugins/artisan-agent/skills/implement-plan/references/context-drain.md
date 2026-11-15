@@ -1,10 +1,10 @@
 # Context drain, hand-offs and resume
 
-The Artisan experiences one continuous chat, and no session in a run ever stops to compact. Each tier watches its own context and hands off before it fills: an orchestrator to a fresh orchestrator for the same wave, the Engineering chat by Claude Code compacting it out of sight at 40%. Scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh`, `run-digest.sh` and `compact-hook.sh`; their usage is in `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Context drain and resume".
+The Artisan experiences one continuous chat, and no session in a run ever stops to compact. Each tier watches its own context and hands off before it fills: an orchestrator to a fresh orchestrator for the same wave, the Run chat by Claude Code compacting it out of sight at 40%. Scripts: `${CLAUDE_PLUGIN_ROOT}/scripts/drain.sh`, `run-digest.sh` and `compact-hook.sh`; their usage is in `${CLAUDE_PLUGIN_ROOT}/scripts/README.md`, "Context drain and resume".
 
 ## The bands
 
-The table is the orchestrator's (the Engineering chat has its own rule, below). An orchestrator's outstanding agents are its workers and its verifiers not yet judged.
+The table is the orchestrator's (the Run chat has its own rule, below). An orchestrator's outstanding agents are its workers and its verifiers not yet judged.
 
 | Context | Band | Does |
 |---|---|---|
@@ -44,7 +44,7 @@ After every event (a dispatch, a sweep that recorded something, a verdict, a mer
 
 **The next orchestrator** starts like any orchestrator for that wave: its prompt says the earlier one handed off and why, it reconciles, and it carries the same wave on from the state file, waiting on the workers already in flight rather than dispatching them again. The wave's guardrail commits are not read again: its workers were given that version.
 
-## The Engineering chat
+## The Run chat
 
 The chat never asks the Artisan to compact, and it has no `handoff` of its own: Claude Code compacts it on its own, out of sight. It checks with `drain.sh chat <run folder> --transcript <its transcript>` before it launches a wave, whenever it is woken, and before it sends a message. The output is `<state> <percent>%`:
 

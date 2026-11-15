@@ -1,11 +1,11 @@
 ---
 name: retro
-description: The retro after every run, in the Engineering chat. A fresh headless session reads the whole run and prepares lessons; the Artisan answers one chat round (obvious lessons batched for one "yes", only judgement calls as questions, the run's signals, their motivation for the product and the satisfaction questions). Kept lessons go to their homes - one project PR, individual-home commits with origin, pipeline tickets, upstream notes - and the answers to the private satisfaction record. Replaces upstream retro. Use after a run ends, or when the Artisan says "retro", "what did we learn", or runs /artisan-agent:retro.
+description: The retro after every run, in the Run chat. A fresh headless session reads the whole run and prepares lessons; the Artisan answers one chat round (obvious lessons batched for one "yes", only judgement calls as questions, the run's signals, their motivation for the product and the satisfaction questions). Kept lessons go to their homes - one project PR, individual-home commits with origin, pipeline tickets, upstream notes - and the answers to the private satisfaction record. Replaces upstream retro. Use after a run ends, or when the Artisan says "retro", "what did we learn", or runs /artisan-agent:retro.
 ---
 
 # Retro
 
-One joint retro per run, for Product and Engineering, run from the Engineering chat once a run has ended (done or halted). It keeps what the run taught while it is fresh and asks how the run felt. It replaces upstream `retro` and mirrors its categories: navigation, checks, coding standards, steering files, tool economy, no-ops, information access.
+One joint retro per run, for Product and Engineering, run from the Run chat once a run has ended (done or halted). It keeps what the run taught while it is fresh and asks how the run felt. It replaces upstream `retro` and mirrors its categories: navigation, checks, coding standards, steering files, tool economy, no-ops, information access.
 
 Follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md` for everything you put in front of the Artisan. Every list of tickets is a markdown table. Use `GLOSSARY.md` vocabulary (lesson, check, gate, guardrail, focus, chore, individual home, motivation, satisfaction record) and respect `docs/adr/`.
 

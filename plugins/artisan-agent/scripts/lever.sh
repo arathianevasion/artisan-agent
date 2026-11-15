@@ -3,7 +3,7 @@
 # tickets. The rules: ${CLAUDE_PLUGIN_ROOT}/references/run-levers.md. State
 # file: references/state-file.md.
 #
-# Usage, from the Engineering chat that holds the run:
+# Usage, from the Run chat that holds the run:
 #   lever.sh steer <run-dir> <ticket> --note TEXT [--wait SECONDS]
 #       stop the ticket's worker and send it back to queued with the Artisan's
 #       notes, to be dispatched again (wave.sh dispatch puts the notes in the

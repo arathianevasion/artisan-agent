@@ -360,7 +360,7 @@ cmd_apply() {
   # Settings: plugins enabled (never installed here), our marketplace, the deny rules;
   # the hook only as the fallback for plugin hooks that don't fire.
   "$GUARD/guard.sh" deny-json >"$tmp/deny.json"
-  # The Engineering chat compacts at the config's chat_context.compact_percent (default 40).
+  # The Run chat compacts at the config's chat_context.compact_percent (default 40).
   compact=$("$ROOT/scripts/config.sh" get chat_context.compact_percent --file "$wt/.artisan-agent/config.yml") || die "cannot read chat_context.compact_percent"
   if [ "$(jq -r '.hook_fallback // false' "$answers")" = true ]; then
     mkdir -p "$wt/.claude/hooks"

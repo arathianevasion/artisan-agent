@@ -2,7 +2,7 @@
 
 Hands-on work keeps the Artisan's skill from eroding and meets the same quality floor as a worker's. The script is `${CLAUDE_PLUGIN_ROOT}/scripts/human.sh`; the tests are `tests/human.test.sh`.
 
-## At plan approval (the Engineering chat)
+## At plan approval (the Run chat)
 
 1. Show the candidates: `human.sh suggest --draft <draft.json>` prints a table of each ticket's slack and the delay it would cost if built by hand. **Suggest at most one** hands-on ticket per plan, off the critical path (delay none), chosen for what the Artisan would learn, and **name the focus it serves**: understanding the problem, finding the best solution, or improving the pipeline (`GLOSSARY.md`, Focus). If none qualifies, suggest none.
 2. A pick goes into the draft as `hands_on: {"ticket": "12", "focus": "…", "minutes": N}` (`minutes` optional: the time by hand, three times the worker's expected minutes if left out), with `blocked_by` (blockers inside the scope) on each ticket so the critical path can be found. `plan.sh build` refuses more than one, a ticket outside the scope, or no focus.

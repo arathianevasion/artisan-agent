@@ -10,6 +10,6 @@ Two calls wire `chats.sh` (from #73) into the plan step. Which chat does what is
 
 ## A queued, approved plan starts later
 
-The Engineering chat's sweep prints `ACTION start-plan <issue> envelope-approved`. Rebuild the plan from the plan issue (`resolve-scope.sh`), show the envelope as information in a table, and go to `state.sh init` without asking for approval again. `ACTION start-plan <issue> approve-envelope` means no approval was recorded: ask as usual.
+The Run chat's sweep prints `ACTION start-plan <issue> envelope-approved`. Rebuild the plan from the plan issue (`resolve-scope.sh`), show the envelope as information in a table, and go to `state.sh init` without asking for approval again. `ACTION start-plan <issue> approve-envelope` means no approval was recorded: ask as usual.
 
 The same rule applies to `/artisan-agent:to-plan`'s approval step when the Artisan approves a plan's envelope there (see that skill's step 5).

@@ -100,7 +100,7 @@ def cmd_settings(path, deny_path, hook_path=None, compact_percent=None):
         key = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
         if key not in env:
             env[key] = str(compact_percent)
-            out.append("changed: %s=%s (the Engineering chat compacts out of sight)" % (key, compact_percent))
+            out.append("changed: %s=%s (the Run chat compacts out of sight)" % (key, compact_percent))
         elif str(env[key]) != str(compact_percent):
             out.append("kept: %s is %s in %s; left as the project set it" % (key, json.dumps(env[key]), path))
 

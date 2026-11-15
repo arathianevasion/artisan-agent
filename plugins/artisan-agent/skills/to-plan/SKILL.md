@@ -1,11 +1,11 @@
 ---
 name: to-plan
-description: Plan-stage skill in the Product chat. Takes the published ticket graph and proposes plans: chunks of tickets, each ending at a slice reviewable end to end, each fitting a budget the Artisan would approve in one go, never putting a blocker after its dependent. The Artisan splits, merges and reorders until happy, sees every ticket's acceptance criteria, then approval creates one `plan` issue per plan with its tickets as sub-issues and native blocking between dependent plans. Use after /mattpocock-skills:to-tickets on an Effort, or when the Artisan wants chunks, says "plan these tickets", "chunk the tickets", "what runs together", or "group the backlog into plans".
+description: Plan-stage skill in the Decision chat. Takes the published ticket graph and proposes plans: chunks of tickets, each ending at a slice reviewable end to end, each fitting a budget the Artisan would approve in one go, never putting a blocker after its dependent. The Artisan splits, merges and reorders until happy, sees every ticket's acceptance criteria, then approval creates one `plan` issue per plan with its tickets as sub-issues and native blocking between dependent plans. Use after /mattpocock-skills:to-tickets on an Effort, or when the Artisan wants chunks, says "plan these tickets", "chunk the tickets", "what runs together", or "group the backlog into plans".
 ---
 
 # To Plan
 
-Decide which work runs together. This skill is the Product chat's: it proposes, the Artisan decides (job 24, "decide which tickets go into which plan", is the Artisan's to approve; `${CLAUDE_PLUGIN_ROOT}/references/jobs.md`). It never starts a run: a plan runs when `/artisan-agent:implement-plan` is given it.
+Decide which work runs together. This skill is the Decision chat's: it proposes, the Artisan decides (job 24, "decide which tickets go into which plan", is the Artisan's to approve; `${CLAUDE_PLUGIN_ROOT}/references/jobs.md`). It never starts a run: a plan runs when `/artisan-agent:implement-plan` is given it.
 
 Wherever you put something in front of the Artisan (the proposal, a warning, a question), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`: lead with the problem, arrive with a recommendation, show the reasoning and the strongest alternative you rejected. Use `GLOSSARY.md` vocabulary (its "Plan" entry names the words to avoid) and respect `docs/adr/`. Wherever tickets are shown, use a markdown table, never a list: one row per ticket, its number and a short plain description together (such as "#12 (retry failed uploads)").
 
@@ -93,7 +93,7 @@ Open with the ADR and guardrail check for each plan, then the loop if the Artisa
 
 The Artisan's approval is the only thing that creates anything. Show the final render once more, with every ticket's acceptance criteria, and ask for approval of the plans as shown. Nothing is created from silence, or from a plan the Artisan has seen only in an earlier version.
 
-When the Artisan also approves a plan's run envelope here (waves, models, estimates, budget) and that plan will wait behind the run lock rather than start, record it once the plan issue exists: `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh approve-envelope --repo <owner/name> <plan issue>`. The chat that got the approval records it, so the Engineering chat doesn't ask again. Approving only the plans' tickets and grouping, as above, is not an envelope approval: don't call it then.
+When the Artisan also approves a plan's run envelope here (waves, models, estimates, budget) and that plan will wait behind the run lock rather than start, record it once the plan issue exists: `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh approve-envelope --repo <owner/name> <plan issue>`. The chat that got the approval records it, so the Run chat doesn't ask again. Approving only the plans' tickets and grouping, as above, is not an envelope approval: don't call it then.
 
 ### 6. Create the plan issues
 

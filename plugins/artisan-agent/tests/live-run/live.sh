@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live proof of the two-tier run (#54): a real Engineering chat, orchestrator
+# Live proof of the two-tier run (#54): a real Run chat, orchestrator
 # and worker, each a capped headless `claude -p` loading this plugin with
 # --plugin-dir under the normal login, on a throwaway repo with the fake
 # tracker (tests/fixtures/fake-gh). Nothing reaches GitHub; no settings are
@@ -150,7 +150,7 @@ check "the orchestrator wrote the wave report" test -s "$RUN/results/orchestrato
 check "the orchestrator is no longer running" sh -c "! kill -0 $ORCH"
 
 # ------------------------------------- 3. a fresh chat learns from files
-session status-chat "You are the Engineering chat for run live1 of /artisan-agent:implement-plan (run folder $RUN). You were just woken; there are no messages for you. Do step 6 of the skill (${PLUGIN_ROOT}/skills/implement-plan/SKILL.md): check the run with wave.sh status and report it to me as the skill says. Do not launch anything." || true
+session status-chat "You are the Run chat for run live1 of /artisan-agent:implement-plan (run folder $RUN). You were just woken; there are no messages for you. Do step 6 of the skill (${PLUGIN_ROOT}/skills/implement-plan/SKILL.md): check the run with wave.sh status and report it to me as the skill says. Do not launch anything." || true
 check "the second chat reported the ticket merged from files alone" \
   sh -c "jq -r '.result' '$WD/status-chat.json' | grep -i -q 'merged as'"
 "$PLUGIN_ROOT/scripts/wave.sh" status "$RUN" >"$WD/status.txt" 2>&1 || true

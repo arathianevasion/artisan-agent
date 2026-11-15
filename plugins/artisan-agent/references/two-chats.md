@@ -1,35 +1,35 @@
 # Two chats through the tracker
 
-The **Engineering chat** drives runs. The **Product chat** runs triage and holds requirements discussion and writing. They share nothing but the tracker: a direct message is only a **doorbell** naming an issue, and never carries content. `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh` does the work; `tests/chats.test.sh` and `tests/gate.test.sh` test it against the fake `gh`. Skills cite this file rather than copying it.
+The **Run chat** drives runs. The **Decision chat** runs triage and holds requirements discussion and writing. They share nothing but the tracker: a direct message is only a **doorbell** naming an issue, and never carries content. `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh` does the work; `tests/chats.test.sh` and `tests/gate.test.sh` test it against the fake `gh`. Skills cite this file rather than copying it.
 
 ## Who writes what
 
 | Thing | Written by | The other chat may |
 |---|---|---|
-| Incoming tickets: triage labels, outcomes, `ready-for-agent` | Product | read; Engineering files findings as new tickets |
-| `plan` issues: their tickets | Product | read |
-| `plan` issues: the plan step | Engineering | read and approve |
-| Runs: state files, integration branches, merges | Engineering (via orchestrators) | read the digest |
-| `review-gate` issues | Engineering (via orchestrators) | read and act on |
+| Incoming tickets: triage labels, outcomes, `ready-for-agent` | Decision chat | read; the Run chat files findings as new tickets |
+| `plan` issues: their tickets | Decision chat | read |
+| `plan` issues: the plan step | Run chat | read and approve |
+| Runs: state files, integration branches, merges | Run chat (via orchestrators) | read the digest |
+| `review-gate` issues | Run chat (via orchestrators) | read and act on |
 
-Either chat can approve a plan or act on a gate. The Product chat never reads a run's state file: what it needs from a run is on the tracker.
+Either chat can approve a plan or act on a gate. The Decision chat never reads a run's state file: what it needs from a run is on the tracker.
 
 ## In-run tickets
 
 | Step | Who | Call |
 |---|---|---|
-| Mark every ticket in the approved scope `in-run`, with one comment naming the run (`<!-- artisan-agent:run <id> -->`) | Engineering chat, right after `state.sh init` | `chats.sh label-run --repo R <run folder>` (once; repeating changes nothing) |
-| Before triaging, editing or relabelling any ticket | Product chat | `chats.sh guard --repo R <issue>`: exit 6 and a line naming the run if the ticket is `in-run`. Refuse, say so in one line, and offer a comment or a new ticket instead |
+| Mark every ticket in the approved scope `in-run`, with one comment naming the run (`<!-- artisan-agent:run <id> -->`) | Run chat, right after `state.sh init` | `chats.sh label-run --repo R <run folder>` (once; repeating changes nothing) |
+| Before triaging, editing or relabelling any ticket | Decision chat | `chats.sh guard --repo R <issue>`: exit 6 and a line naming the run if the ticket is `in-run`. Refuse, say so in one line, and offer a comment or a new ticket instead |
 
-A ticket leaves the run by its own rules (`deferred`, closed); the label is not the Product chat's to remove.
+A ticket leaves the run by its own rules (`deferred`, closed); the label is not the Decision chat's to remove.
 
 ## Sending work to Engineering
 
-"Send #345 and #346 to engineering" in the Product chat: `chats.sh send --repo R 345 346`. It creates a `plan` issue (title `Plan: send #345, #346 to engineering`) with those tickets as sub-issues and nothing else: no models, estimate or gates, because the plan step is Engineering's. It refuses (6) a ticket that is `in-run`, closed or missing, and reuses the open plan with the same title. Tell the Artisan the plan's number and ring the doorbell if the Engineering chat is awake ("plan #347 waits for you").
+"Send #345 and #346 to engineering" in the Decision chat: `chats.sh send --repo R 345 346`. It creates a `plan` issue (title `Plan: send #345, #346 to engineering`) with those tickets as sub-issues and nothing else: no models, estimate or gates, because the plan step is Engineering's. It refuses (6) a ticket that is `in-run`, closed or missing, and reuses the open plan with the same title. Tell the Artisan the plan's number and ring the doorbell if the Run chat is awake ("plan #347 waits for you").
 
 ## The sweep
 
-Each chat runs `chats.sh sweep --repo R --chat engineering|product` on every wake and at least every `sweep_minutes` (default 5; `chats.sh due` says when). It is a few `gh` queries and local files, never a transcript. A chat with no wake of its own sets a recurring wake-up for `sweep_minutes` when it starts. A wake that came from the clock, not the Artisan typing, passes `--idle`.
+Each chat runs `chats.sh sweep --repo R --chat run|decision` (the names from before the rename, `engineering` and `product`, still work) on every wake and at least every `sweep_minutes` (default 5; `chats.sh due` says when). It is a few `gh` queries and local files, never a transcript. A chat with no wake of its own sets a recurring wake-up for `sweep_minutes` when it starts. A wake that came from the clock, not the Artisan typing, passes `--idle`.
 
 It prints, in order:
 
@@ -56,17 +56,17 @@ Skills cite this section rather than copying it.
 
 ## Plans queued behind the run lock
 
-A run request that arrives while a run holds the lock waits as a `plan` issue (`guard/queue-plan.sh`, or the Product chat's `send`). When the lock frees, **the first sweep** of the Engineering chat names the oldest plan that is startable (not blocked by an open plan, with a ticket not yet in a run) and prints `ACTION start-plan`; younger plans show "queued behind #N". The chat starts the plan step for it (`${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/SKILL.md`, step 3; `resolve-scope.sh` reads the plan back) and puts **the run envelope** (waves, models, estimates, budget) in front of the Artisan to approve, as a table. Only one plan starts per lock.
+A run request that arrives while a run holds the lock waits as a `plan` issue (`guard/queue-plan.sh`, or the Decision chat's `send`). When the lock frees, **the first sweep** of the Run chat names the oldest plan that is startable (not blocked by an open plan, with a ticket not yet in a run) and prints `ACTION start-plan`; younger plans show "queued behind #N". The chat starts the plan step for it (`${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/SKILL.md`, step 3; `resolve-scope.sh` reads the plan back) and puts **the run envelope** (waves, models, estimates, budget) in front of the Artisan to approve, as a table. Only one plan starts per lock.
 
-A queued plan skips that approval only if its envelope was approved before it was queued: the chat that got the approval records it with `chats.sh approve-envelope --repo R <plan issue>` (a comment, `<!-- artisan-agent:envelope-approved -->`); the sweep then prints `envelope-approved` and the chat goes straight to starting the run. A plan from the Product chat, or a plan left by the run-lock hook, never has it.
+A queued plan skips that approval only if its envelope was approved before it was queued: the chat that got the approval records it with `chats.sh approve-envelope --repo R <plan issue>` (a comment, `<!-- artisan-agent:envelope-approved -->`); the sweep then prints `envelope-approved` and the chat goes straight to starting the run. A plan from the Decision chat, or a plan left by the run-lock hook, never has it.
 
 ## A plan approved in the other chat
 
-Plan approval is on the tracker, so either chat can give it, and the other honours it. The chat that approves a plan's envelope records `approve-envelope`; the Engineering chat's sweep treats that as given. It never asks the Artisan the same question twice.
+Plan approval is on the tracker, so either chat can give it, and the other honours it. The chat that approves a plan's envelope records `approve-envelope`; the Run chat's sweep treats that as given. It never asks the Artisan the same question twice.
 
 ## Gates closed by hand
 
-A gate (`review-gate` issue) the Artisan closes on GitHub is approved at the next `gate.sh sync` (the Engineering chat's sweep calls it for each run with an open gate), by "Artisan (closed on the tracker)", every undecided card kept. The sync records which cards were undecided (`review_gates[].closed_on_tracker`, `carried`; event `gate-approved` carries both) and comments once on the issue:
+A gate (`review-gate` issue) the Artisan closes on GitHub is approved at the next `gate.sh sync` (the Run chat's sweep calls it for each run with an open gate), by "Artisan (closed on the tracker)", every undecided card kept. The sync records which cards were undecided (`review_gates[].closed_on_tracker`, `carried`; event `gate-approved` carries both) and comments once on the issue:
 
 ```
 Gate #41 closed on GitHub: treated as approved; 3 undecided cards carried to the end gate

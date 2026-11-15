@@ -1,6 +1,6 @@
 # The verdict and the evidence contract
 
-How every finished ticket is checked the same way, and how the tracker becomes the audit trail. A worker's evidence record (`evidence-record.md`) is its claim. A fresh **verifier** checks the claim against the diff and writes a **verdict**. From the two, `verify.sh judge` builds the ticket's **evidence contract** and writes it to the state file; `wave.sh close` posts the same contract on the ticket; the Engineering chat shows a **wave digest** of the contracts. The orchestrator reads only result files and one-line verdicts, never a transcript.
+How every finished ticket is checked the same way, and how the tracker becomes the audit trail. A worker's evidence record (`evidence-record.md`) is its claim. A fresh **verifier** checks the claim against the diff and writes a **verdict**. From the two, `verify.sh judge` builds the ticket's **evidence contract** and writes it to the state file; `wave.sh close` posts the same contract on the ticket; the Run chat shows a **wave digest** of the contracts. The orchestrator reads only result files and one-line verdicts, never a transcript.
 
 Skills cite this file rather than copying it.
 
@@ -93,7 +93,7 @@ Each ticket's cost is logged in the state file: the worker's and verifier's sess
 
 ## The wave digest
 
-`evidence.sh digest <run> [--wave N | --all]`, the Engineering chat's report after each wave: a heading line, a table with one row per ticket dispatched in that wave, and one line of cost against the budget (and one naming the blocked tickets, if any).
+`evidence.sh digest <run> [--wave N | --all]`, the Run chat's report after each wave: a heading line, a table with one row per ticket dispatched in that wave, and one line of cost against the budget (and one naming the blocked tickets, if any).
 
 | Ticket | Outcome | Criteria | Unsure / decisions | Cost |
 |---|---|---|---|---|

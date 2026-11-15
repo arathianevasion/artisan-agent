@@ -11,7 +11,7 @@
 #   0  run here: nothing printed when host_configured is false or absent, or this
 #      machine is the host ("here: this machine is the host")
 #   10 host_configured is true and this machine is not the host: prints the
-#      one-line notice and the offer, for the Engineering chat. Do not start the
+#      one-line notice and the offer, for the Run chat. Do not start the
 #      run locally unless the Artisan says so; to move one, see
 #      ${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/host-and-move.md
 #   Either way, a leftover host.json from an old login stamp (not a host) adds a

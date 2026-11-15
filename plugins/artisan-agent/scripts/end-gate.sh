@@ -9,7 +9,7 @@
 # upstream `pr`; then the in-run labels come off and the retro is offered.
 # The rules: ${CLAUDE_PLUGIN_ROOT}/references/end-gate.md.
 #
-# Usage, from the Engineering chat once wave.sh status says `done`:
+# Usage, from the Run chat once wave.sh status says `done`:
 #   end-gate.sh status <run-dir>
 #       one word: not-due (tickets remain; Human checks don't count),
 #       due, open, removed (the Artisan
@@ -62,7 +62,7 @@
 #
 # An urgent ticket (lever.sh urgent, references/run-levers.md) ships through
 # its own end gate and PR, scoped to that one ticket and based on main, with
-# this same packet, PR body and cut. From the Engineering chat, once the
+# this same packet, PR body and cut. From the Run chat, once the
 # ticket has returned and been verified:
 #   end-gate.sh urgent-packet <run-dir> <ticket>
 #       the packet for that ticket alone, as it would be opened now.

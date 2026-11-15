@@ -40,7 +40,7 @@ A worker's `blocked` result is the cue. After the sweep records it:
 
 ## Once triage decides
 
-The Engineering chat runs `questions.sh sync $RUN` between waves (it is cheap: a read of each open question). Triage rules on the question ticket in the Product chat (`skills/triage/SKILL.md`, "Worker questions"):
+The Run chat runs `questions.sh sync $RUN` between waves (it is cheap: a read of each open question). Triage rules on the question ticket in the Decision chat (`skills/triage/SKILL.md`, "Worker questions"):
 
 | Ruling | What `sync` sees | What happens |
 |---|---|---|

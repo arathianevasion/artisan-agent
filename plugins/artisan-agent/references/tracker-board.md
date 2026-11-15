@@ -28,7 +28,7 @@ Project setup learns it from the project's tracker doc, `docs/agents/issue-track
 | Kind | Opened by | On the board |
 |---|---|---|
 | `plan` | `to-plan.sh publish`, `chats.sh send` | yes |
-| `finding` | `findings.sh mark … triage`; the Engineering chat between waves | yes |
+| `finding` | `findings.sh mark … triage`; the Run chat between waves | yes |
 | `human-check` | `to-plan.sh split-human-check` (also at an exception gate); a Human check deferred past the run stays on it | yes |
 | `rework` | `gate.sh change`, a failed Human check (`gate.sh check`), `gate-action.sh redirect` | yes |
 | `split` | `gate-action.sh split` to a new ticket: criteria split off at an exception gate | yes |

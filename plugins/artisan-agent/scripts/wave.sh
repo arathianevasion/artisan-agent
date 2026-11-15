@@ -4,7 +4,7 @@
 # calls what: ${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/SKILL.md and
 # references/orchestrator.md beside it. State file: references/state-file.md.
 #
-# Usage, from the Engineering chat:
+# Usage, from the Run chat:
 #   wave.sh start <run-dir> [--base REF]
 #       create the integration branch (from REF, default the main checkout's
 #       branch) and the run's integration worktree beside the repo, at

@@ -1,12 +1,12 @@
 ---
 name: triage
-description: Product-chat skill that replaces upstream triage. Sorts incoming tickets (from agents, findings or other people) into uncontroversial items first, each with a recommendation, then the controversial queue, each naming its controversy criterion. Every outcome (Do, Defer, Discard, take it myself) needs the Artisan's approval. Use when the Artisan wants to triage, or says "what needs my attention".
+description: Decision-chat skill that replaces upstream triage. Sorts incoming tickets (from agents, findings or other people) into uncontroversial items first, each with a recommendation, then the controversial queue, each naming its controversy criterion. Every outcome (Do, Defer, Discard, take it myself) needs the Artisan's approval. Use when the Artisan wants to triage, or says "what needs my attention".
 disable-model-invocation: true
 ---
 
 # Triage
 
-Sort incoming tickets in the Product chat. This replaces upstream `triage`: same roles, grilling and discard mechanism, but in version one **nothing is applied until the Artisan approves it**, and nothing reaches `ready-for-agent` without that approval.
+Sort incoming tickets in the Decision chat. This replaces upstream `triage`: same roles, grilling and discard mechanism, but in version one **nothing is applied until the Artisan approves it**, and nothing reaches `ready-for-agent` without that approval.
 
 Follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md` for every item you put in front of the Artisan: lead with the problem, arrive with a recommendation, show the reasoning and the strongest rejected alternative. Use `GLOSSARY.md` vocabulary and respect `docs/adr/`. Label strings come from `docs/agents/triage-labels.md`; tracker commands from `docs/agents/issue-tracker.md`.
 
@@ -21,7 +21,7 @@ Every comment or ticket posted during triage **must** start with:
 - `${CLAUDE_PLUGIN_ROOT}/references/controversy-criteria.md`: the seven criteria and the "Not controversial" list. Cite a criterion by number.
 - [AGENT-BRIEF.md](AGENT-BRIEF.md): how to write durable agent briefs (upstream's, kept).
 - [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md): how `.out-of-scope/` works (upstream's, kept).
-- [backlog-review.md](backlog-review.md): the Product-chat prompt for backlog review. There is no backlog-review skill in version one.
+- [backlog-review.md](backlog-review.md): the Decision-chat prompt for backlog review. There is no backlog-review skill in version one.
 
 ## Roles and outcomes
 
@@ -34,7 +34,7 @@ The Artisan's outcomes for a ticket:
 - **Discard**: reject it, see below.
 - **Take it myself**: `ready-for-human`, same brief structure, with a note why it can't be delegated.
 
-`needs-info` (post the triage notes template) and `needs-triage` (leave in the queue) are ways to move an item along, not outcomes. A ticket marked `in-run` is never re-triaged, edited or relabelled here: check with `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh guard <issue>` first, and send work on to the Engineering chat as `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md` says.
+`needs-info` (post the triage notes template) and `needs-triage` (leave in the queue) are ways to move an item along, not outcomes. A ticket marked `in-run` is never re-triaged, edited or relabelled here: check with `${CLAUDE_PLUGIN_ROOT}/scripts/chats.sh guard <issue>` first, and send work on to the Run chat as `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md` says.
 
 ## What goes through triage
 
@@ -108,13 +108,13 @@ A deferred ticket doesn't come back through triage; the backlog review surfaces 
 
 ## Worker questions
 
-A `needs-triage` ticket a worker filed mid-run (its body: question, options, recommendation, criterion) is already controversial; it names its criterion, so don't re-derive it. An **open decision** (criterion 8: its body holds the case, the harm and one recommendation, and where it was raised; `${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md`) is ruled on the same way; researching its options is your work here. The ticket it blocks is `in-run`, but the question ticket itself is yours to rule on. Present it with the options (for an open decision, the ones you researched) and the raiser's recommendation. Record the ruling so the Engineering chat's `questions.sh sync` can read it (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`):
+A `needs-triage` ticket a worker filed mid-run (its body: question, options, recommendation, criterion) is already controversial; it names its criterion, so don't re-derive it. An **open decision** (criterion 8: its body holds the case, the harm and one recommendation, and where it was raised; `${CLAUDE_PLUGIN_ROOT}/references/open-decisions.md`) is ruled on the same way; researching its options is your work here. The ticket it blocks is `in-run`, but the question ticket itself is yours to rule on. Present it with the options (for an open decision, the ones you researched) and the raiser's recommendation. Record the ruling so the Run chat's `questions.sh sync` can read it (`${CLAUDE_PLUGIN_ROOT}/references/worker-questions.md`):
 
 - **Answer** (Do): post a comment whose first line is `Answer: <the decision>`, then close the ticket. The blocked ticket is redispatched with it. An answer that adds scope is new work: file it as its own ticket for triage; it never rides in on the answer.
 - **Reject**: the original ticket can't be built as written. Post a comment whose first line is `Reject: <what the rewrite must settle>`, then close the ticket. The original leaves the run and comes back to `needs-triage` with the open decision noted, to be rewritten; its dependents wait. If its work has merged already, nothing is pulled and nothing is reverted: `sync` files a follow-up `needs-triage` ticket that corrects it.
 - **Add ticket**: the open decision is a case beside the original. File the case as its own ticket (it is triaged as usual), post a comment whose first line is `Add ticket: #<the new ticket>`, then close this one. The original is unblocked and carries on with the answer "not covered here". On an `incomplete` open decision, Add ticket is allowed only when the original doesn't expose the incomplete behaviour, or the new ticket lands before the run's end gate; otherwise rule Answer or Reject. Say which holds in the comment, after the ticket number.
-- **Defer**: as below, `deferred` with its `Return condition:` line. If the question blocks a running ticket, the Engineering chat then asks whether to pull that ticket from the run (it defers with this one) or let it carry on with "not now". That ticket's deferral comment uses the same `Return condition: blocked-by #<question>` format.
-- **Discard**: close with a reason; the Engineering chat sends the blocked ticket back to the Artisan.
+- **Defer**: as below, `deferred` with its `Return condition:` line. If the question blocks a running ticket, the Run chat then asks whether to pull that ticket from the run (it defers with this one) or let it carry on with "not now". That ticket's deferral comment uses the same `Return condition: blocked-by #<question>` format.
+- **Discard**: close with a reason; the Run chat sends the blocked ticket back to the Artisan.
 - **Add the block**: only for an open decision `Raised at: finding`, which another ticket's worker found in this ticket and filed without blocking it. When your ruling needs that ticket held until the decision is settled, post a comment whose first line is `Add the block: <why>` and leave the question open; `sync` makes it a native blocker of that ticket (queued, it waits; in flight, it finishes its attempt). Then rule on it as above. Without the line it never blocks, and a Defer or Discard of it leaves its ticket going. For a ticket outside the run, add the native dependency yourself (`docs/agents/issue-tracker.md`, "Blocking").
 
 Every ruling records two verdicts, as their own lines in the ruling's comment (for a Defer, the deferral comment; for a Discard, the closing comment):
@@ -128,7 +128,7 @@ Needed the Decision chat: yes
 
 ## Ending a turn
 
-Whenever a turn ends with something only the Artisan can decide, end it with the `Waiting on you:` line (`${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`, "Waiting on you"). That covers a queue of recommendations to approve, a worker question to rule on, and a gate or a plan needing its envelope approved that the sweep or a doorbell surfaced. For example: `Waiting on you: rule on #31 (worker question from #12)`. A turn that only hands work to the Engineering chat doesn't add it.
+Whenever a turn ends with something only the Artisan can decide, end it with the `Waiting on you:` line (`${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`, "Waiting on you"). That covers a queue of recommendations to approve, a worker question to rule on, and a gate or a plan needing its envelope approved that the sweep or a doorbell surfaced. For example: `Waiting on you: rule on #31 (worker question from #12)`. A turn that only hands work to the Run chat doesn't add it.
 
 ## Recording a miss
 
@@ -141,7 +141,7 @@ ${CLAUDE_PLUGIN_ROOT}/skills/triage/scripts/record-miss.sh <ticket> <criterion 1
 ```
 
 - Choose the criterion that **should have** made the item controversial, by number. Use `new` when no existing criterion fits (the retro treats it as a candidate for a new "Always ask" item).
-- Records are lines in `.artisan-agent/triage/misses.jsonl` in the project's main checkout (project state, not per-run, because triage runs in the Product chat outside any run). Each has `ts`, `ticket`, `recommended`, `ruled`, `criterion_that_should_have_caught_it`, `reason` and `run_id` (from `ARTISAN_RUN_ID` when a run is open, else `null`). The folder contains its own `.gitignore`, so records stay out of git. The retro reads every record newer than the last retro.
+- Records are lines in `.artisan-agent/triage/misses.jsonl` in the project's main checkout (project state, not per-run, because triage runs in the Decision chat outside any run). Each has `ts`, `ticket`, `recommended`, `ruled`, `criterion_that_should_have_caught_it`, `reason` and `run_id` (from `ARTISAN_RUN_ID` when a run is open, else `null`). The folder contains its own `.gitignore`, so records stay out of git. The retro reads every record newer than the last retro.
 - Also add a line "Triage miss: recommended X, ruled Y (criterion N)" to the ticket's comment when you apply the ruling, so the tracker shows it too.
 
 Don't record a miss when the Artisan only asks for more information, or approves the recommendation.

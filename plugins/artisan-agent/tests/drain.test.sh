@@ -289,7 +289,7 @@ test_the_chats_pre_compact_steers_the_summary_while_a_run_is_open() {
   setup_run
   local out=
   out=$(cd "$PROJECT" && HOOK_CWD="$PROJECT" hook_input PreCompact '{"trigger":"auto"}' | "$HOOK" pre-compact)
-  assert_contains "$out" "Engineering chat"
+  assert_contains "$out" "Run chat"
   assert_contains "$out" "run r1 is open"
   assert_contains "$out" "Leave out: ticket tables"
   # No open run: nothing.

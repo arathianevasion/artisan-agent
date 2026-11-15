@@ -19,10 +19,10 @@ test_findings_are_filed_for_triage_not_discovered_work() {
   assert_contains "$(cat "$SKILL_DIR/SKILL.md")" "Findings filed for triage"
 }
 
-test_the_chat_is_the_engineering_chat_and_not_the_orchestrator() {
+test_the_chat_is_the_run_chat_and_not_the_orchestrator() {
   local skill=
   skill=$(cat "$SKILL_DIR/SKILL.md")
-  assert_contains "$skill" "You are the **Engineering chat**"
+  assert_contains "$skill" "You are the **Run chat**"
   assert_contains "$(cat "$SKILL_DIR/references/orchestrator.md")" "You are an **orchestrator**"
   ! grep -n -i 'you are the orchestrator\|the orchestrator stays here\|orchestrator never writes product code' "$SKILL_DIR/SKILL.md" \
     || fail "the chat is described as the orchestrator"

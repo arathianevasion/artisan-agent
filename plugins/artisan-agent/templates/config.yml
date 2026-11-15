@@ -22,7 +22,7 @@ context:
   drain_percent: 30     # dispatch nothing new, hand off once idle
   review_percent: 50    # every merge from here gets a risk gate
 
-# The Engineering chat's context: it never asks the Artisan to compact.
+# The Run chat's context: it never asks the Artisan to compact.
 # Above warn_percent every message ends with a one-line warning; Claude Code
 # compacts the chat on its own at compact_percent (setup writes it to the
 # project settings as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE); if the chat passes

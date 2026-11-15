@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The evidence contract, shown: on the ticket as a comment, and in the
-# Engineering chat as the wave digest. Both are printed from the state file
+# Run chat as the wave digest. Both are printed from the state file
 # alone (the contract verify.sh judge wrote), so the tracker and the state
 # file can't disagree. The contract's shape:
 # ${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md.

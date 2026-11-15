@@ -36,7 +36,7 @@
 #   budget.sh packet <run-dir>
 #       the latest overrun gate's packet (Markdown), read-only.
 #
-# Usage, from the Engineering chat, on the Artisan's word:
+# Usage, from the Run chat, on the Artisan's word:
 #   budget.sh overrun <run-dir> raise <usd> | cut <ticket>... | stop
 #           [--action defer] [--by NAME] [--why TEXT]
 #       the overrun gate's answer: one option (a decision card), and the gate

@@ -30,7 +30,7 @@
 #       guardrail-fired "open-decision"; a worker's findings line carries
 #       case, raised_by and about, and the sweep logs it.
 #
-# Usage, from the orchestrator and the Engineering chat:
+# Usage, from the orchestrator and the Run chat:
 #   questions.sh block <run-dir> <ticket>
 #       a blocked ticket whose worker filed a blocking question: add the
 #       question ticket as a native blocker of the worker's ticket on the
@@ -340,7 +340,7 @@ cmd_block() {
       .tickets[$t].questions = ((.tickets[$t].questions // []) + [{ticket: $q, blocking: true, state: "open", at: $now}])
       | .tickets[$t].blocked_reason = "waiting on the answer to #\($q)"
       | .decisions += [{id: ((.decisions | length) + 1), kind: "question", ticket: $t, question_ticket: $q,
-          question: "Ticket \($t) waits on #\($q), a question its worker filed for triage. Answer it in the Product chat; the ticket is redispatched with the answer.",
+          question: "Ticket \($t) waits on #\($q), a question its worker filed for triage. Answer it in the Decision chat; the ticket is redispatched with the answer.",
           status: "waiting", at: $now}]
       | event({event: "asked", ticket: $t, question: $q}; $now)' --arg t "$t" --arg q "$q"
   done

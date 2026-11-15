@@ -1,12 +1,12 @@
 # Backlog review
 
-A periodic review of outstanding tickets. It is not automatic and has no skill in version one; a dedicated backlog-review skill arrives only as a retro lesson. The Artisan runs it in the **Product chat**, pasting the prompt below.
+A periodic review of outstanding tickets. It is not automatic and has no skill in version one; a dedicated backlog-review skill arrives only as a retro lesson. The Artisan runs it in the **Decision chat**, pasting the prompt below.
 
 It sorts every open ticket into **the next plan**, **closed**, or **left open**, and points out deferred tickets whose return condition has been met. It changes nothing until the Artisan approves each sort; triage rules still apply (nothing reaches `ready-for-agent` without approval).
 
 ## The prompt
 
-Paste this into the Product chat. A pasted prompt runs outside a skill, so `${CLAUDE_PLUGIN_ROOT}` is empty there; the prompt resolves the plugin's install path itself (from `claude plugin list --json`, or the variable if set).
+Paste this into the Decision chat. A pasted prompt runs outside a skill, so `${CLAUDE_PLUGIN_ROOT}` is empty there; the prompt resolves the plugin's install path itself (from `claude plugin list --json`, or the variable if set).
 
 ````text
 Run a backlog review of this repo's open tickets. First find the plugin: run the line below once and use $ROOT for every plugin path that follows. If it prints nothing, stop and tell me; don't search the disk.

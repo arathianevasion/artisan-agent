@@ -1,6 +1,6 @@
 # Prepare the retro
 
-You are a fresh headless session. Read one finished run whole and propose the lessons worth keeping from it, so the Engineering chat can put them to the Artisan in one chat round. You change nothing: no commits, no tickets, no edits outside the two files named at the end of this brief. Nothing changes until the Artisan answers.
+You are a fresh headless session. Read one finished run whole and propose the lessons worth keeping from it, so the Run chat can put them to the Artisan in one chat round. You change nothing: no commits, no tickets, no edits outside the two files named at the end of this brief. Nothing changes until the Artisan answers.
 
 Vocabulary is the project's `GLOSSARY.md` (or the plugin's): Artisan, run, wave, worker, verifier, finding, lesson, guardrail, check, gate, packet, focus, chore. A **lesson** is something kept from the run so later runs go better.
 

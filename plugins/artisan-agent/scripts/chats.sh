@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Two chats through the tracker: what the Engineering chat and the Product chat
+# Two chats through the tracker: what the Run chat and the Decision chat
 # do for each other, and only through issues. The rules and the ownership
 # table: ${CLAUDE_PLUGIN_ROOT}/references/two-chats.md.
 #
 # Usage (repo: --repo OWNER/NAME, else $ARTISAN_REPO, else `gh repo view`):
 #   chats.sh send --repo R <issue>...
-#       Product chat: "send #N and #M to engineering". Creates a `plan` issue
-#       with those tickets as sub-issues, for the Engineering chat's plan
+#       Decision chat: "send #N and #M to engineering". Creates a `plan` issue
+#       with those tickets as sub-issues, for the Run chat's plan
 #       step. Refuses (6) a ticket that is `in-run`, closed or missing; reuses
 #       the open plan issue with the same title. Prints the plan's number.
 #   chats.sh guard --repo R <issue>
-#       Product chat, before it triages, edits or relabels a ticket: exit 0 if
+#       Decision chat, before it triages, edits or relabels a ticket: exit 0 if
 #       the ticket is free to touch, 6 (and a line naming the run) if it is
 #       `in-run`.
 #   chats.sh label-run --repo R <run-dir>
-#       Engineering chat, once a run starts: every ticket in scope gets the
+#       Run chat, once a run starts: every ticket in scope gets the
 #       `in-run` label and one comment naming the run id (once). Exit 1 if any
 #       ticket could not be marked.
 #   chats.sh approve-envelope --repo R <plan-issue>
-#       Engineering chat: records on the plan issue that the Artisan approved
+#       Run chat: records on the plan issue that the Artisan approved
 #       the run envelope before the plan was queued (so a queued plan skips
 #       the approval when its turn comes).
 #   chats.sh gates --repo R [--role ROLE]
@@ -30,7 +30,7 @@
 #       The cheap check each chat makes on every wake and at least every
 #       sweep_minutes: gates (above), gates closed by hand, guardrail changes,
 #       a new plugin version, board adds that failed (tracker.sh board-retry,
-#       #146), and (Engineering chat) the plan to start now
+#       #146), and (Run chat) the plan to start now
 #       when the run lock is free. Prints Markdown, then `ACTION <verb> ...`
 #       lines for the chat to act on, then `notify: <text>` when --idle (the
 #       terminal is idle) and a decision is waiting that no earlier sweep
@@ -135,7 +135,7 @@ cmd_guard() {
   j=$(issue_json "$n") || die "could not read #$n"
   if is_in_run "$j"; then
     run=$(run_id_of "$j")
-    echo "#$n is in run ${run:-(unknown)}: the Product chat doesn't triage, edit or relabel it. Comment on it, or file a new ticket."
+    echo "#$n is in run ${run:-(unknown)}: the Decision chat doesn't triage, edit or relabel it. Comment on it, or file a new ticket."
     exit 6
   fi
   exit 0
@@ -150,7 +150,7 @@ link_sub() {
   gh api --method POST "repos/$REPO/issues/$1/sub_issues" -F "sub_issue_id=$2" >/dev/null 2>&1
 }
 
-# link_missing_subs plan body subs-json: a plan sent from the Product chat whose
+# link_missing_subs plan body subs-json: a plan sent from the Decision chat whose
 # body lists tickets that are not its sub-issues gets them linked now; a link
 # that fails again stays quiet until the next sweep.
 link_missing_subs() {
@@ -187,7 +187,7 @@ cmd_send() {
     echo "$existing"
     return 0
   fi
-  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body-file - <<<"Sent from the Product chat for the Engineering chat's plan step. It waits here until Engineering plans it.
+  url=$("$SCRIPT_DIR/tracker.sh" new-issue --kind plan --from "${nums[0]}" --project "$PROJECT" -- -R "$REPO" --title "$title" --label plan --body-file - <<<"Sent from the Decision chat for the Run chat's plan step. It waits here until Engineering plans it.
 
 $list
 <!-- artisan-agent:sent-from-product -->") || die "could not create the plan issue"
@@ -215,7 +215,7 @@ cmd_label_run() {
     is_in_run "$j" || gh issue edit "$t" -R "$REPO" --add-label in-run >/dev/null 2>&1 \
       || { echo "chats.sh: could not label #$t in-run" >&2; bad=1; continue; }
     if [ "$(run_id_of "$j")" != "$run" ]; then
-      gh issue comment "$t" -R "$REPO" --body "In run \`$run\`. The Product chat won't triage, edit or relabel this ticket while it is in the run.
+      gh issue comment "$t" -R "$REPO" --body "In run \`$run\`. The Decision chat won't triage, edit or relabel this ticket while it is in the run.
 
 <!-- ${RUN_MARK}$run -->" >/dev/null 2>&1 || { echo "chats.sh: could not comment on #$t" >&2; bad=1; }
     fi
@@ -358,7 +358,7 @@ sweep_gates() {
   [ "$(jq length <<<"$g")" -eq 0 ] || WAITING_TEXT="$WAITING_TEXT$(jq length <<<"$g") review gate(s) waiting; "
 }
 
-# Gates closed by hand. The Engineering chat's runs record the approval
+# Gates closed by hand. The Run chat's runs record the approval
 # (gate.sh sync, which comments on the issue); both chats read the line from
 # the tracker.
 sweep_closed_gates() {
@@ -497,7 +497,7 @@ EOF
   echo
 }
 
-sweep_decisions() { # Engineering chat only: decisions waiting in a live run's state file
+sweep_decisions() { # Run chat only: decisions waiting in a live run's state file
   local main= f= run= n=
   main=$(main_checkout)
   for f in "$main"/.artisan-agent/runs/*/state.json; do
@@ -546,7 +546,7 @@ cmd_sweep() {
   fi
   [ ! -s "$ACTIONS" ] || { cat "$ACTIONS"; }
   # Board adds that failed when their issue was opened (#146), such as a plan
-  # sent from the Product chat, are tried again.
+  # sent from the Decision chat, are tried again.
   "$SCRIPT_DIR/tracker.sh" board-retry --project "$PROJECT" || echo "chats.sh: the board retry failed; the next sweep tries again" >&2
   # A push notification, once per waiting decision, when the terminal is idle.
   notified=$(mem_get '(.notified // []) | join(" ")')

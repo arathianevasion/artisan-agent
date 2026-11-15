@@ -1,6 +1,6 @@
 ---
 name: implement-plan
-description: Run a defined set of work to completion — a plan, several plans, individual tickets, a single ticket, or any mix. The Engineering chat reads the published tickets and their blocking edges, plans a worker for each one (model, brief, expected output), gets the plan approved, then launches a detached headless orchestrator per wave. The orchestrator dispatches workers that each run /artisan-agent:implement in their own worktree, merges their work into the run's integration branch, runs the suite and closes the tickets; the chat reports each wave and files findings for triage. Use this whenever the Artisan wants tickets built — "run this ticket", "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize work over one or more issues, even if they do not say the word "ticket". Claude may call it, for example when another pipeline step hands an approved ticket or plan on to be built.
+description: Run a defined set of work to completion — a plan, several plans, individual tickets, a single ticket, or any mix. The Run chat reads the published tickets and their blocking edges, plans a worker for each one (model, brief, expected output), gets the plan approved, then launches a detached headless orchestrator per wave. The orchestrator dispatches workers that each run /artisan-agent:implement in their own worktree, merges their work into the run's integration branch, runs the suite and closes the tickets; the chat reports each wave and files findings for triage. Use this whenever the Artisan wants tickets built — "run this ticket", "work the backlog", "run the plan", "implement these tickets", "fan out the tickets", "run them in parallel", "kick this off overnight", "burn down the frontier" — and whenever they ask to orchestrate, dispatch, or parallelize work over one or more issues, even if they do not say the word "ticket". Claude may call it, for example when another pipeline step hands an approved ticket or plan on to be built.
 ---
 
 # Implement Plan
@@ -13,13 +13,13 @@ Wherever this skill puts something in front of the Artisan (the plan, a wave dig
 
 ## Two tiers
 
-You are the **Engineering chat**. You stay light: you hold the plan, show progress, take the Artisan's decisions and start each wave. You never dispatch a worker, merge or close a ticket yourself.
+You are the **Run chat**. You stay light: you hold the plan, show progress, take the Artisan's decisions and start each wave. You never dispatch a worker, merge or close a ticket yourself.
 
 Each wave runs in a fresh headless **orchestrator** that you launch detached and then leave alone. It dispatches the wave's **workers** (one headless `claude -p` per ticket, each running `/artisan-agent:implement` in its own worktree), waits on their files, merges their work into the run's integration branch, runs the full suite after each merge, closes each merged ticket, writes the state file after every event, and exits. Its brief is `references/orchestrator.md`; the mechanics both tiers share are in `references/dispatch.md`.
 
 | Who | Holds the state lock | Does | Learns what happened from |
 |---|---|---|---|
-| Engineering chat | between waves | plan step, `wave.sh start`, `wave.sh launch`, reports, decisions, findings for triage | the orchestrator's exit record and result file, and `wave.sh status` (sweep and reconciler) |
+| Run chat | between waves | plan step, `wave.sh start`, `wave.sh launch`, reports, decisions, findings for triage | the orchestrator's exit record and result file, and `wave.sh status` (sweep and reconciler) |
 | Orchestrator | for its wave | `wave.sh dispatch`, `wait-any.sh`, `sweep.sh`, `wave.sh merge`, `wave.sh close`, `wave.sh report` | result files, exit records, git and the tracker |
 | Worker | never | `/artisan-agent:implement` on one ticket in its own worktree | its ticket |
 
@@ -184,4 +184,4 @@ Then every run gets its retro: `/artisan-agent:retro` (`${CLAUDE_PLUGIN_ROOT}/sk
 - Dispatch only on merged work. A ticket is dispatchable only when every blocker is merged into the integration branch, never when its worker merely reported `complete`; a blocker and its dependent are never in flight together. `wave.sh dispatch` enforces this.
 - Neither tier writes product code. A conflict the orchestrator can't merge comes to the Artisan as a blocked ticket.
 - Keep the chat's context small: read the status, result summaries and the tracker; never a worker's or orchestrator's transcript.
-- The tracker duties you share with the Product chat (sweep on every wake and every `sweep_minutes`, `in-run` labels with `chats.sh label-run` right after `state.sh init`, plans queued behind the lock, push notifications): `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`.
+- The tracker duties you share with the Decision chat (sweep on every wake and every `sweep_minutes`, `in-run` labels with `chats.sh label-run` right after `state.sh init`, plans queued behind the lock, push notifications): `${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`.

@@ -3,7 +3,7 @@
 # doesn't erode, and which meets the same quality floor as a worker's. The
 # rules and the flow: skills/implement-plan/references/hands-on.md.
 #
-# At plan approval (the Engineering chat):
+# At plan approval (the Run chat):
 #   human.sh suggest --draft FILE [--minutes N]
 #       the tickets that could be the plan's one hands-on ticket without
 #       delaying the run (off the critical path), as a markdown table with

@@ -82,7 +82,7 @@ When several tickets returned in one wave, measure before choosing the order: li
 
 Closing is the orchestrator's alone, and only on merged work. `wave.sh close` posts the evidence contract on the ticket (`evidence.sh comment`: each criterion with the verifier's evidence, the suite, diff stats, cost against the estimate, what the worker was unsure of, its decisions made alone, and the contract as JSON, exactly as in the state file), ticks the criteria the verifier found met, and closes it. An open criterion on a closed ticket makes the audit trail lie, so an unmet one stays unticked and shows "no" in the comment.
 
-Findings are filed for triage by the Engineering chat between waves (`SKILL.md`, step 7), never by a worker or the orchestrator, and never straight into a wave.
+Findings are filed for triage by the Run chat between waves (`SKILL.md`, step 7), never by a worker or the orchestrator, and never straight into a wave.
 
 ## Cleanup
 

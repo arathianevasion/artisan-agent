@@ -3,7 +3,7 @@
 # draft plan, show them, and take the Artisan's moves and removals. The rules:
 # ${CLAUDE_PLUGIN_ROOT}/references/end-gate.md, "Gate placement".
 #
-# Usage, from the Engineering chat at the plan step:
+# Usage, from the Run chat at the plan step:
 #   gate-plan.sh propose <draft.json> [--config FILE]
 #       writes the draft's `gates`: one slice gate per slice (a ticket with no
 #       `slice` is its own), a risk gate per ticket whose `escalation` names

@@ -187,7 +187,7 @@ test_the_sweep_syncs_a_run_whose_only_review_gate_is_deferred() {
   num=$(open_slice_gate)
   "$A" defer "$RUN_DIR" "$num" --by Andrew --why "Busy today" >/dev/null
   gh issue close "$num" -R local/sample
-  out=$(ARTISAN_REPO=local/sample "$PLUGIN_ROOT/scripts/chats.sh" sweep --chat engineering --no-fetch --project "$PROJECT")
+  out=$(ARTISAN_REPO=local/sample "$PLUGIN_ROOT/scripts/chats.sh" sweep --chat run --no-fetch --project "$PROJECT")
   assert_contains "$out" "Gate #$num closed on GitHub: treated as approved"
   assert_eq approved "$(state_get '.review_gates[0].status')"
 }

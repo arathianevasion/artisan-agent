@@ -17,11 +17,11 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/host-setup.sh` (run it
 | Config records the host | script | `host-setup.sh mark` sets `host_configured: true` in the project's `.artisan-agent/config.yml`; the change reaches the project by PR like any config change |
 | Check the lot | script | `host-setup.sh status`: one `ok:` or `todo:` line per piece; exit 0 only when all are ok |
 
-SSH is only for setting up and repairing the host. Workers are headless, so a permission prompt a worker hits has nobody to answer it and is denied; only the Engineering chat's prompts, gates and questions reach the phone.
+SSH is only for setting up and repairing the host. Workers are headless, so a permission prompt a worker hits has nobody to answer it and is denied; only the Run chat's prompts, gates and questions reach the phone.
 
 ## After setup
 
-The Engineering chat, its orchestrators and workers run on the host once it is configured. The laptop keeps the Product chat and hands-on tickets, which arrive through git. The Artisan opens sessions on the host the same way from the Claude app on a phone or from claude.ai/code or the desktop app on a laptop; each spawns in its own worktree.
+The Run chat, its orchestrators and workers run on the host once it is configured. The laptop keeps the Decision chat and hands-on tickets, which arrive through git. The Artisan opens sessions on the host the same way from the Claude app on a phone or from claude.ai/code or the desktop app on a laptop; each spawns in its own worktree.
 
 Before every wave launch on the host (not an orchestrator hand-off), `wave.sh launch` runs `login-check.sh check`: it refuses (exit 15, nothing launched) when the login would expire before the span of the tickets the run has left plus a margin, and tells the Artisan to log in again and `stamp`. A machine with no `host.json` written by host setup is not a host and is never checked, so without a host everything runs on the laptop unchanged.
 
@@ -33,7 +33,7 @@ Before every wave launch on the host (not an orchestrator hand-off), `wave.sh la
 | `host.json` | individual home | this machine is the host | `host-setup.sh apply` only (a rerun changes nothing) |
 | `login.json` | individual home | when the claude.ai login was made | `login-check.sh stamp` |
 
-Before starting a run, `implement-plan` runs `${CLAUDE_PLUGIN_ROOT}/scripts/host-notice.sh`. With `host_configured` true on a machine that is not the host it exits 10 and prints one line; the Engineering chat says it and offers to start the run on the host, and starts it here only if the Artisan says so. On the host, or with `host_configured` false or absent, the run starts as usual. A laptop whose `host.json` came only from an old login stamp (it has no `configured: true`) is not a host; `host-notice.sh` prints a `legacy:` line offering `login-check.sh cleanup`, which moves the stamp to `login.json` and removes the file.
+Before starting a run, `implement-plan` runs `${CLAUDE_PLUGIN_ROOT}/scripts/host-notice.sh`. With `host_configured` true on a machine that is not the host it exits 10 and prints one line; the Run chat says it and offers to start the run on the host, and starts it here only if the Artisan says so. On the host, or with `host_configured` false or absent, the run starts as usual. A laptop whose `host.json` came only from an old login stamp (it has no `configured: true`) is not a host; `host-notice.sh` prints a `legacy:` line offering `login-check.sh cleanup`, which moves the stamp to `login.json` and removes the file.
 
 To bring a run home or send it to the host, see `${CLAUDE_PLUGIN_ROOT}/skills/implement-plan/references/host-and-move.md`.
 

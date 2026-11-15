@@ -25,7 +25,7 @@
 #       those carried from an earlier gate; a Human check is never one of
 #       the gate's tickets or dependents.
 #
-# Usage, from the Engineering chat (or the Product chat: the Artisan can act
+# Usage, from the Run chat (or the Decision chat: the Artisan can act
 # from either):
 #   gate.sh list [<run-dir>]
 #       the open review-gate issues on the tracker, batched by job and role, as

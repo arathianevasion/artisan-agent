@@ -1,4 +1,4 @@
-# chats.sh: the Engineering and Product chats through the tracker (#73).
+# chats.sh: the Run and Decision chats through the tracker (#73).
 # A fake `gh` over a folder tracker; nothing reaches GitHub.
 
 . "$TESTS_DIR/helpers/run-state.sh"
@@ -81,7 +81,7 @@ test_send_refuses_a_ticket_already_in_a_run() {
   assert_contains "$(cat "$TEST_TMPDIR/out")" "already in run"
 }
 
-test_the_engineering_chat_picks_up_a_sent_plan_on_its_next_sweep() {
+test_the_run_chat_picks_up_a_sent_plan_on_its_next_sweep() {
   setup_chats
   ticket 345
   "$C" send 345 >/dev/null
@@ -92,7 +92,7 @@ test_the_engineering_chat_picks_up_a_sent_plan_on_its_next_sweep() {
   assert_contains "$out" "ACTION start-plan 346 approve-envelope"
 }
 
-test_the_product_chat_refuses_to_triage_edit_or_relabel_an_in_run_ticket() {
+test_the_decision_chat_refuses_to_triage_edit_or_relabel_an_in_run_ticket() {
   setup_chats
   ticket 1
   ticket 2 needs-triage
@@ -171,7 +171,7 @@ test_a_sweep_lists_open_gates_batched_by_job_and_role() {
   assert_contains "$out" "#22 (slice: design, run r2)"
   case "$out" in *"#20 (slice"*) fail "the Product role saw an Engineering gate" ;; esac
   # Both chats see the same gates, from the tracker.
-  assert_contains "$(sweep --chat product)" "#20 (slice: export, run r1)"
+  assert_contains "$(sweep --chat decision)" "#20 (slice: export, run r1)"
   # And `gate.sh list` reads the tracker too, with no run folder at all.
   assert_contains "$("$SCRIPTS/gate.sh" list)" "#22 (slice: design, run r2)"
 }
@@ -199,11 +199,11 @@ test_a_gate_closed_on_github_is_announced_in_one_line_by_either_chat() {
   jq -n '{number: 30, title: "Slice gate: export (run r1)", state: "closed", labels: [{name: "review-gate"}], body: "x"}' >"$FAKE_GH_DIR/issue-30.json"
   printf 'Gate #30 closed on GitHub: treated as approved; 3 undecided cards carried to the end gate\n\n<!-- artisan-agent:gate-closed-by-hand carried=3 -->' >"$FAKE_GH_DIR/comments-30.md"
   local out=
-  out=$(sweep --chat product)
+  out=$(sweep --chat decision)
   assert_contains "$out" "Gate #30 closed on GitHub: treated as approved; 3 undecided cards carried to the end gate"
-  out=$(sweep --chat product)
+  out=$(sweep --chat decision)
   case "$out" in *"Gate #30 closed"*) fail "announced twice" ;; esac
-  # The Engineering chat keeps its own memory.
+  # The Run chat keeps its own memory.
   assert_contains "$(sweep)" "Gate #30 closed on GitHub"
 }
 
@@ -224,11 +224,11 @@ test_a_plan_waiting_for_its_envelope_notifies_when_idle() {
   assert_contains "$(sweep --idle)" "needs its run envelope approved"
 }
 
-test_the_product_chat_never_reads_a_run_state_file() {
+test_the_decision_chat_never_reads_a_run_state_file() {
   setup_chats
   "$SCRIPTS/state.sh" decision "$RUN_DIR" <(echo '{"id":1,"kind":"exception","question":"q","status":"waiting"}') >/dev/null
   assert_contains "$(sweep)" "Run r1 has 1 decision(s) waiting"
-  case "$(sweep --chat product --idle)" in *"decision(s) waiting"*) fail "the Product chat read the run's state file" ;; esac
+  case "$(sweep --chat decision --idle)" in *"decision(s) waiting"*) fail "the Decision chat read the run's state file" ;; esac
 }
 
 test_an_orchestrators_unclean_exit_notifies_at_once_naming_its_cause() {
