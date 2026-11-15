@@ -19,6 +19,7 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/project-setup.sh` (run
 | PR boundaries guardrail | `CODING_STANDARDS.md` `## Guardrails`, line `` - `pr-boundaries`: one PR per <slice\|plan\|ticket> `` | product level (the project's own `CODING_STANDARDS.md`). `end-gate.sh` reads the levels in this order and takes the first that has the line: product; team (the same `## Guardrails` line in `CODING_STANDARDS.md` at the root of the team guardrails repo, `team_guardrails_repo` in `.artisan-agent/config.yml`); individual (the same line in `CODING_STANDARDS.md` in the Artisan's individual home, `~/.claude/artisan-agent/`). Question 1 says which level the answer goes to |
 | The project's checks | `CODING_STANDARDS.md` `## Checks` | only checks proven to fail, with the date and the break used; the worker, verifier and plan step read them through `${CLAUDE_PLUGIN_ROOT}/scripts/checks.sh` (`references/checks.md`) |
 | The ten labels | the tracker, and `docs/agents/triage-labels.md` | upstream's five (the strings the doc maps them to) plus `review-gate`, `plan`, `in-run`, `urgent`, `deferred` |
+| The project's board (#146) | `tracker.board` in `.artisan-agent/config.yml` | learnt from `docs/agents/issue-tracker.md`: a linked GitHub Project (`github.com/users\|orgs/<owner>/projects/<number>`) and the fields a table row says whoever files the issue sets (`scan` prints them on a `board` line). Recorded only when the config has none; a doc without a board records nothing. Then every issue the plugin opens that outlives a run goes on that board with those fields copied from its source ticket (`${CLAUDE_PLUGIN_ROOT}/references/tracker-board.md`) |
 | Who the Artisan is; agent tickets carry `needs-triage` | `docs/agents/issue-tracker.md` `## Conventions` | GitHub: `gh api user --jq .login` and the login at setup; local markdown: `git config user.name`, no `gh` call; GitLab: `glab api user` |
 | Front-door pointer | `CLAUDE.md` (or `AGENTS.md` if only that exists) | "Start with `/artisan-agent:craft`." |
 | Main-checkout protection fallback | the repo's git hooks dir | `${CLAUDE_PLUGIN_ROOT}/guard/install-pre-commit.sh`; local to the clone, not in the PR |
@@ -30,7 +31,7 @@ The motivation never goes in the PR: it is committed to the individual home (`mo
 ## Steps
 
 1. **Machine first.** If `scan` says `individual-home missing`, do the machine-level part (`SKILL.md`) first.
-2. **Scan:** `bash "$ps" scan` (`ps` as in step 7). If it says `upstream missing`, tell the Artisan to type `/mattpocock-skills:setup-matt-pocock-skills` first, and stop. Otherwise note what's present, the tracker, the candidate `check` lines and whether a motivation is recorded.
+2. **Scan:** `bash "$ps" scan` (`ps` as in step 7). If it says `upstream missing`, tell the Artisan to type `/mattpocock-skills:setup-matt-pocock-skills` first, and stop. Otherwise note what's present, the tracker, the board (a `board` line: owner/number and the fields set at filing), the candidate `check` lines and whether a motivation is recorded. When the tracker doc plainly describes a board that `scan` printed no `board` line for (or got wrong), read it yourself and put it in the answers as `tracker_board`; show it in the defaults summary (step 6) either way.
 3. **Ask the five questions** (below), conversationally, one at a time, each with your recommendation. Nothing else is a question.
 4. **Prove each chosen check fails** before anything trusts it (below).
 5. **Probe the hook:** `bash "$ps" hook-probe`. `fires` means plugin hooks work here and no hook goes in project settings; `silent` sets `hook_fallback`. It runs one headless `claude -p` capped at `--max-turns 1 --max-budget-usd 0.05`; when the hook fires the block happens before any model call and costs nothing.
@@ -98,11 +99,12 @@ The worktree is removed afterwards whatever happens; the main checkout is never 
                "prepare": "npm ci", "runs_locally": "always" }],
   "hook_fallback": false,
   "ci_gate_workflow": "ci.yml",
-  "worktree_setup": "npm ci --prefer-offline"
+  "worktree_setup": "npm ci --prefer-offline",
+  "tracker_board": { "owner": "arathianevasion", "number": 1, "fields_at_filing": ["Area"] }
 }
 ```
 
-Every key is optional. `apply` proves each check again with its `break_cmd` (and `prepare`) before recording it, so a check is never recorded on the agent's say-so; an entry without `break_cmd`, or one that isn't `proven`, is reported and left out. `pr_boundary` is written to the PR only when `pr_level` is `product`. The motivation is never in this file.
+Every key is optional. `apply` proves each check again with its `break_cmd` (and `prepare`) before recording it, so a check is never recorded on the agent's say-so; an entry without `break_cmd`, or one that isn't `proven`, is reported and left out. `pr_boundary` is written to the PR only when `pr_level` is `product`. `tracker_board` is needed only when `scan`'s `board` line is missing or wrong: without it, `apply` records the board the tracker doc describes, or none. The motivation is never in this file.
 
 ## Rerun
 

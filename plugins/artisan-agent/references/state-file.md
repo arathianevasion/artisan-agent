@@ -252,6 +252,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - `conflict` (`ticket`, `paths`, `next`)
 - `resolve` (`ticket`, `outcome`, `why?`)
 - `finding` (`from`, `seq`, `target`, `action`)
+- `board-add-failed` (`issue`, `kind`, `from?`, `why`: an issue `tracker.sh` created but could not add to the project's board; queued, and the next sweep adds it, #146)
 - `design-question` (`ticket`)
 - plus `integration` `orchestrator` and `guardrail-merge` (`wave`, `from`: `main`'s commit brought into the integration branch because a product guardrail changed, `by?`: who answered when the run's base was not in main; `references/guardrails.md`)
 - `guardrail-base-kept` (`wave`, `ref_commit`, `in_force`, `decision`: the Artisan kept the guardrails as of the run's base) for the run's own steps
@@ -356,6 +357,8 @@ The retro's merge gate figures (`retro.py facts`, `merge_gates` and `artisan_wai
 4. The pid is not alive: a failed attempt (a crash that wrote nothing).
 
 A failed attempt appends to `failures` and sends the ticket back to `queued`, or, once `attempts` reaches `attempts_per_ticket`, to `blocked` with an `exception` decision queued for the Artisan. The sweep then logs new complete lines of every findings file and recomputes `costs`.
+
+After the state is written, the sweep tries again every board add that failed when its issue was opened (`tracker.sh board-retry`, `references/tracker-board.md`, #146); the queue is the project's, not the run's, so nothing in the state file changes.
 
 **Repair (#151).** Plugin 0.4.0 found a session's `result` event by the start of its line, and current `claude -p` writes `"type"` after other keys, so `output.json` came out empty: every finished worker was judged `failed crashed`, its cost was lost, and after two such attempts an exception gate opened. `sweep.sh repair <run-dir>` mends such a run, once, under the lock:
 
