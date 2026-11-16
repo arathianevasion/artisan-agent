@@ -30,10 +30,12 @@
 #       decided that an agent would have needed) and whether to nudge (N runs, default 5, with none)
 #   guardrail-health.sh backstop --runs DIR... [--repo-dir D] [--main REF] [--since DATE]
 #       [--prs FILE] [--closed FILE] [--table]
-#       (pass --since: without it every ticket ever closed is checked)
+#       (pass --since: without it every ticket ever closed and every PR merged is checked)
 #       commits straight to main, PRs and merges with no run record, tickets
-#       closed outside a run. --prs and --closed are JSON files standing in for
-#       `gh pr list` and `gh issue list`.
+#       closed outside a run. A run's own gate and plan issues are closed in
+#       that run; its end-gate (pr/<run-id>/...) and retro (retro/<run-id>)
+#       branches are its record. --prs and --closed are JSON files standing in
+#       for `gh pr list` and `gh issue list`.
 #   guardrail-health.sh bugs --runs DIR... [--since DATE] [--issues FILE] [--bugs FILE] [--table]
 #       the retro's candidate bugs: `bug` issues opened since DATE (the last
 #       retro) whose title or body mentions a ticket a run closed (#<n>), each
@@ -348,13 +350,18 @@ cmd_backstop() {
     --slurpfile commits "$WORK/commits.json" --arg since "$since" '
     $states[0] as $states | $prs[0] as $prs | $closed[0] as $closed | $commits[0] as $commits
     | ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits
-    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]) as $branches
+    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]
+       + [$states[] | "retro/\(.run_id)", ((.end_gate.prs // [])[] | .branch // empty), ((.urgent_gates // {})[] | .pr.branch // empty)]) as $branches
+    | ([$states[] | "pr/\(.run_id)/"]) as $prprefixes
     | ([$prs[] | .mergeCommit.oid // .mergeCommit // empty]) as $prcommits
     | ([$states[] | (.tickets // {}) | to_entries[] | select(.value.status == "merged" or .value.status == "closed") | .key]
-       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]) as $inrun
+       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]
+       + [$states[] | ((.plans // [])[] | .number), ((.review_gates // [])[], (.exception_gates // [])[], (.overrun_gates // [])[],
+            (.end_gate // empty), (.urgent_gates // {})[] | .issue) | values | tostring]) as $inrun
     | { direct_commits: [$commits[] | select(.parents == 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
         unrecorded_merges: [$commits[] | select(.parents > 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
-        prs_without_run: [$prs[] | select((.headRefName | IN($branches[])) | not) | {number, headRefName}],
+        prs_without_run: [$prs[] | select($since == "" or (.mergedAt // "") >= $since) | .headRefName as $b
+          | select(($b | IN($branches[])) or any($prprefixes[]; . as $p | $b | startswith($p)) | not) | {number, headRefName}],
         tickets_closed_outside_run: [$closed[] | select(($since == "" or (.closedAt // "") >= $since) and ((.number | tostring) | IN($inrun[]) | not)) | .number] }')
   if [ "$TABLE" = 1 ]; then
     jq -r "$(state_jq_row_def)"'

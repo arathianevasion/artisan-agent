@@ -24,6 +24,7 @@ The state file is the record of a run's plan, progress and evidence that lets an
       workers/orchestrator-w<w>.<n>/transcript.path  the orchestrator's transcript (its SessionStart hook), for drain.sh check
       workers/orchestrator-w<w>.<n>/handoff.json     the hand-off marker its PreCompact hook left
       .digest-seen                 the last event seq the chat was shown in the run digest (run-digest.sh)
+      waiter.pid                   "<pid> <orchestrator-id> <attempt>" while a `wave.sh wait` waits on that orchestrator; status and the digest check the pid is alive (#237)
 ```
 
 Beside the repo, never inside it: `<repo>-wt/run-<run-id>/` is the run's integration worktree (the integration branch checked out; every merge happens here) and `<repo>-wt/<run-id>-<ticket>.<n>/` each worker's worktree, removed once its ticket merges. `scripts/wave.sh` makes and removes them.
