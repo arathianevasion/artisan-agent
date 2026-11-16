@@ -4,7 +4,7 @@ A **gate** is a point where the Artisan reviews work before what depends on it c
 
 Skills cite this file rather than copying it.
 
-A **risk gate** placed on a ticket (an escalation test, or a worker's new-seam card) is opened, held and answered exactly as a slice gate of that one ticket, with kind `risk` and its own title; placement, risk gates and the end gate are `references/end-gate.md` (#71). An urgent ticket gets no risk gate: its own end gate packet names the escalation tests it meets instead.
+A **risk gate** placed on a ticket (an escalation test, or a worker's new-seam card) is opened, held and answered exactly as a slice gate of that one ticket, with kind `risk` and its own title; placement, risk gates and the end gate are `references/end-gate.md` (#71). An urgent ticket gets no risk gate: its own end gate packet names the escalation tests it meets instead. A risk gate whose ticket nothing still to merge depends on folds into its slice gate (or the end gate) instead of opening (#241, `references/end-gate.md`, "Folded risk gates"): the slice gate's packet shows it under "Folded risk gates", and approving the slice gate answers it.
 
 ## Slices in the plan
 

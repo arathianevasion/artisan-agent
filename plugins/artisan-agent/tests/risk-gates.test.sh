@@ -227,3 +227,110 @@ test_bypassing_a_gate_no_guardrail_opened_logs_no_guardrail_bypassed() {
   "$PLUGIN_ROOT/scripts/gate-action.sh" bypass "$RUN_DIR" "$(state_get '.review_gates[0].issue')" --why x >/dev/null
   assert_eq 0 "$(state_get '[.events[] | select(.event == "guardrail-bypassed")] | length')"
 }
+
+# ------------------------------------------- folded risk gates (#241)
+# Nothing in the run depends on #3 (only #4 has a dependent, #3 itself), so a
+# risk gate on #3 holds no ticket: it folds into the next gate covering #3.
+
+review_gate_issues() { # how many review-gate issues the fake tracker holds
+  local n=0 f=
+  for f in "$FAKE_GH_DIR"/issue-*.json; do
+    jq -e 'any(.labels[]?; .name == "review-gate")' "$f" >/dev/null && n=$((n + 1))
+  done
+  echo "$n"
+}
+
+test_a_planned_risk_gate_with_no_unmerged_dependent_folds_into_its_slice_gate() {
+  setup_risk '[{"kind": "slice", "tickets": ["3", "4"]}, {"kind": "risk", "after": "3", "tests": ["new-seam"]}, {"kind": "end"}]'
+  merged_with_cards 4 none
+  merged_with_cards 3 none
+  local out= num=
+  out=$("$G" sync "$RUN_DIR")
+  assert_contains "$out" "folded risk-2 into slice-1"
+  num=$(printf '%s\n' "$out" | sed -n 's/^opened #\([0-9]*\) slice-1$/\1/p')
+  [ -n "$num" ] || fail "sync opened no slice gate: $out"
+  assert_eq 1 "$(review_gate_issues)" "the risk gate opened no issue of its own"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.gate == "risk-2")] | length')" "nor a decision"
+  assert_eq "folded slice-1" "$(state_get '.review_gates[] | select(.id == "risk-2") | "\(.status) \(.folded_into)"')"
+  local body=
+  body=$(jq -r .body "$FAKE_GH_DIR/issue-$num.json")
+  assert_contains "$body" "## Folded risk gates"
+  assert_contains "$body" "### risk-2: #3 (Ticket 3)"
+  assert_contains "$body" "- **Raised for:** new seam or module boundary"
+  assert_contains "$body" "- **Its cards:** 1, under Decisions"
+  assert_contains "$("$G" chat "$RUN_DIR")" "Folded risk gates, answered with this one: risk-2"
+  # Approving the slice gate answers the folded one, unchanged.
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  assert_eq "approved slice-1" "$(state_get '.review_gates[] | select(.id == "risk-2") | "\(.status) \(.answered_with)"')"
+  assert_eq "approve 13 false" "$(state_get '.decisions[] | select(.gate == "risk-2") | "\(.choice) \(.job) \(.changed)"')"
+  assert_eq '["gate-folded","gate-decision keep slice-1","gate-approved"]' \
+    "$(state_get '[.events[] | select(.gate == "risk-2") | .event + (if .event == "gate-decision" then " \(.outcome) \(.folded_into)" else "" end)]' | jq -c .)"
+  assert_eq free "$("$G" holds "$RUN_DIR" 3)"
+  # A second sync opens and folds nothing.
+  assert_eq "" "$("$G" sync "$RUN_DIR")"
+}
+
+test_a_risk_gate_with_an_unmerged_dependent_opens_and_holds_as_before() {
+  setup_risk '[{"kind": "slice", "tickets": ["1", "2"]}, {"kind": "risk", "after": "1", "tests": ["new-seam"]}, {"kind": "end"}]'
+  merged_with_cards 1 none
+  local out=
+  out=$("$G" sync "$RUN_DIR")
+  assert_contains "$out" "risk-2"
+  assert_not_contains "$out" "folded"
+  assert_eq open "$(state_get '.review_gates[] | select(.id == "risk-2") | .status')"
+  assert_eq held "$("$G" holds "$RUN_DIR" 1 2)"
+}
+
+test_a_kept_risk_gate_opens_on_its_own() {
+  setup_risk '[{"kind": "slice", "tickets": ["3", "4"]}, {"kind": "risk", "after": "3", "tests": ["new-seam"], "own": true}, {"kind": "end"}]'
+  merged_with_cards 4 none
+  merged_with_cards 3 none
+  assert_contains "$("$G" sync "$RUN_DIR")" "opened #"
+  assert_eq open "$(state_get '.review_gates[] | select(.id == "risk-2") | .status')"
+  assert_eq 2 "$(review_gate_issues)"
+}
+
+test_a_new_seam_cards_risk_gate_folds_by_the_same_rule() {
+  setup_risk '[{"kind": "slice", "tickets": ["3", "4"]}, {"kind": "end"}]'
+  merged_with_cards 4 none
+  merged_with_cards 3 3
+  assert_contains "$("$G" sync "$RUN_DIR")" "folded risk-seam-3 into slice-1"
+  assert_eq 1 "$(review_gate_issues)"
+}
+
+test_a_context_band_risk_gate_folds_into_the_end_gate_once_its_slice_gate_has_opened() {
+  setup_risk '[{"kind": "slice", "tickets": ["3", "4"]}, {"kind": "end"}]'
+  merged_with_cards 4 none
+  merged_with_cards 3 none
+  assert_contains "$("$G" sync "$RUN_DIR")" "slice-1"
+  "$PLUGIN_ROOT/scripts/drain.sh" gate "$RUN_DIR" 3 55
+  assert_eq "folded end" "$(state_get '.review_gates[] | select(.id == "risk-context-3") | "\(.status) \(.folded_into)"')"
+  assert_eq 1 "$(review_gate_issues)" "only the slice gate's issue"
+  local packet=
+  packet=$("$PLUGIN_ROOT/scripts/end-gate.sh" packet "$RUN_DIR" 2>&1)
+  assert_contains "$packet" "## Folded risk gates"
+  assert_contains "$packet" "### risk-context-3: #3 (Ticket 3)"
+  assert_contains "$packet" "merged at 55% context, the review band"
+  assert_contains "$packet" "| 1 | #3 | Where does the export seam go? → to_csv() | firm |"
+}
+
+test_guardrail_health_counts_a_folded_area_risk_gate_approved_unchanged_with_its_slice_gate() {
+  setup_risk '[{"kind": "slice", "tickets": ["3", "4"]}, {"kind": "risk", "after": "3", "tests": ["area:billing"]}, {"kind": "end"}]'
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.tickets["3"].areas = ["billing"]'
+  merged_with_cards 4 none
+  merged_with_cards 3 none
+  local num=
+  num=$("$G" sync "$RUN_DIR" | sed -n 's/^opened #\([0-9]*\) slice-1$/\1/p')
+  assert_eq '[{"guardrail":"area:billing","gate":"risk-2"}]' \
+    "$(state_get '[.events[] | select(.event == "guardrail-fired") | {guardrail, gate}]' | jq -c .)" "the folded gate fired its guardrail"
+  "$G" approve "$RUN_DIR" "$num" >/dev/null
+  mkdir -p "$ARTISAN_HOME"
+  jq -nc '{id: "billing-risk", key: "area-gates", value: "risk", area: "billing", rule: "r", strict: 1,
+           origin: {date: "2026-01-01T00:00:00Z", reason: "seed", who: "Andrew"}, moves: []}' >"$ARTISAN_HOME/guardrails.jsonl"
+  git_quiet -C "$ARTISAN_HOME" init
+  git_quiet -C "$ARTISAN_HOME" add -A
+  git_quiet -C "$ARTISAN_HOME" commit -m seed
+  local out=
+  out=$(cd "$PROJECT" && "$PLUGIN_ROOT/scripts/guardrail-health.sh" health --runs "$RUN_DIR")
+  assert_eq '["slice-1","risk-2"]' "$(jq -c '[.guardrails[] | select(.id == "billing-risk") | .loosen.evidence[] | select(.kind == "gate approved unchanged") | .gate]' <<<"$out")"
+}

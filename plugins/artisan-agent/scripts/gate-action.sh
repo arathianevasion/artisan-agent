@@ -238,7 +238,9 @@ parse_opts() { # --bug only where BUG_OK=1 (redirect, retry, take); the criterio
 # The events guardrail health reads go in the same write (#122): a bypass
 # of a gate a guardrail opened logs guardrail-bypassed per guardrail; a
 # redirect logs gate-decision (outcome change, redirect true, the tickets'
-# areas); --bug logs bug-found for each of the gate's tickets.
+# areas); --bug logs bug-found for each of the gate's tickets. A redirect or
+# bypass of a review gate also answers the risk gates folded into it
+# (answer_folded, #241); a deferred gate's folded gates wait for its approval.
 record_answer() {
   local status="$1" choice="$2" field="$3" extra="$4" job=13
   shift 4
@@ -268,7 +270,9 @@ record_answer() {
          event({event: "gate-decision", gate: $gt.id, card: null, by: $by, outcome: "change", redirect: true,
                 areas: ticket_areas($gt.tickets // [])}; $now)
        else . end)
-    | (if $bug == 1 then reduce ($gt.tickets // [])[] as $bt (.; bug_found($bt; $gt.id; $by; $why; $now)) else . end)' \
+    | (if $bug == 1 then reduce ($gt.tickets // [])[] as $bt (.; bug_found($bt; $gt.id; $by; $why; $now)) else . end)
+    | (if $list == "review_gates" and ($status == "redirected" or $status == "bypassed")
+       then answer_folded($gt.id; $status; $by; false; $now) else . end)' \
     --arg list "$LIST" --arg issue "$(g .issue)" --arg status "$status" --arg choice "$choice" \
     --arg field "$field" --argjson job "$job" --arg by "$BY" --arg why "$WHY" --arg notes "$NOTES" \
     --arg redirect "$REDIRECT" --argjson bug "$BUG" "$@"

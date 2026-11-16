@@ -394,8 +394,28 @@ test_only_a_didnt_need_the_decision_chat_ruling_is_loosen_evidence_for_open_deci
   assert_eq "built-in fired 2 0" "$(od_row "$out" | jq -r '"\(.level) \(.status) \(.loosen.count) \(.tighten.count)"')"
   assert_eq "40 41" "$(od_row "$out" | jq -r '[.loosen.evidence[].question] | join(" ")')"
   assert_eq none "$(proposal "$out" open-decision)"
-  run r2 "[$(ruled 50 true false)]"
+  run r2 "[$(od worker 9 50), $(ruled 50 true false)]"
   assert_eq loosen "$(proposal "$("$H" health --runs "$(R r1)" "$(R r2)")" open-decision)"
+}
+
+# Only a ruling on an open decision filed in the same run is its loosen
+# evidence (#239): a criterion 1-7 worker question's ruling counts neither way.
+test_a_ruling_on_a_question_that_was_not_an_open_decision_is_not_loosen_evidence() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(od worker 5 40), $(ruled 40 true false), $(ruled 41 true false)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq "1 40" "$(od_row "$out" | jq -r '"\(.loosen.count) \([.loosen.evidence[].question] | join(" "))"')"
+}
+
+test_a_run_with_only_a_worker_questions_ruling_shows_no_open_decision_loosen_evidence() {
+  setup "$(g quiet kq 1)"
+  run r1 "[$(ruled 41 true false)]"
+  out=$("$H" health --runs "$(R r1)")
+  assert_eq 0 "$(jq '[.guardrails[] | select(.id == "open-decision") | .loosen.count] | add // 0' <<<"$out")"
+  # An open decision filed in another run doesn't make this run's ruling count.
+  run r2 "[$(od worker 6 41)]"
+  out=$("$H" health --runs "$(R r1)" "$(R r2)")
+  assert_eq 0 "$(od_row "$out" | jq '.loosen.count')"
 }
 
 test_an_open_decision_raised_at_a_gate_or_after_its_ticket_merged_is_tighten_evidence() {

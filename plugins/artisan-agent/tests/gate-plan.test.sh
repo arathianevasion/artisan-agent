@@ -10,7 +10,7 @@ draft() { # route
     scope: ["1", "2", "3"], waves: [["1"], ["2", "3"]],
     tickets: {
       "1": {title: "export seam", slice: "export", escalation: ["new-seam"]},
-      "2": {title: "CSV header", slice: "export"},
+      "2": {title: "CSV header", slice: "export", blocked_by: ["1"]},
       "3": {title: "billing tab", slice: "billing", escalation: ["judgement-criteria", "vocabulary-adr"]}}}' >draft.json
 }
 
@@ -22,7 +22,7 @@ test_propose_places_a_slice_gate_per_slice_every_risk_gate_and_the_end_gate() {
   assert_contains "$(cat out.md)" "| Gate | Kind | Opens after | Why | Can be removed |"
   assert_contains "$(cat out.md)" "| slice-1 | slice | #1 (export seam), #2 (CSV header) merge | the slice export is reviewable end to end | yes |"
   assert_contains "$(cat out.md)" "| risk-3 | risk | #1 (export seam) merges | new seam or module boundary | yes |"
-  assert_contains "$(cat out.md)" "| risk-4 | risk | #3 (billing tab) merges | judgement-like acceptance criteria, change to vocabulary or an ADR | yes |"
+  assert_contains "$(cat out.md)" "| risk-4 | risk | #3 (billing tab) merges; folded into slice-2 | judgement-like acceptance criteria, change to vocabulary or an ADR | yes |"
   assert_contains "$(cat out.md)" "| end | end | every ticket in scope is done | the end gate, before the PRs to main | yes |"
   assert_contains "$(cat out.md)" "Exception gates are never placed here"
 }
@@ -102,7 +102,46 @@ test_a_proposal_already_in_the_plan_is_kept_until_the_artisan_reproposes() {
   "$GP" remove draft.json risk-3 >/dev/null
   "$GP" render draft.json >out.md
   assert_eq 4 "$(jq '.gates | length' draft.json)"
-  assert_contains "$(cat out.md)" "| risk-3 | risk | #3 (billing tab) merges |"
+  assert_contains "$(cat out.md)" "| risk-3 | risk | #3 (billing tab) merges; folded into slice-2 |"
+}
+
+# Folding (#241): a risk gate whose ticket nothing in scope depends on holds
+# no ticket, so it goes into the next gate covering its ticket.
+
+test_a_risk_gate_whose_ticket_has_no_dependent_in_scope_shows_folded_into_its_slice_gate() {
+  draft feature
+  "$GP" propose draft.json >out.md
+  assert_contains "$(cat out.md)" "| risk-3 | risk | #1 (export seam) merges | new seam or module boundary | yes |" "#2 depends on #1: it holds"
+  assert_contains "$(cat out.md)" "| risk-4 | risk | #3 (billing tab) merges; folded into slice-2 |"
+  assert_contains "$(cat out.md)" "A folded risk gate opens no issue of its own"
+}
+
+test_a_risk_gate_folds_into_the_end_gate_once_its_slice_gate_is_removed() {
+  draft feature
+  "$GP" propose draft.json >/dev/null
+  "$GP" remove draft.json slice-2 >out.md
+  assert_contains "$(cat out.md)" "| risk-3 | risk | #3 (billing tab) merges; folded into end |"
+  "$GP" remove draft.json end >out.md
+  assert_contains "$(cat out.md)" "| risk-3 | risk | #3 (billing tab) merges | judgement-like" "no gate to fold into: it opens on its own"
+}
+
+test_a_human_check_is_no_dependent_that_keeps_a_risk_gate_open() {
+  draft feature
+  jq '.scope += ["9"] | .tickets["9"] = {title: "try the tab", human_check_for: "3", blocked_by: ["3"]}' draft.json >d && mv d draft.json
+  "$GP" propose draft.json >out.md
+  assert_contains "$(cat out.md)" "#3 (billing tab) merges; folded into"
+}
+
+test_the_artisan_keeps_a_folded_risk_gate_as_its_own_gate() {
+  draft feature
+  "$GP" propose draft.json >/dev/null
+  "$GP" keep draft.json risk-4 >out.md
+  assert_eq true "$(jq '.gates[3].own' draft.json)" "the choice is recorded on the draft"
+  assert_contains "$(cat out.md)" "| risk-4 | risk | #3 (billing tab) merges; kept as its own gate |"
+  assert_not_contains "$(cat out.md)" "A folded risk gate opens no issue of its own"
+  local st=0
+  "$GP" keep draft.json slice-1 >/dev/null 2>&1 || st=$?
+  assert_eq 6 "$st" "only a risk gate can be kept"
 }
 
 # Areas (#77): per-area gate settings at the plan step.

@@ -53,6 +53,14 @@ While a flag stands, the plan can't be approved: `check` exits 1, so `publish` r
 - **Split it**: `to-plan.sh split-human-check --repo <owner/name> [--graph <graph.json> [--plans <plans.json>]] <ticket> "<criterion>"` moves the criterion off the agent ticket into its Human check ticket, creating that ticket (title, marker, `ready-for-human`, blocking edge) or adding to the existing one. Running it again changes nothing. It reads the agent ticket's criteria the way the verifier does (`scripts/lib/criteria.py ticket`: the body's, else the newest triage comment's with an Agent Brief heading; in either, the checkboxes under an "Acceptance criteria" heading, or every checkbox in one with no such heading, as in the triage brief's `**Acceptance criteria:**` list) and moves that one line off wherever they live, editing the body or that comment in place (`scripts/lib/criteria-lib.sh`).
 - **Override it**: the Artisan decides the criterion stays, with a reason: `--override-human-check <ticket> "<criterion>" --why "<reason>"` on `to-plan.sh check` or `publish`, or on `plan.sh build`. It is recorded on the plan (`human_check_overrides` in `plans.json` and the plan issue's body; in `plan.json` at the plan step).
 
+## Measured after merge
+
+A fact measured on the run's PR or CI run after merge ("A PR run's wall time is <= 8 min. Give the run id.", a PR's CI timing, a run's duration or run id) can't be observed by anyone inside a run: workers open no PR, and the verifier runs before the merge (#244).
+The plan check flags it as a Human check flag, beside the phrases: `human_check_flags` gives it `"after_merge": true`, with the measure as its `phrase`, and `render` shows it as "(measured after merge)".
+The rule is `scripts/lib/criteria.py` `after_merge_criterion`: the criterion names the PR, a pull request or CI, and a measure of a run (wall time, duration, timing, run id, runtime). One that names a script or a condition is about code, and one `merge_gate_criterion` reads is the merge gate's, so neither is flagged.
+It is cleared like any Human check flag: split it into the ticket's Human check (recommended), or override it with a reason.
+If one reaches a verifier anyway, the verifier reads it by the same rule: it needs a check after merge, never fails the attempt, and moves to the Human check (`references/evidence-contract.md`, "Checked by the merge gate").
+
 ## Merge-gate flags
 
 A worker runs no CI, opens no PR and runs only the tests that cover its change; the merge gate runs the suite (or CI) on every merge. So an agent criterion that needs CI, a PR or the full suite can't be met by a worker. Worded as a merge-gate criterion ("CI is green", "the PR shows ...", `GLOSSARY.md`), the verifier leaves it to the merge gate. Worded any other way ("CI green on this ticket's branch", "All tests pass on CI", "The full suite passes"), the verifier would judge it, and the ticket fails its attempts.

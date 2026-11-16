@@ -14,10 +14,30 @@
 #     ticket, rewrite it, drop it with a reason, or retry anyway; and bypass
 #     or defer, as on any exception gate.
 #
+#   GATE_FOLD_JQ: the fold rule (#241), one jq def gate-plan.sh render and
+#     gate.sh open (sync, drain.sh gate) both use. fold_into($g; $gates;
+#     $waiting; $past) is where risk gate $g folds, or null when it opens on
+#     its own: null for a gate kept as its own (`own`, gate-plan.sh keep) or
+#     with a ticket still waiting on its ticket ($waiting: the unmerged
+#     dependents in scope); else the first slice gate in $gates covering its
+#     ticket that is not in $past (the gates already opened or answered),
+#     else "end" when $gates has an end gate not in $past, else null.
+#     $gates: [{id, kind, tickets}], as the plan numbers them.
+#
 # The slice gate's body header (| Gate | Role needed | Slice | Tickets blocked |)
 # is written by lib/packet.py, which owns it: `packet.py header` prints it.
 
 GATE_CLOSED_MARK='artisan-agent:gate-closed-by-hand'
+
+GATE_FOLD_JQ='
+  def fold_into($g; $gates; $waiting; $past):
+    if ($g.kind // "") != "risk" or ($g.own // false) or ($waiting | length) > 0 then null
+    else ([$gates[] | select(.kind == "slice" and (.id as $id | $past | index($id)) == null)
+           | select(.tickets // [] | map(tostring) | any(. as $t | $g.tickets | map(tostring) | index($t) != null)) | .id]
+          | first)
+         // (if any($gates[]; .kind == "end") and ($past | index("end")) == null then "end" else null end)
+    end;
+'
 
 exception_choices_table() { # body|chat
   local style="$1" choice="" in_body="" in_chat="" head="Choice"

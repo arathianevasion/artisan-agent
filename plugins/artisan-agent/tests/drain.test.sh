@@ -350,6 +350,26 @@ test_the_digest_says_where_the_run_is_whats_waiting_and_what_changed() {
   assert_contains "$out" "| closed | #10 |"
 }
 
+# #237: a chat whose skill text lacks the wait step still learns it from the digest.
+test_the_digest_names_the_wait_step_while_no_waiter_runs() {
+  setup_run
+  local out="" i=0
+  out=$("$DIGEST" --repo "$PROJECT" --peek)
+  assert_contains "$out" "No \`wave.sh wait\` is running for this wave: start \`$SCRIPTS/wave.sh wait $RUN_DIR\` as a background task, then end the turn."
+  assert_contains "$("$DIGEST" --repo "$PROJECT" --line)" "no waiter running: start wave.sh wait $RUN_DIR in the background"
+  out=$(HOOK_CWD="$PROJECT" hook_input SessionStart '{"source":"compact"}' | "$HOOK" session-start)
+  assert_contains "$out" "No \`wave.sh wait\` is running for this wave"
+  # A waiter on the running orchestrator: the digest says nothing about it.
+  ARTISAN_WAIT_INTERVAL=1 "$SCRIPTS/wave.sh" wait "$RUN_DIR" --timeout 60 >/dev/null 2>&1 &
+  printf '%s\n' "$!" >>"$TEST_TMPDIR/.workers"
+  while [ ! -e "$RUN_DIR/waiter.pid" ]; do
+    i=$((i + 1)); [ "$i" -le 100 ] || fail "the waiter recorded no pid file"; sleep 0.1
+  done
+  out=$("$DIGEST" --repo "$PROJECT" --peek)
+  assert_not_contains "$out" "wave.sh wait"
+  assert_not_contains "$("$DIGEST" --repo "$PROJECT" --line)" "no waiter"
+}
+
 test_the_digest_line_and_no_open_run() {
   setup_run
   assert_contains "$("$DIGEST" --repo "$PROJECT" --line)" "run r1 is open: wave 1 running (orchestrator attempt 1); 0 of 3 merged, \$0 of \$20 budget; nothing waiting for you"
