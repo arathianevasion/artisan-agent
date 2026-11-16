@@ -12,8 +12,9 @@
 # the command under taskpolicy -b on macOS, and under nice -n 10 on Linux,
 # inside ionice -c 3 where ionice works. Children inherit it. normal runs it
 # directly, as before #248. A priority tool missing (or refusing) runs the
-# command at normal priority with a one-line note on stderr; it never fails the
-# run. Rules: ${CLAUDE_PLUGIN_ROOT}/references/checks.md, "Background priority".
+# command at normal priority with a one-line note on stderr ("<tool> not
+# found" or "<tool> could not run here"); it never fails the run.
+# Rules: ${CLAUDE_PLUGIN_ROOT}/references/checks.md, "Background priority".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs jq.
 
@@ -50,11 +51,17 @@ priority_os() {
   elif [ "$(uname -s 2>/dev/null)" = Darwin ]; then echo macos; else echo linux; fi
 }
 
-# priority_tool name args...: 0 when name is on PATH and runs `true` with args.
+# priority_tool name args...: 0 when name is on PATH and runs `true` with
+# args; otherwise 1 and PRIORITY_WHY says why ("not found" or "could not run
+# here").
+PRIORITY_WHY=
 priority_tool() {
   local n="$1"
   shift
-  command -v "$n" >/dev/null 2>&1 && "$n" "$@" true >/dev/null 2>&1
+  PRIORITY_WHY="$n not found"
+  command -v "$n" >/dev/null 2>&1 || return 1
+  PRIORITY_WHY="$n could not run here"
+  "$n" "$@" true >/dev/null 2>&1
 }
 
 # priority_init: read the setting once and set PRIORITY_PREFIX, the command
@@ -67,15 +74,15 @@ priority_init() {
   [ "${setting%% *}" = background ] || return 0
   if [ "$(priority_os)" = macos ]; then
     if priority_tool taskpolicy -b; then PRIORITY_PREFIX=(taskpolicy -b)
-    else echo "taskpolicy not found: ran at normal priority" >&2; fi
+    else echo "$PRIORITY_WHY: ran at normal priority" >&2; fi
     return 0
   fi
   if ! priority_tool nice -n 10; then
-    echo "nice not found: ran at normal priority" >&2
+    echo "$PRIORITY_WHY: ran at normal priority" >&2
     return 0
   fi
   if priority_tool ionice -c 3; then PRIORITY_PREFIX=(ionice -c 3 nice -n 10)
-  else PRIORITY_PREFIX=(nice -n 10); echo "ionice not found: disk at normal priority" >&2; fi
+  else PRIORITY_PREFIX=(nice -n 10); echo "$PRIORITY_WHY: disk at normal priority" >&2; fi
 }
 
 # priority_run command...: run command at this machine's suite priority

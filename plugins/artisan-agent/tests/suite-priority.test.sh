@@ -220,3 +220,18 @@ test_sp_the_worker_hears_why_a_bad_value_is_refused() {
   assert_eq 1 "$st"
   assert_eq 'local_suite_priority must be background or normal, not "low" ('"$HOST_JSON"')' "$(cat "$TEST_TMPDIR/err")"
 }
+
+test_sp_a_tool_that_refuses_is_named_as_refusing_not_missing() {
+  fake_os linux
+  recorded_check
+  printf '#!/bin/sh\necho "ionice: ioprio_set failed" >&2\nexit 1\n' >"$TEST_TMPDIR/fakebin/ionice"
+  run_checks >/dev/null 2>"$TEST_TMPDIR/err" || fail "checks.sh run failed"
+  [ -e "$P/ran" ] || fail "the check did not run"
+  assert_contains "$(cat "$CALLS")" "nice -n 10 sh -c ./check.sh"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "ionice could not run here: disk at normal priority"
+  printf '#!/bin/sh\nexit 1\n' >"$TEST_TMPDIR/fakebin/nice"
+  rm -f "$P/ran"
+  run_checks >/dev/null 2>"$TEST_TMPDIR/err" || fail "checks.sh run failed"
+  [ -e "$P/ran" ] || fail "the check did not run"
+  assert_eq "nice could not run here: ran at normal priority" "$(cat "$TEST_TMPDIR/err")"
+}
