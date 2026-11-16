@@ -118,7 +118,7 @@ test_the_price_agent_is_granted_the_prices_file_the_pricing_page_and_its_answer_
   export TEST_TMPDIR PUBLISHED_JSON; PUBLISHED_JSON=$(jq -c '{models}' "$ARTISAN_PRICES_FILE")
   export PUBLISH_TO="$TEST_TMPDIR/w/published.json"
   bash "$MP" fetch "$TEST_TMPDIR/w"
-  local tools= rule= expected=
+  local tools= expected=
   tools=$(awk 'prev == "[--allowedTools]" { print; exit } { prev = $0 }' "$TEST_TMPDIR/claude.args" | sed 's/^\[//; s/\]$//')
   expected="Read(/$ARTISAN_PRICES_FILE)
 Write(/$TEST_TMPDIR/w/published.json)
