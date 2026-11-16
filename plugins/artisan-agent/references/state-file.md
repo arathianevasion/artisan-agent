@@ -24,6 +24,7 @@ The state file is the record of a run's plan, progress and evidence that lets an
       workers/orchestrator-w<w>.<n>/transcript.path  the orchestrator's transcript (its SessionStart hook), for drain.sh check
       workers/orchestrator-w<w>.<n>/handoff.json     the hand-off marker its PreCompact hook left
       .digest-seen                 the last event seq the chat was shown in the run digest (run-digest.sh)
+      waiter.pid                   "<pid> <orchestrator-id> <attempt>" while a `wave.sh wait` waits on that orchestrator; status and the digest check the pid is alive (#237)
 ```
 
 Beside the repo, never inside it: `<repo>-wt/run-<run-id>/` is the run's integration worktree (the integration branch checked out; every merge happens here) and `<repo>-wt/<run-id>-<ticket>.<n>/` each worker's worktree, removed once its ticket merges. `scripts/wave.sh` makes and removes them.
@@ -52,7 +53,7 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). Attempt n's files are named `<ticket>.<n>.*`, with n the ticket's `attempts` after dispatch, so a retry never reads an earlier attempt's files |
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
 | verifier started | `verify.sh start <run-dir> <ticket>` | appends to `verifications`; event `verify` (`ticket`, `attempt`, `verifier`); once per verifier: while the attempt's verifier is running, is waiting to be judged, or has passed, starting again writes nothing |
-| verified | `verify.sh judge <run-dir> <ticket>` | stores the evidence contract in `evidence` (`references/evidence-contract.md`), logs both sessions' cost; event `verified` (`ticket`, `attempt`, `verifier`, `verdict`, and `met`, `total` or `reason`; `gate`: the criteria checked by the merge gate, when there are any, #174) |
+| verified | `verify.sh judge <run-dir> <ticket>` | stores the evidence contract in `evidence` (`references/evidence-contract.md`), logs both sessions' cost; event `verified` (`ticket`, `attempt`, `verifier`, `verdict`, and `met`, `total` or `reason`; `gate`: the criteria checked by the merge gate, when there are any, #174; `after_merge`: the criteria measured after merge, moved to the Human check, when there are any, #244) |
 | evidence stored directly | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
 | closed on the tracker | `closed <run-dir> <ticket>` | `tracker_closed` set |

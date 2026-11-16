@@ -735,3 +735,30 @@ test_a_plan_from_the_graph_has_a_comment_only_tickets_criteria_and_flags_them() 
     "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
   assert_not_contains "$(plan render "$TEST_TMPDIR/plan.json")" "with no acceptance criteria"
 }
+
+# ------------------------------------------------- measured after merge (#244)
+
+# A fact measured on the run's PR or CI run after merge: no one in the run
+# can observe it, so it is flagged the way a Human check is.
+test_build_flags_a_criterion_measured_after_merge_and_the_plan_is_not_approvable() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  jq '.tickets["10"].acceptance = ["retries twice", "A PR run'"'"'s wall time is <= 8 min. Give the run id.",
+    "wave.sh records each worker'"'"'s wall time", "the plan shows the CI duration estimate when merge_gate is ci"]' \
+    "$TEST_TMPDIR/draft.json" >"$TEST_TMPDIR/d2.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[{"ticket":"10","criterion":"A PR run'"'"'s wall time is <= 8 min. Give the run id.","phrase":"wall time","after_merge":true}]' \
+    "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_eq '[]' "$(jq -c .merge_gate_flags "$TEST_TMPDIR/plan.json")"
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Needs your attention"
+  assert_contains "$out" "| #10 (Retry failed uploads) | A PR run's wall time is <= 8 min. Give the run id. | \"wall time\" (measured after merge) |"
+  assert_contains "$out" "Not approvable yet: 1 criteria need a person (above)."
+  assert_not_contains "$out" "Approve as shown"
+  assert_status 1 "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json"
+  # The override and reason path, as for a Human check.
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/d2.json" \
+    --override-human-check 10 "wall time is" --why "the ticket's Human check reads the PR") >"$TEST_TMPDIR/plan.json"
+  assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "Approve as shown"
+}

@@ -874,6 +874,45 @@ test_wait_returns_once_the_orchestrator_has_ended() {
   [ -f "$ORCH_EXIT" ] || fail "wait returned before the orchestrator ended"
 }
 
+# #237: the wait step comes from the scripts, not only the skill text a chat holds.
+test_launch_names_the_wait_and_status_says_when_no_waiter_runs() {
+  setup_wave
+  export WORKER_SLEEP=4 ARTISAN_WAIT_INTERVAL=1
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" launch "$RUN_DIR" >"$TEST_TMPDIR/launch.out" 2>"$TEST_TMPDIR/launch.err"
+  ORCH_EXIT="$RUN_DIR/results/orchestrator-w1.1.exit.json"
+  assert_eq 1 "$(wc -l <"$TEST_TMPDIR/launch.out" | tr -d ' ')" "stdout stays the one orchestrator line"
+  assert_eq "next: start wave.sh wait $RUN_DIR as a background task, then end the turn" \
+    "$(tail -1 "$TEST_TMPDIR/launch.err")"
+  local out="" waiter=""
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: wait (no waiter running: start wave.sh wait $RUN_DIR in the background)"
+  "$SCRIPTS/wave.sh" wait "$RUN_DIR" --timeout 60 >"$TEST_TMPDIR/wait.out" &
+  waiter=$!
+  wait_for "$RUN_DIR/waiter.pid" 10
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  assert_contains "$out" "next: wait"
+  assert_not_contains "$out" "no waiter"
+  wait "$waiter" || fail "the waiter failed"
+  assert_contains "$(cat "$TEST_TMPDIR/wait.out")" "orchestrator: completed"
+  [ ! -e "$RUN_DIR/waiter.pid" ] || fail "the waiter left its pid file"
+}
+
+# A dead waiter's pid file, or one left for an earlier orchestrator, is no waiter.
+test_status_counts_only_a_live_waiter_on_the_running_orchestrator() {
+  setup_wave
+  export WORKER_SLEEP=3
+  start_and_launch
+  local dead=""
+  sh -c 'exit 0' & dead=$!
+  wait "$dead"
+  printf '%s orchestrator-w1 1\n' "$dead" >"$RUN_DIR/waiter.pid"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "no waiter running"
+  printf '%s orchestrator-w1 0\n' "$$" >"$RUN_DIR/waiter.pid"
+  assert_contains "$("$SCRIPTS/wave.sh" status "$RUN_DIR")" "no waiter running"
+  wait_for "$ORCH_EXIT" 60
+}
+
 test_an_orchestrator_ending_without_its_completion_line_queues_the_decision() {
   setup_wave
   export ORCH_STOP=fail

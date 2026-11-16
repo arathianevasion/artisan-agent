@@ -53,7 +53,8 @@
 #
 # A criterion "reads as needing a person" when it holds a phrase from
 # references/human-checks.md or the project's human_check_phrases (config.sh;
-# --config FILE to name the config file).
+# --config FILE to name the config file), or is measured on the run's PR or
+# CI run after merge (#244, lib/criteria.py after_merge_criterion).
 #
 # The budget (USD) is the amount the Artisan would approve in one go; there is
 # no default. Exit status: 0 ok, 1 refused (the reason is on stderr), 2 bad usage.

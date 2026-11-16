@@ -11,7 +11,8 @@
 #       supports: loosen or tighten once it reaches the threshold (default 3).
 #       The scope floor and a defer-only gate never get a loosen proposal.
 #       The built-in open-decision guardrail (criterion 8) loosens only on a
-#       "didn't need the Decision chat" ruling, tightens on a filing raised at
+#       "didn't need the Decision chat" ruling on a question the same run
+#       filed as an open decision, tightens on a filing raised at
 #       a gate or after its ticket merged, and counts plan-step filings on
 #       their own line (plan_step).
 #       Guardrail conflicts and evidence both ways are raised, not resolved.
@@ -30,10 +31,12 @@
 #       decided that an agent would have needed) and whether to nudge (N runs, default 5, with none)
 #   guardrail-health.sh backstop --runs DIR... [--repo-dir D] [--main REF] [--since DATE]
 #       [--prs FILE] [--closed FILE] [--table]
-#       (pass --since: without it every ticket ever closed is checked)
+#       (pass --since: without it every ticket ever closed and every PR merged is checked)
 #       commits straight to main, PRs and merges with no run record, tickets
-#       closed outside a run. --prs and --closed are JSON files standing in for
-#       `gh pr list` and `gh issue list`.
+#       closed outside a run. A run's own gate and plan issues are closed in
+#       that run; its end-gate (pr/<run-id>/...) and retro (retro/<run-id>)
+#       branches are its record. --prs and --closed are JSON files standing in
+#       for `gh pr list` and `gh issue list`.
 #   guardrail-health.sh bugs --runs DIR... [--since DATE] [--issues FILE] [--bugs FILE] [--table]
 #       the retro's candidate bugs: `bug` issues opened since DATE (the last
 #       retro) whose title or body mentions a ticket a run closed (#<n>), each
@@ -128,7 +131,7 @@ def match($g): (.guardrail == $g.id)
 def hits($name; $g): [evs[] | select(.event == $name and match($g))];
 # The built-in open-decision guardrail (criterion 8, references/open-decisions.md):
 # its filings, each marked when its ticket had merged earlier in the run,
-# and its rulings. Only a "did not need the Decision chat" ruling loosens it;
+# and the rulings on them. Only a "did not need the Decision chat" ruling loosens it;
 # a filing raised at a gate or after merge tightens it; a plan-step filing
 # is counted on its own, neither way.
 def od_filings: [.states[] | . as $s | (.events // []) | to_entries as $e | $e[]
@@ -136,7 +139,12 @@ def od_filings: [.states[] | . as $s | (.events // []) | to_entries as $e | $e[]
   | .key as $i | ((.value.ticket // "") | tostring) as $t
   | .value + {run: $s.run_id,
       after_merge: ([$e[:$i][] | select(.value.event == "merge" and ((.value.ticket // "") | tostring) == $t)] | length > 0)}];
-def od_rulings: [evs[] | select(.event == "ruled")];
+# A ruling is the open decision'"'"'s only when the same run filed that question
+# as one (#239): a criterion 1-7 worker question'"'"'s ruling counts neither way.
+def od_rulings: [.states[] | . as $s | (.events // []) as $e
+  | [$e[] | select(.event == "guardrail-fired" and .guardrail == "open-decision") | (.question // "") | tostring] as $q
+  | $e[] | select(.event == "ruled" and (((.question // "") | tostring) as $x | any($q[]; . == $x)))
+  | . + {run: $s.run_id}];
 def od_late: [od_filings[] | select(.raised_by == "gate" or .after_merge)];
 def decided($g): [evs[] | select(.event == "gate-decision" and match($g))];
 def row($g):
@@ -176,9 +184,10 @@ def row($g):
     + (if $od then {plan_step: ([od_filings[] | select(.raised_by == "plan") | {ticket, question, run}]
                                 | {count: length, evidence: .})} else {} end);
 # The built-in row, when no level defines open-decision and the runs carry
-# a filing or a ruling: a run from before criterion 8 shows no new row.
+# a filing (every ruling it counts is on one): a run from before criterion 8
+# shows no new row.
 def builtin_rows: if ([.resolved.applied[] | select(.id == "open-decision")] | length) == 0
-    and ((od_filings | length) > 0 or (od_rulings | length) > 0)
+    and (od_filings | length) > 0
   then [{id: "open-decision", level: "built-in", key: "open-decision", value: null, area: null, protected: false,
          origin: {reason: "controversy criterion 8: open decisions go to the Decision chat (docs/adr/0002)"}}]
   else [] end;
@@ -348,13 +357,18 @@ cmd_backstop() {
     --slurpfile commits "$WORK/commits.json" --arg since "$since" '
     $states[0] as $states | $prs[0] as $prs | $closed[0] as $closed | $commits[0] as $commits
     | ([$states[] | (.integration.merges // [])[] | .commit]) as $runcommits
-    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]) as $branches
+    | ([$states[] | .integration.branch // empty] + [$states[] | (.tickets // {}) | to_entries[] | (.value.branch // "agent/\(.key)")]
+       + [$states[] | "retro/\(.run_id)", ((.end_gate.prs // [])[] | .branch // empty), ((.urgent_gates // {})[] | .pr.branch // empty)]) as $branches
+    | ([$states[] | "pr/\(.run_id)/"]) as $prprefixes
     | ([$prs[] | .mergeCommit.oid // .mergeCommit // empty]) as $prcommits
     | ([$states[] | (.tickets // {}) | to_entries[] | select(.value.status == "merged" or .value.status == "closed") | .key]
-       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]) as $inrun
+       + [$states[] | (.events // [])[] | select(.event == "closed") | .ticket | tostring]
+       + [$states[] | ((.plans // [])[] | .number), ((.review_gates // [])[], (.exception_gates // [])[], (.overrun_gates // [])[],
+            (.end_gate // empty), (.urgent_gates // {})[] | .issue) | values | tostring]) as $inrun
     | { direct_commits: [$commits[] | select(.parents == 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
         unrecorded_merges: [$commits[] | select(.parents > 1 and ((.sha | IN($prcommits[])) | not) and ((.sha | IN($runcommits[])) | not)) | .sha],
-        prs_without_run: [$prs[] | select((.headRefName | IN($branches[])) | not) | {number, headRefName}],
+        prs_without_run: [$prs[] | select($since == "" or (.mergedAt // "") >= $since) | .headRefName as $b
+          | select(($b | IN($branches[])) or any($prprefixes[]; . as $p | $b | startswith($p)) | not) | {number, headRefName}],
         tickets_closed_outside_run: [$closed[] | select(($since == "" or (.closedAt // "") >= $since) and ((.number | tostring) | IN($inrun[]) | not)) | .number] }')
   if [ "$TABLE" = 1 ]; then
     jq -r "$(state_jq_row_def)"'

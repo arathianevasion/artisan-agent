@@ -199,3 +199,80 @@ test_g_the_shipped_ticket_writing_guidance_suggests_no_pr_or_ci_criterion() {
     assert_contains "$(cat "$PLUGIN_ROOT/$g")" "docs/review/<n>/" "$g"
   done
 }
+
+# #244: a CI outcome for the merged work, in other common forms, is the
+# merge gate's too; the same verbs on a ticket's branch or bare stay the
+# verifier's to judge (or the plan step's to flag, #213).
+test_g_a_ci_outcome_for_the_merged_work_in_other_forms_is_the_merge_gates() {
+  local c=
+  for c in "CI check job is green on the merged commit" "the CI build passes on the merge commit" \
+    "CI checks pass for the merged change" "CI is green after merge" "CI is green on main after merge" \
+    "All CI checks pass on the merged commit" "CI is green on the merged PR"; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "1" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
+  done
+  for c in "CI checks pass" "the CI build passes on this ticket's branch" "CI green on this ticket's branch" \
+    "wave.sh merge blocks the ticket when the CI build passes on the merge commit"; do
+    printf -- '- [ ] %s\n' "$c" >b.md
+    assert_eq "0" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq length)" "$c"
+  done
+}
+
+test_g_a_ticket_whose_only_unmet_criterion_is_ci_on_the_merged_commit_passes() {
+  gate_ticket "CI check job is green on the merged commit"
+  export VERIFIER_UNMET="CI check job is green on the merged commit"
+  judge_once
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq "pass 2/3, 1 to the merge gate" "$JUDGE_OUT"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures | tostring')"
+}
+
+# #244: a fact measured on the run's PR or CI run after merge reaches the
+# verifier anyway: judged unmet, it is recorded as needing a check after
+# merge (a Human check), not as unmet, and the attempt doesn't fail.
+test_g_a_criterion_measured_after_merge_judged_unmet_needs_a_check_after_merge_and_passes() {
+  gate_ticket "A PR run's wall time is <= 8 min. Give the run id."
+  export VERIFIER_UNMET="A PR run's wall time is <= 8 min. Give the run id."
+  judge_once
+  assert_eq 0 "$JUDGE_STATUS"
+  assert_eq "pass 2/3, 1 to Human check #3 (1 checked after merge)" "$JUDGE_OUT"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures | tostring')"
+  assert_eq "false true true" "$(state_get '.tickets["1"].evidence.acceptance[2] | "\(.met) \(.human) \(.after_merge)"')"
+  assert_eq "1" "$(state_get '.tickets["1"].evidence.criteria_after_merge')"
+  assert_eq '["A PR run'"'"'s wall time is <= 8 min. Give the run id."]' \
+    "$(state_get '[.events[] | select(.event == "verified")][-1].after_merge' | jq -c .)"
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-3.json")" "- [ ] A PR run's wall time is <= 8 min. Give the run id."
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-1.md")" "- A PR run's wall time is <= 8 min. Give the run id.: measured on the run's PR or CI run after merge"
+  # The plan step reads it the same way (one reading, lib/criteria.py).
+  printf -- '- [ ] %s\n' "A PR run's wall time is <= 8 min. Give the run id." >b.md
+  assert_eq "[]" "$(python3 -I "$CRITERIA_PY" merge-gate <b.md | jq -c .)"
+}
+
+test_g_align_reads_a_criterion_measured_after_merge_as_human_whatever_the_verifier_said() {
+  echo '["A PR run'"'"'s wall time is <= 8 min. Give the run id.", "the PR CI timing stays under 10 minutes", "wave.sh records the CI run id"]' >c.json
+  echo '{"acceptance": [{"criterion": "x", "met": true}, {"criterion": "y", "met": false}, {"criterion": "z", "met": true}]}' >v.json
+  assert_eq '[[false,true,true],[false,true,true],[true,null,null]]' \
+    "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c 'map([.met, .human, .after_merge])')"
+}
+
+test_g_align_reads_the_merged_work_ci_outcomes_as_gate_when_judged_unmet() {
+  echo '["CI check job is green on the merged commit", "the CI build passes on the merge commit", "CI checks pass for the merged change", "hello.txt exists"]' >c.json
+  echo '{"acceptance": [{"criterion": "a", "met": false}, {"criterion": "b", "met": false}, {"criterion": "c", "met": false}, {"criterion": "d", "met": true}]}' >v.json
+  assert_eq '[[false,true],[false,true],[false,true],[true,null]]' \
+    "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c 'map([.met, .gate])')"
+}
+
+# Only a measure of the PR's or CI's run reads as measured after merge: CI or
+# a PR named beside some other duration or id stays the verifier's to judge.
+test_g_a_measure_not_of_the_prs_or_cis_run_is_not_measured_after_merge() {
+  local c=
+  for c in "README documents the CI duration" "The retry duration is configurable; PR title is short" \
+    "The tests complete in under 8 min of wall time on CI" "The PR description lists the run id" \
+    "CI timing is reported in the PR description" "The script runtime on CI is logged"; do
+    echo "[\"$c\"]" >c.json
+    echo '{"acceptance": [{"criterion": "x", "met": true}]}' >v.json
+    assert_eq '[true,null]' "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c '.[0] | [.met, .after_merge]')" "$c"
+  done
+  echo '["the duration of the CI run is under 5 min"]' >c.json
+  assert_eq 'true' "$(python3 -I "$CRITERIA_PY" align c.json v.json missing.json | jq -c '.[0].after_merge')"
+}

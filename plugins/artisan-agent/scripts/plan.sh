@@ -46,7 +46,9 @@
 #                  An issue that can't be read (no gh, offline) leaves the
 #                  build succeeding, with those tickets named on stderr
 #                  as unchecked (references/human-checks.md,
-#                  plus config human_check_phrases): [{ticket, criterion, phrase}].
+#                  plus config human_check_phrases): [{ticket, criterion, phrase}];
+#                  one measured on the run's PR or CI run after merge (#244,
+#                  criteria.py after_merge_criterion) also has after_merge: true.
 #                  While one stands the plan is not approvable: render says so
 #                  and state.sh init refuses it. Split it into a Human check
 #                  (to-plan.sh split-human-check) or override it:
@@ -520,7 +522,7 @@ cmd_render() {
       ( ($p.human_check_flags // []) | if length == 0 then empty else
         "| Ticket | Criterion | Reads as needing a person |",
         "|---|---|---|",
-        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\"\(if .after_merge == true then " (measured after merge)" else "" end) |" ),
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),

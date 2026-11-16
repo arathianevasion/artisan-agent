@@ -25,16 +25,16 @@ An event belongs to a guardrail when its `guardrail` is the guardrail's `id`, it
 
 ### The open-decision guardrail
 
-Criterion 8 (`references/open-decisions.md`, ADR 0002) is a built-in guardrail, `open-decision`, level `built-in`. No level file defines it; its row shows once the runs carry an open-decision filing or a ruling, so a run from before criterion 8 shows none. Its evidence is its own, never the other guardrails' rules:
+Criterion 8 (`references/open-decisions.md`, ADR 0002) is a built-in guardrail, `open-decision`, level `built-in`. No level file defines it; its row shows once the runs carry an open-decision filing, so a run from before criterion 8 shows none. Its evidence is its own, never the other guardrails' rules:
 
 | Evidence | Counts toward | Event it reads |
 |---|---|---|
-| A ruling with "Needed the Decision chat: no", whatever "Took the recommendation" says | loosen (the only loosen evidence) | `ruled` with `needed_decision_chat: false` |
+| A ruling on an open decision with "Needed the Decision chat: no", whatever "Took the recommendation" says | loosen (the only loosen evidence) | `ruled` with `needed_decision_chat: false`, whose `question` a `guardrail-fired` with `guardrail: "open-decision"` names in the same run |
 | An open decision first raised at a gate | tighten | `guardrail-fired` with `guardrail: "open-decision"`, `raised_by: "gate"` |
 | An open decision raised after its ticket merged | tighten | the same, after a `merge` event for its `ticket` in that run's log |
 | An open decision caught at the plan step | neither: counted on its own line (`plan_step`; the table's "Open decisions caught at the plan step") | the same, `raised_by: "plan"` |
 
-A ruling with "yes", or with no verdict, counts neither way. A bypass, an unchanged gate approval and never firing are not loosen evidence for it. Filings by a worker, verifier or finding before the merge count neither way. It is not protected: three loosen events propose loosening it like any other guardrail.
+A ruling with "yes", or with no verdict, counts neither way, and so does a ruling on any other question, such as a worker's question under criteria 1–7 (#239); the retro's leverage line still counts every ruling (#234). A bypass, an unchanged gate approval and never firing are not loosen evidence for it. Filings by a worker, verifier or finding before the merge count neither way. It is not protected: three loosen events propose loosening it like any other guardrail.
 
 ## Where the events come from
 
@@ -65,6 +65,6 @@ At the retro, `guardrail-health.sh bugs --runs ... --since <the last retro's dat
 | `spot-check --runs ... [--count 3]` | picks about three decisions a worker made alone (`tickets.<t>.evidence.decisions`) of tickets no slice gate showed (`review_gates[].tickets`, `provisional_shown`), provisional first. Ask the Artisan whether they would have decided differently; record each answer with `spot-check-record --run D --ticket T --card I --answer same\|differently [--area A]`. "Differently" is tighten evidence |
 | `audit --runs ... [--misses FILE]` | each counted triage miss with the criterion that should have caught it (or a prompt to name one), and the run's discards and deferrals (`pulled`, `deferred-question`, tickets closed unmerged) grouped by area or reason: a group at the threshold gets a suggested guardrail or criterion |
 | `hands-on --runs ...` | after a run with a hands-on ticket (`human-done`), the question to ask: "What did you decide that an agent would have needed? Which ADR or guardrail would have let an agent build it your way?" The answers become ADR lessons (`domain` lessons, `skills/retro/SKILL.md`). After 5 runs (`--nudge-after`) with none, a nudge |
-| `backstop --runs ... [--repo-dir D] [--main REF] [--since DATE]` | flags commits straight to `main` (a first-parent commit that is neither a merged PR nor a run's merge), merges to `main` with no PR or run record, merged PRs whose branch no run opened (`integration.branch`, `tickets.<t>.branch`), and tickets closed outside a run (not merged or closed by any run). `--prs` and `--closed` take JSON files standing in for `gh pr list --json number,headRefName,mergeCommit` and `gh issue list --state closed --json number,closedAt` |
+| `backstop --runs ... [--repo-dir D] [--main REF] [--since DATE]` | flags commits straight to `main` (a first-parent commit that is neither a merged PR nor a run's merge), merges to `main` with no PR or run record, merged PRs whose branch no run opened (`integration.branch`, `tickets.<t>.branch`, and a given run's end-gate and urgent branches `pr/<run-id>/…` and retro branch `retro/<run-id>`), and tickets closed outside a run (not merged or closed by any run; a run's own plan issues, `plans[].number`, and gate issues, the `issue` of its review, exception, overrun, end and urgent gates, count as closed in it). `--since` limits PRs by `mergedAt` and tickets by `closedAt`. `--prs` and `--closed` take JSON files standing in for `gh pr list --json number,headRefName,mergeCommit,mergedAt` and `gh issue list --state closed --json number,closedAt` |
 
 Every list shown to the Artisan is a markdown table (`--table`).

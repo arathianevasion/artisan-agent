@@ -23,7 +23,9 @@
 #       recorded in orchestrators[], its exit record and status's first line,
 #       and the prompt's first line names the wave, repo, run and plan.
 #       The state lock passes to the orchestrator's runner for the wave.
-#       Prints "orchestrator-w<wave> <attempt> <runner-pid>". 12: the run
+#       Prints "orchestrator-w<wave> <attempt> <runner-pid>", then (not on
+#       --handoff) "next: start wave.sh wait <run-dir> as a background task,
+#       then end the turn" on stderr (#237). 12: the run
 #       halted (a whole wave failed); --resume is the Artisan's decision to
 #       carry on, and clears the halt. --handoff is for drain.sh handoff
 #       only: the running orchestrator, having recorded its hand-off, launches
@@ -40,11 +42,16 @@
 #       block until the last orchestrator has ended (default at most 6600
 #       seconds, then 3: wait again), then print "orchestrator: <state>". The
 #       chat runs it as a background task so the orchestrator's exit wakes it.
+#       While it waits it keeps "<pid> <orchestrator-id> <attempt>" in the
+#       run folder's waiter.pid (#237), removed when it exits.
 #   wave.sh status <run-dir>
 #       how the run stands, from files only: the orchestrator's exit record
 #       and classification, then (once it has ended) the reconciler (git, the
 #       sweep, the tracker). First line "orchestrator: <state>", second
-#       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>", then a
+#       "next: <launch|wait|halted|decide|parked|stranded|blocked|done>"
+#       ("next: wait (no waiter running: start wave.sh wait <run-dir> in the
+#       background)" while the orchestrator runs and no live wave.sh wait in
+#       waiter.pid waits on it, #237), then a
 #       ticket table, after a "Human checks: N open (next slice gate, end
 #       gate, or how many at each)" line when any is open (references/human-checks.md: a Human
 #       check is never waited on, so the run can be done with it open).
@@ -463,6 +470,20 @@ settle_orchestrator_exit() { # id attempt wave classification resume
   apply_exit_answers
 }
 
+remove_waiter_file() {
+  local pid="" rest=""
+  read -r pid rest 2>/dev/null <"$WAITER_FILE" || return 0
+  [ "$pid" != "$$" ] || rm -f "$WAITER_FILE"
+}
+
+# The next-step line while an orchestrator runs (#237): plain "wait" with a
+# waiter on it, else the step that starts one.
+wait_step() { # id attempt
+  if state_waiter_running "$RUN_DIR" "$1" "$2"; then echo wait
+  else echo "wait (no waiter running: start wave.sh wait $RUN_DIR in the background)"
+  fi
+}
+
 # wave.sh wait: block until the last orchestrator has ended, for the chat to
 # run as a background task so the exit wakes it.
 cmd_wait() {
@@ -478,6 +499,14 @@ cmd_wait() {
   last=$(last_orchestrator)
   [ -n "$last" ] || { echo "orchestrator: none"; return 0; }
   set -- $last
+  # Record this waiter (#237), so status and the digest can tell the chat
+  # when nothing is waiting; removed on exit while it is still this one's.
+  WAITER_FILE=$(state_waiter_path "$RUN_DIR")
+  printf '%s %s %s\n' "$$" "$1" "$2" >"$WAITER_FILE.tmp.$$" && mv "$WAITER_FILE.tmp.$$" "$WAITER_FILE"
+  trap 'remove_waiter_file' EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  trap 'exit 129' HUP
   while :; do
     cls=$(orchestrator_state "$1" "$2")
     case "$cls" in
@@ -713,6 +742,10 @@ EOF
   awk -v id="$id" -v t="$turns" -v e="$estimate" \
     'BEGIN { printf "wave.sh: %s has %d turns and an estimate of $%.2f (cap $%.2f)\n", id, t, e, e * 2 }' >&2
   printf '%s %s %s\n' "$id" "$attempt" "$runner"
+  # The step after a launch, from the script itself (#237): a chat holding
+  # older skill text still learns it.
+  [ "$handoff" -eq 1 ] \
+    || echo "next: start wave.sh wait $RUN_DIR as a background task, then end the turn" >&2
 }
 
 # ------------------------------------------------------------------ status
@@ -805,7 +838,7 @@ cmd_status() {
     echo "orchestrator: $cls (wave $wave, attempt $attempt, pid $pid)$(orchestrator_named "$id" "$attempt")"
   fi
   case "${cls:-}" in
-    running*) next=wait ;;
+    running*) next=$(wait_step "$id" "$attempt") ;;
     *)
       # Ended (or never started): this tier writes again. Between waves the
       # chat holds the lock with its own long-lived pid.

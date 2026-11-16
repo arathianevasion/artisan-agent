@@ -62,6 +62,22 @@ state_pid_alive() {
   return 0
 }
 
+# The run's waiter (#237): while `wave.sh wait` waits on an orchestrator it
+# keeps "<pid> <orchestrator-id> <attempt>" in the run folder's waiter.pid.
+state_waiter_path() { printf '%s/waiter.pid\n' "$1"; }
+
+# True when a waiter is waiting on that orchestrator attempt: the pid file
+# names it, and its pid is alive and is a wave.sh (not a reused pid).
+state_waiter_running() { # run_dir orchestrator-id attempt
+  local pid="" id="" attempt="" args=""
+  read -r pid id attempt 2>/dev/null <"$(state_waiter_path "$1")" || return 1
+  [ "$id" = "$2" ] && [ "$attempt" = "$3" ] || return 1
+  state_pid_alive "$pid" || return 1
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+  case "$args" in *wave.sh*) return 0 ;; esac
+  return 1
+}
+
 # The lock is a symlink whose target is the holder's pid: creating it is one
 # atomic step and carries the holder with it.
 state_lock_holder() {
