@@ -54,7 +54,8 @@
 #                  (to-plan.sh split-human-check) or override it:
 #   criteria_missing  the tickets with no acceptance criteria anywhere: not in
 #                  the draft, the issue body or a triage "Agent Brief" comment
-#                  (criteria.py ticket; body wins, then the newest comment).
+#                  (criteria.py ticket; body wins, then the newest comment;
+#                  a heading "Agent brief (triage, <date>)" needs no disclaimer).
 #                  tickets.<t>.acceptance_source says where a read list came
 #                  from ("body" or the comment's url). While one stands the
 #                  plan is not approvable: render says so, state.sh init refuses.

@@ -685,6 +685,20 @@ test_build_takes_a_comment_only_tickets_criteria_from_its_agent_brief_and_record
   assert_eq '[]' "$(jq -c .criteria_missing "$TEST_TMPDIR/plan.json")"
 }
 
+# #225: a hand-written brief headed "## Agent brief (triage, <date>)" with no
+# disclaimer is read as the verifier reads it.
+test_build_reads_a_dated_agent_brief_without_the_disclaimer() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 10 $'## What\nno checkboxes'
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  printf '%s' $'## Agent brief (triage, 2026-11-14)\n\n**Acceptance criteria:**\n- [ ] retries twice\n- [ ] it shows a banner\n' \
+    >"$FAKE_GH_DIR/comments-10.md"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json" 2>"$TEST_TMPDIR/err"
+  assert_eq '["retries twice","it shows a banner"]' "$(jq -c '.tickets["10"].acceptance' "$TEST_TMPDIR/plan.json")"
+  assert_eq '[]' "$(jq -c .criteria_missing "$TEST_TMPDIR/plan.json")"
+}
+
 test_build_prefers_body_criteria_over_the_agent_brief_comment() {
   make_project
   write_draft "$TEST_TMPDIR/draft.json"

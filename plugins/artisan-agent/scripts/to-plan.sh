@@ -28,7 +28,9 @@
 #                                  verify every ticket is in one plan, no blocker comes after its
 #                                  dependent and a Human check is in its agent ticket's plan; then
 #                                  refuse approval (exit 1, the flags printed under "Needs your
-#                                  attention") while an agent criterion reads as needing a person,
+#                                  attention") while an agent ticket has no acceptance criteria
+#                                  criteria.py can read (#225: the verifier would refuse it after
+#                                  its worker ran), or an agent criterion reads as needing a person,
 #                                  or as needing CI, a PR or the full suite in a form the verifier
 #                                  doesn't leave to the merge gate (#213; drop or reword it in the
 #                                  ticket, then graph again). Each override is recorded on the

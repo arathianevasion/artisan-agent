@@ -1,5 +1,5 @@
 # A ticket's acceptance criteria where they live (#215): the body, else the
-# newest triage comment with an Agent Brief heading (lib/criteria.py where,
+# newest triage Agent Brief comment (lib/criteria.py where,
 # the rule the verifier reads a ticket by). Every script that edits a
 # ticket's criteria (to-plan.sh split-human-check, wave.sh close) reads and
 # writes them through these two, so a criterion is changed or ticked

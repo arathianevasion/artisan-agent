@@ -588,6 +588,7 @@ def warnings(plans, graph):
         ext = [str(x).lstrip("#") for x in tickets[n].get("external_blockers") or []]
         if ext:
             out.append((describe(tickets, n), "waits on #%s, which is outside these tickets and still open." % ", #".join(ext)))
+    out += criteria_missing_warnings(tickets)
     out += human_check_warnings(plans, tickets)
     out += merge_gate_warnings(plans, tickets)
     return out
@@ -618,17 +619,34 @@ def human_check_warnings(plans, tickets):
     return out
 
 
+def criteria_missing_warnings(tickets):
+    """Each agent ticket whose graph entry has an empty acceptance list (#225):
+    neither its body nor a triage Agent Brief comment gave criteria.py any, so
+    the verifier would refuse it after its worker had run."""
+    return [(describe(tickets, n),
+             "has no acceptance criteria the verifier can read: neither its body nor a triage Agent Brief "
+             "comment has a checkbox list under an acceptance-criteria heading or `**Acceptance criteria:**` "
+             "label, so it can't be verified. Add a `## Acceptance criteria` checklist to the ticket, then "
+             "graph again. The plan can't be approved while this stands.")
+            for n in sorted(tickets, key=key)
+            if not human_check_for(tickets, n) and tickets[n].get("acceptance") == []]
+
+
 def check(plans, graph):
-    """validate, then refuse approval while an agent criterion needs a person,
-    or CI, a PR or the full suite; the flags go to stdout under "Needs your
-    attention"."""
+    """validate, then refuse approval while an agent ticket has no criteria, or
+    an agent criterion needs a person, or CI, a PR or the full suite; the flags
+    go to stdout under "Needs your attention"."""
     validate(plans, graph)
+    missing = criteria_missing_warnings(graph_tickets(graph))
     person = human_check_warnings(plans, graph_tickets(graph))
     gate = merge_gate_warnings(plans, graph_tickets(graph))
-    if person or gate:
+    if missing or person or gate:
         print("\n".join(["## Needs your attention", "", "| About | Problem |", "|---|---|"]
-                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in person + gate]))
+                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in missing + person + gate]))
         why = []
+        if missing:
+            why.append("%d ticket(s) with no readable acceptance criteria; add a checklist to each "
+                       "and graph again" % len(missing))
         if person:
             why.append("%d agent criteria read as needing a person; split each into a Human check "
                        "or override it with --why" % len(person))

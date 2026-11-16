@@ -892,6 +892,38 @@ test_graph_lists_a_triage_comments_criteria_and_where_they_came_from() {
   assert_eq body "$(jq -r '.tickets["1"].acceptance_source' <<<"$g")"
 }
 
+# #225: a hand-written brief, "## Agent brief (triage, <date>)" with no
+# disclaimer, gives the graph its criteria as it gives the verifier them.
+test_graph_reads_a_dated_agent_brief_without_the_disclaimer() {
+  use_fake_gh
+  body_on 2 $'## What\nno checkboxes here'
+  printf '%s' $'## Agent brief (triage, 2026-11-14)\n\n**Acceptance criteria:**\n- [ ] shows percent\n' >"$FAKE_GH_DIR/comments-2.md"
+  assert_eq '["shows percent"]' "$("$TP" graph --repo local/sample 1 2 | jq -c '.tickets["2"].acceptance')"
+}
+
+# #225: a ticket with no readable criteria can't be verified, so the plan step
+# refuses it and says why, before a worker's money is spent on it.
+test_check_refuses_a_ticket_with_no_readable_criteria_and_says_why() {
+  sample_graph
+  jq '.tickets["3"].acceptance = []' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+  local out=""
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH"
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "| #3 (Billing model) | has no acceptance criteria the verifier can read"
+  assert_contains "$out" "not ready to approve: 1 ticket(s) with no readable acceptance criteria"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "| #3 (Billing model) | has no acceptance criteria the verifier can read"
+  use_fake_gh
+  assert_status 1 "$TP" publish "$PLANS" --graph "$GRAPH" --repo local/sample --approved
+  ! grep -q 'issue create' "$FAKE_GH_DIR/calls" 2>/dev/null || fail "a plan with a ticket missing its criteria reached the tracker"
+  # A Human check is a person's job, not the verifier's: never flagged.
+  sample_graph
+  jq '.tickets["3"].acceptance = [] | .tickets["3"].human_check_for = "1"' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+  assert_not_contains "$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)" "no acceptance criteria"
+}
+
 test_split_off_a_triage_comment_takes_the_criterion_off_the_comment_alone() {
   use_fake_gh
   comment_ticket 2
