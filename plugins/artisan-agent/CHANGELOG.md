@@ -2,6 +2,17 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.10.0 (2026-11-16)
+
+Fewer gates that hold nothing, criteria a run can read and judge, a Run chat that wakes when a wave ends, working retro sessions, and local suites at background priority.
+
+- **Folded risk gates:** a risk gate whose ticket no unmerged ticket in scope depends on opens no issue of its own. Its section goes into the next slice gate covering its ticket, else the end gate, and answering that gate answers it. The events still record it for guardrail health and the retro. At the plan step the gate table shows it as "folded into <gate>", and `gate-plan.sh keep` keeps it as its own gate (#241).
+- **Criteria:** more wordings of a CI outcome for the merged work ("CI check job is green on the merged commit") are left to the merge gate. A fact measured on the run's PR or CI run after merge (a wall time, a run id) is flagged at the plan step as a Human check and never fails a verifier attempt (#244). The criteria reader takes a triage brief headed `Agent brief (…)` with or without the disclaimer, and the plan step refuses a ticket whose criteria it can't read (#225).
+- **Run chat wake-up:** `wave.sh launch` prints the wait step. `wave.sh status` and the run digest say when an orchestrator runs with no `wave.sh wait` on it, so a chat holding older skill text still starts the wait (#237).
+- **Retro:** the prices agent is granted the prices file, the pricing page and its answer file, and a check that writes nothing reports "price check failed" with the denied calls. The preparer reads the Artisan's turns from the run folder, and a denied tool marks the focus shares incomplete (#245).
+- **Guardrail health:** the backstop limits PRs by `--since` and counts a run's own gate, plan, end-gate, urgent and retro issues and PRs as the run's (#246). The open-decision guardrail's loosen evidence counts only rulings on open decisions (#239).
+- **Background priority:** every suite and recorded check the pipeline starts on this machine (`checks.sh run`, the local merge gate, `end-gate.sh urgent-finish`) runs at background priority: `taskpolicy -b` on macOS, `nice -n 10` (inside `ionice -c 3` where it works) on Linux. `local_suite_priority: normal` in `host.json` opts a machine out. A missing priority tool runs the command at normal priority with a note (#248).
+
 ## 0.9.0 (2026-11-15)
 
 Open decisions: a worker, the verifier, the plan step or a gate can file a decision no ticket should settle on its own, and it reaches you in the Decision chat. The two chats are renamed the Decision chat and the Run chat.
