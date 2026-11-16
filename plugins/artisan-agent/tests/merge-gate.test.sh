@@ -415,8 +415,13 @@ test_mg_a_local_gate_that_died_without_an_outcome_is_undone_and_retried() {
   verified_ticket
   merge_1_wait 0
   assert_eq 20 "$MERGE_STATUS"
-  local sha=
+  local sha= i=0
   sha=$(state_get '.merge_gate.sha')
+  # Kill it mid-suite, not before the suite starts: at background priority
+  # (taskpolicy -b, nice) the suite can start well after the gate does.
+  until [ "$(suite_runs)" = 1 ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || fail "the suite never started"; sleep 0.1
+  done
   kill -KILL "-$(gate_pid)"
   mv "$TEST_TMPDIR/slow" "$TEST_TMPDIR/slow.gone"
   merge_1
