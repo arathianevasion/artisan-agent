@@ -400,16 +400,25 @@ def overridden(overrides, n, criterion):
 
 def human_check_flags(tickets, overrides, words=None):
     """Each agent criterion that reads as needing a person and is not overridden:
-    [{"ticket", "criterion", "phrase"}]. A Human check's own criteria are its job."""
+    [{"ticket", "criterion", "phrase"}], plus "after_merge": true on one that
+    is measured on the run's PR or CI run after merge (#244, criteria.py
+    after_merge_criterion; "phrase" is the measure). A Human check's own
+    criteria are its job."""
     words = phrases() if words is None else words
     out = []
     for n in sorted(tickets, key=key):
         if human_check_for(tickets, n):
             continue
         for c in tickets[n].get("acceptance") or []:
+            if overridden(overrides, n, c):
+                continue
             w = needs_person(c, words)
-            if w and not overridden(overrides, n, c):
+            if w:
                 out.append({"ticket": n, "criterion": c, "phrase": w})
+                continue
+            m = criteria.after_merge_criterion(c)
+            if m:
+                out.append({"ticket": n, "criterion": c, "phrase": m, "after_merge": True})
     return out
 
 
@@ -595,12 +604,18 @@ def merge_gate_warnings(plans, tickets):
 
 
 def human_check_warnings(plans, tickets):
-    return [(describe(tickets, f["ticket"]),
-             "criterion \"%s\" reads as needing a person (\"%s\"): an agent can't show it. "
-             "Split it into a Human check (`to-plan.sh split-human-check %s \"<criterion>\"`), "
-             "or override it with a reason (`--override-human-check %s \"<criterion>\" --why ...`). "
-             "The plan can't be approved while this stands." % (f["criterion"], f["phrase"], f["ticket"], f["ticket"]))
-            for f in human_check_flags(tickets, plans.get("human_check_overrides"))]
+    out = []
+    for f in human_check_flags(tickets, plans.get("human_check_overrides")):
+        if f.get("after_merge"):
+            why = ("criterion \"%s\" is measured on the run's PR or CI run after merge (\"%s\"): no one in the run "
+                   "can observe it, so a person checks it after merge. " % (f["criterion"], f["phrase"]))
+        else:
+            why = "criterion \"%s\" reads as needing a person (\"%s\"): an agent can't show it. " % (f["criterion"], f["phrase"])
+        out.append((describe(tickets, f["ticket"]), why
+                    + "Split it into a Human check (`to-plan.sh split-human-check %s \"<criterion>\"`), "
+                    "or override it with a reason (`--override-human-check %s \"<criterion>\" --why ...`). "
+                    "The plan can't be approved while this stands." % (f["ticket"], f["ticket"])))
+    return out
 
 
 def check(plans, graph):

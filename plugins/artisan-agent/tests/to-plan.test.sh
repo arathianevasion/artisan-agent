@@ -964,3 +964,25 @@ test_with_a_board_a_human_check_goes_on_it_with_its_agent_tickets_area() {
   hc=$(printf '%s\n' "$out" | sed -n 's/^Human check #\([0-9]*\) for .*/\1/p')
   assert_eq '{"Area":"Pipeline"}' "$(on_board "$hc" local/sample)"
 }
+
+# ---- Measured after merge (#244) -------------------------------------------
+
+test_check_flags_a_criterion_measured_after_merge_and_split_moves_it_to_the_human_check() {
+  use_fake_gh
+  jq '.body = "## Acceptance criteria\n- [ ] shows percent\n- [ ] A PR run'"'"'s wall time is <= 8 min. Give the run id.\n"' \
+    "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-2.json"
+  sample_graph
+  jq '.tickets["2"].acceptance += ["A PR run'"'"'s wall time is <= 8 min. Give the run id."]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+  local out=
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH"
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "criterion \"A PR run's wall time is <= 8 min. Give the run id.\" is measured on the run's PR or CI run after merge (\"wall time\")"
+  assert_contains "$out" "split-human-check"
+  "$TP" split-human-check --repo local/sample --graph "$GRAPH" --plans "$PLANS" 2 "wall time" >/dev/null
+  local hc=; hc=$(jq -r 'to_entries[] | select(.value.human_check_for == "2") | .key' <<<"$(jq .tickets "$GRAPH")")
+  assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")" "- [ ] A PR run's wall time is <= 8 min. Give the run id."
+  assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-2.json")" "wall time"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+}

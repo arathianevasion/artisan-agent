@@ -41,6 +41,11 @@
 #                                               split-human-check), in the
 #                                               run's scope, for the next slice
 #                                               gate. Never a failed attempt
+#         pass <met>/<total>, <k> to Human check #<n> (<a> checked after merge)
+#                                               the same, a of the k measured on
+#                                               the run's PR or CI run after
+#                                               merge (lib/criteria.py
+#                                               after_merge_criterion, #244)
 #         pass <met>/<total>, <k> need a human check (no tracker ticket to split them into)
 #                                               the same, for a ticket with a
 #                                               ticket_path: its contract's
@@ -334,6 +339,7 @@ cmd_start() {
       printf -- '- The worker says no worker could meet these criteria in this environment (its record'"'"'s unmeetable). For each one you find unmet, add "unmeetable": true to its entry if you agree that no worker could meet it here for the reason given (evidence.why says what stands in the way), or "unmeetable": false if a worker could (evidence.why says how). Never agree because it is hard or the worker ran out of time. Leave it out on a criterion you find met:\n'
       jq -r '.unmeetable[] | objects | "  - \(.criterion // "?"): \(.why // "no reason given")"' "$result"
     fi
+    printf -- '- A criterion measured on the run'"'"'s PR or CI run after merge (a PR run'"'"'s wall time or duration, a run id, a PR'"'"'s CI timing): mark it "met": "human" with evidence.why saying it is measured after merge. No one in the run can observe it; it moves to the Human check and does not fail the ticket.\n'
     printf -- '- A criterion about CI, the merge gate or the PR ("CI green", "the PR shows / lists …", "merge gate green"): mark it "met": "gate" and don'"'"'t judge it. Workers never open PRs and the merge gate runs after you, so nothing in this checkout can show it; wave.sh merge'"'"'s gate is what satisfies it. Never for a criterion about code that runs CI or the merge gate: judge that one.\n'
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
@@ -465,6 +471,7 @@ CONTRACT_FILTER='
       criteria_met: $met,
       criteria_human: $human,
       criteria_gate: $gate,
+      criteria_after_merge: ([$acc[] | select(.after_merge == true)] | length),
       criteria_total: ($acc | length),
       acceptance: $acc,
       tests: ($record.tests // null),
@@ -500,6 +507,7 @@ say_again() { # ticket
              else (if ($e.criteria_human // 0) == 0 then ""
                elif $e.human_check then ", \($e.criteria_human) to Human check #\($e.human_check)"
                else ", \($e.criteria_human) need a human check (no tracker ticket to split them into)" end)
+               + (if ($e.criteria_after_merge // 0) == 0 then "" else " (\($e.criteria_after_merge) checked after merge)" end)
                + (if ($e.criteria_gate // 0) == 0 then "" else ", \($e.criteria_gate) to the merge gate" end) end)
       end')
   echo "$line"
@@ -664,7 +672,8 @@ cmd_judge() {
           else .open_decisions = [$ev[0].verifier.open_decisions[] | . + {question: null}] end)
     | event({event: "verified", ticket: $t, attempt: $n, verifier: $v, verdict: $ev[0].verdict,
              met: $ev[0].criteria_met, total: $ev[0].criteria_total}
-             + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end); $now)
+             + ([$ev[0].acceptance[] | select(.gate == true) | .criterion] | if length > 0 then {gate: .} else {} end)
+             + ([$ev[0].acceptance[] | select(.after_merge == true) | .criterion] | if length > 0 then {after_merge: .} else {} end); $now)
     | reduce ($ev[0].acceptance[] | select(.unmeetable != null)) as $c (.;
         event({event: "criterion-unmeetable", ticket: $t, attempt: $n, criterion: $c.criterion,
                why: $c.unmeetable.why, verifier_agrees: $c.unmeetable.verifier_agrees}; $now))
