@@ -25,13 +25,20 @@
 #   gate-plan.sh remove <draft.json> <gate-id>
 #       removes a slice, risk or end gate. An exception gate is refused (6):
 #       exception gates are never placed in the plan and can't be removed.
+#       A risk gate whose ticket no ticket in scope depends on (`blocked_by`)
+#       shows "folded into <gate>": it opens no issue of its own, its section
+#       goes into that gate's packet (its slice gate, else the end gate), the
+#       rule in lib/gate-lib.sh (GATE_FOLD_JQ) that gate.sh open also uses.
+#   gate-plan.sh keep <draft.json> <risk-gate-id>
+#       keeps a risk gate as its own gate: it never folds (`own: true` on the
+#       draft's gate). Any other gate is refused (6).
 #   gate-plan.sh move <draft.json> <gate-id> (--after T | --tickets T,T...)
 #       a slice gate opens once those tickets merge; a risk gate (--after
 #       only) once that ticket does. The end gate has one place and is
 #       refused (6); remove it instead.
 #
 # Draft fields read: scope, route (feature, small-change or bug; default
-# feature), tickets.<t>.title, .slice, .expected_files (the files it touches: waves and areas),
+# feature), tickets.<t>.title, .slice, .blocked_by, .human_check_for, .expected_files (the files it touches: waves and areas),
 # .escalation (any of new-seam, tracer-bullet, vocabulary-adr,
 # judgement-criteria). Every command except
 # render rewrites the draft in place and prints the table.
@@ -48,18 +55,33 @@ usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/paths-lib.sh
 . "$SCRIPT_DIR/lib/paths-lib.sh"
+# shellcheck source=lib/gate-lib.sh
+. "$SCRIPT_DIR/lib/gate-lib.sh"
 die() { echo "gate-plan.sh: $*" >&2; exit "${2:-1}"; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 TESTS='["new-seam","tracer-bullet","vocabulary-adr","judgement-criteria"]'
 
 # Positional ids, as scripts/lib/state-lib.sh numbers them in the run.
-JQ_DEFS='
+JQ_DEFS="$GATE_FOLD_JQ"'
   def test_label: {"new-seam": "new seam or module boundary", "tracer-bullet": "first tracer bullet through a new layer",
               "vocabulary-adr": "change to vocabulary or an ADR", "judgement-criteria": "judgement-like acceptance criteria"}[.]
               // (if startswith("area:") then "area \(.[5:]) gate setting" else . end);
   def ids: [.gates // [] | to_entries[] | (if .value.kind == "end" then "end" else "\(.value.kind)-\(.key + 1)" end)];
   def tref($d): "#\(.)" + (($d.tickets[.].title // null) | if . then " (\(.))" else "" end);
+  def gate_ts($d): . as $g | ($g.tickets // (if $g.after then [$g.after] else null end)
+    // [$d.scope[] | tostring | select($d.tickets[.].slice? == $g.slice)]) | map(tostring);
+  # The fold rule (lib/gate-lib.sh) at the plan step: a risk gate whose ticket
+  # no ticket in scope depends on (blocked_by; a Human check is no dependent).
+  def folds($d): . as $d | ids as $ids
+    | [.gates // [] | to_entries[] | {id: $ids[.key], kind: .value.kind, tickets: (.value | gate_ts($d))}] as $gs
+    | [.gates // [] | to_entries[] | select(.value.kind == "risk") | .key as $k | .value as $g
+       | ($g | gate_ts($d)) as $ts
+       | [$d.scope // [] | .[] | tostring | select(. as $u | $ts | index($u) == null)
+          | select($d.tickets[.].human_check_for == null)
+          | select(($d.tickets[.].blocked_by // []) | map(tostring) | any(. as $b | $ts | index($b) != null))] as $w
+       | {key: $ids[$k], value: fold_into($g + {tickets: $ts}; $gs; $w; [])}]
+    | from_entries;
 '
 
 write() { # draft filter [jq args]: rewrite the draft in one step
@@ -76,7 +98,7 @@ cmd_render() {
   [ $# -eq 1 ] || usage
   need_draft "$1"
   jq -r "$JQ_DEFS"'
-    . as $d | ids as $ids
+    . as $d | ids as $ids | folds($d) as $folds
     | "| Gate | Kind | Opens after | Why | Can be removed |", "|---|---|---|---|---|",
       (.gates // [] | to_entries[] | .key as $k | .value as $g
        | ($g.tickets // (if $g.after then [$g.after] else null end)
@@ -84,6 +106,8 @@ cmd_render() {
        | "| \($ids[$k]) | \($g.kind) | "
          + (if $g.kind == "end" then "every ticket in scope is done"
             else ($ts | map(tref($d)) | join(", ")) + (if ($ts | length) == 1 then " merges" else " merge" end) end)
+         + (if $folds[$ids[$k]] then "; folded into \($folds[$ids[$k]])"
+            elif $g.kind == "risk" and $g.own then "; kept as its own gate" else "" end)
          + " | "
          + (if $g.kind == "slice" then "the slice \($g.slice // $ts[0] | tostring) is reviewable end to end"
             elif $g.kind == "risk" then ($g.tests // [] | map(test_label) | join(", "))
@@ -95,6 +119,8 @@ cmd_render() {
        | if ($in | length) == 0 then empty
          else "| Ticket | Areas |", "|---|---|",
               ($in[] | . as $t | "| \($t | tref($d)) | \($d.tickets[$t].areas | join(", ")) |"), "" end),
+      (if ($folds | to_entries | map(select(.value)) | length) == 0 then empty
+       else "A folded risk gate opens no issue of its own: no ticket in scope depends on its ticket, so nothing waits on it. Its section goes into the packet of the gate it is folded into, and approving that gate answers it. To keep one as its own gate: `gate-plan.sh keep <draft.json> <gate-id>`.", "" end),
       "Exception gates are never placed here: the run opens one whenever it gives up on a ticket or a check won'"'"'t go green, and none can be removed."' "$1"
 }
 
@@ -173,6 +199,18 @@ cmd_remove() {
   cmd_render "$1"
 }
 
+cmd_keep() {
+  [ $# -eq 2 ] || usage
+  need_draft "$1"
+  refuse_exception "$2"
+  local i=
+  i=$(gate_index "$1" "$2")
+  [ "$(jq -r --argjson i "$i" '.gates[$i].kind' "$1")" = risk ] \
+    || die "only a risk gate folds, so only a risk gate can be kept as its own gate" 6
+  write "$1" '.gates[$i].own = true' --argjson i "$i"
+  cmd_render "$1"
+}
+
 cmd_move() {
   [ $# -ge 4 ] || usage
   local f="$1" id="$2" after= tickets= i= kind= t=
@@ -211,5 +249,6 @@ case "$cmd" in
   render) cmd_render "$@" ;;
   remove) cmd_remove "$@" ;;
   move) cmd_move "$@" ;;
+  keep) cmd_keep "$@" ;;
   *) usage ;;
 esac

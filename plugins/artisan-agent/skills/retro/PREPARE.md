@@ -14,7 +14,7 @@ All of it is in the run folder (paths below the brief). Read, in this order:
 4. Deferrals and bypasses: deferred tickets and questions (`tickets.<t>.questions`, events `deferred-question`, `pulled`), and any decision with a `redirect` or a guardrail bypass and its reason.
 5. The facts and signals already computed (`retro/facts.json`): don't recompute them.
 6. Triage misses since the last retro (`retro/misses.jsonl`): uncontroversial recommendations the Artisan reversed, each with the controversy criterion that should have caught it.
-7. The chat log, if one is given: what the Artisan asked, corrected, redirected, repeated or typed by hand.
+7. The chat log, if one is given: what the Artisan asked, corrected, redirected, repeated or typed by hand. It is the Artisan's turns, already taken from the transcript into `retro/chat.md` (one `### Turn` heading each): read that file with `Read`, never the transcript.
 8. The project's `CODING_STANDARDS.md`, `PRODUCT_STANDARDS.md`, `GLOSSARY.md`, `docs/adr/` and `.artisan-agent/config.yml`, so a lesson doesn't repeat what is already there.
 
 Use `git log`/`git show` on the run's integration branch and `gh issue view` for ticket text when you need it. Read only.

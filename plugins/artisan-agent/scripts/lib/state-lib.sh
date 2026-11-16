@@ -342,6 +342,13 @@ state_usage() {
 #     a slice or risk gate that is pending and d is not in it (a ticket is
 #     never held by its own gate). d null: any dependent outside the gate
 #   gate_holds(t): gate_holds(t; null)
+#   answer_folded(into; status; by; changed; at): the risk gates folded into
+#     gate `into` (#241: status "folded", folded_into) answered with it:
+#     status (approved, redirected or bypassed), answered_with, a decided
+#     review-gate decision (job 13, changed when `changed` or a card of its
+#     tickets was changed at that gate), a gate-decision event (outcome keep
+#     or change, cards, folded_into) for guardrail health and a
+#     gate-<status> event; one already answered changes nothing
 #   gate_waits(d; bs): the pending gates that hold d through its blockers bs
 #     (ticket numbers as strings), each {id, kind, slice}
 STATE_JQ_DEFS='
@@ -413,7 +420,7 @@ STATE_JQ_DEFS='
           why: (if $g.kind == "risk" then (($g.tests // []) | map(escalation_label) | join(", ")) else null end),
           slice: ($g.slice // (if $g.kind == "risk" and $g.after != null then "#\($g.after)" else "slice \($k + 1)" end)),
           role: ($g.role // "Engineering (QA)"),
-          problem: ($g.problem // null), solution: ($g.solution // null),
+          problem: ($g.problem // null), solution: ($g.solution // null), own: ($g.own // false),
           guardrails: ([($g.tests // [])[] | select(startswith("area:")) | {guardrail: ., area: .[5:]}]
                        | if . == [] then null else . end),
           tickets: ([($g.tickets // (if $g.after != null then [$g.after] else null end)
@@ -546,4 +553,22 @@ STATE_JQ_DEFS='
           and ($d == null or (.tickets | index($d)) == null)
           and (. as $g | $s | gate_pending($g)));
   def gate_holds($t): gate_holds($t; null);
+  def answer_folded($into; $status; $by; $changed; $at):
+    . as $s0
+    | ([($s0.review_gates // [])[] | select(.id == $into)] | first // {}) as $tg
+    | reduce ([(.review_gates // []) | to_entries[]
+               | select(.value.status == "folded" and .value.folded_into == $into) | .key][]) as $i (.;
+        .review_gates[$i] as $f
+        | ($changed or $status == "redirected"
+           or any(($tg.decisions // [])[]; ((.ticket // "") | tostring) as $x
+                  | .outcome? == "change" and ($f.tickets | index($x)) != null)) as $ch
+        | .review_gates[$i] += {status: $status, answered_with: $into, approved_at: $at}
+        | .decisions += [{id: ((.decisions | length) + 1), kind: "review-gate", gate: $f.id, issue: null,
+            folded_into: $into, question: "\($f.title), folded into \($into)", status: "decided", at: $at,
+            decided_at: $at, choice: (if $status == "approved" then "approve" else $status end), by: $by,
+            job: 13, changed: $ch}]
+        | event({event: "gate-decision", gate: $f.id, card: null, by: $by,
+                 outcome: (if $ch then "change" else "keep" end), redirect: ($status == "redirected"),
+                 areas: ticket_areas($f.tickets), cards: ($f.cards // [] | length), folded_into: $into}; $at)
+        | event({event: "gate-\($status)", gate: $f.id, issue: null, kind: "risk", folded_into: $into, by: $by}; $at));
 '

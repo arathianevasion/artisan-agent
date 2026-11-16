@@ -255,6 +255,10 @@ _Avoid_: gate (for automated checks)
 A point where the Artisan reviews work before what depends on it continues: a slice, risk, exception or end gate.
 _Avoid_: checkpoint, approval step, gate (for automated checks)
 
+**Folded risk gate**:
+A risk gate whose ticket nothing still to merge depends on, so it holds nothing: it opens no gate of its own and is shown and answered in the next gate covering its ticket (its slice gate, else the end gate).
+_Avoid_: skipped gate, auto-passed gate
+
 **Packet**:
 What the Artisan sees at a gate: the decisions agents made, what they were unsure of, and the evidence, framed as problem, solution and verification.
 _Avoid_: report, summary

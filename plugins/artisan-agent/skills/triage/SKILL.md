@@ -124,7 +124,7 @@ Took the recommendation: yes
 Needed the Decision chat: yes
 ```
 
-"Took the recommendation" is `yes` when the ruling is what the raiser recommended, `no` when the Artisan changed it: the retro counts a `yes` like an unchanged gate approval and a `no` as changing the outcome. "Needed the Decision chat" is `no` when the raiser could have made the call itself: only that answer is evidence for loosening criterion 8 (`${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md`). Ask the Artisan for both with the ruling; `sync` records them in the run's state.
+"Took the recommendation" is `yes` when the ruling is what the raiser recommended, `no` when the Artisan changed it: the retro counts a `yes` like an unchanged gate approval and a `no` as changing the outcome. "Needed the Decision chat" is `no` when the raiser could have made the call itself: only that answer, on an open decision, is evidence for loosening criterion 8 (`${CLAUDE_PLUGIN_ROOT}/references/guardrail-health.md`). Ask the Artisan for both with the ruling; `sync` records them in the run's state.
 
 ## Ending a turn
 
