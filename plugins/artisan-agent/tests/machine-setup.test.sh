@@ -237,3 +237,16 @@ test_merge_batch_with_no_value_prints_the_setting_and_its_source() {
   out=$(ARTISAN_MERGE_BATCH=on "$SCRIPT" merge-batch)
   assert_eq "on ARTISAN_MERGE_BATCH" "$(jq -r '"\(.batch) \(.source)"' <<<"$out")"
 }
+
+# ---- local_suite_priority (#248): machine setup leaves it unset (default background)
+
+test_machine_setup_leaves_local_suite_priority_unset() {
+  seed_machine
+  local f="$CLAUDE_CONFIG_DIR/artisan-agent/host.json"
+  unset ARTISAN_MERGE_BATCH ARTISAN_LOCAL_SUITE_PRIORITY
+  "$SCRIPT" init >/dev/null 2>&1 || true
+  "$SCRIPT" merge-gate local >/dev/null
+  "$SCRIPT" merge-batch off >/dev/null
+  assert_eq null "$(jq '.local_suite_priority' "$f")"
+  assert_eq "background default" "$(ARTISAN_MERGE_GATE=local "$PLUGIN_ROOT/scripts/merge-gate.sh" show | jq -r '"\(.priority) \(.priority_source)"')"
+}
