@@ -76,8 +76,9 @@
 #       to main with the body upstream `pr` wrote. Prints the URL; again, the same.
 #   end-gate.sh urgent-finish <run-dir> <ticket>
 #       once the Artisan has merged that PR: merges main into the integration
-#       branch in its worktree, runs the plan's full suite there (red undoes
-#       the merge, queues a decision, exit 7), marks the ticket merged and
+#       branch in its worktree, runs the plan's full suite there at background
+#       priority (lib/priority-lib.sh, #248; red undoes the merge, queues a
+#       decision, exit 7), marks the ticket merged and
 #       takes the in-run label off. 6 while the PR is not merged.
 #
 # Environment: ARTISAN_HOME, ARTISAN_TEAM_CACHE (as guardrails.sh);
@@ -95,6 +96,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/wave-lib.sh
 . "$SCRIPT_DIR/lib/wave-lib.sh"
+# shellcheck source=lib/priority-lib.sh
+. "$SCRIPT_DIR/lib/priority-lib.sh"
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -797,6 +800,7 @@ cmd_urgent_finish() {
   wt=$(integration_worktree); ib=$(integration_branch); base=$(main_branch)
   suite=$(get -r '.plan.suite_command // ""')
   [ -n "$suite" ] || die "the plan has no suite_command; the full suite must run after main joins the integration branch"
+  priority_init || exit 1
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the integration worktree $wt has uncommitted changes"
   ref=$base
   if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
@@ -824,7 +828,7 @@ cmd_urgent_finish() {
   fi
   mkdir -p "$RUN_DIR/merges"
   log="$RUN_DIR/merges/urgent-$U.suite.log"
-  if ! (cd "$wt" && sh -c "$suite") >"$log" 2>&1; then
+  if ! (cd "$wt" && priority_run sh -c "$suite") >"$log" 2>&1; then
     git -C "$wt" reset -q --hard "$pre"
     apply '.decisions += [{id: ((.decisions | length) + 1), kind: "exception", ticket: $t,
         question: "Merging main into the integration branch after urgent #\($t) shipped made the suite fail (merges/urgent-\($t).suite.log); the merge was undone. Fix the integration branch, or take it yourself?",

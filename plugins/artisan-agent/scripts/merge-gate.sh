@@ -15,7 +15,8 @@
 #       local or ci: the mode this machine's merge gate runs in.
 #   merge-gate.sh show
 #       how it was chosen, as JSON: {mode, setting, source, os, batch,
-#       batch_source}.
+#       batch_source, priority, priority_source}. priority is the local
+#       suite priority, background or normal (lib/priority-lib.sh, #248).
 #   merge-gate.sh batch
 #       on or off: whether wave.sh merge gates tickets ready together as one
 #       merge batch (#167). host.json's merge_batch (on | off), default on.
@@ -32,7 +33,11 @@
 #       runner's session: stopping that session's group stops the suite too.
 #   merge-gate.sh local --dir D --command CMD --log FILE
 #       the gate on this machine: CMD (the plan's suite) in D, its output to
-#       FILE. Prints {mode: "local", command, passed}. Exit 0 green, 7 red.
+#       FILE, at background priority unless host.json says
+#       local_suite_priority: normal (lib/priority-lib.sh, #248; a note on
+#       stderr when a priority tool is missing). Prints {mode: "local",
+#       command, passed}. Exit 0 green, 7 red, 1 a bad local_suite_priority
+#       (start refuses a local gate with one before it starts).
 #   merge-gate.sh find --repo O/N --workflow FILE --branch B --sha SHA
 #       the gate workflow's dispatched run on B for SHA, as JSON (any status);
 #       exit 1 when there is none, so a gate cut off before its dispatch has
@@ -119,7 +124,8 @@
 #       line naming it otherwise (setup refuses such a gate workflow).
 #
 # Environment: ARTISAN_MERGE_GATE (auto|local|ci) and ARTISAN_MERGE_BATCH
-# (on|off) override host.json, for tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
+# (on|off) and ARTISAN_LOCAL_SUITE_PRIORITY (background|normal) override
+# host.json, for tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
 # ARTISAN_HOME, CLAUDE_CONFIG_DIR place host.json (as login-check.sh);
 # ARTISAN_CI_POLL_SECONDS, the wait between readings (default 20).
 #
@@ -133,6 +139,8 @@ set -euo pipefail
 
 # shellcheck source=lib/detach-lib.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/detach-lib.sh"
+# shellcheck source=lib/priority-lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/priority-lib.sh"
 
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOST_FILE=${ARTISAN_HOME:-$CFG/artisan-agent}/host.json
@@ -185,10 +193,12 @@ mode_json() {
 }
 
 cmd_show() {
-  local m="" batch=""
+  local m="" batch="" prio=""
   m=$(mode_json)
   batch=$(batch_setting)
-  jq -c --arg b "${batch%% *}" --arg bsrc "${batch#* }" '. + {batch: $b, batch_source: $bsrc}' <<<"$m"
+  prio=$(priority_setting) || exit 1
+  jq -c --arg b "${batch%% *}" --arg bsrc "${batch#* }" --arg p "${prio%% *}" --arg psrc "${prio#* }" \
+    '. + {batch: $b, batch_source: $bsrc, priority: $p, priority_source: $psrc}' <<<"$m"
 }
 
 cmd_mode() { mode_json | jq -r .mode; }
@@ -649,7 +659,8 @@ cmd_local() {
     esac
   done
   [ -n "$dir" ] && [ -n "$command" ] && [ -n "$log" ] || usage
-  (cd "$dir" && sh -c "$command") >"$log" 2>&1 || { passed=false rc=7; }
+  priority_init || exit 1
+  (cd "$dir" && priority_run sh -c "$command") >"$log" 2>&1 || { passed=false rc=7; }
   jq -nc --arg c "$command" --argjson p "$passed" '{mode: "local", command: $c, passed: $p}'
   return "$rc"
 }
@@ -675,6 +686,8 @@ cmd_start() {
   start_args "$@"
   shift "$START_SHIFT"
   case "${1:-}" in local | ci) ;; *) usage ;; esac
+  # A bad local_suite_priority stops a local gate here, before it starts.
+  [ "$1" != local ] || priority_setting >/dev/null || exit 1
   [ ! -e "$START_RESULT" ] || die "$START_RESULT already holds a gate's outcome"
   rm -f "$START_PID_FILE"
   mkdir -p "$(dirname "$START_RESULT")" "$(dirname "$START_PID_FILE")" "$(dirname "$START_LOG")"

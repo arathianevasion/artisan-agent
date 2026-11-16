@@ -44,6 +44,9 @@
 #       --worker; the verifier passes it (with --suite) only on a machine whose
 #       merge gate runs on CI (merge-gate.sh), otherwise it runs the suite
 #       too. A check is the suite when its command equals that command exactly.
+#       Each check runs at background priority unless host.json says
+#       local_suite_priority: normal (lib/priority-lib.sh, #248); a bad value
+#       is refused (exit 1) before any check runs.
 #       --out also writes the JSON to FILE (atomically) and each check's full
 #       output beside it, in FILE's name with .logs/<n>.log.
 #       Exit 0 every check passed, 7 a check failed, 16 nothing to run.
@@ -59,6 +62,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/priority-lib.sh
+. "$SCRIPT_DIR/lib/priority-lib.sh"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'checks.sh: %s\n' "$*" >&2; exit 1; }
@@ -144,6 +149,9 @@ EOF
   else
     run=(${FOUND[@]+"${FOUND[@]}"})
   fi
+  # Every check runs at this machine's suite priority (#248), read once,
+  # before anything else asks the machine (a bad value is refused here).
+  if [ -n "${run[*]+x}" ]; then priority_init || exit 1; fi
   if [ "$WORKER" = 1 ] && [ "$recorded" = true ]; then
     suite=${SUITE:-$(cmd_suite)}
     ci=$(ci_only_json "$json")
@@ -167,7 +175,7 @@ EOF
     fi
     i=$((i + 1))
     rc=0
-    (cd "$IN" && sh -c "$cmd") >"$tmp" 2>&1 </dev/null || rc=$?
+    (cd "$IN" && priority_run sh -c "$cmd") >"$tmp" 2>&1 </dev/null || rc=$?
     last=$(awk 'NF { l = $0 } END { print l }' "$tmp" | cut -c1-200)
     local log=
     if [ -n "$logs" ]; then cp "$tmp" "$logs/$i.log"; log="$logs/$i.log"; fi
