@@ -142,6 +142,39 @@ test_two_events_between_polls_both_count() {
   assert_eq 50 "$(jq -r '.rate_limits.five_hour.used_percentage' "$RUN/workers/46.1/usage.json")"
 }
 
+# #251: an account with no plan windows (overage billing only, or an API key)
+# sends rate_limit_events with no five-hour or seven-day window. The runner
+# records that as a fresh reading of its own: no plan windows, stamped with
+# the time it received each such event.
+test_overage_only_events_record_a_reading_with_no_plan_windows() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=3
+  launch stream-overage
+  local u="$RUN/workers/46.1/usage.json" i=0 first= before=
+  while ! [ -s "$u" ]; do
+    i=$((i + 1)); [ "$i" -lt 100 ] || fail "no usage.json for an overage-only event"; sleep 0.1
+  done
+  before=$(date +%s)
+  assert_eq worker "$(jq -r .source "$u")"
+  assert_eq true "$(jq -r .no_plan_windows "$u")" "an overage-only event says the account has no plan windows"
+  assert_eq null "$(jq -c .rate_limits "$u")" "and no window is made up"
+  first=$(jq -r .received_at "$u")
+  [ $((before - first)) -lt 30 ] || fail "received_at is not the time the runner saw it"
+  wait_for_file "$EXIT_RECORD"
+  assert_eq true "$(jq -r .no_plan_windows "$u")" "an event with no windows at all says the same"
+  [ "$(jq -r .received_at "$u")" -gt "$first" ] || fail "the later event is a fresher reading"
+}
+
+test_a_worker_that_saw_a_plan_window_never_records_no_plan_windows() {
+  setup_run
+  export FAKE_CLAUDE_SLEEP=0 FAKE_CLAUDE_PLAN_FIRST=1
+  launch stream-overage
+  wait_for_file "$EXIT_RECORD"
+  local u="$RUN/workers/46.1/usage.json"
+  assert_eq 29 "$(jq -r '.rate_limits.seven_day.used_percentage' "$u")"
+  assert_eq false "$(jq -r '.no_plan_windows // false' "$u")" "the overage events after it don't hide the plan window"
+}
+
 test_output_json_is_the_streams_result_event() {
   setup_run
   export FAKE_CLAUDE_SLEEP=1

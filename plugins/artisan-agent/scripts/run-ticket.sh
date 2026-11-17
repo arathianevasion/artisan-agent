@@ -38,7 +38,8 @@
 #   workers/<t>.<n>/              runner.pid, prompt.md, output.json (claude's
 #                                 final result event), stream.jsonl (its whole
 #                                 stream), usage.json (latest rate-limit
-#                                 reading), stderr.log, runner.log
+#                                 reading, or no plan windows), stderr.log,
+#                                 runner.log
 #
 # A ticket's attempt is refused if its worker folder already exists; pass
 # --attempt for a retry. The run folder must hold a state file (an approved
@@ -329,6 +330,10 @@ set +m
 # a fraction (0.29); the reading holds percent, as the status line does.
 # Events are found by their parsed type (lib/stream-lib.sh), never by the
 # line's prefix: claude writes other keys before "type".
+# An event with no five-hour or seven-day window (an account with no plan
+# windows: overage billing only, or an API key) is a reading too: rate_limits
+# null and no_plan_windows true, stamped the same way (#251). A worker that has
+# seen a plan window keeps it and never says no_plan_windows.
 usage_seen=0
 usage_size=-1   # the stream's size at the last look: unchanged, nothing new to read
 record_usage() {
@@ -347,13 +352,16 @@ record_usage() {
   now=$(date +%s)
   jq -nc --argjson now "$now" --arg t "$ticket" --argjson n "$attempt" \
     --slurpfile prev <(cat "$worker_dir/usage.json" 2>/dev/null || echo null) '
-    reduce (inputs | (.rate_limit_info.unifiedWindows // {}) | to_entries[]
-            | select((.key == "five_hour" or .key == "seven_day") and (.value.utilization | type) == "number"))
-      as $e (($prev[0].rate_limits // {});
+    def plan_windows: (.rate_limit_info.unifiedWindows // {}) | if type == "object" then to_entries else [] end
+      | map(select((.key == "five_hour" or .key == "seven_day") and (.value.utilization | type) == "number"));
+    [inputs] as $events
+    | reduce ($events[] | plan_windows[]) as $e (($prev[0].rate_limits // {});
         .[$e.key] = {used_percentage: (($e.value.utilization * 10000 | round) / 100),
                      resets_at: ($e.value.resetsAt // null), at: $now})
-    | select(length > 0)
-    | {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: .}' \
+    | if length > 0 then {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: .}
+      elif any($events[]; (plan_windows | length) == 0) then
+        {source: "worker", ticket: $t, attempt: $n, received_at: $now, rate_limits: null, no_plan_windows: true}
+      else empty end' \
     <<<"$lines" >"$worker_dir/.usage.json.tmp" 2>/dev/null \
     && [ -s "$worker_dir/.usage.json.tmp" ] && mv "$worker_dir/.usage.json.tmp" "$worker_dir/usage.json" \
     || rm -f "$worker_dir/.usage.json.tmp"

@@ -33,6 +33,11 @@
 #               the result event
 #               A line that is not JSON sits between them, as a stream cut
 #               mid-write would leave one.
+#   stream-overage  like stream, for an account with no plan windows (#251):
+#               its rate_limit_events carry no five-hour or seven-day window,
+#               one only an overage window and, FAKE_CLAUDE_SLEEP seconds later,
+#               one with no windows at all. FAKE_CLAUDE_PLAN_FIRST=1 sends a
+#               seven-day event first.
 #   deny        calls a tool outside its allowlist (#187). With
 #               --permission-mode dontAsk the call is denied at once: the
 #               result event lists it in permission_denials, without the
@@ -82,10 +87,14 @@ result() { # subtype is_error num_turns text
   fi
 }
 
-rate_limit() { # window utilization resetsAt
+rate_limit() { # window utilization resetsAt | none
   local info=
-  info=$(printf '"rate_limit_info":{"status":"allowed","resetsAt":%s,"rateLimitType":"%s","unifiedWindows":{"%s":{"utilization":%s,"resetsAt":%s,"status":"allowed"}}}' \
-    "$3" "$1" "$1" "$2" "$3")
+  if [ "$1" = none ]; then
+    info='"rate_limit_info":{"status":"allowed","overageStatus":"allowed"}'
+  else
+    info=$(printf '"rate_limit_info":{"status":"allowed","resetsAt":%s,"rateLimitType":"%s","unifiedWindows":{"%s":{"utilization":%s,"resetsAt":%s,"status":"allowed"}}}' \
+      "$3" "$1" "$1" "$2" "$3")
+  fi
   if [ -n "${FAKE_CLAUDE_TYPE_FIRST:-}" ]; then
     printf '{"type":"rate_limit_event",%s,"session_id":"s1"}\n' "$info"
   else
@@ -183,6 +192,17 @@ ARTISAN-WORKER: complete"
     sleep "${FAKE_CLAUDE_SLEEP:-2}"
     echo '{"session_id":"s1","type":"result","result":"cut off'
     rate_limit five_hour 0.5 4102444000
+    write_result_file
+    result success false 4 "Built the ticket.
+
+ARTISAN-WORKER: complete"
+    ;;
+  stream-overage)
+    echo '{"type":"system","subtype":"init","session_id":"s1"}'
+    [ -z "${FAKE_CLAUDE_PLAN_FIRST:-}" ] || rate_limit seven_day 0.29 4102444800
+    rate_limit overage 0.1 4102444800
+    sleep "${FAKE_CLAUDE_SLEEP:-2}"
+    rate_limit none
     write_result_file
     result success false 4 "Built the ticket.
 
