@@ -196,12 +196,14 @@ merge_gate_minutes_limit: 6
 #     - .claude-plugin/marketplace.json
 merge_gate_skip_paths: []
 
-# A shell command run once in every new worker, verifier, hands-on and
-# end-gate worktree, with the worktree as its working directory and
+# A shell command run once in every new integration, worker, verifier,
+# hands-on and end-gate worktree, with the worktree as its working directory and
 # ARTISAN_MAIN set to the main checkout, so the worktree has its dependencies
 # (a worktree is a bare checkout; node_modules is not in git). If it fails the
 # attempt fails with the reason "setup" and the command's stderr tail, not a red
 # test. Empty means nothing runs. Setup offers a default for a Node project.
+# A run reads it, and worktree_setup_timeout, from its plan's config first, so
+# `state.sh override <run> worktree_setup ...` changes it for one run (#252).
 # Examples:
 #   worktree_setup: npm ci --prefer-offline
 #   worktree_setup: ln -s "$ARTISAN_MAIN/node_modules" node_modules

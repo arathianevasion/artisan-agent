@@ -144,11 +144,12 @@ One entry per line: the longer rows of the table above continue here, a clause t
 | `budget_usd` | the run's approved budget; raised only at the overrun gate, each change in `budget_history` (`{from, to, gate, by, at}`) |
 | `attempts_per_ticket` | failed attempts allowed before a ticket is blocked (default 2) |
 | `estimate_usd` | the approved estimate, in estimated dollars (`budget_usd` adds the overrun allowance) |
-| `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml` |
+| `config` | every config number this run uses: the project config with this run's overrides. The orchestrator reads its numbers here, not from `config.yml`. `worktree_setup` and `worktree_setup_timeout` are read here too, each falling back to the project config when unset or empty (`worktree_setup` in `lib/wave-lib.sh`, #252) |
 | `overrides` | `{<key>: {value, project}}`, one per number overridden for this run, with the project's value it replaced |
 | `suite_command` | the full suite, run with `sh -c` in the integration worktree after every merge |
 | `suite_source` | where the suite came from (`plan.sh build`): `recorded` (the project's recorded checks), `changed` (the Artisan approved another command), `discovered` (no recorded checks; found by the chat) or `none` |
 | `recorded_checks` | the recorded checks at plan time (`checks.sh json`): `{recorded, file, commands, suite}`, or `{recorded: false, reason}`; `references/checks.md` |
+| `worktree_setup_warning` | `{file: "package.json"}` when the project has a `package.json` and the run's `config.worktree_setup` is empty (`plan.sh build`, #252); shown under "Needs your attention", never blocks approval; absent otherwise |
 | `checks` | `[{command, covers, proven_to_fail}]`: the checks the plan step proved capable of failing, shown in each gate's packet |
 | `orchestrator` | optional `model`, `estimate_usd` and `deadline_seconds` for the orchestrators (defaults: `claude-sonnet-5-5`, the wave's turn limit x config `orchestrator_usd_per_turn` (#216), the longest ticket deadline plus 30 minutes) |
 | `plans` | `[{number, title}]`, the plan issues the scope came through, in order (`resolve-scope.sh`'s `plans`, copied by the plan step; default `[]`). The first title, without its `Plan: ` prefix, names the orchestrator sessions, with `+N` for the others (#189) |
@@ -285,6 +286,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - the end gate's `end-gate-approved`
 - `pr-cut` and `run-ended` (`references/end-gate.md`)
 - `end-gate-setup-failed` (`n`, `branch`, `command`, `exit`, `stderr`, `decision`: a PR's `worktree_setup` failed at the end gate, #182)
+- `integration-setup-failed` (`branch`, `worktree`, `command`, `exit`, `stderr`: the run's `worktree_setup` failed in a new integration worktree at `wave.sh start`, which removed the worktree, and the branch if it made it, and exited 6, #252)
 - `gate-redirected`
 - `gate-bypassed`
 - `gate-deferred`

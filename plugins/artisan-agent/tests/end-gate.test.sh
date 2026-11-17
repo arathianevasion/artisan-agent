@@ -470,6 +470,16 @@ test_a_passing_setup_at_the_end_gate_runs_once_in_each_pr_worktree() {
   assert_eq 0 "$(state_get '[.events[] | select(.event == "end-gate-setup-failed")] | length')"
 }
 
+test_the_end_gate_runs_the_runs_setup_when_the_project_config_has_none() {
+  export SETUP_LOG="$TEST_TMPDIR/setup.log"
+  setup_interleaved_cut ''
+  # The run's plan.config (#252): what plan.sh build snapshots and state.sh override changes.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config = ($c + {worktree_setup: "echo \"$PWD\" >>\"$SETUP_LOG\""})' \
+    --argjson c "$("$PLUGIN_ROOT/scripts/config.sh" defaults)"
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/body.md" >/dev/null
+  assert_eq "$TEST_TMPDIR/project-wt/r1-pr-1" "$(sed "s#$(cd "$TEST_TMPDIR" && pwd -P)#$TEST_TMPDIR#" "$SETUP_LOG")"
+}
+
 test_a_setup_timeout_at_the_end_gate_records_exit_124_and_its_stderr() {
   setup_interleaved_cut 'echo "installing deps" >&2; sleep 30'
   printf 'worktree_setup_timeout: 1\n' >>"$PROJECT/.artisan-agent/config.yml"
