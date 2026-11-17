@@ -192,7 +192,10 @@ test_the_run_status_file_follows_each_write_and_the_lock_holder() {
   ARTISAN_NOW=2300 ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" \
     '.halted = {wave: 1, tickets: ["11"], reason: "test", at: 2300}'
   assert_eq halted "$(status_get .next)"
+  # Halted comes first, as in wave.sh status; an ended run says done.
   ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" '.end_gate = {status: "ended"}'
+  assert_eq halted "$(status_get .next)"
+  ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" '.halted = null'
   assert_eq done "$(status_get .next)" "an ended run says so"
   # A write refused under someone else's lock leaves the file as it was.
   local before=
@@ -224,6 +227,11 @@ test_the_run_status_text_stays_under_a_hundred_characters() {
   assert_eq true "$(status_get '.text | length <= 100')" "text: $(status_get .text)"
   assert_contains "$(status_get .text)" "a-rather-long-repository-name run 20261117-101 · Wave 0/3 · 0/3 merged, "
   assert_contains "$(status_get .text)" '1 in CI · $123.46/$456.70'
+  # A name too long for the line is cut, so the run, wave, counts and cost still show.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "o/" + ("x" * 120)'
+  assert_eq true "$(status_get '.text | length <= 100')" "text: $(status_get .text)"
+  assert_contains "$(status_get .text)" '… run 20261117-101 · Wave 0/3 · 0/3 merged'
+  assert_contains "$(status_get .text)" '$123.46/$456.70'
   # A shorter name leaves room for every count.
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "o/app"'
   assert_contains "$(status_get .text)" 'app run 20261117-101 · Wave 0/3 · 0/3 merged, 1 in flight, 1 in CI, 1 blocked · $123.46/$456.70'

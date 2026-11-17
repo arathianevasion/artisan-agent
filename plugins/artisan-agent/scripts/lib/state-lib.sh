@@ -694,7 +694,7 @@ STATE_TITLE_JQ_DEFS='
 
 # The run status file (#192): status.json beside the state file, one line of
 # JSON for a display (the Agent Cockpit) to read without a session. Its shape
-# is in references/state-file.md, "Run status file". Display only: nothing in
+# is in references/state-file.md, "The run status file". Display only: nothing in
 # the plugin reads it back. Rewritten by every state write (state_commit) and
 # when the lock is handed on (state_hand_lock), under the state lock, as a
 # temp file then a rename.
@@ -713,7 +713,7 @@ STATE_STATUS_JQ='
   ((.orchestrators // []) | last) as $o
   | ($o != null and $lock != null and ($runners | index($lock)) != null) as $in_wave
   | ($in_wave and $o.exit == null) as $running
-  | (if (.end_gate.status? // "") == "ended" then {next: "done"}
+  | (if (.end_gate.status? // "") == "ended" and .halted == null then {next: "done"}
      else run_next({wait: (if $running then "wait" else null end), reconciled: true,
                     reviews: review_park_possible, human: (human_park_line != null),
                     stranded: stranded_possible}) end) as $n
@@ -724,9 +724,14 @@ STATE_STATUS_JQ='
   | ([((.plan.waves // []) | length), $w] | max) as $ws
   | (.costs.total_usd // 0) as $cost
   | (.plan.budget_usd // null) as $budget
-  | "\(repo_short) run \(.run_id) · Wave \($w)/\($ws) · " as $head
   | (" · " + ($cost | usd) + (if $budget == null then "" else "/" + ($budget | usd) end)) as $tail
-  | ["\($c.merged)/\($c.total) merged",
+  | "\($c.merged)/\($c.total) merged" as $first
+  | " run \(.run_id) · Wave \($w)/\($ws) · " as $rest
+  # A repo name too long for the line is cut, ending in "…".
+  | (100 - ($rest + $first + $tail | length)) as $room
+  | (repo_short | if length <= $room then . elif $room > 1 then .[0:$room - 1] + "…" else "…" end) as $repo
+  | ($repo + $rest) as $head
+  | [$first,
      (if $c.in_flight > 0 then "\($c.in_flight) in flight" else empty end),
      (if $c.verifying > 0 then "\($c.verifying) verifying" else empty end),
      (if $c.merge_gate > 0 then "\($c.merge_gate) \(if (.merge_gate.mode? // "") == "ci" then "in CI" else "merging" end)" else empty end),

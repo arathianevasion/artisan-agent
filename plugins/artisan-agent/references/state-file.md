@@ -244,7 +244,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 `status.json` in the run folder is one line of JSON saying how the run stands, for a display such as the Agent Cockpit to show beside the Run chat without spending a token (#192). It is display only: nothing in the plugin reads it back. One entry per line.
 
 - **Written with the state file.** Every state write (`state_commit` in `scripts/lib/state-lib.sh`, under the state lock) rewrites it, and so does handing the lock to an orchestrator's runner (`state_hand_lock`). It is written as `.status.json.tmp.<pid>` and renamed over `status.json`, so a reader never sees a partial file. Content that has not changed is not rewritten. A failure to write it never fails the state write; the last one stays.
-- **When the run ends** it stays in place: `next` is `done` once `end-gate.sh finish` ends the run, `halted` while the run is halted.
+- **When the run ends** it stays in place: `next` is `done` once `end-gate.sh finish` ends the run, `halted` while the run is halted (halted first, as in `wave.sh status`).
 - **Schema `v: 1`.** `{v, run, repo, plan, wave, waves, counts, cost_usd, budget_usd, next, waiting_on_artisan, last_event, last_event_at, owner, text}`.
 - `run`, `repo`: `run_id` and `repo`.
 - `plan`: the run's title, from the same source as the orchestrator's session name (#189): the first plan issue's title without `Plan: `, ` +N` for further plans, else the spec's title, else `run <id>`.
@@ -257,7 +257,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 - `owner.lock_pid`: the lock's holder when it is a long-lived writer (the chat, or an orchestrator's runner), else `null` (a one-off call holds it only for that call). A reader greys the line out when that process is gone.
 - `owner.chat_pid`: the chat that holds the run: the lock's holder between waves, the last orchestrator's `chat_pid` (the pid `wave.sh launch` handed the lock from) while its runner holds the lock.
 - `owner.chat_session`: `chat_session`, or `null`.
-- `text`: `<repo> run <id> · Wave <w>/<n> · <m>/<total> merged[, <k> in flight][, <k> verifying][, <k> in CI or merging][, <k> blocked] · $<cost>[/$<budget>]`, at most 100 characters (a count that would pass that is left out); no age, which a reader adds at display time.
+- `text`: `<repo> run <id> · Wave <w>/<n> · <m>/<total> merged[, <k> in flight][, <k> verifying][, <k> in CI or merging][, <k> blocked] · $<cost>[/$<budget>]`, at most 100 characters (a count that would pass that is left out, and a repo name too long for the line is cut, ending in `…`); no age, which a reader adds at display time.
 
 ## The end gate
 
