@@ -776,3 +776,34 @@ test_build_flags_a_criterion_measured_after_merge_and_the_plan_is_not_approvable
   assert_eq '[]' "$(jq -c .human_check_flags "$TEST_TMPDIR/plan.json")"
   assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "Approve as shown"
 }
+
+# ------------------------------------------- an empty worktree_setup in a Node project (#252)
+
+test_a_node_project_with_no_worktree_setup_is_warned_and_still_approvable() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 10 $'## Acceptance criteria\n- [ ] retries twice\n'
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  echo '{}' >"$PROJECT/package.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  local out=""
+  out=$(plan render "$TEST_TMPDIR/plan.json")
+  assert_contains "$out" "### Needs your attention"
+  assert_contains "$out" '**`worktree_setup` is empty in a Node project.**'
+  assert_not_contains "$out" "Not approvable"
+  "$SCRIPTS/state.sh" init "$PROJECT/.artisan-agent/runs/r1" "$TEST_TMPDIR/plan.json" \
+    || fail "state.sh init refused a plan with only the worktree_setup warning"
+}
+
+test_no_worktree_setup_warning_when_it_is_set_or_there_is_no_package_json() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  put_issue 10 $'## Acceptance criteria\n- [ ] retries twice\n'
+  put_issue 11 $'## Acceptance criteria\n- [ ] lists invoices\n'
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_not_contains "$(plan render "$TEST_TMPDIR/plan.json")" "worktree_setup\` is empty"
+  echo '{}' >"$PROJECT/package.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --set 'worktree_setup=npm ci') >"$TEST_TMPDIR/plan2.json"
+  assert_not_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "worktree_setup\` is empty"
+  assert_not_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "### Needs your attention"
+}

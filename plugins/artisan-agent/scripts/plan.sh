@@ -94,6 +94,10 @@
 #                  the draft's command (and its optional suite_found, where it
 #                  was found) is "discovered", shown as a fallback; no command
 #                  at all is "none".
+#   worktree_setup_warning  {file: "package.json"} when the checkout's top
+#                  has a package.json and the run's config.worktree_setup is
+#                  empty (#252): shown under "Needs your attention"; never
+#                  blocks approval. Absent otherwise.
 #   merge_gate     only on a machine whose merge gate runs on CI (merge-gate.sh
 #                  mode): {mode: "ci", workflow, timeout_minutes,
 #                  minutes_per_merge, from_runs, note?}, the expected CI
@@ -358,6 +362,15 @@ cmd_build() {
   if [ "$(jq -r '.hands_on != null' "$draft")" = true ]; then
     out=$(printf '%s' "$out" | "$SCRIPT_DIR/human.sh" annotate --draft "$draft") || exit 1
   fi
+  # A Node project whose run has no worktree_setup (#252): every worker,
+  # verifier and the integration worktree would start without node_modules.
+  # A warning under "Needs your attention", never a refusal.
+  local top=""
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+  if [ -n "$top" ] && [ -f "$top/package.json" ]; then
+    out=$(printf '%s' "$out" | jq 'if ((.config.worktree_setup // "") | tostring | test("^\\s*$"))
+      then .worktree_setup_warning = {file: "package.json"} else . end')
+  fi
   printf '%s\n' "$out"
 }
 
@@ -511,7 +524,7 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
-      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] then empty
+      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] and $p.worktree_setup_warning == null then empty
         else "### Needs your attention" end ),
       ( ($p.open_decision_flags // []) | if length == 0 then empty else
         "| Ticket | Open decision | Harm | Recommendation |",
@@ -526,6 +539,9 @@ cmd_render() {
         ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\"\(if .after_merge == true then " (measured after merge)" else "" end) |" ),
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
+        "" end ),
+      ( if $p.worktree_setup_warning == null then empty else
+        "**`worktree_setup` is empty in a Node project.** This project has a `package.json`, but the run has no `worktree_setup`, so the integration worktree and every worker and verifier start without `node_modules`: the first merge gate and every test, typecheck and lint fail as setup failures. Recommended: rebuild with `--set '"'"'worktree_setup=<command>'"'"'` (the command that installs the dependencies), so this run has it from its first worktree; once approved, `state.sh override <run-dir> worktree_setup '"'"'<command>'"'"'` does the same for the next worktree. Setting it only in `.artisan-agent/config.yml` by PR reaches this run only once the main checkout has the change, so it is the fix for later runs, not this one. A warning only: it does not block approval.",
         "" end ),
       ( ($p.merge_gate_flags // []) | if length == 0 then empty else
         "### Already checked by the merge gate",

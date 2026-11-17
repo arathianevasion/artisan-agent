@@ -9,6 +9,10 @@
 #       create the integration branch (from REF, default the main checkout's
 #       branch) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
+#       A new worktree runs the run's worktree_setup first (#252); a failing
+#       one exits 6 with the setup failure, records an
+#       integration-setup-failed event and removes the worktree (and the
+#       branch, if this start made it): run start again once it is fixed.
 #   wave.sh launch <run-dir> [--resume] [--handoff] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
@@ -213,8 +217,9 @@
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 lock held or an orchestrator still
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
-# conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
-# expected files overlap, 11 conflict awaiting its one resolution try,
+# conflicted, or a worktree_setup failure (dispatch, start), 7 suite red,
+# 8 worker still running, 9 no free slot, 10 expected files overlap,
+# 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
 # CI, 20 the merge gate is still running, 21 launch: main changed a product
@@ -525,7 +530,7 @@ cmd_wait() {
 cmd_start() {
   open_run "${1:-}"
   shift
-  local base= ib= wt= sha=
+  local base= ib= wt= sha= made_branch="" rc="null"
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] || usage; base=$2; shift 2 ;;
@@ -540,12 +545,30 @@ cmd_start() {
   fi
   if ! git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib" >/dev/null; then
     git -C "$MAIN" branch "$ib" "$base" >/dev/null || die "could not create $ib from $base"
+    made_branch=1
   fi
   wt="$WT_ROOT/run-$RUN_ID"
   if [ ! -d "$wt" ]; then
     mkdir -p "$WT_ROOT"
     git -C "$MAIN" worktree add -q "$wt" "$ib" >/dev/null 2>&1 \
       || die "could not add the integration worktree $wt for $ib"
+  fi
+  # The run's worktree_setup (#252), so the first merge gate has the
+  # dependencies: until the worktree is recorded, so a start cut off during
+  # its setup runs it again. A failure is a setup failure, not a red suite:
+  # the worktree goes, and the branch too if this start made it, so nothing
+  # of a half-made run is left and start can run again once it is fixed.
+  if [ "$(get '.integration.worktree // ""')" != "$wt" ]; then
+    if ! worktree_setup "$wt"; then
+      git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+      [ -z "$made_branch" ] || git -C "$MAIN" branch -D "$ib" >/dev/null 2>&1 || true
+      # No exit status (null) when the command never started.
+      ! state_is_uint "${SETUP_RC:-}" || rc=$SETUP_RC
+      apply 'event({event: "integration-setup-failed", branch: $b, worktree: $wt, command: $c,
+          exit: $rc, stderr: $e}; $now)' \
+        --arg b "$ib" --arg wt "$wt" --arg c "$SETUP_CMD" --argjson rc "$rc" --arg e "$SETUP_TAIL"
+      state_die 6 "wave.sh: the integration worktree for $ib: $SETUP_ERR"
+    fi
   fi
   sha=$(git -C "$wt" rev-parse HEAD)
   apply '
