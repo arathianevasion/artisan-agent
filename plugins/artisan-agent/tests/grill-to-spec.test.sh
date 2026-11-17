@@ -80,3 +80,30 @@ test_skills_avoid_workflow_as_a_term() {
   if grep -qi 'workflow' "$GRILL" "$TOSPEC"; then fail "uses 'workflow'; say pipeline"; fi
   return 0
 }
+
+test_to_spec_checks_draft_against_the_motivation() {
+  local n_check="" n_show=""
+  grep -qF 'motivations/<repo>.md' "$TOSPEC" || fail "to-spec does not name motivations/<repo>.md"
+  grep -qF 'individual home' "$TOSPEC" || fail "to-spec does not name the individual home"
+  grep -qF '## Motivation check' "$TOSPEC" || fail "no Motivation check heading"
+  grep -qF '## Additions to accept or cut' "$TOSPEC" || fail "no additions heading"
+  grep -qF 'strongest alternative' "$TOSPEC" || fail "motivation items lack the strongest alternative"
+  grep -qF 'Batch both lists' "$TOSPEC" || fail "motivation check not in the same batch"
+  n_check=$(grep -n 'Check the draft against the motivation' "$TOSPEC" | head -n 1 | cut -d: -f1)
+  n_show=$(grep -n 'Show the draft before publishing' "$TOSPEC" | head -n 1 | cut -d: -f1)
+  [ -n "$n_check" ] && [ -n "$n_show" ] && [ "$n_check" -lt "$n_show" ] || fail "motivation step not before the draft is shown"
+}
+
+test_to_spec_keeps_the_motivation_out_of_the_spec() {
+  grep -qF 'contains no text from the motivation' "$TOSPEC" || fail "no ban on motivation text"
+  grep -qF 'Scope never widens to match the motivation without the Artisan' "$TOSPEC" || fail "no scope rule"
+}
+
+test_to_spec_reads_always_ask_lines_at_the_motivation_step() {
+  grep -qF '"Always ask" lines' "$TOSPEC" || fail "no Always ask lines"
+  grep -qF 'individual and project `PRODUCT_STANDARDS.md`' "$TOSPEC" || fail "no individual and project PRODUCT_STANDARDS.md"
+}
+
+test_to_spec_without_a_motivation_file_changes_nothing() {
+  grep -qF 'With no motivation file, nothing changes' "$TOSPEC" || fail "no-motivation-file behaviour unsaid"
+}

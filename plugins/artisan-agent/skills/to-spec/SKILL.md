@@ -17,7 +17,9 @@ The issue tracker and triage label vocabulary should have been provided to you (
 
 3. **Draft the spec** with the template below. As you write, keep a running list of every addition: any user story, implementation decision, testing decision or out-of-scope line that did not come from the conversation (something you inferred, filled in for completeness, or took from the codebase). A line that restates something the Artisan said or agreed to is not an addition. When unsure, count it as an addition.
 
-4. **Show the draft before publishing.** Show the whole spec, then, under it, the additions:
+4. **Check the draft against the motivation.** Before showing it, read the individual and project `PRODUCT_STANDARDS.md` "Always ask" lines, as `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md` "Tuning" says to read standards at the point of use. Then read `motivations/<repo>.md` in the individual home (`~/.claude/artisan-agent/`), if it exists. List each place the motivation conflicts with a user story, decision or out-of-scope line, or could sharpen the spec's wording or boundaries, and each line that trips an "Always ask" item, for step 5. With no motivation file, nothing changes: skip the motivation check and step 5 shows only the additions.
+
+5. **Show the draft before publishing.** Show the whole spec, then, under it, the additions:
 
    ```
    ## Additions to accept or cut
@@ -27,11 +29,20 @@ The issue tracker and triage label vocabulary should have been provided to you (
    ...
    ```
 
-   Recommend accept or cut for each, with the reason (ARTISAN.md rule 3). Lines not in the list came from the conversation. If there are no additions, say so explicitly. Batch it: the Artisan answers once ("accept all", "cut 2 and 5"), not piecemeal.
+   Recommend accept or cut for each, with the reason (ARTISAN.md rule 3). Lines not in the list came from the conversation. If there are no additions, say so explicitly.
 
-5. **Apply their answers.** Remove every line the Artisan cut, renumber, and fix any other line that depended on a cut one. If they asked for other edits, make them, and show again only what changed. Anything newly added counts as an addition and goes through the same list. Don't publish until the Artisan says the spec is approved.
+   Under that, when step 4 found anything, its own heading:
 
-6. **Publish** the approved spec to the project issue tracker and apply the `ready-for-agent` triage label; no further triage is needed. A line the Artisan cut must not appear anywhere in what you publish, including Further Notes. Give the Artisan the link, and that the next step is `/mattpocock-skills:to-tickets`.
+   ```
+   ## Motivation check
+   1. **<section, number>**: <conflict or sharpening point>: recommend <change or keep>, because <reason>; strongest alternative: <the other option>
+   ```
+
+   Each item carries a recommendation and the strongest alternative you rejected (ARTISAN.md rules 2 and 3). Say what conflicts or sharpens, not the motivation's own words: the published spec contains no text from the motivation, quoted or paraphrased, because the motivation is private and the spec may be public. Scope never widens to match the motivation without the Artisan's yes. Batch both lists: the Artisan answers once ("accept all, apply 1", "cut 2 and 5"), not piecemeal.
+
+6. **Apply their answers.** Remove every line the Artisan cut, renumber, and fix any other line that depended on a cut one. If they asked for other edits, make them, and show again only what changed. Anything newly added counts as an addition and goes through the same list. Don't publish until the Artisan says the spec is approved.
+
+7. **Publish** the approved spec to the project issue tracker and apply the `ready-for-agent` triage label; no further triage is needed. A line the Artisan cut must not appear anywhere in what you publish, including Further Notes. Give the Artisan the link, and that the next step is `/mattpocock-skills:to-tickets`.
 
 <spec-template>
 
