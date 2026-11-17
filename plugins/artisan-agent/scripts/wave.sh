@@ -743,10 +743,18 @@ EOF
     esac
   fi
 
+  # The chat that holds the run during the wave (#192, the run status file's
+  # owner): the pid the lock is handed from, or on a handoff the chat the
+  # wave's first orchestrator named; and the chat's Claude session id, when
+  # its environment gives one (a handoff is the orchestrator's call: it keeps
+  # the chat's).
   apply '
-    .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, name: $name, launched_at: $now}])
+    (if $handoff == 1 then ((.orchestrators // []) | last | .chat_pid) // null else $me end) as $chat
+    | .orchestrators = ((.orchestrators // []) + [{id: $id, wave: $w, attempt: $a, name: $name, launched_at: $now, chat_pid: $chat}])
+    | (if $handoff == 1 or $sid == "" then . else .chat_session = $sid end)
     | event({event: "orchestrator", id: $id, wave: $w, attempt: $a}; $now)' \
-    --arg id "$id" --argjson w "$wave" --argjson a "$attempt" --arg name "$name"
+    --arg id "$id" --argjson w "$wave" --argjson a "$attempt" --arg name "$name" \
+    --argjson handoff "$handoff" --argjson me "$me" --arg sid "$(state_chat_session)"
 
   # The runner takes the lock over from this writer before its session
   # starts: the orchestrator is the writer for the wave.
@@ -831,13 +839,6 @@ human_checks_line() {
   [ -z "$waiting" ] || echo "Human checks waiting on a rework: $waiting"
 }
 
-# Urgent tickets (lever.sh urgent) still to dispatch, one per line: never on
-# the frontier, so status and the orchestrator's dispatch step (wave-width.sh
-# pick) look for them themselves (#205).
-urgent_pending() {
-  get -r '.tickets | to_entries[] | select(.value.urgent == true and .value.status == "queued") | .key'
-}
-
 # One line per pending urgent ticket: the first is dispatched on the one extra
 # slot above Max Agents while it is free, the rest wait for it.
 urgent_lines() {
@@ -850,7 +851,7 @@ urgent_lines() {
 
 cmd_status() {
   open_run "${1:-}"
-  local last= id= attempt= wave= pid= cls= next= reconciled=1 waiting= o= parked= usage_park= reviews= stranded= urgent=
+  local last= id= attempt= wave= pid= cls= next= reconciled=1 o= parked= reviews= stranded= probe= step= found=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -892,59 +893,44 @@ cmd_status() {
       [ -z "${id:-}" ] || halt_if_wave_failed
       # The ended orchestrator's exit, judged once (#171).
       [ -z "${id:-}" ] || check_orchestrator_exit "$id" "$attempt" "$wave" "$cls"
-      # A usage park, as the guard last left it (budget.sh parked reads only).
-      # The guard itself runs from the orchestrator's sweep and from launch,
-      # never from here: status writes no guard state and opens no gate (#120).
-      usage_park=
-      [ "$(get '.halted != null')" = true ] \
-        || usage_park=$("$SCRIPT_DIR/budget.sh" parked "$RUN_DIR" 2>/dev/null || true)
-      # A risk gate or a review gate holds only its tickets' dependents
-      # (drain.sh gate, gate.sh): the run carries on while the frontier has work.
-      # An exception gate (an exception decision with its issue) holds only
-      # its ticket's dependents too.
-      waiting=$(get "$STATE_JQ_DEFS"'waiting_non_gate_decisions | length')
-      # A pending urgent ticket is work an orchestrator dispatches, as the
-      # frontier is (#205): it is never on the frontier itself.
-      urgent=$(urgent_pending)
-      [ "$(get '.frontier | length')" -gt 0 ] || [ -n "$urgent" ] \
-        || waiting=$(get '[.decisions[] | select(.status == "waiting")] | length')
-      if [ "$(get '.halted != null')" = true ]; then next=halted
-      # An orchestrator that exited without finishing its wave: never launch.
-      elif [ -n "$(exit_decision_waiting)" ]; then next=decide
-      elif [ "$(get '.ci_park != null')" = true ]; then next=parked
-        parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"')
-      elif [ -n "$usage_park" ]; then next=parked parked=$usage_park
-        # Parked on usage and behind open reviews too: both reasons show.
-        if [ "$reconciled" -eq 1 ] && reviews=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then
-          parked="$parked
+      # The next step is run_next (lib/state-lib.sh), the one chain the run
+      # status file (status.json) reads too (#192). What the state file
+      # cannot say is asked for only where the chain reaches it: gate-action.sh
+      # parked (open reviews hold every ticket left), human.sh parked (only a
+      # hands-on ticket is left) and gate-action.sh stranded (tickets wait for
+      # good behind a dropped or resliced one, #116). A risk, review or
+      # exception gate holds only its tickets' dependents, so the run carries
+      # on while the frontier has work; a pending urgent ticket is work too
+      # (#205). The usage guard runs from the orchestrator's sweep and from
+      # launch, never from here: status writes no guard state and opens no
+      # gate (#120); budget.sh parked only reads the park it left.
+      probe=$(jq -nc --argjson r "$reconciled" '{reconciled: ($r == 1)}')
+      while :; do
+        step=$(get -c --argjson p "$probe" "$STATE_JQ_DEFS"'run_next($p)')
+        case "$(jq -r '.probe // ""' <<<"$step")" in
+          reviews) found=false
+            parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null) && found=true
+            probe=$(jq -c --argjson v "$found" '.reviews = $v' <<<"$probe") ;;
+          human) found=false
+            parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null) && found=true
+            probe=$(jq -c --argjson v "$found" '.human = $v' <<<"$probe") ;;
+          stranded) found=false
+            stranded=$("$SCRIPT_DIR/gate-action.sh" stranded "$RUN_DIR" 2>/dev/null) && found=true
+            probe=$(jq -c --argjson v "$found" '.stranded = $v' <<<"$probe") ;;
+          *) break ;;
+        esac
+      done
+      next=$(jq -r '.next' <<<"$step")
+      case "$(jq -r '.why' <<<"$step")" in
+        ci) parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"') ;;
+        usage) parked=$("$SCRIPT_DIR/budget.sh" parked "$RUN_DIR" 2>/dev/null || true)
+          # Parked on usage and behind open reviews too: both reasons show.
+          if [ "$reconciled" -eq 1 ] && reviews=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then
+            parked="$parked
 $reviews"
-        fi
-      elif [ "$reconciled" -eq 1 ] && parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
-      # A red base pauses merging only: parked once nothing else can run.
-      elif [ "$(get '.base_park != null')" = true ] && [ "$(get '.frontier | length')" -eq 0 ]; then next=parked
-        parked="parked base: $(base_red_line); clear it with wave.sh unpark-base once the base is fixed"
-      elif [ "$waiting" -gt 0 ]; then next=decide
-      elif [ "$reconciled" -eq 0 ]; then next=blocked
-      elif [ "$(get '.frontier | length')" -gt 0 ]; then next=launch
-      # An urgent ticket to dispatch, or waiting for the extra slot (#205).
-      elif [ -n "$urgent" ]; then next=launch
-      # A hands-on ticket the Artisan finished waits for its verifier and merge.
-      elif [ "$(get '[.tickets[] | select(.status == "returned")] | length')" -gt 0 ]; then next=launch
-      # A ticket the Artisan took out of the run at a gate (dropped, resliced,
-      # bypassed, deferred) is finished for this run.
-      # A Human check is not work the run waits on: the gates settle it. One
-      # whose ticket left the run without it is stranded (#161), not done.
-      elif [ "$(get "$STATE_JQ_DEFS"' . as $s | out_of_run as $o | [.plan.scope[] as $t
-               | select((($s | is_human_check($t)) and ($s.tickets[$t].status? != "queued"
-                          or ((["dropped", "resliced", "sent_back"] | index($s.tickets[$s | human_check_for($t)].status? // "")) == null)))
-                        or (.tickets[$t].status | . as $st
-                        | $st == "merged" or $st == "closed" or ($o | index($st))))] | length')" \
-             = "$(get '.plan.scope | length')" ]; then next=done
-      elif parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null); then next=parked
-      # Tickets left waiting for good behind a dropped or resliced one (#116).
-      elif stranded=$("$SCRIPT_DIR/gate-action.sh" stranded "$RUN_DIR" 2>/dev/null); then next=stranded
-      else next=blocked
-      fi
+          fi ;;
+        base) parked="parked base: $(base_red_line); clear it with wave.sh unpark-base once the base is fixed" ;;
+      esac
       ;;
   esac
   echo "next: $next"

@@ -1172,12 +1172,8 @@ cmd_parked() {
   [ "${2:-}" != --record ] || record=1
   # Quick refusals from the state file alone: work still moving, work ready,
   # a decision that isn't a gate, or no gate open.
-  [ "$(get "$STATE_JQ_DEFS"'
-    ([.tickets[] | select(.status == "in_flight" or .status == "returned")] | length) == 0
-    and ((.frontier // []) | length) == 0
-    and (waiting_non_gate_decisions | map(select(.kind != "usage")) | length) == 0
-    and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
-         + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0')" = true ] || return 1
+  # (review_park_possible in lib/state-lib.sh, which status.json reads too.)
+  [ "$(get "$STATE_JQ_DEFS"'review_park_possible')" = true ] || return 1
   # Each queued ticket's open blockers, one {ticket: [...]} per line: the
   # responses carry whole issue bodies and the map grows with the scope, so
   # both reach jq on stdin (#208). An unreadable tracker gives null.

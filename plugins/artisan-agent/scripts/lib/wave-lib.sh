@@ -134,12 +134,7 @@ writer() { printf '%s\n' "${ARTISAN_WRITER_PID:-$$}"; }
 # title is cut at a word boundary so the whole name is SESSION_NAME_MAX
 # characters or less. Workers keep worker-<ticket> (run-ticket.sh).
 SESSION_NAME_MAX=60
-SESSION_JQ_DEFS='
-  def repo_short: (.repo // "" | split("/") | last) // "";
-  def run_title: ((.plan.plans // []) | map(.title // "" | sub("^ *[Pp]lan: *"; "") | select(. != ""))) as $p
-    | if ($p | length) > 0 then {title: $p[0], more: (if ($p | length) > 1 then " +\(($p | length) - 1)" else "" end)}
-      elif (.plan.spec.title // "") != "" then {title: .plan.spec.title, more: ""}
-      else {title: "run \(.run_id)", more: ""} end;
+SESSION_JQ_DEFS="$STATE_TITLE_JQ_DEFS"'
   def cut($n): if length <= $n then . elif $n <= 0 then ""
     else .[0:$n + 1] | (if test(" ") then sub(" +[^ ]*$"; "") else .[0:$n] end) | sub("[ ,;:·-]+$"; "") end;
 '

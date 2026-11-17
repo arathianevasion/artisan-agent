@@ -192,7 +192,8 @@ state_hand_lock() {
   }
   tmp="$run_dir/.state.lock.tmp.$$"
   rm -f "$tmp"
-  ln -s "$to" "$tmp" && mv -f "$tmp" "$lock"
+  ln -s "$to" "$tmp" && mv -f "$tmp" "$lock" || return $?
+  state_status_write "$run_dir" "$to"
 }
 
 state_valid_file() { # path
@@ -239,9 +240,11 @@ state_commit() {
   fi
   if [ -f "$file" ] && cmp -s "$tmp" "$file"; then
     rm -f "$tmp"
-    return 0
+  else
+    mv -f "$tmp" "$file" || return $?
   fi
-  mv -f "$tmp" "$file"
+  # The run status file follows every write, the lock's holder included (#192).
+  state_status_write "$run_dir"
 }
 
 state_tmp() { # run_dir
@@ -572,3 +575,208 @@ STATE_JQ_DEFS='
                  areas: ticket_areas($f.tickets), cards: ($f.cards // [] | length), folded_into: $into}; $at)
         | event({event: "gate-\($status)", gate: $f.id, issue: null, kind: "risk", folded_into: $into, by: $by}; $at));
 '
+
+# How the run stands, from the state file, for `wave.sh status` and the run
+# status file (status.json, below), so both say the same thing (#192):
+#   urgent_queued: the urgent tickets still to dispatch (lever.sh urgent)
+#   run_all_done: every ticket in scope merged, closed or out of the run, a
+#     Human check counting once it is answered or its ticket stayed in the run
+#   review_park_possible: the state-file half of gate-action.sh parked: no
+#     work moving or ready, no decision that isn't a gate, and a gate open
+#   human_park_line: human.sh parked's line (only a hands-on ticket, and the
+#     work behind it, is left), or null
+#   stranded_possible: a ticket in scope was dropped or resliced, the
+#     state-file half of gate-action.sh stranded (which reads the tracker)
+#   run_next($p): the run's next step, {next, why} or {probe}. $p holds what
+#     the state file cannot say: reconciled (the reconciler read the tracker),
+#     wait (an orchestrator is running: its next, e.g. "wait") and the
+#     probes reviews, human and stranded (true, false, or absent to be asked
+#     for: {probe: "<name>"} names the first one the chain reaches, so a
+#     probe with side effects runs only where the chain needs it). why is
+#     running, halted, orchestrator-exit, ci, usage, reviews, base,
+#     decisions, tracker, frontier, urgent, returned, done, human, stranded
+#     or blocked
+#   run_counts: the scope's agent tickets by where they are: merged, in
+#     flight, verifying (returned), at the merge gate, queued, blocked, other
+#     (closed on the tracker or out of the run) and total
+STATE_JQ_DEFS="$STATE_JQ_DEFS"'
+  def urgent_queued: [.tickets | to_entries[] | select(.value.urgent == true and .value.status == "queued") | .key];
+  def run_all_done:
+    . as $s | out_of_run as $o
+    | [.plan.scope[] as $t
+       | select((($s | is_human_check($t)) and ($s.tickets[$t].status? != "queued"
+                  or ((["dropped", "resliced", "sent_back"] | index($s.tickets[$s | human_check_for($t)].status? // "")) == null)))
+                or (.tickets[$t].status | . as $st
+                    | $st == "merged" or $st == "closed" or ($o | index($st))))] | length
+    | . == ($s.plan.scope | length);
+  def review_park_possible:
+    ([.tickets[] | select(.status == "in_flight" or .status == "returned")] | length) == 0
+    and ((.frontier // []) | length) == 0
+    and (waiting_non_gate_decisions | map(select(.kind != "usage")) | length) == 0
+    and ([(.review_gates // [])[], (.exception_gates // [])[] | select(.status == "open")]
+         + [.tickets[] | select(.risk_gate.status? == "waiting")] | length) > 0;
+  def human_park_line:
+    . as $s | ($s.plan.tickets // {}) as $pt
+    | $s.plan.scope as $scope
+    | [$scope[] | select($s.tickets[.].status != "merged" and $s.tickets[.].status != "closed")
+        | select(. as $t | $s | is_human_check($t) | not)] as $open
+    | [$open[] | select($s.tickets[.].human != null or (($s.plan.hands_on.ticket // "" | tostring) == .))] as $hum
+    | def blk($t): [($pt[$t].blocked_by // [])[] | tostring];
+      (reduce range(0; ($scope | length) + 1) as $_ ($hum;
+        . as $r | ($r + [$open[] | select(. as $t | blk($t) | any(. as $b | $r | index($b)))]) | unique)) as $held
+    | [$open[] | select(. as $t | $held | index($t) | not)] as $loose
+    | if ($hum | length) == 0 or ($loose | length) > 0
+         or ([$open[] | select($s.tickets[.].status == "in_flight" or $s.tickets[.].status == "returned")] | length) > 0
+         or ($s.frontier | length) > 0
+         or ([$s.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length) > 0
+      then null
+      else
+        ($open | map(select(. as $t | $hum | index($t) | not))) as $behind
+        | "parked: waiting on the Artisan'"'"'s hands-on ticket \($hum | map("#" + . + " (" + ($pt[.].title // "untitled") + ")") | join(", "))"
+          + (if ($behind | length) > 0 then "; \($behind | length) ticket(s) wait behind it: \($behind | map("#" + .) | join(", "))" else "; nothing else waits behind it" end)
+      end;
+  def stranded_possible:
+    . as $s | any(.plan.scope[]; $s.tickets[.].status? == "dropped" or $s.tickets[.].status? == "resliced");
+  def run_next($p):
+    ((.frontier // []) | length) as $front
+    | (if $front > 0 or (urgent_queued | length) > 0 then waiting_non_gate_decisions | length
+       else [.decisions[] | select(.status == "waiting")] | length end) as $waiting
+    | ($p.reconciled != false) as $rec
+    | if $p.wait != null then {next: $p.wait, why: "running"}
+      elif .halted != null then {next: "halted", why: "halted"}
+      # An orchestrator that exited without finishing its wave: never launch.
+      elif any(.decisions[]; .kind == "orchestrator-exit" and .status == "waiting") then {next: "decide", why: "orchestrator-exit"}
+      elif .ci_park != null then {next: "parked", why: "ci"}
+      elif .usage_park != null then {next: "parked", why: "usage"}
+      elif $rec and $p.reviews == null then {probe: "reviews"}
+      elif $rec and $p.reviews then {next: "parked", why: "reviews"}
+      # A red base pauses merging only: parked once nothing else can run.
+      elif .base_park != null and $front == 0 then {next: "parked", why: "base"}
+      elif $waiting > 0 then {next: "decide", why: "decisions"}
+      elif ($rec | not) then {next: "blocked", why: "tracker"}
+      elif $front > 0 then {next: "launch", why: "frontier"}
+      # An urgent ticket to dispatch, or waiting for the extra slot (#205).
+      elif (urgent_queued | length) > 0 then {next: "launch", why: "urgent"}
+      # A hands-on ticket the Artisan finished waits for its verifier and merge.
+      elif any(.tickets[]; .status == "returned") then {next: "launch", why: "returned"}
+      elif run_all_done then {next: "done", why: "done"}
+      elif $p.human == null then {probe: "human"}
+      elif $p.human then {next: "parked", why: "human"}
+      # Tickets left waiting for good behind a dropped or resliced one (#116).
+      elif $p.stranded == null then {probe: "stranded"}
+      elif $p.stranded then {next: "stranded", why: "stranded"}
+      else {next: "blocked", why: "blocked"} end;
+  def merge_gate_tickets:
+    [(.merge_gate // {}), (.ci_gate // {}), (.merge_batch // {}) | (.tickets // [.ticket // empty])[] | tostring] | unique;
+  def run_counts:
+    . as $s | merge_gate_tickets as $mg
+    | [.plan.scope[] | tostring | select(. as $t | $s | is_human_check($t) | not)
+       | . as $t | ($s.tickets[$t].status // "queued")
+       | if . == "returned" then (if ($mg | index($t)) then "merge_gate" else "verifying" end)
+         elif . == "merged" or . == "in_flight" or . == "queued" or . == "blocked" then .
+         else "other" end] as $k
+    | reduce ("merged", "in_flight", "verifying", "merge_gate", "queued", "blocked", "other") as $c ({};
+        .[$c] = ([$k[] | select(. == $c)] | length))
+    | .total = ($k | length);
+'
+
+# The run's title (#189), for session names (lib/wave-lib.sh) and the run
+# status file: the first plan issue's title without its "Plan: " prefix
+# (plan.plans), " +N" for the other plans in more, else the spec's title
+# (plan.spec.title), else "run <id>". repo_short is the repo after the slash.
+STATE_TITLE_JQ_DEFS='
+  def repo_short: (.repo // "" | split("/") | last) // "";
+  def run_title: ((.plan.plans // []) | map(.title // "" | sub("^ *[Pp]lan: *"; "") | select(. != ""))) as $p
+    | if ($p | length) > 0 then {title: $p[0], more: (if ($p | length) > 1 then " +\(($p | length) - 1)" else "" end)}
+      elif (.plan.spec.title // "") != "" then {title: .plan.spec.title, more: ""}
+      else {title: "run \(.run_id)", more: ""} end;
+'
+
+# The run status file (#192): status.json beside the state file, one line of
+# JSON for a display (the Agent Cockpit) to read without a session. Its shape
+# is in references/state-file.md, "Run status file". Display only: nothing in
+# the plugin reads it back. Rewritten by every state write (state_commit) and
+# when the lock is handed on (state_hand_lock), under the state lock, as a
+# temp file then a rename.
+#
+# $lock is the lock's holder when it is a long-lived writer (the chat, or an
+# orchestrator's runner), else null. An orchestrator is running when the last
+# one has no exit judged and the lock is held by a writer other than the chat
+# that launched it (orchestrators[].chat_pid): then next is "wait" and the
+# owning chat is that one. Otherwise next is run_next with what only the
+# tracker could add left to the state file (review_park_possible,
+# human_park_line, stranded_possible), and the owning chat is the lock holder.
+STATE_STATUS_JQ='
+  def usd: (. * 100 | round) as $c | "$" + (($c / 100 | floor) | tostring) + "."
+    + (($c % 100) | tostring | if length == 1 then "0" + . else . end);
+  ((.orchestrators // []) | last) as $o
+  | ($o != null and $o.exit == null and $lock != null and $lock != ($o.chat_pid // null)) as $running
+  | (if (.end_gate.status? // "") == "ended" then {next: "done"}
+     else run_next({wait: (if $running then "wait" else null end), reconciled: true,
+                    reviews: review_park_possible, human: (human_park_line != null),
+                    stranded: stranded_possible}) end) as $n
+  | run_counts as $c
+  | ((.events // []) | last) as $e
+  | run_title as $t
+  | current_wave as $w
+  | ([((.plan.waves // []) | length), $w] | max) as $ws
+  | (.costs.total_usd // 0) as $cost
+  | (.plan.budget_usd // null) as $budget
+  | "\(repo_short) run \(.run_id) · Wave \($w)/\($ws) · " as $head
+  | (" · " + ($cost | usd) + (if $budget == null then "" else "/" + ($budget | usd) end)) as $tail
+  | ["\($c.merged)/\($c.total) merged",
+     (if $c.in_flight > 0 then "\($c.in_flight) in flight" else empty end),
+     (if $c.verifying > 0 then "\($c.verifying) verifying" else empty end),
+     (if $c.merge_gate > 0 then "\($c.merge_gate) \(if (.merge_gate.mode? // "") == "ci" then "in CI" else "merging" end)" else empty end),
+     (if $c.blocked > 0 then "\($c.blocked) blocked" else empty end)] as $parts
+  | (reduce $parts[1:][] as $x ($parts[0];
+       if (($head + . + ", " + $x + $tail) | length) <= 100 then . + ", " + $x else . end)) as $counts
+  | {v: 1, run: .run_id, repo: .repo, plan: ($t.title + $t.more), wave: $w, waves: $ws,
+     counts: $c, cost_usd: ($cost | r2), budget_usd: $budget,
+     next: $n.next, waiting_on_artisan: ([.decisions[] | select(.status == "waiting")] | length),
+     last_event: ($e.event // null), last_event_at: ($e.at // $now),
+     owner: {chat_pid: (if $running then ($o.chat_pid // null) else $lock end),
+             chat_session: (.chat_session // null), lock_pid: $lock},
+     text: ($head + $counts + $tail)}
+'
+
+# state_chat_session: the Claude session id of the chat running this call,
+# from its environment (CLAUDE_CODE_SESSION_ID, else CLAUDE_SESSION_ID), or
+# nothing. state.sh init and wave.sh launch record it as chat_session.
+state_chat_session() {
+  printf '%s\n' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+}
+
+state_status_path() { printf '%s/status.json\n' "$1"; }
+
+# state_status_write run_dir [lock-pid]: rewrite status.json from the state
+# file, the caller holding the lock. lock-pid names the holder (state_hand_lock
+# passes the new one); by default the lock's holder, unless it is this call's
+# own pid with no long-lived writer (ARTISAN_WRITER_PID), which holds it only
+# for the call. Display only, so it never fails a state write: a failure
+# leaves the last status.json in place.
+state_status_write() {
+  local run_dir="$1" file="" holder="" tmp="" out=""
+  file=$(state_file "$run_dir")
+  [ -f "$file" ] || return 0
+  if [ $# -ge 2 ]; then
+    holder=$2
+  else
+    holder=$(state_lock_holder "$run_dir")
+    [ -n "${ARTISAN_WRITER_PID:-}" ] || [ "$holder" != "$$" ] || holder=
+  fi
+  state_is_uint "$holder" || holder=null
+  out=$(state_status_path "$run_dir")
+  tmp="$run_dir/.status.json.tmp.$$"
+  if ! jq -c --argjson lock "$holder" --argjson now "$(state_now)" \
+    "$STATE_JQ_DEFS$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ" "$file" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 0
+  fi
+  if [ -f "$out" ] && cmp -s "$tmp" "$out"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  mv -f "$tmp" "$out" || rm -f "$tmp"
+  return 0
+}

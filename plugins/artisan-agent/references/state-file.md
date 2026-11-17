@@ -25,6 +25,7 @@ The state file is the record of a run's plan, progress and evidence that lets an
       workers/orchestrator-w<w>.<n>/handoff.json     the hand-off marker its PreCompact hook left
       .digest-seen                 the last event seq the chat was shown in the run digest (run-digest.sh)
       waiter.pid                   "<pid> <orchestrator-id> <attempt>" while a `wave.sh wait` waits on that orchestrator; status and the digest check the pid is alive (#237)
+      status.json                  the run status file: one line for a display, rewritten with the state file (#192, "The run status file" below); nothing in the plugin reads it
 ```
 
 Beside the repo, never inside it: `<repo>-wt/run-<run-id>/` is the run's integration worktree (the integration branch checked out; every merge happens here) and `<repo>-wt/<run-id>-<ticket>.<n>/` each worker's worktree, removed once its ticket merges. `scripts/wave.sh` makes and removes them.
@@ -88,7 +89,7 @@ Top level:
 | `review_gates` | top-level | every review gate opened (or folded, #241): `{id, kind, slice, title, role, issue, tickets, dependents, cards, uncertainties, triaged?, status: open\|approved\|redirected\|bypassed\|deferred\|empty\|folded, left_run?, folded_into?, folded_at?, answered_with?, why?, opened_at, approved_at?, decisions, reworks, guardrails?}` (`guardrails`, `[{guardrail: "area:<name>", area}]`, on a risk gate an area's settings opened; `uncertainties`, `[{uncertainty, ticket, from: worker|verifier, text}]`, numbered as the packet lists them; `triaged`, `[{card|uncertainty, ticket, question, by, at}]`, each item sent to the Decision chat with `gate-action.sh triage`, #232); each decision a decision record with its job and who made it (`references/review-gates.md`); a redirect, bypass or deferral adds `redirect`, `bypass` or `deferral` (`{by, at, why?, notes?, released?, mode?, ticket?}`) and `answered`, every action in order (`references/gate-actions.md`) |
 | `exception_gates` | top-level | every exception gate opened (`scripts/gate-action.sh`): `{id: "exception-<decision id>", kind: "exception", reason: gave-up\|red-check\|unmeetable\|blocked, title, headline, ticket, tickets, decision, dependents, issue, status: open\|decided\|bypassed\|deferred, downstream, opened_at, outcome?, bypass?, deferral?, answered, guardrails?}` (`references/gate-actions.md`); `guardrails` (`[{guardrail, area?}]`) when the exception decision named the guardrail that raised it; `unmeetable` (`[{criterion, why, verifier_why}]`) on one whose reason is `unmeetable` (#186) |
 | `halted` | top-level | `null`, or, once a wave failed whole, every ticket blocked and none verified (or the Artisan answered an `orchestrator-exit` decision `halt`), `{wave, tickets, reason, at}`. `wave.sh launch` refuses while it is set; `--resume` (the Artisan's decision) sets it back to `null` |
-| `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, name, launched_at}` (`name` its session's name, #189: `<repo> · Wave <n> · <plan title>`, with ` (resumed)` or ` (handoff <k>)` on a later attempt at the wave; absent before #189), plus `cost_usd` once `wave.sh status` has seen it end, `exit` once its exit was judged (#171: `{clean: true, at}`, or `{clean: false, cause, decision, at}` with an `orchestrator-exit` decision queued; judged once, by its runner's exit hook, #184, or else by `wave.sh status` or `launch`), and `handoff` (`{reason, percent, at}`) when it handed its wave to the next one (`drain.sh handoff`; `skills/implement-plan/references/context-drain.md`). Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
+| `orchestrators` | top-level | every orchestrator launched, in order: `{id, wave, attempt, name, launched_at, chat_pid}` (`chat_pid` the chat holding the run during the wave, #192; `name` its session's name, #189: `<repo> · Wave <n> · <plan title>`, with ` (resumed)` or ` (handoff <k>)` on a later attempt at the wave; absent before #189), plus `cost_usd` once `wave.sh status` has seen it end, `exit` once its exit was judged (#171: `{clean: true, at}`, or `{clean: false, cause, decision, at}` with an `orchestrator-exit` decision queued; judged once, by its runner's exit hook, #184, or else by `wave.sh status` or `launch`), and `handoff` (`{reason, percent, at}`) when it handed its wave to the next one (`drain.sh handoff`; `skills/implement-plan/references/context-drain.md`). Its pid is in `workers/<id>.<attempt>/runner.pid`, its files are named like a worker's |
 | `overrun_gates` | top-level | every overrun gate opened (`budget.sh`, `references/cost-and-usage.md`): `{id: "overrun-<n>", kind: "exception", title, issue, status: open\|deferred, gate_actions: ["defer"], opened_at, budget_usd, spent_usd, projected_usd, tickets_over: [{ticket, estimate, spent, over_by}], guardrails: [{guardrail: "defer-only"}], action?, decision?: {card, option, choice, why, by, job, at}, deferred_at?}`. An open one holds every new dispatch (17) |
 | `usage_park` | top-level | `null`, or while the plan-window guard has parked dispatch (18): `{window: five-hour\|seven-day\|unknown, used, limit, resets_at, why, at, resume: null\|{by, at, after, raised?}}` |
 | `base_park` | top-level | `null`, or while merging is parked on a red base (19, #195): a red CI merge gate whose failing tests the base fails too, so the merge was undone and nobody was charged: `{ticket, attempt, tickets?, batch?, label, pre, sha, at, tests, workflow, run_id, url, conclusion, base_sha, merge_run: {run_id, url, conclusion}}` (`run_id`, `url`, `conclusion` the base's run), with a `base-red` decision waiting. Only merging stops (dispatch and verifying carry on; a `base-red` decision holds no launch while the frontier has work). `wave.sh unpark-base` (the Artisan's word, once the base is fixed) clears it; the tickets, still `returned` and verified, are merged afresh |
@@ -96,6 +97,7 @@ Top level:
 | `merge_gate` | top-level | `null`, or while a merge gate is in progress (#142): `{ticket, attempt, gate, mode, pre, sha, result, pid_file, log, at}`, |
 | `usage_verdict` | top-level | `null` until the plan-window guard first runs, then the guard's current verdict `{ok, line, at}`, where `at` is when that verdict was first seen. `budget.sh guard` writes it only when the verdict (`ok` and `line`) changes, so a repeat reading leaves the file untouched and a second sweep changes nothing. `wave.sh status` only reads it (#120) |
 | `merge_batch` | top-level | `null`, or while a merge batch is settling (#167, `wave.sh merge` with several tickets): `{id, tickets, attempts, pre, order, commits, red, red_record, rebuild, merged, red_tickets, left_out, gates, at}`. `tickets` and `attempts` (ticket → attempt) are the batch as asked; |
+| `chat_session` | top-level | the Claude session id of the chat that holds the run (#192), from its environment (`CLAUDE_CODE_SESSION_ID`, else `CLAUDE_SESSION_ID`): `state.sh init` records it and each `wave.sh launch` (not `--handoff`) updates it; `null` when the environment gives none. Only the run status file reads it |
 | `events` | top-level | the event log, in order: `{seq, at, event, ...}` (below) |
 
 One entry per line: the longer rows of the table above continue here, a clause to a line.
@@ -200,6 +202,8 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 |---|---|
 | `events` | `[]`; the first event written is `seq` 1 |
 | `orchestrators` | `[]`; `current_wave` is 0 |
+| `chat_session` | `null`: the chat's session is not known |
+| `orchestrators[].chat_pid` | absent: the run status file names no chat during that wave |
 | `findings_read` | `{}`; no finding line is read yet |
 | `relays` | `[]` |
 | `pushed` | `{}`: no ticket branch pushed, nothing to delete |
@@ -234,6 +238,26 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `questions`, `answers` | `[]` (ticket fields) |
 
 #54 added `events`, `plan.suite_command`, `plan.orchestrator`, the ticket's `tracker_closed`, and (with the two-tier scripts) `integration.worktree`, `integration.base`, the ticket's `worktree`, `base` and `suite`. It also let a ticket's `cost_usd` fall back to the session's `total_cost_usd` when the result file has none. Reviewed in #96: none of these changed the meaning or type of a field that existed before (the cost fallback only fills a value that was `null`), so none needed a bump.
+
+## The run status file
+
+`status.json` in the run folder is one line of JSON saying how the run stands, for a display such as the Agent Cockpit to show beside the Run chat without spending a token (#192). It is display only: nothing in the plugin reads it back. One entry per line.
+
+- **Written with the state file.** Every state write (`state_commit` in `scripts/lib/state-lib.sh`, under the state lock) rewrites it, and so does handing the lock to an orchestrator's runner (`state_hand_lock`). It is written as `.status.json.tmp.<pid>` and renamed over `status.json`, so a reader never sees a partial file. Content that has not changed is not rewritten. A failure to write it never fails the state write; the last one stays.
+- **When the run ends** it stays in place: `next` is `done` once `end-gate.sh finish` ends the run, `halted` while the run is halted.
+- **Schema `v: 1`.** `{v, run, repo, plan, wave, waves, counts, cost_usd, budget_usd, next, waiting_on_artisan, last_event, last_event_at, owner, text}`.
+- `run`, `repo`: `run_id` and `repo`.
+- `plan`: the run's title, from the same source as the orchestrator's session name (#189): the first plan issue's title without `Plan: `, ` +N` for further plans, else the spec's title, else `run <id>`.
+- `wave`: the last orchestrator's wave (`current_wave`, 0 before any); `waves`: the plan's wave count, or `wave` if that is more.
+- `counts`: the scope's agent tickets (no Human check) by status: `merged`, `in_flight`, `verifying` (`returned`, not at a merge gate), `merge_gate` (`returned`, in `merge_gate`, `ci_gate` or `merge_batch`), `queued`, `blocked`, `other` (closed on the tracker, or out of the run) and `total`, their sum (`run_counts` in `scripts/lib/state-lib.sh`).
+- `cost_usd`: `costs.total_usd`; `budget_usd`: `plan.budget_usd`, or `null`.
+- `next`: `wave.sh status`'s next step, from the same chain (`run_next` in `scripts/lib/state-lib.sh`), with what only the tracker or the processes can say read from the state file: `wait` while an orchestrator runs (the last one has no `exit` and the lock is held by a writer other than its `chat_pid`), the tracker counted as read, review parking from `review_park_possible`, hands-on parking from `human_park_line`, and stranded from `stranded_possible` (a dropped or resliced ticket in scope). `wave.sh status` itself prints `wait (no waiter running: ...)` where this says `wait`.
+- `waiting_on_artisan`: the decisions waiting (gate decisions included), as `wave.sh status` lists them.
+- `last_event`, `last_event_at`: the last event's name and time (epoch seconds); `last_event_at` is always set (the write's time when the log is empty), so a reader shows its age itself.
+- `owner.lock_pid`: the lock's holder when it is a long-lived writer (the chat, or an orchestrator's runner), else `null` (a one-off call holds it only for that call). A reader greys the line out when that process is gone.
+- `owner.chat_pid`: the chat that holds the run: the lock's holder between waves, the last orchestrator's `chat_pid` (the pid `wave.sh launch` handed the lock from) while it runs.
+- `owner.chat_session`: `chat_session`, or `null`.
+- `text`: `<repo> run <id> · Wave <w>/<n> · <m>/<total> merged[, <k> in flight][, <k> verifying][, <k> in CI or merging][, <k> blocked] · $<cost>[/$<budget>]`, at most 100 characters (a count that would pass that is left out); no age, which a reader adds at display time.
 
 ## The end gate
 

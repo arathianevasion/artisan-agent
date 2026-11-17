@@ -89,12 +89,15 @@ cmd_init() {
 init_write() {
   local run_dir="$1" plan="$2" tmp=
   tmp=$(state_tmp "$run_dir")
-  jq --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" "$STATE_JQ_DEFS"'
+  # chat_session: the Claude session id of the chat starting the run, when its
+  # environment gives one (the run status file's owner, #192).
+  jq --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" --arg sid "$(state_chat_session)" "$STATE_JQ_DEFS"'
     . as $p
     | {
         schema_version: $v,
         run_id: $p.run_id,
         repo: $p.repo,
+        chat_session: (if $sid == "" then null else $sid end),
         plan: {
           scope: ($p.scope | map(tostring)),
           waves: ($p.waves // []),

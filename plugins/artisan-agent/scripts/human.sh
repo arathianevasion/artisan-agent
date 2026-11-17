@@ -374,26 +374,8 @@ cmd_parked() {
   local record=0
   [ "${2:-}" != --record ] || record=1
   local line=
-  line=$(get "$STATE_JQ_DEFS"'
-    . as $s | ($s.plan.tickets // {}) as $pt
-    | $s.plan.scope as $scope
-    | [$scope[] | select($s.tickets[.].status != "merged" and $s.tickets[.].status != "closed")
-        | select(. as $t | $s | is_human_check($t) | not)] as $open
-    | [$open[] | select($s.tickets[.].human != null or (($s.plan.hands_on.ticket // "" | tostring) == .))] as $hum
-    | def blk($t): [($pt[$t].blocked_by // [])[] | tostring];
-      (reduce range(0; ($scope | length) + 1) as $_ ($hum;
-        . as $r | ($r + [$open[] | select(. as $t | blk($t) | any(. as $b | $r | index($b)))]) | unique)) as $held
-    | [$open[] | select(. as $t | $held | index($t) | not)] as $loose
-    | if ($hum | length) == 0 or ($loose | length) > 0
-         or ([$open[] | select($s.tickets[.].status == "in_flight" or $s.tickets[.].status == "returned")] | length) > 0
-         or ($s.frontier | length) > 0
-         or ([$s.decisions[] | select(.status == "waiting" and .kind != "risk-gate" and .kind != "review-gate")] | length) > 0
-      then empty
-      else
-        ($open | map(select(. as $t | $hum | index($t) | not))) as $behind
-        | "parked: waiting on the Artisan'"'"'s hands-on ticket \($hum | map("#" + . + " (" + ($pt[.].title // "untitled") + ")") | join(", "))"
-          + (if ($behind | length) > 0 then "; \($behind | length) ticket(s) wait behind it: \($behind | map("#" + .) | join(", "))" else "; nothing else waits behind it" end)
-      end')
+  # human_park_line in lib/state-lib.sh, which status.json reads too (#192).
+  line=$(get "$STATE_JQ_DEFS"'human_park_line // empty')
   [ -n "$line" ] || return 1
   echo "$line"
   if [ "$record" -eq 1 ]; then
