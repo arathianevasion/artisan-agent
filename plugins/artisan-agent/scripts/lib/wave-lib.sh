@@ -22,10 +22,14 @@ open_run() { # run-dir
 
 get() { jq -r "$@" "$FILE"; }
 
-# worktree_setup wt (#173): the project's worktree_setup command (config.yml),
-# run once in a new worktree, with ARTISAN_MAIN set to the main checkout, so a
+# worktree_setup wt (#173): the worktree_setup command, run once in a new
+# worktree, with ARTISAN_MAIN set to the main checkout, so the integration,
 # worker, verifier, hands-on or end-gate worktree starts with its dependencies
-# (npm ci, a node_modules symlink). Unset runs nothing and returns 0. A failing
+# (npm ci, a node_modules symlink). The command and worktree_setup_timeout are
+# the run's (#252): its state file's plan.config, which carries state.sh
+# override; each one the run leaves unset or empty, or with no state file,
+# comes from the project config (config.sh show in the main checkout). The one
+# place either is read. Unset runs nothing and returns 0. A failing
 # command returns 1 with SETUP_ERR = "setup: <command> exited N: <stderr tail>",
 # so the caller records a setup failure, not a red test. Not for $(...): it
 # sets SETUP_ERR.
@@ -46,9 +50,16 @@ SETUP_CMD=
 SETUP_RC=
 SETUP_TAIL=
 worktree_setup() {
-  local wt="$1" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
+  local wt="$1" run="{}" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
   SETUP_ERR= SETUP_CMD= SETUP_RC= SETUP_TAIL=
+  if [ -n "${FILE:-}" ] && [ -f "$FILE" ]; then
+    run=$(jq -c '.plan.config | if type == "object" then . else {} end' "$FILE" 2>/dev/null) || run='{}'
+  fi
   conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
+  # Each setting: the run's, else the project's.
+  conf=$(jq -c --argjson r "$run" '. as $p
+    | def pick($k): [$r[$k], $p[$k]] | map(select(. != null and . != "")) | first;
+      {worktree_setup: pick("worktree_setup"), worktree_setup_timeout: pick("worktree_setup_timeout")}' <<<"$conf" 2>/dev/null) || conf='{}'
   cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
   [ -n "$cmd" ] || return 0
   limit=$(jq -r '.worktree_setup_timeout // empty' <<<"$conf" 2>/dev/null) || limit=

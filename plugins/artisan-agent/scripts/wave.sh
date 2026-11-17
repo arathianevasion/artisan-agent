@@ -9,6 +9,10 @@
 #       create the integration branch (from REF, default the main checkout's
 #       branch) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
+#       A new worktree runs the run's worktree_setup first (#252); a failing
+#       one exits 6 with the setup failure, records an
+#       integration-setup-failed event and removes the worktree (and the
+#       branch, if this start made it): run start again once it is fixed.
 #   wave.sh launch <run-dir> [--resume] [--handoff] [--model M] [--estimate-usd N] [-- claude args...]
 #       launch the next wave's orchestrator: a detached headless claude -p
 #       under run-ticket.sh --role orchestrator, in the integration worktree.
@@ -525,7 +529,7 @@ cmd_wait() {
 cmd_start() {
   open_run "${1:-}"
   shift
-  local base= ib= wt= sha=
+  local base= ib= wt= sha= made_branch=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] || usage; base=$2; shift 2 ;;
@@ -540,12 +544,25 @@ cmd_start() {
   fi
   if ! git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib" >/dev/null; then
     git -C "$MAIN" branch "$ib" "$base" >/dev/null || die "could not create $ib from $base"
+    made_branch=1
   fi
   wt="$WT_ROOT/run-$RUN_ID"
   if [ ! -d "$wt" ]; then
     mkdir -p "$WT_ROOT"
     git -C "$MAIN" worktree add -q "$wt" "$ib" >/dev/null 2>&1 \
       || die "could not add the integration worktree $wt for $ib"
+    # The run's worktree_setup (#252), so the first merge gate has the
+    # dependencies. A failure is a setup failure, not a red suite: the
+    # worktree goes, and the branch too if this start made it, so nothing of
+    # a half-made run is left and start can run again once it is fixed.
+    if ! worktree_setup "$wt"; then
+      git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
+      [ -z "$made_branch" ] || git -C "$MAIN" branch -D "$ib" >/dev/null 2>&1 || true
+      apply 'event({event: "integration-setup-failed", branch: $b, worktree: $wt, command: $c,
+          exit: (if $rc == "" then null else ($rc | tonumber) end), stderr: $e}; $now)' \
+        --arg b "$ib" --arg wt "$wt" --arg c "$SETUP_CMD" --arg rc "$SETUP_RC" --arg e "$SETUP_TAIL"
+      state_die 6 "wave.sh: the integration worktree for $ib: $SETUP_ERR"
+    fi
   fi
   sha=$(git -C "$wt" rev-parse HEAD)
   apply '
