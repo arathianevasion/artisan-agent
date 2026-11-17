@@ -189,7 +189,7 @@ The exception gate a run hits when its projected spend crosses the budget. It ho
 _Avoid_: budget alert, cost gate
 
 **Plan-window guard**:
-The check before every dispatch that the Artisan's claude.ai plan has room in its five-hour and seven-day usage windows. When a window is near its limit, or its reading is unknown or stale, the guard parks the run instead of letting work be cut off midway.
+The check before every dispatch that the Artisan's claude.ai plan has room in its five-hour and seven-day usage windows. When a window is near its limit, or its reading is unknown or stale, the guard parks the run instead of letting work be cut off midway. An account with no plan windows (overage billing only, or an API key), seen by the workers' own rate-limit events, is let through: the budget limits its spend.
 _Avoid_: rate limiter, usage check
 
 **Park**:

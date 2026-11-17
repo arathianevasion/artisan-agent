@@ -184,7 +184,7 @@ verdict() {
           # plan-window account is judged on its windows, never on this.
           {ok: true, no_plan_windows: true, window: null, five_hour: 0, seven_day: 0,
            source: "worker", age_seconds: ($now - $np.at),
-           why: "the account has no plan windows (a worker'"'"'s rate-limit events show no five-hour or seven-day window), so the budget cap limits spend"}
+           why: "the account has no plan windows (a worker'"'"'s rate-limit events show no five-hour or seven-day window), so the budget limits spend"}
         elif ($all | length) == 0 then
           if $u == null and ($w | length) == 0 then
             unknown("no usage reading at \($f): the status-line capture is not installed or has not run (statusline.sh install), and no worker has reported one")

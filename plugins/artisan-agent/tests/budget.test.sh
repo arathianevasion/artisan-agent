@@ -326,7 +326,7 @@ test_a_fresh_no_plan_windows_reading_carries_on_while_workers_run() {
   out=$("$B" usage "$RUN_DIR")
   assert_contains "$out" "ok "
   assert_contains "$out" "no plan windows"
-  assert_contains "$out" "budget cap"
+  assert_contains "$out" "the budget limits spend"
   assert_status 0 "$B" guard "$RUN_DIR"
   assert_eq null "$(state_get .usage_park)"
   # Stale, it is no reading: unknown, as before.
