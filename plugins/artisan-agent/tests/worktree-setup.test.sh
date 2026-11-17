@@ -307,3 +307,25 @@ test_ws_a_hands_on_worktree_runs_the_runs_setup() {
   "$SCRIPTS/human.sh" start "$RUN_DIR" 1 >/dev/null
   [ -e "$TEST_TMPDIR/project-wt/r1-1.human/run-setup" ] || fail "the run's setup did not run in the hands-on worktree"
 }
+
+test_ws_a_start_cut_off_during_its_setup_runs_it_again() {
+  setup_wave
+  # What a start killed mid-setup leaves: the branch and worktree, unrecorded.
+  git -C "$PROJECT" branch run/r1 >/dev/null
+  mkdir -p "$TEST_TMPDIR/project-wt"
+  git -C "$PROJECT" worktree add -q "$TEST_TMPDIR/project-wt/run-r1" run/r1 >/dev/null 2>&1
+  set_setup 'touch deps-installed'
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  [ -e "$TEST_TMPDIR/project-wt/run-r1/deps-installed" ] || fail "setup did not run in the leftover worktree"
+}
+
+test_ws_an_override_works_on_a_plan_whose_config_leaves_worktree_setup_empty() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  set_run_config '{}'
+  assert_eq null "$(state_get '.plan.config.worktree_setup')"
+  "$SCRIPTS/state.sh" override "$RUN_DIR" worktree_setup 'touch override-setup'
+  export FAKE_CLAUDE_MODE=complete
+  "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null
+  [ -e "$TEST_TMPDIR/project-wt/r1-1.1/override-setup" ] || fail "the override did not run"
+}

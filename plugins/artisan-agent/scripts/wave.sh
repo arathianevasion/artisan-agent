@@ -217,8 +217,9 @@
 #
 # Exit status: 0 ok, 1 error, 2 usage, 3 lock held or an orchestrator still
 # running, 4 outside the scope, 5 a blocker not merged, 6 merge refused or
-# conflicted, 7 suite red, 8 worker still running, 9 no free slot, 10
-# expected files overlap, 11 conflict awaiting its one resolution try,
+# conflicted, or a worktree_setup failure (dispatch, start), 7 suite red,
+# 8 worker still running, 9 no free slot, 10 expected files overlap,
+# 11 conflict awaiting its one resolution try,
 # 12 the run is halted, 13 not verified, 15 the login would expire mid-run,
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
 # CI, 20 the merge gate is still running, 21 launch: main changed a product
@@ -529,7 +530,7 @@ cmd_wait() {
 cmd_start() {
   open_run "${1:-}"
   shift
-  local base= ib= wt= sha= made_branch=""
+  local base= ib= wt= sha= made_branch="" rc="null"
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] || usage; base=$2; shift 2 ;;
@@ -551,16 +552,21 @@ cmd_start() {
     mkdir -p "$WT_ROOT"
     git -C "$MAIN" worktree add -q "$wt" "$ib" >/dev/null 2>&1 \
       || die "could not add the integration worktree $wt for $ib"
-    # The run's worktree_setup (#252), so the first merge gate has the
-    # dependencies. A failure is a setup failure, not a red suite: the
-    # worktree goes, and the branch too if this start made it, so nothing of
-    # a half-made run is left and start can run again once it is fixed.
+  fi
+  # The run's worktree_setup (#252), so the first merge gate has the
+  # dependencies: until the worktree is recorded, so a start cut off during
+  # its setup runs it again. A failure is a setup failure, not a red suite:
+  # the worktree goes, and the branch too if this start made it, so nothing
+  # of a half-made run is left and start can run again once it is fixed.
+  if [ "$(get '.integration.worktree // ""')" != "$wt" ]; then
     if ! worktree_setup "$wt"; then
       git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
       [ -z "$made_branch" ] || git -C "$MAIN" branch -D "$ib" >/dev/null 2>&1 || true
+      # No exit status (null) when the command never started.
+      ! state_is_uint "${SETUP_RC:-}" || rc=$SETUP_RC
       apply 'event({event: "integration-setup-failed", branch: $b, worktree: $wt, command: $c,
-          exit: (if $rc == "" then null else ($rc | tonumber) end), stderr: $e}; $now)' \
-        --arg b "$ib" --arg wt "$wt" --arg c "$SETUP_CMD" --arg rc "$SETUP_RC" --arg e "$SETUP_TAIL"
+          exit: $rc, stderr: $e}; $now)' \
+        --arg b "$ib" --arg wt "$wt" --arg c "$SETUP_CMD" --argjson rc "$rc" --arg e "$SETUP_TAIL"
       state_die 6 "wave.sh: the integration worktree for $ib: $SETUP_ERR"
     fi
   fi

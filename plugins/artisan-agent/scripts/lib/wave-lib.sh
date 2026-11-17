@@ -50,15 +50,15 @@ SETUP_CMD=
 SETUP_RC=
 SETUP_TAIL=
 worktree_setup() {
-  local wt="$1" run="{}" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
+  local wt="$1" run_conf="{}" conf="" cmd="" limit="" dir="" rc="" tail_="" pgid="" bg="" deadline=0 i=0 timed_out="" starting=0 never_started=""
   SETUP_ERR= SETUP_CMD= SETUP_RC= SETUP_TAIL=
   if [ -n "${FILE:-}" ] && [ -f "$FILE" ]; then
-    run=$(jq -c '.plan.config | if type == "object" then . else {} end' "$FILE" 2>/dev/null) || run='{}'
+    run_conf=$(jq -c '.plan.config | if type == "object" then . else {} end' "$FILE" 2>/dev/null) || run_conf='{}'
   fi
   conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
-  # Each setting: the run's, else the project's.
-  conf=$(jq -c --argjson r "$run" '. as $p
-    | def pick($k): [$r[$k], $p[$k]] | map(select(. != null and . != "")) | first;
+  # Each setting: the run's, else the project's; blank counts as unset.
+  conf=$(jq -c --argjson r "$run_conf" '. as $p
+    | def pick($k): [$r[$k], $p[$k]] | map(select(. != null and (tostring | test("^\\s*$") | not))) | first;
       {worktree_setup: pick("worktree_setup"), worktree_setup_timeout: pick("worktree_setup_timeout")}' <<<"$conf" 2>/dev/null) || conf='{}'
   cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
   [ -n "$cmd" ] || return 0

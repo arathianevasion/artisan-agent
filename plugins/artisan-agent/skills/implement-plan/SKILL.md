@@ -94,7 +94,7 @@ The approved scope is the run's scope, exactly: `state.sh dispatch` and `run-tic
 ### 4. Take the lock and start the integration branch
 
 1. **Hold the run.** Your session's process is the long-lived pid that holds the state lock between waves. In every Bash call that runs a run script, set `ARTISAN_WRITER_PID=$(ps -o ppid= -p $$ | tr -d ' ')` (the tool shell's parent is this session), and take the lock once: `ARTISAN_WRITER_PID=… ${CLAUDE_PLUGIN_ROOT}/scripts/state.sh lock <run folder> "$ARTISAN_WRITER_PID"`. While you hold it, `run-lock.sh check` refuses a second run in this repo.
-2. **Start the integration branch:** `${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh start <run folder>`. It creates `run/<run-id>` from the main checkout's branch and checks it out in the run's own integration worktree, `<repo>-wt/run-<run-id>`, beside the repo. Every merge in this run happens there; the main checkout is never touched.
+2. **Start the integration branch:** `${CLAUDE_PLUGIN_ROOT}/scripts/wave.sh start <run folder>`. It creates `run/<run-id>` from the main checkout's branch and checks it out in the run's own integration worktree, `<repo>-wt/run-<run-id>`, beside the repo. Every merge in this run happens there; the main checkout is never touched. The run's `worktree_setup` runs there first (#252); exit 6 is that setup failing, with its stderr tail, and leaves no worktree: fix the command (`state.sh override <run folder> worktree_setup '<command>'`) and run start again.
 
 ### 5. Launch a wave and yield
 
