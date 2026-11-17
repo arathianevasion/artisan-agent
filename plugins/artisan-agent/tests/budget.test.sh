@@ -301,6 +301,80 @@ test_workers_running_and_no_fresh_reading_parks_unknown_but_nothing_running_does
   assert_contains "$out" "ok no fresh usage reading"
 }
 
+# #251: an account with no plan windows (overage billing only, or an API key).
+# no_plan_reading ticket [age-seconds]: what a worker's runner records for a
+# rate_limit_event with no five-hour or seven-day window.
+no_plan_reading() {
+  local t= d=$RUN_DIR/workers/$1.1
+  t=$(( $(date +%s) - ${2:-0} ))
+  mkdir -p "$d"
+  jq -nc --argjson t "$t" --arg k "$1" '{source: "worker", ticket: $k, attempt: 1,
+    received_at: $t, rate_limits: null, no_plan_windows: true}' >"$d/usage.json"
+}
+
+# The status line never sees plan windows on such an account.
+no_plan_status_line() {
+  jq -nc --argjson t "$(date +%s)" '{schema_version: 1, written_at: $t, rate_limits: null}' >"$ARTISAN_USAGE_FILE"
+}
+
+test_a_fresh_no_plan_windows_reading_carries_on_while_workers_run() {
+  setup_budget
+  seed_running_worker
+  no_plan_status_line
+  no_plan_reading 2 60
+  local out=
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok "
+  assert_contains "$out" "no plan windows"
+  assert_contains "$out" "budget cap"
+  assert_status 0 "$B" guard "$RUN_DIR"
+  assert_eq null "$(state_get .usage_park)"
+  # Stale, it is no reading: unknown, as before.
+  no_plan_reading 2 $((11 * 60))
+  out=$("$B" usage "$RUN_DIR" || true)
+  assert_contains "$out" "park unknown"
+  assert_contains "$out" "11 minutes old"
+}
+
+test_a_fresh_plan_window_beside_an_overage_only_reading_is_judged_as_before() {
+  setup_budget
+  seed_running_worker
+  no_plan_status_line
+  # A worker's five-hour reading at 85%, older than another's overage-only
+  # event but still fresh: the plan window parks.
+  worker_reading 2 85 20 $((5 * 60))
+  no_plan_reading 3 30
+  local out= st=0
+  out=$("$B" usage "$RUN_DIR") || st=$?
+  assert_eq 18 "$st"
+  assert_contains "$out" "park five-hour 85%"
+  # A fresh status-line reading under the limits carries on as before.
+  rm -f "$RUN_DIR/workers/2.1/usage.json"
+  usage_reading 10 20 $((5 * 60))
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "ok 5h 10% 7d 20%"
+}
+
+test_a_fake_workers_overage_only_events_let_dispatch_carry_on() {
+  setup_budget
+  no_plan_status_line
+  printf 'Build.\n' >"$TEST_TMPDIR/prompt.md"
+  mkdir -p "$TEST_TMPDIR/wt"
+  local rpid= i=0 out=
+  rpid=$(PATH="$TESTS_DIR/fixtures/fake-claude:$PATH" FAKE_CLAUDE_MODE=stream-overage FAKE_CLAUDE_SLEEP=20 \
+    "$SCRIPTS/run-ticket.sh" --run-dir "$RUN_DIR" --ticket 1 --prompt-file "$TEST_TMPDIR/prompt.md" \
+    --workdir "$TEST_TMPDIR/wt" --estimate-usd 0.5 --expected-minutes 5)
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"] |= (.status = "in_flight" | .attempts = 1 | .pid = $pid | .dispatched_at = 1 | .deadline_at = 9999999999)' --argjson pid "$rpid"
+  while ! [ -s "$RUN_DIR/workers/1.1/usage.json" ]; do
+    i=$((i + 1)); [ "$i" -lt 100 ] || fail "the runner recorded no reading"; sleep 0.1
+  done
+  out=$("$B" usage "$RUN_DIR")
+  assert_contains "$out" "no plan windows"
+  assert_status 0 "$B" guard "$RUN_DIR"
+  assert_eq null "$(state_get .usage_park)"
+  kill "$rpid" 2>/dev/null || true
+}
+
 test_a_nine_minute_old_reading_is_fresh() {
   setup_budget
   usage_reading 10 20 $((9 * 60))

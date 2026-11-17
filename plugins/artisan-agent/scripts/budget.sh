@@ -28,7 +28,7 @@
 #       ("usage guard: <line>, since <time>").
 #   budget.sh usage <run-dir>
 #       the plan-window verdict alone, read-only: "ok 5h <p>% 7d <p>%",
-#       "park five-hour|seven-day <p>% ...resets <time>" or "park unknown <why>"
+#       "ok the account has no plan windows ..." (#251), "park five-hour|seven-day <p>% ...resets <time>" or "park unknown <why>"
 #       (exit 18 for either park).
 #   budget.sh project <run-dir>
 #       the projection as JSON, read-only: budget, spent, still to come,
@@ -126,7 +126,8 @@ running_workers() {
 }
 
 # worker_readings: a JSON array of every worker's usage.json in this run
-# (run-ticket.sh writes it: the latest rate_limit_event, with its own time).
+# (run-ticket.sh writes it: the latest rate_limit_event, with its own time, or
+# no_plan_windows: true when the events carry no plan window).
 worker_readings() {
   local f=
   for f in "$RUN_DIR"/workers/*/usage.json; do
@@ -138,7 +139,10 @@ worker_readings() {
 # resets_at, why} from the freshest reading per window across the status-line
 # capture and every worker, and this run's thresholds. With no fresh reading
 # from any source: unknown (park) while workers run, and no park while none
-# does (nothing is spending); ok then carries idle: true.
+# does (nothing is spending); ok then carries idle: true. With no fresh
+# five-hour or seven-day reading but a fresh worker reading that saw no plan
+# windows (the account has none): ok, no_plan_windows: true, and the budget
+# cap limits spend.
 verdict() {
   local f= reading= reserve= ceiling= stale= workers= running=
   f=$(usage_file)
@@ -165,12 +169,22 @@ verdict() {
        ($w[] | select((.rate_limits[$k] // null) != null)
         | {source: "worker", at: (.rate_limits[$k].at // .received_at), w: .rate_limits[$k]})];
     def freshest($k): [cands($k)[] | select(($now - .at) <= ($stale * 60))] | max_by(.at);
-    (cands("five_hour") + cands("seven_day")) as $all
+    # A worker whose rate-limit events carry no plan window (#251): the
+    # account has none (overage billing only, or an API key).
+    ([$w[] | select(.no_plan_windows == true and (.received_at | type) == "number")
+      | {source: "worker", at: .received_at}] | max_by(.at)) as $np
+    | (cands("five_hour") + cands("seven_day") + (if $np then [$np] else [] end)) as $all
     | (freshest("five_hour")) as $f5 | (freshest("seven_day")) as $f7
     | if $f5 == null and $f7 == null then
         if $running == 0 then
           {ok: true, idle: true, window: null, five_hour: 0, seven_day: 0, age_seconds: null,
            why: "no fresh usage reading, and no worker is running, so nothing is spending"}
+        elif $np != null and ($now - $np.at) <= ($stale * 60) then
+          # Only with no fresh plan-window reading from any source, so a
+          # plan-window account is judged on its windows, never on this.
+          {ok: true, no_plan_windows: true, window: null, five_hour: 0, seven_day: 0,
+           source: "worker", age_seconds: ($now - $np.at),
+           why: "the account has no plan windows (a worker'"'"'s rate-limit events show no five-hour or seven-day window), so the budget cap limits spend"}
         elif ($all | length) == 0 then
           if $u == null and ($w | length) == 0 then
             unknown("no usage reading at \($f): the status-line capture is not installed or has not run (statusline.sh install), and no worker has reported one")
@@ -200,7 +214,7 @@ WHEN_JQ='def when: if . == null then "unknown" else (strflocaltime("%a %d %b %H:
 
 verdict_line() { # verdict-json
   jq -r "$WHEN_JQ"'
-    if .ok and .idle then "ok \(.why)"
+    if .ok and (.idle or .no_plan_windows) then "ok \(.why)"
     elif .ok then "ok 5h \(.five_hour | floor)% 7d \(.seven_day | floor)%"
     elif .window == "unknown" then "park unknown: \(.why)"
     else "park \(.window) \(.used | floor)% (limit \(.limit)%): \(.why); resets \(.resets_at | when)" end' <<<"$1"
