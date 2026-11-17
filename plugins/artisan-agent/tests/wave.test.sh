@@ -125,6 +125,8 @@ if [ "\${ORCH_STOP:-}" = mid-dispatch ]; then . "\$ORCH_MID_DISPATCH"; exit 1; f
 S="$SCRIPTS"
 R="\$ARTISAN_RUN_DIR"
 inflight() { jq '[.tickets[] | select(.status == "in_flight")] | length' "\$R/state.json"; }
+# SNAP_DIR: keep a copy of the run status file after each step (#192).
+snap() { [ -z "\${SNAP_DIR:-}" ] || cp "\$R/status.json" "\$SNAP_DIR/\$(ls "\$SNAP_DIR" | wc -l | tr -d ' ').\$1.json"; }
 # A fresh verifier per returned ticket; only its one-line verdict is read.
 verify() {
   local rc=
@@ -141,16 +143,20 @@ verify() {
   done
 }
 for t in \$("\$S/reconcile.sh" "\$R"); do "\$S/wave.sh" dispatch "\$R" "\$t" >/dev/null; done
+snap dispatch
 while [ "\$(inflight)" -gt 0 ]; do
   "\$S/wait-any.sh" "\$R" --timeout 5 >/dev/null || true
   "\$S/sweep.sh" "\$R"
 done
+snap returned
 if [ "\${ORCH_STOP:-}" = returned ]; then "\$S/wave.sh" report "\$R" >"\$ARTISAN_RESULT_FILE"; exit 0; fi
 for t in \$(jq -r '.tickets | to_entries[] | select(.value.status == "returned") | .key' "\$R/state.json"); do
   n=\$(jq -r --arg t "\$t" '.tickets[\$t].attempts' "\$R/state.json")
   while [ "\$("\$S/classify-worker.sh" "\$R" "\$t" "\$n")" = "running -" ]; do sleep 0.2; done
   if [ "\${ORCH_STOP:-}" = verified ]; then verify "\$t" || true; continue; fi
-  if verify "\$t" && "\$S/wave.sh" merge "\$R" "\$t"; then "\$S/wave.sh" close "\$R" "\$t"; fi
+  if verify "\$t" && snap verified && "\$S/wave.sh" merge "\$R" "\$t"; then
+    snap merged; "\$S/wave.sh" close "\$R" "\$t"; snap closed
+  fi
 done
 "\$S/wave.sh" report "\$R" >"\$ARTISAN_RESULT_FILE"
 EOF
@@ -939,4 +945,64 @@ test_an_earlier_waves_unfinished_ticket_is_still_unfinished_later() {
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: decide"
   assert_contains "$out" "orchestrator-exit: no-verdict in wave 2 (#1)"
+}
+
+# The run status file (#192) through a fake-claude run: after each kind of
+# state change it says what wave.sh status says, and names its owner.
+# assert_status_json_matches label: next, and the ticket table's statuses
+# against counts (returned is verifying plus merge_gate).
+assert_status_json_matches() {
+  local out="" want="" got=""
+  out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
+  want=$(printf '%s\n' "$out" | sed -n 's/^next: \([a-z]*\).*/\1/p')
+  assert_eq "$want" "$(jq -r .next "$RUN_DIR/status.json")" "$1: next"
+  want=$(printf '%s\n' "$out" | awk -F' [|] ' '/^[|] #/ { split($4, w, " "); n[w[1]]++ }
+    END { printf "%d %d %d %d %d", n["merged"], n["in_flight"], n["returned"], n["queued"], n["blocked"] }')
+  got=$(jq -r '.counts | "\(.merged) \(.in_flight) \(.verifying + .merge_gate) \(.queued) \(.blocked)"' "$RUN_DIR/status.json")
+  assert_eq "$want" "$got" "$1: merged, in flight, returned, queued, blocked"
+}
+
+test_the_run_status_file_says_what_status_says_through_a_fake_claude_run() {
+  setup_wave
+  export SNAP_DIR="$TEST_TMPDIR/snaps" CLAUDE_CODE_SESSION_ID=chat-session-1
+  mkdir -p "$SNAP_DIR"
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  assert_status_json_matches "before the wave"
+  assert_eq "$CHAT $CHAT" "$(jq -r '"\(.owner.chat_pid) \(.owner.lock_pid)"' "$RUN_DIR/status.json")"
+  "$SCRIPTS/wave.sh" launch "$RUN_DIR" >/dev/null 2>&1
+  wait_for_runner_gone orchestrator-w1.1
+  local runner="" f="" at=0 events=""
+  runner=$(cat "$RUN_DIR/workers/orchestrator-w1.1/runner.pid")
+  # During the wave: the orchestrator's runner holds the lock, the chat that
+  # launched it owns the run, and the next step is to wait.
+  assert_eq "0.dispatch.json 1.returned.json 2.verified.json 3.merged.json 4.closed.json" "$(ls "$SNAP_DIR" | sort -n | tr '\n' ' ' | sed 's/ $//')"
+  for f in $(ls "$SNAP_DIR" | sort -n); do
+    assert_eq "wait $runner $CHAT chat-session-1" \
+      "$(jq -r '"\(.next) \(.owner.lock_pid) \(.owner.chat_pid) \(.owner.chat_session)"' "$SNAP_DIR/$f")" "$f"
+    [ "$(jq -r .last_event_at "$SNAP_DIR/$f")" -ge "$at" ] || fail "$f: last_event_at went back"
+    at=$(jq -r .last_event_at "$SNAP_DIR/$f")
+    events="$events $(jq -r .last_event "$SNAP_DIR/$f")"
+  done
+  assert_eq '1 0' "$(jq -r '.counts | "\(.in_flight) \(.merged)"' "$SNAP_DIR/0.dispatch.json")" "dispatched"
+  assert_eq '1 0' "$(jq -r '.counts | "\(.verifying) \(.merged)"' "$SNAP_DIR/1.returned.json")" "returned"
+  assert_eq '1 0' "$(jq -r '.counts | "\(.verifying) \(.merged)"' "$SNAP_DIR/2.verified.json")" "verdict"
+  assert_eq '0 1' "$(jq -r '.counts | "\(.verifying) \(.merged)"' "$SNAP_DIR/3.merged.json")" "merged"
+  assert_contains "$events" " dispatch "
+  assert_contains "$(jq -r .text "$SNAP_DIR/3.merged.json")" "sample run r1 · Wave 1/2 · 1/1 merged · \$"
+  # After it: the chat takes the lock back, and each change the chat makes
+  # shows at once.
+  assert_status_json_matches "after the wave"
+  assert_eq "$CHAT $CHAT" "$(jq -r '"\(.owner.chat_pid) \(.owner.lock_pid)"' "$RUN_DIR/status.json")"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.decisions += [{id: ((.decisions | length) + 1), kind: "design",
+    ticket: "1", question: "Which?", status: "waiting", at: 1}]' >/dev/null
+  "$SCRIPTS/state.sh" event "$RUN_DIR" '{"event": "decision"}' >/dev/null
+  assert_status_json_matches "a decision queued"
+  assert_eq "decision 1" "$(jq -r '"\(.last_event) \(.waiting_on_artisan)"' "$RUN_DIR/status.json")"
+  "$SCRIPTS/state.sh" decide "$RUN_DIR" "$(jq '.decisions | length' "$RUN_DIR/state.json")" keep >/dev/null
+  assert_status_json_matches "the decision answered"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.halted = {wave: 1, tickets: ["1"], reason: "test", at: 1}' >/dev/null
+  assert_status_json_matches "halted"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.halted = null | .end_gate = {status: "ended"}' >/dev/null
+  assert_status_json_matches "ended"
+  assert_eq done "$(jq -r .next "$RUN_DIR/status.json")"
 }

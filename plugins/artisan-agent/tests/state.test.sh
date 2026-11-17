@@ -150,3 +150,81 @@ test_a_failed_write_changes_nothing_and_releases_the_lock() {
   assert_eq "$before" "$(state_sum)"
   [ ! -L "$RUN_DIR/state.lock" ] || fail "lock left behind by a failed write"
 }
+
+# The run status file (#192): status.json, rewritten with every state write.
+status_get() { jq -r "$1" "$RUN_DIR/status.json"; }
+
+test_init_writes_the_run_status_file_with_the_chats_session() {
+  make_project
+  write_plan "$TEST_TMPDIR/plan.json"
+  ARTISAN_NOW=1000 CLAUDE_CODE_SESSION_ID=sess-1 "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
+  assert_eq 1 "$(wc -l <"$RUN_DIR/status.json" | tr -d ' ')" "one line"
+  # (next is the chain's from the state file alone: no frontier until the
+  # reconciler first runs, at wave.sh start, status or launch.)
+  assert_eq "1 r1 owner/repo run r1 0 3 0" \
+    "$(status_get '"\(.v) \(.run) \(.repo) \(.plan) \(.wave) \(.waves) \(.waiting_on_artisan)"')"
+  assert_eq '{"merged":0,"in_flight":0,"verifying":0,"merge_gate":0,"queued":3,"blocked":0,"other":0,"total":3}' \
+    "$(jq -c .counts "$RUN_DIR/status.json")"
+  assert_eq "sess-1 null null" "$(status_get '"\(.owner.chat_session) \(.owner.chat_pid) \(.owner.lock_pid)"')" \
+    "a one-off call holds the lock for itself only"
+  assert_eq 1000 "$(status_get .last_event_at)" "always set, even before the first event"
+  assert_eq 'repo run r1 · Wave 0/3 · 0/3 merged · $0.00/$20.00' "$(status_get .text)"
+  assert_eq sess-1 "$(state_get .chat_session)"
+}
+
+test_the_run_status_file_follows_each_write_and_the_lock_holder() {
+  trap kill_workers EXIT
+  init_run
+  local chat=
+  assert_eq null "$(state_get .chat_session)" "no session in the environment"
+  ARTISAN_NOW=2000 "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 4242 9999
+  assert_eq "dispatch 2000 1 2" "$(status_get '"\(.last_event) \(.last_event_at) \(.counts.in_flight) \(.counts.queued)"')"
+  assert_contains "$(status_get .text)" "0/3 merged, 1 in flight"
+  # The chat takes the lock with its long-lived pid: the file names it.
+  chat=$(start_worker)
+  "$SCRIPTS/state.sh" lock "$RUN_DIR" "$chat"
+  ARTISAN_NOW=2100 ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" merge "$RUN_DIR" 10 abc123
+  assert_eq "merge 2100 1 $chat $chat" \
+    "$(status_get '"\(.last_event) \(.last_event_at) \(.counts.merged) \(.owner.lock_pid) \(.owner.chat_pid)"')"
+  ARTISAN_NOW=2200 ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" \
+    '.decisions += [{id: 1, kind: "design", ticket: "11", question: "Which?", status: "waiting", at: 2200}]'
+  assert_eq "decide 1" "$(status_get '"\(.next) \(.waiting_on_artisan)"')"
+  ARTISAN_NOW=2300 ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" \
+    '.halted = {wave: 1, tickets: ["11"], reason: "test", at: 2300}'
+  assert_eq halted "$(status_get .next)"
+  ARTISAN_WRITER_PID=$chat "$SCRIPTS/state.sh" update "$RUN_DIR" '.end_gate = {status: "ended"}'
+  assert_eq done "$(status_get .next)" "an ended run says so"
+  # A write refused under someone else's lock leaves the file as it was.
+  local before=
+  before=$(cat "$RUN_DIR/status.json")
+  assert_status 3 "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.max_agents = 9'
+  assert_eq "$before" "$(cat "$RUN_DIR/status.json")"
+  [ -z "$(ls -A "$RUN_DIR" | grep '^\.status\.json\.tmp')" ] || fail "a temp file was left behind"
+}
+
+test_a_reader_never_sees_a_partial_run_status_file() {
+  init_run
+  local i=0 bad=0
+  ( for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.max_agents = $n' --argjson n "$i" >/dev/null 2>&1 || true
+    done; touch "$TEST_TMPDIR/writes.done" ) &
+  while [ ! -e "$TEST_TMPDIR/writes.done" ]; do
+    jq -e '.v == 1 and (.text | length) > 0' "$RUN_DIR/status.json" >/dev/null 2>&1 || bad=$((bad + 1))
+  done
+  wait
+  assert_eq 0 "$bad" "reads that found a partial or missing file"
+}
+
+test_the_run_status_text_stays_under_a_hundred_characters() {
+  init_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "some-owner/a-rather-long-repository-name"
+    | .run_id = "20261117-101"
+    | .tickets["10"].status = "in_flight" | .tickets["11"].status = "returned" | .tickets["12"].status = "blocked"
+    | .merge_gate = {ticket: "11", mode: "ci"} | .costs.total_usd = 123.456 | .plan.budget_usd = 456.7'
+  assert_eq true "$(status_get '.text | length <= 100')" "text: $(status_get .text)"
+  assert_contains "$(status_get .text)" "a-rather-long-repository-name run 20261117-101 · Wave 0/3 · 0/3 merged, "
+  assert_contains "$(status_get .text)" '1 in CI · $123.46/$456.70'
+  # A shorter name leaves room for every count.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "o/app"'
+  assert_contains "$(status_get .text)" 'app run 20261117-101 · Wave 0/3 · 0/3 merged, 1 in flight, 1 in CI, 1 blocked · $123.46/$456.70'
+}

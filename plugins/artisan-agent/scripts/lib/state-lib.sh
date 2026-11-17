@@ -700,17 +700,19 @@ STATE_TITLE_JQ_DEFS='
 # temp file then a rename.
 #
 # $lock is the lock's holder when it is a long-lived writer (the chat, or an
-# orchestrator's runner), else null. An orchestrator is running when the last
-# one has no exit judged and the lock is held by a writer other than the chat
-# that launched it (orchestrators[].chat_pid): then next is "wait" and the
-# owning chat is that one. Otherwise next is run_next with what only the
-# tracker could add left to the state file (review_park_possible,
-# human_park_line, stranded_possible), and the owning chat is the lock holder.
+# orchestrator's runner), else null; $runners the pids of the run's
+# orchestrator runners. While a runner holds the lock the wave is the
+# orchestrator's, and the owning chat is the one that launched it
+# (orchestrators[].chat_pid); next is "wait" until its exit is judged.
+# Otherwise the owning chat is the lock holder, and next is run_next with what
+# only the tracker could add left to the state file (review_park_possible,
+# human_park_line, stranded_possible).
 STATE_STATUS_JQ='
   def usd: (. * 100 | round) as $c | "$" + (($c / 100 | floor) | tostring) + "."
     + (($c % 100) | tostring | if length == 1 then "0" + . else . end);
   ((.orchestrators // []) | last) as $o
-  | ($o != null and $o.exit == null and $lock != null and $lock != ($o.chat_pid // null)) as $running
+  | ($o != null and $lock != null and ($runners | index($lock)) != null) as $in_wave
+  | ($in_wave and $o.exit == null) as $running
   | (if (.end_gate.status? // "") == "ended" then {next: "done"}
      else run_next({wait: (if $running then "wait" else null end), reconciled: true,
                     reviews: review_park_possible, human: (human_park_line != null),
@@ -735,7 +737,7 @@ STATE_STATUS_JQ='
      counts: $c, cost_usd: ($cost | r2), budget_usd: $budget,
      next: $n.next, waiting_on_artisan: ([.decisions[] | select(.status == "waiting")] | length),
      last_event: ($e.event // null), last_event_at: ($e.at // $now),
-     owner: {chat_pid: (if $running then ($o.chat_pid // null) else $lock end),
+     owner: {chat_pid: (if $in_wave then ($o.chat_pid // null) else $lock end),
              chat_session: (.chat_session // null), lock_pid: $lock},
      text: ($head + $counts + $tail)}
 '
@@ -749,18 +751,25 @@ state_chat_session() {
 
 state_status_path() { printf '%s/status.json\n' "$1"; }
 
-# state_status_write run_dir [lock-pid]: rewrite status.json from the state
-# file, the caller holding the lock. lock-pid names the holder (state_hand_lock
-# passes the new one); by default the lock's holder, unless it is this call's
-# own pid with no long-lived writer (ARTISAN_WRITER_PID), which holds it only
-# for the call. Display only, so it never fails a state write: a failure
-# leaves the last status.json in place.
+# state_status_write run_dir [runner-pid]: rewrite status.json from the state
+# file, the caller holding the lock. runner-pid is the orchestrator runner the
+# lock was just handed to (state_hand_lock), and the holder. Otherwise the
+# holder is the lock's, unless it is this call's own pid with no long-lived
+# writer (ARTISAN_WRITER_PID), which holds it only for the call. Display only,
+# so it never fails a state write: a failure leaves the last status.json.
 state_status_write() {
-  local run_dir="$1" file="" holder="" tmp="" out=""
+  local run_dir="$1" file="" holder="" tmp="" out="" runners="" f="" p=""
   file=$(state_file "$run_dir")
   [ -f "$file" ] || return 0
+  for f in "$run_dir"/workers/orchestrator-*/runner.pid; do
+    [ -f "$f" ] || continue
+    p=
+    read -r p <"$f" || true
+    if state_is_uint "$p"; then runners="$runners,$p"; fi
+  done
   if [ $# -ge 2 ]; then
     holder=$2
+    runners="$runners,$2"
   else
     holder=$(state_lock_holder "$run_dir")
     [ -n "${ARTISAN_WRITER_PID:-}" ] || [ "$holder" != "$$" ] || holder=
@@ -768,7 +777,7 @@ state_status_write() {
   state_is_uint "$holder" || holder=null
   out=$(state_status_path "$run_dir")
   tmp="$run_dir/.status.json.tmp.$$"
-  if ! jq -c --argjson lock "$holder" --argjson now "$(state_now)" \
+  if ! jq -c --argjson lock "$holder" --argjson runners "[${runners#,}]" --argjson now "$(state_now)" \
     "$STATE_JQ_DEFS$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ" "$file" >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
     return 0
