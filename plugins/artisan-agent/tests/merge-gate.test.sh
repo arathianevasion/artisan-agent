@@ -209,6 +209,81 @@ test_mg_a_cancelled_ci_run_parks_the_run_unblocked_and_clearing_the_park_retries
   assert_eq "" "$(ci_branches)"
 }
 
+# A runner shortage (#258): the macOS job no runner picked up is cancelled
+# with GitHub's "not acquired by Runner" annotation while the job that ran
+# passed. The plan's config sets the waits to zero minutes.
+runner_short() { # [attempts it lasts]
+  echo '["bash 5.2", "macos"]' >"$FAKE_GH_DIR/ci-jobs"
+  echo '["macos"]' >"$FAKE_GH_DIR/ci-no-runner"
+  [ -z "${1:-}" ] || echo "$1" >"$FAKE_GH_DIR/ci-no-runner-attempts"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate.runner_wait_minutes = [0, 0]'
+}
+
+test_mg_a_run_short_of_runners_is_rerun_and_a_green_rerun_merges_with_no_attempt_used() {
+  setup_ci
+  verified_ticket
+  runner_short 1
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq 1 "$(grep -c '^run rerun 9001 -R local/sample --failed' "$FAKE_GH_DIR/calls")" "one rerun of only the cancelled jobs"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "api repos/local/sample/check-runs/900102/annotations"
+  assert_eq 0 "$(grep -c -- '--ref ci/.*-base' "$FAKE_GH_DIR/calls")" "no base check"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures // [] | tojson')" "no attempt used"
+  assert_eq "ci true 9001 success" "$(state_get '.tickets["1"].suite | "\(.mode) \(.passed) \(.run_id) \(.conclusion)"')"
+  assert_eq '[{"attempt":2,"waited_minutes":0,"jobs":["macos"],"conclusion":"success"}]' \
+    "$(state_get '.tickets["1"].suite.runner_reruns | tojson')" "the suite record names the rerun"
+  assert_eq null "$(state_get '.tickets["1"].suite.base_check | tojson')" "not flaky: no base check"
+  assert_eq "" "$(ci_branches)"
+}
+
+test_mg_a_run_still_short_of_runners_after_the_reruns_parks_on_ci_naming_the_shortage_and_the_jobs() {
+  setup_ci
+  verified_ticket
+  runner_short
+  merge_1
+  assert_eq 19 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq returned "$(state_get '.tickets["1"].status')" "not blocked, no attempt used"
+  assert_eq "[]" "$(state_get '.tickets["1"].failures // [] | tojson')"
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)" "the merge was undone"
+  assert_eq 2 "$(grep -c '^run rerun 9001 -R local/sample --failed' "$FAKE_GH_DIR/calls")" "two reruns"
+  assert_eq 0 "$(grep -c -- '--ref ci/.*-base' "$FAKE_GH_DIR/calls")" "no base check"
+  assert_eq "ci 1" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.ticket)"')"
+  local why=
+  why=$(state_get '.ci_park.why')
+  assert_contains "$why" "no runner"
+  assert_contains "$why" "macos"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "no runner"
+  assert_eq "" "$(ci_branches)"
+}
+
+test_mg_a_runner_rerun_that_fails_for_real_is_judged_red_as_today() {
+  setup_ci 30 '["1","2"]'
+  verified_ticket
+  runner_short 1
+  echo 1 >"$FAKE_GH_DIR/ci-no-runner-runs"
+  echo failure >"$FAKE_GH_DIR/ci-rerun-outcome"
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
+  merge_1
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq 1 "$(state_get '.tickets["1"].failures | length')" "a real failure uses an attempt"
+  assert_eq '[{"attempt":2,"waited_minutes":0,"jobs":["macos"],"conclusion":"failure"}]' \
+    "$(state_get '.tickets["1"].suite.runner_reruns | tojson')"
+  assert_eq new "$(state_get '.tickets["1"].suite.base_check.verdict')" "the base check judged the real failure"
+}
+
+test_mg_a_cancel_without_the_runner_annotation_parks_as_today_with_no_rerun() {
+  setup_ci
+  verified_ticket
+  runner_short
+  rm -f "$FAKE_GH_DIR/ci-no-runner"
+  echo cancelled >"$FAKE_GH_DIR/ci-outcome"
+  merge_1
+  assert_eq 19 "$MERGE_STATUS"
+  assert_eq 0 "$(grep -c '^run rerun' "$FAKE_GH_DIR/calls")" "no rerun"
+  assert_contains "$(state_get '.ci_park.why')" "concluded cancelled"
+}
+
 test_mg_a_green_run_for_another_commit_does_not_count_and_the_run_parks() {
   setup_ci 0
   verified_ticket

@@ -166,10 +166,17 @@ host_configured: false
 #   ci_gate:
 #     worker_inputs:
 #       macos: false
+# runner_wait_minutes (#258) are the waits before each rerun of a gate run
+# whose only jobs that did not pass were cancelled for want of a runner
+# (GitHub's "not acquired by Runner"): one rerun after each wait, each given a
+# fresh timeout_minutes; with them used up the run parks (reason ci). Source:
+# GitHub's hosted macOS arm64 runners went missing for minutes to an hour on
+# 2026-11-17 and 11-18, stalling four gates; the owner's ruling on #258.
 ci_gate:
   workflow:
   timeout_minutes: 30
   worker_inputs: {}
+  runner_wait_minutes: [15, 30]
 
 # The merge gate's time limit, in minutes (#200): how long one merge gate
 # may take. The plan step says so in one line when the expected CI minutes

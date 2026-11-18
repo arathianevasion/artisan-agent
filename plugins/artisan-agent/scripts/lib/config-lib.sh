@@ -51,6 +51,9 @@ CONFIG_JQ_DEFS='
         (if ($v | type) != "object" then error("estimate_multipliers must be a map of model to number")
          elif ([$v[] | select(type != "number" or . <= 0)] | length) > 0 then error("estimate_multipliers values must be positive numbers")
          else . end)
+      elif ($path == ["ci_gate", "runner_wait_minutes"]) then
+        (if ($v | type) != "array" or ([$v[] | select(type != "number" or . < 0 or floor != .)] | length) > 0
+         then error("ci_gate.runner_wait_minutes must be a list of whole minutes, not negative") else . end)
       elif ($path == ["tracker", "board"]) then
         (if ($v | type) != "object" then error("tracker.board must be a map: owner, number, fields_at_filing")
          elif ($v | length) == 0 then .
