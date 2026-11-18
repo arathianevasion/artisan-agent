@@ -169,7 +169,7 @@ cmd_annotate() {
 # the integration branch, every one outside it closed. 5 when not.
 blockers_merged() { # ticket
   local t="$1" repo= ib= tip= blockers= b= state= status= sha=
-  repo=$(get '.repo')
+  repo=$(run_repo)
   ib=$(integration_branch)
   tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib") || die "no integration branch $ib"
   blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
@@ -197,7 +197,7 @@ is_hands_on() { # ticket: labelled ready-for-human on the tracker, or the plan's
   local t="$1" issue=""
   [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] || return 1
   [ "$(get --arg t "$t" '(.plan.hands_on.ticket // "" | tostring) == $t')" != true ] || return 0
-  issue=$(gh api "repos/$(get '.repo')/issues/$t") || die "could not read #$t from the tracker"
+  issue=$(gh api "repos/$(run_repo)/issues/$t") || die "could not read #$t from the tracker"
   jq -e --arg m "$HUMAN_CHECK_MARK" '(.body // "") | contains($m) | not' <<<"$issue" >/dev/null || return 1
   jq -e '[.labels[]? | (.name? // .)] | index("ready-for-human") != null' <<<"$issue" >/dev/null
 }

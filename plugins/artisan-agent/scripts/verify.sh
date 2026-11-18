@@ -410,7 +410,7 @@ ci_only_results() {
     run=null
   else
     id=$(printf '%s' "$run" | jq -r .run_id)
-    if out=$("$SCRIPT_DIR/worker-ci.sh" check --repo "$(get .repo)" --run-id "$id" --sha "$commit"); then
+    if out=$("$SCRIPT_DIR/worker-ci.sh" check --repo "$(run_repo)" --run-id "$id" --sha "$commit"); then
       ok=true why="green on CI: run $id"
     else
       why="no green CI run for $commit: $(printf '%s' "$out" | jq -r '.why // "run \($id) could not be read"' 2>/dev/null || echo "run $id could not be read")"
@@ -433,7 +433,7 @@ split_human_check() { # ticket criteria-json
   n=$(printf '%s' "$2" | jq length)
   while [ "$i" -lt "$n" ]; do
     c=$(printf '%s' "$2" | jq -r --argjson i "$i" '.[$i]')
-    out=$("$SCRIPT_DIR/to-plan.sh" split-human-check --repo "$(get .repo)" "$1" "$c") \
+    out=$("$SCRIPT_DIR/to-plan.sh" split-human-check --repo "$(run_repo)" "$1" "$c") \
       || die "could not split \"$c\" off #$1 into its Human check; nothing recorded, judge again"
     hc=$(printf '%s\n' "$out" | sed -n 's/^Human check #\([0-9][0-9]*\) for .*/\1/p' | tail -1)
     [ -n "$hc" ] || die "split-human-check named no Human check for #$1 ($out); judge again"
@@ -730,7 +730,7 @@ cmd_judge() {
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"
     if ! "$SCRIPT_DIR/evidence.sh" comment "$RUN_DIR" "$t" >"$body" \
-      || ! gh issue comment "$t" -R "$(get .repo)" --body-file "$body" >/dev/null 2>&1; then
+      || ! gh issue comment "$t" -R "$(run_repo)" --body-file "$body" >/dev/null 2>&1; then
       echo "verify.sh: could not post the evidence on #$t; it is in the state file" >&2
     fi
   fi

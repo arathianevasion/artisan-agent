@@ -101,9 +101,9 @@ state_location_guard() {
   [ -z "${ARTISAN_MOVING:-}" ] || return 0
   file=$(state_file "$run_dir")
   [ -f "$file" ] || return 0
-  status=$(jq -r '.location.status // empty' "$file" 2>/dev/null) || return 0
+  # Both in one read (#185); a file jq can't read has no location.
+  state_fields "$file" status machine -- '[.location.status // "", .location.machine // ""]' 2>/dev/null || return 0
   [ -n "$status" ] || return 0
-  machine=$(jq -r '.location.machine // empty' "$file")
   if [ "$status" = moved ]; then
     printf 'this run was moved away (pushed to its runs/ branch); it is not live here until move.sh in resumes it\n' >&2
     return 3

@@ -299,7 +299,7 @@ Answer by commenting \`Answer: <the decision>\` and closing this ticket."
 
 # ---------------------------------------------------------------- tracker
 
-repo_of() { get .repo; }
+repo_of() { run_repo; }
 
 issue_id() { gh api "repos/$(repo_of)/issues/$1" | jq -r .id; }
 

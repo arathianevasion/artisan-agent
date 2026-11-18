@@ -205,7 +205,7 @@ waiting_checks_for_gate() { gate_checks "$1" true; } # def
 # The in-run tickets still to merge that a ticket of the gate blocks natively.
 dependents() { # def
   local def="$1" repo= t= blockers= out='[]'
-  repo=$(get '.repo')
+  repo=$(run_repo)
   for t in $(get '.plan.scope[]'); do
     jq -e --arg t "$t" '.tickets | index($t)' <<<"$def" >/dev/null && continue
     # Merged, closed or out of the run (#164): nothing to hold.
@@ -222,12 +222,12 @@ dependents() { # def
   printf '%s\n' "$out"
 }
 
-issue_id() { local j=; j=$(gh api "repos/$(get '.repo')/issues/$1") && jq -er .id <<<"$j"; }
+issue_id() { local j=; j=$(gh api "repos/$(run_repo)/issues/$1") && jq -er .id <<<"$j"; }
 
 # blocker blocks ticket natively, once.
 add_blocker() { # ticket blocker-issue blocker-id
   local repo=
-  repo=$(get '.repo')
+  repo=$(run_repo)
   gh api "repos/$repo/issues/$1/dependencies/blocked_by" \
     | jq -e --arg b "$2" 'any(.[]; (.number | tostring) == $b)' >/dev/null && return 0
   gh api --method POST "repos/$repo/issues/$1/dependencies/blocked_by" -F "issue_id=$3" >/dev/null \
@@ -261,7 +261,7 @@ cmd_open() {
     into=$(fold_target "$def" "$deps")
     if [ -n "$into" ]; then fold_gate "$def" "$into"; return 0; fi
   fi
-  repo=$(get '.repo')
+  repo=$(run_repo)
   # Built once and kept, so a call that crashed after opening the issue
   # opens nothing new and shows the same packet.
   view="$dir/$id.view.json"
@@ -547,7 +547,7 @@ cmd_change() {
   BUG_OK=1 parse_opts "$@"
   open_gate "$issue"
   card=$(card_json "$n")
-  repo=$(get '.repo')
+  repo=$(run_repo)
   t=$(jq -r .ticket <<<"$card")
   title="Rework #$t: $(jq -r '.question // "a decision"' <<<"$card")"
   # A call that crashed after opening the rework ticket left it open: reuse it.
@@ -642,7 +642,7 @@ cmd_approve() {
   [ "$REACH" != area ] || [ -n "$AREA" ] || state_die 2 "gate.sh: a reach of area needs --area NAME"
   open_gate "$issue"
   gid=$(jq -r .id <<<"$GATE")
-  repo=$(get '.repo')
+  repo=$(run_repo)
   decided=$(decided_cards "$gid" | jq -R 'tonumber? // empty' | jq -sc .)
   keeps=$(jq -c --argjson done "$decided" --arg by "$BY" --arg g "$gid" '
     [.cards[] | select(.card as $c | $done | index($c) | not)
@@ -730,7 +730,7 @@ check_one() { # ticket verdict notes not-bug want-gate
   gid=$(check_gate "$t") || exit $?
   [ -z "$want" ] || [ "$want" = "$gid" ] || state_die 6 "gate.sh: Human check #$t is on $gid, not on $want"
   agent=$(jget 'human_check_for($t)' --arg t "$t")
-  repo=$(get '.repo')
+  repo=$(run_repo)
   case "$verdict" in
     pass)
       gh issue close "$t" -R "$repo" --comment "Human check passed at $gid by $BY, on the build of #$agent.${notes:+ Notes: $notes}" >/dev/null \
@@ -852,7 +852,7 @@ cmd_sync() {
     fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
   done
   # A gate closed on the tracker by hand is approved by whoever closed it.
-  repo=$(get '.repo')
+  repo=$(run_repo)
   for issue in $(get '(.review_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue'); do
     state=$(gh api "repos/$repo/issues/$issue" 2>/dev/null | jq -r '.state // empty') || continue
     if [ "$(printf '%s' "$state" | tr 'A-Z' 'a-z')" = closed ]; then
@@ -918,7 +918,7 @@ cmd_list() {
   local repo=${ARTISAN_REPO:-}
   if [ -n "${1:-}" ]; then
     open_run "$1"
-    repo=$(get '.repo')
+    repo=$(run_repo)
   fi
   [ -n "$repo" ] || usage
   "$SCRIPT_DIR/chats.sh" gates --repo "$repo"

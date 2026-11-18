@@ -159,7 +159,7 @@ hold() {
 }
 
 REPO=
-repo() { [ -n "$REPO" ] || REPO=$(get '.repo'); printf '%s\n' "$REPO"; }
+repo() { [ -n "$REPO" ] || REPO=$(run_repo); printf '%s\n' "$REPO"; }
 issue_id() { local j=; j=$(gh api "repos/$(repo)/issues/$1") && jq -er .id <<<"$j"; }
 blockers_of() { gh api "repos/$(repo)/issues/$1/dependencies/blocked_by"; }
 

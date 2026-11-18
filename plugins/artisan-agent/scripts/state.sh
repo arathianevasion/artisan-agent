@@ -178,8 +178,18 @@ dispatch_ticket() {
 # require_in_scope run_dir ticket: exits 4 unless the ticket is in the
 # approved scope. The scope is exactly the set approved; everything else waits.
 require_in_scope() {
-  local file=
+  local file= ok= in= scope=
   file=$(state_file "$1")
+  # The check, the answer and the scope in one read (#185); anything else
+  # (not JSON, no scope list) goes the long way, as it always did.
+  if state_fields "$file" ok in scope -- 'if type == "object" and .schema_version == $v
+      then (.plan.scope | map(tostring)) as $s | [true, ($s | index($t) != null), ($s | join(", "))]
+      else [false, null, null] end' --arg t "$2" --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" 2>/dev/null \
+    && [ "$ok" = true ]; then
+    [ "$in" = true ] \
+      || state_die 4 "refusing ticket $2: it is not in the approved scope ($scope); add it through a plan step first"
+    return 0
+  fi
   state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   jq -e --arg t "$2" '.plan.scope | map(tostring) | index($t) != null' "$file" >/dev/null \
     || state_die 4 "refusing ticket $2: it is not in the approved scope ($(jq -r '.plan.scope | map(tostring) | join(", ")' "$file")); add it through a plan step first"

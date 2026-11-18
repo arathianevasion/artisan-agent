@@ -415,7 +415,7 @@ ensure_issue() {
   mkdir -p "$dir"
   body="$dir/$id.md"
   [ -s "$body" ] || packet "$g" >"$body"
-  repo=$(get '.repo')
+  repo=$(run_repo)
   num=$(gh issue list -R "$repo" --state open --limit 10000 --label review-gate --json number,title 2>/dev/null \
           | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty' 2>/dev/null || true)
   if [ -z "$num" ]; then
@@ -518,7 +518,7 @@ cmd_overrun() {
              | reduce $cut[] as $t (.; .tickets[$t] = ((.tickets[$t] // new_ticket($t)) + {status: "deferred", cut: {gate: $id, by: $by, at: $now}}))
              | .frontier = ((.frontier // []) - $cut)' \
         --argjson cut "$(printf '%s\n' "${ARGS[@]}" | jq -R . | jq -s .)" --arg id "$id" --arg by "$BY"
-      repo=$(get '.repo')
+      repo=$(run_repo)
       for t in "${ARGS[@]}"; do
         gh issue comment "$t" -R "$repo" --body "Cut from run $RUN_ID at its overrun gate${issue:+ (#$issue)} by $BY. The ticket stays open for a later run." >/dev/null 2>&1 \
           || echo "budget.sh: could not comment on #$t" >&2
@@ -549,7 +549,7 @@ cmd_overrun() {
     --arg id "$id" --arg opt "$opt" --arg choice "$choice" --arg by "$BY" --arg why "$WHY" \
     --argjson card "$card"
   if [ -n "$issue" ]; then
-    gh issue comment "$issue" -R "$(get '.repo')" --body "$(printf '%s\n\n| Card | Choice | By | Why |\n|---|---|---|---|\n| %s | %s | %s | %s |\n\nGate action: **defer** (the only one this gate has). This issue stays open until the end gate.\n\n```json\n%s\n```' \
+    gh issue comment "$issue" -R "$(run_repo)" --body "$(printf '%s\n\n| Card | Choice | By | Why |\n|---|---|---|---|\n| %s | %s | %s | %s |\n\nGate action: **defer** (the only one this gate has). This issue stays open until the end gate.\n\n```json\n%s\n```' \
       "Overrun gate answered." "$opt" "$choice" "$BY" "${WHY:--}" \
       "$(get -c --arg id "$id" '.overrun_gates[] | select(.id == $id) | .decision')")" >/dev/null 2>&1 \
       || echo "budget.sh: could not post the decision on #$issue" >&2

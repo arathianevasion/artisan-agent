@@ -6,12 +6,27 @@
 # Portable to bash 3.2 (macOS) and Linux. Needs git and jq.
 
 RUN_DIR= FILE= RUN_ID= MAIN= WT_ROOT=
+# What open_run read with its check (#185): the run's repo, integration
+# branch and worktree, as `get` would print them, while RUN_READ is set.
+# apply clears it, so a value this call may have changed is read again.
+RUN_READ= RUN_REPO= RUN_IB= RUN_IWT=
 open_run() { # run-dir
   [ -n "${1:-}" ] || usage
   state_require_run_dir "$1"
   RUN_DIR=$(cd "$1" && pwd)
   FILE=$(state_file "$RUN_DIR")
-  state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
+  local ok=""
+  RUN_READ=
+  if state_fields "$FILE" ok RUN_REPO RUN_IB RUN_IWT -- 'if type == "object" and .schema_version == $v
+      then [true, .repo, .integration.branch, (.integration.worktree // "")] else [false, null, null, null] end' \
+      --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" 2>/dev/null; then
+    [ "$ok" = true ] || die "$(state_version_message "$FILE")"
+    RUN_READ=1
+  else
+    # Not JSON, or a state file these fields can't be read from: the check
+    # alone says which.
+    state_valid_file "$FILE" || die "$(state_version_message "$FILE")"
+  fi
   RUN_ID=$(basename "$RUN_DIR")
   local common=
   common=$(git -C "$RUN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
@@ -58,13 +73,14 @@ worktree_setup() {
     run_conf=$(jq -c '.plan.config | if type == "object" then . else {} end' "$FILE" 2>/dev/null) || run_conf='{}'
   fi
   conf=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null) || conf='{}'
-  # Each setting: the run's, else the project's; blank counts as unset.
-  conf=$(jq -c --argjson r "$run_conf" '. as $p
+  # Each setting: the run's, else the project's; blank counts as unset. Both
+  # in one read (#185); a project config jq can't read counts as none.
+  if ! state_fields /dev/stdin cmd limit -- '. as $p
     | def pick($k): [$r[$k], $p[$k]] | map(select(. != null and (tostring | test("^\\s*$") | not))) | first;
-      {worktree_setup: pick("worktree_setup"), worktree_setup_timeout: pick("worktree_setup_timeout")}' <<<"$conf" 2>/dev/null) || conf='{}'
-  cmd=$(jq -r '.worktree_setup // empty' <<<"$conf" 2>/dev/null) || cmd=
+      [pick("worktree_setup") // "", pick("worktree_setup_timeout") // ""]' --argjson r "$run_conf" <<<"$conf" 2>/dev/null; then
+    cmd= limit=
+  fi
   [ -n "$cmd" ] || return 0
-  limit=$(jq -r '.worktree_setup_timeout // empty' <<<"$conf" 2>/dev/null) || limit=
   if ! state_is_uint "$limit" || [ "$limit" -eq 0 ]; then limit=900; fi
   declare -F detach >/dev/null || . "$SCRIPT_DIR/lib/detach-lib.sh"
   dir=$(mktemp -d "${TMPDIR:-/tmp}/worktree-setup.XXXXXX")
@@ -164,11 +180,18 @@ verifier_name() { # ticket
 apply() {
   local filter="$1"
   shift
+  RUN_READ=
   state_with_lock "$RUN_DIR" state_apply "$RUN_DIR" "$STATE_JQ_DEFS$filter" \
     --argjson now "$(state_now)" "$@"
 }
 
-integration_branch() { get '.integration.branch'; }
+integration_branch() {
+  if [ -n "$RUN_READ" ]; then printf '%s\n' "$RUN_IB"; else get '.integration.branch'; fi
+}
+# run_repo: the run's repo, as `get .repo` prints it.
+run_repo() {
+  if [ -n "$RUN_READ" ]; then printf '%s\n' "$RUN_REPO"; else get '.repo'; fi
+}
 # The integration branch's gated tip: while a merge gate runs (wave.sh merge,
 # merge_gate in the state file) the branch already holds the merge commit the
 # gate is judging, so new work branches from the commit before it; while a
@@ -181,7 +204,7 @@ integration_tip() {
 }
 integration_worktree() {
   local wt=
-  wt=$(get '.integration.worktree // ""')
+  if [ -n "$RUN_READ" ]; then wt=$RUN_IWT; else wt=$(get '.integration.worktree // ""'); fi
   [ -n "$wt" ] && [ -d "$wt" ] || die "no integration worktree for run $RUN_ID; run wave.sh start first"
   printf '%s\n' "$wt"
 }
@@ -269,7 +292,7 @@ human_checks_view() {
   # Each check carries its issue's whole body, one per line: the issue and
   # the checks reach jq on stdin, never as an argument (#208).
   for t in $(jq -r '.[].ticket' <<<"$list"); do
-    issue=$(gh api "repos/$(get '.repo')/issues/$t") || die "could not read Human check #$t from the tracker"
+    issue=$(gh api "repos/$(run_repo)/issues/$t") || die "could not read Human check #$t from the tracker"
     out=$out$(jq -c --argjson l "$list" --arg t "$t" --arg title "$(get --arg t "$t" '.plan.tickets[$t].title // ""')" '
       . as $i | ($l[] | select(.ticket == $t))
       + {title: (if $title == "" then ($i.title // null) else $title end), body: ($i.body // "")}' <<<"$issue")$'\n'
