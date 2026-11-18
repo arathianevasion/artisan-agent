@@ -293,6 +293,9 @@ state_write() {
     return 1
   fi
   state=$out
+  # A commit writes the temp file as it is (state.sh write keeps stdin's
+  # bytes); only an apply's result is printed by state_pp.
+  [ "$mode" != commit ] || state=$in
   # Unchanged content is not rewritten, so repeated reconciling leaves the
   # file untouched.
   old=
