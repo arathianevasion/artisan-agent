@@ -161,9 +161,14 @@ sweep() {
   # between (the orchestrator stopped at its deadline) leaves a queued ticket
   # with a wave whose next attempt has a runner. That attempt is taken in as
   # dispatched, so the checks below see it.
-  local next="" runner=""
-  for t in $(jq -r '.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0) | .key' "$tmp"); do
-    next=$(( $(jq -r --arg t "$t" '.tickets[$t].attempts' "$tmp") + 1 ))
+  # One read for the loop (#185): ticket and attempts, a line each. A step
+  # here changes only its own ticket.
+  local next="" runner="" rows="" n=""
+  state_fields "$tmp" rows -- '[[.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0)
+    | "\(.key)\u001f\(.value.attempts)\n"] | add // ""]'
+  while IFS=$'\x1f' read -r t n; do
+    [ -n "$t" ] || continue
+    next=$(( $n + 1 ))
     runner=$(cat "$RUN_DIR/workers/$t.$next/runner.pid" 2>/dev/null) || runner=""
     state_is_uint "$runner" || continue
     step "$STATE_JQ_DEFS"'
@@ -174,22 +179,26 @@ sweep() {
           | .dispatched_at = $now | .deadline_at = $deadline | .result = null)
       | event({event: "dispatch", ticket: $t, attempt: .tickets[$t].attempts, pid: $pid, unrecorded: true}; $now)' \
       --arg t "$t" --argjson pid "$runner" --argjson now "$now"
-  done
+  done <<<"$rows"
 
-  tickets=$(jq -r '.tickets | to_entries[] | select(.value.status == "in_flight") | .key' "$tmp")
-  for t in $tickets; do
-    pid=$(jq -r --arg t "$t" '.tickets[$t].pid // ""' "$tmp")
-    attempt=$(jq -r --arg t "$t" '.tickets[$t].attempts' "$tmp")
-    deadline=$(jq -r --arg t "$t" '.tickets[$t].deadline_at // ""' "$tmp")
+  # The in-flight tickets with their pid, attempt and deadline, in one read
+  # (#185); a step below changes only its own ticket.
+  local result_status=""
+  state_fields "$tmp" rows -- '[[.tickets | to_entries[] | select(.value.status == "in_flight")
+    | "\(.key)\u001f\(.value.pid // "")\u001f\(.value.attempts)\u001f\(.value.deadline_at // "")\n"] | add // ""]'
+  while IFS=$'\x1f' read -r t pid attempt deadline <&3; do
+    [ -n "$t" ] || continue
     result="$RESULTS/$t.$attempt.result.json"
     exit_record="$RESULTS/$t.$attempt.exit.json"
-    if [ -f "$result" ] && jq -e 'type == "object"' "$result" >/dev/null 2>&1; then
+    # The result's status comes with the check that it is an object.
+    if [ -f "$result" ] && state_fields "$result" result_status -- \
+      'if type == "object" then [.status // "complete"] else error end' 2>/dev/null; then
       # The worker does not write its cost; its session's JSON output does.
       session_cost=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$attempt/output.json" 2>/dev/null || echo null)
       [ -n "$session_cost" ] || session_cost=null
       step "$RESULT_FILTER" --arg t "$t" --slurpfile rs "$result" --arg file "results/$t.$attempt.result.json" \
         --argjson now "$now" --argjson session_cost "$session_cost"
-      status=$(jq -r '.status // "complete"' "$result")
+      status=$result_status
       if [ "$status" = "failed" ]; then
         step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"
       fi
@@ -212,7 +221,7 @@ sweep() {
       # exit record and then exits, so a first look can be too early).
       step "$FAIL_FILTER" --arg t "$t" --arg reason "worker gone without a result or exit record" --argjson now "$now"
     fi
-  done
+  done 3<<<"$rows"
 
   # Findings: append lines beyond what has been read, per ticket.
   local f= ticket= total= seen=
@@ -255,7 +264,7 @@ sweep() {
             else .tickets[$a].questions = ((.tickets[$a].questions // [])
                    + [{ticket: $n, blocking: false, state: "open", raised_by: "finding", from: $t, at: $now}]) end)' \
       --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" --argjson now "$now" \
-      --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -R . | jq -s .)"
+      --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -Rn '[inputs]')"
   done
 
   step '.costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
@@ -365,11 +374,12 @@ repair() {
 file_verifier_open_decisions() {
   local file="" pending="" t="" v="" k="" cj="" hj="" rj="" c="" h="" r="" q="" repo="" how=""
   file=$(state_file "$RUN_DIR")
-  repo=$(jq -r '.repo // ""' "$file")
-  pending=$(jq -r '.tickets | to_entries[] | .key as $t | (.value.verifications // [])[] | .attempt as $v
+  # The repo and the pending lines in one read (#185).
+  state_fields "$file" repo pending -- '[.repo // "",
+    ([.tickets | to_entries[] | .key as $t | (.value.verifications // [])[] | .attempt as $v
       | (.open_decisions // []) | to_entries[] | select(.value.question == null)
       | [$t, ($v | tostring), (.key | tostring), (.value.case | tojson), (.value.harm | tojson), (.value.recommendation | tojson)]
-      | join("\t")' "$file") || return 0
+      | join("\t") + "\n"] | add // "")]' || return 0
   [ -n "$pending" ] || return 0
   # Each line is read on fd 3, so nothing the filing runs can eat the rest.
   while IFS="$(printf '\t')" read -r t v k cj hj rj <&3; do

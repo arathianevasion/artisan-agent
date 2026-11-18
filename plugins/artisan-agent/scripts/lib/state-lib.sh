@@ -318,7 +318,8 @@ state_step() {
 # array, and each name is set to one element, in order, as `$(jq -r ...)` of
 # that element alone gives it: a string raw, anything else as compact JSON
 # (null as "null"), trailing newlines cut. Fails, setting nothing, when jq does
-# (its message on stderr, as a lone `jq -r` would print it).
+# (its message on stderr, as a lone `jq -r` would print it) or yields another
+# number of values (none, for an empty file).
 state_fields() {
   local _sf_file="$1" _sf_filter="" _sf_out="" _sf_v="" _sf_name=""
   local -a _sf_names=()
@@ -329,6 +330,12 @@ state_fields() {
   shift 2
   _sf_out=$(jq -j "$@" '('"$_sf_filter"'
     ) | .[] | (if type == "string" then . else tojson end) + "\u001e"' "$_sf_file") || return $?
+  # One value per name, or none set (an empty file gives jq nothing to read).
+  _sf_v=${_sf_out//[!$'\x1e']/}
+  if [ "${#_sf_v}" -ne "${#_sf_names[@]}" ]; then
+    printf 'state_fields: %s values for %s names from %s\n' "${#_sf_v}" "${#_sf_names[@]}" "$_sf_file" >&2
+    return 1
+  fi
   for _sf_name in ${_sf_names[@]+"${_sf_names[@]}"}; do
     _sf_v=${_sf_out%%$'\x1e'*}
     _sf_out=${_sf_out#*$'\x1e'}

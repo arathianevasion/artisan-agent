@@ -62,32 +62,40 @@ merge_commit_for() {
 
 reconcile() {
   local file= tmp= repo= integration= first_parent= t= branch= tip= sha= issue= blockers= tracker=
+  local rows= row= status= urgent= base= merged_here= scope= responses=
   file=$(state_file "$RUN_DIR")
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
 
   step() { state_step "$tmp" "$@"; }
 
-  repo=$(jq -r '.repo' "$tmp")
-  integration=$(jq -r '.integration.branch' "$tmp")
-
   # Tickets added to the scope after approval get an entry.
   step "$STATE_JQ_DEFS"'reduce .plan.scope[] as $t (.;
           if .tickets[$t] == null then .tickets[$t] = new_ticket($t) else . end)'
 
+  # One read for the loop below (#185): a row per ticket in scope, its
+  # fields split by \x1f. A merge step changes only its own ticket, so each
+  # ticket's row is what a read just before its turn would give; one in the
+  # scope twice is merged once (merged_here), as a re-read would show.
+  state_fields "$tmp" repo integration rows -- '[.repo, .integration.branch,
+    (. as $s | [$s.plan.scope[] | tostring as $t | $s.tickets[$t] as $k
+      | [$t, ($k.status | tostring), ($k.urgent // false | tostring), ($k.branch | tostring), ($k.base // "" | tostring)]
+      | join("\u001f") + "\n"] | add // "")]'
+
   # Git: what is merged into the integration branch.
   if git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$integration" >/dev/null; then
     first_parent=$(git -C "$REPO_DIR" rev-list --first-parent "$integration")
-    for t in $(jq -r '.plan.scope[]' "$tmp"); do
-      [ "$(jq -r --arg t "$t" '.tickets[$t].status' "$tmp")" = "merged" ] && continue
+    while IFS=$'\x1f' read -r t status urgent branch base; do
+      [ -n "$t" ] || continue
+      [ "$status" = "merged" ] && continue
+      case " $merged_here " in *" $t "*) continue ;; esac
       # An urgent ticket branches from main and ships on its own PR to main;
       # end-gate.sh urgent-finish records it merged, never this check (#206).
-      [ "$(jq -r --arg t "$t" '.tickets[$t].urgent // false' "$tmp")" = "true" ] && continue
-      branch=$(jq -r --arg t "$t" '.tickets[$t].branch' "$tmp")
+      [ "$urgent" = "true" ] && continue
       tip=$(git -C "$REPO_DIR" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null) || continue
       # A branch still at the commit it was dispatched from holds no work of
       # the ticket's, wherever the integration branch reaches that commit.
-      [ "$tip" = "$(jq -r --arg t "$t" '.tickets[$t].base // ""' "$tmp")" ] && continue
+      [ "$tip" = "$base" ] && continue
       # A branch still sitting on the integration line (dispatched, nothing
       # merged yet) is not merged work; a merged ticket comes in through a
       # --no-ff merge commit, so its tip is off the first-parent line.
@@ -96,7 +104,8 @@ reconcile() {
       step "$STATE_JQ_DEFS"'merged($t; $sha)
         | event({event: "merge", ticket: $t, commit: $sha, source: "reconcile"}; $now)' \
         --arg t "$t" --arg sha "$sha" --argjson now "$(state_now)"
-    done
+      merged_here="$merged_here $t"
+    done <<<"$rows"
   fi
 
   state_commit "$RUN_DIR" "$tmp"
@@ -110,20 +119,26 @@ reconcile() {
   # responses carry whole issue bodies and the map grows with the scope, so
   # both reach jq on stdin, never as an argument (Linux refuses one over
   # 128 KiB: #208).
-  tracker=''
-  for t in $(jq -r '.plan.scope[]' "$tmp"); do
+  # Every ticket's two responses are read first, then made into the map in
+  # one jq call (#185), a line per ticket as before.
+  scope=$(jq -r '.plan.scope[]' "$tmp")
+  responses=
+  for t in $scope; do
     issue=$(gh api "repos/$repo/issues/$t") || { rm -f "$tmp"; state_die 1 "reconcile: could not read #$t from the tracker"; }
     blockers=$(gh api "repos/$repo/issues/$t/dependencies/blocked_by") \
       || { rm -f "$tmp"; state_die 1 "reconcile: could not read blockers of #$t from the tracker"; }
-    tracker=$tracker$(printf '%s\n%s\n' "$issue" "$blockers" | jq -cn --arg t "$t" '
-      input as $i | input as $b
+    responses=$responses$(printf '%s\n%s\n' "$issue" "$blockers")$'\n'
+  done
+  tracker=
+  # shellcheck disable=SC2086 # the scope's tickets are words
+  [ -z "$scope" ] || tracker=$(printf '%s' "$responses" | jq -cn '
+    $ARGS.positional[] as $t | input as $i | input as $b
       | {($t): {
         state: ($i.state | ascii_downcase),
         labels: [$i.labels[]? | (.name? // .)],
         human_check_for: ([($i.body // "") | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null),
         blocked_by: [$b[]? | {number: (.number | tostring), state: (.state | ascii_downcase)}]
-      }}')$'\n'
-  done
+      }}' --args $scope)$'\n'
 
   step "$STATE_JQ_DEFS"'
     (reduce $trs[] as $e ({}; . + $e)) as $tr

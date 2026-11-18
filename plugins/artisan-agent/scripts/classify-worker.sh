@@ -100,23 +100,27 @@ case "$(jq -r .reason "$exit_record")" in
   stopped) echo "failed stopped"; exit 0 ;;
 esac
 
+# The session's output in one read (#185): not a result object (or no
+# output, or not JSON) is a crash.
 output=$worker_dir/output.json
-if ! jq -e 'type == "object" and .type == "result"' "$output" >/dev/null 2>&1; then
+subtype= is_error= result=
+if ! state_fields "$output" subtype is_error result -- \
+  '[if type == "object" and .type == "result" then (.subtype // ""), (.is_error // false), (.result // "") else error end]' \
+  2>/dev/null; then
   echo "failed crashed"
   exit 0
 fi
 
-subtype=$(jq -r '.subtype // ""' "$output")
 case "$subtype" in
   error_max_budget_usd) echo "failed budget"; exit 0 ;;
   error_max_turns) echo "failed turns"; exit 0 ;;
 esac
-if [ "$(jq -r '.is_error // false' "$output")" != false ] || [ "$subtype" != success ]; then
+if [ "$is_error" != false ] || [ "$subtype" != success ]; then
   echo "failed error"
   exit 0
 fi
 
-last_line=$(jq -r '.result // ""' "$output" | awk 'NF { last = $0 } END { print last }' | sed 's/[[:space:]]*$//')
+last_line=$(printf '%s\n' "$result" | awk 'NF { last = $0 } END { print last }' | sed 's/[[:space:]]*$//')
 if [ "$last_line" != "$COMPLETION_LINE" ]; then
   echo "not-completed no-completion-line"
 elif [ ! -f "$run_dir/results/$key.result.json" ]; then

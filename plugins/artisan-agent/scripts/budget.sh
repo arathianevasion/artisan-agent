@@ -115,24 +115,21 @@ project() { get "$PROJECTION_JQ projection"; }
 
 # ---------------------------------------------------------- the usage guard
 
-# running_workers: how many in-flight tickets have a live worker (a runner
-# pid that is still there). Nothing running means nothing is spending.
+# running_workers pids...: how many of the in-flight tickets' runner pids are
+# still there. Nothing running means nothing is spending.
 running_workers() {
   local pid= n=0
-  for pid in $(get -r '[.tickets[] | select(.status == "in_flight") | .pid // empty] | .[]'); do
+  for pid in "$@"; do
     kill -0 "$pid" 2>/dev/null && n=$((n + 1))
   done
   echo "$n"
 }
 
-# worker_readings: a JSON array of every worker's usage.json in this run
-# (run-ticket.sh writes it: the latest rate_limit_event, with its own time, or
-# no_plan_windows: true when the events carry no plan window).
-worker_readings() {
-  local f=
-  for f in "$RUN_DIR"/workers/*/usage.json; do
-    [ -s "$f" ] && jq -c 'if type == "object" then . else empty end' "$f" 2>/dev/null
-  done | jq -sc '.'
+# read_text file: the file's text, read by the shell itself (no process).
+read_text() {
+  local text=""
+  IFS= read -r -d '' text <"$1" || true
+  printf '%s' "$text"
 }
 
 # verdict: the plan-window verdict as JSON {ok, window, used, limit,
@@ -144,21 +141,37 @@ worker_readings() {
 # windows (the account has none): ok, no_plan_windows: true, and the budget
 # cap limits spend.
 verdict() {
-  local f= reading= reserve= ceiling= stale= workers= running=
+  local f= reserve= ceiling= stale= running= pids= w=
   f=$(usage_file)
-  # A raise is judged against its own new limit before it is written
-  # (cmd_park), so the answer and the override land in one write.
-  reserve=${VERDICT_RESERVE:-$(get '.plan.config.usage_reserve.five_hour_reserve_percent // 20')}
-  ceiling=${VERDICT_CEILING:-$(get '.plan.config.usage_reserve.seven_day_ceiling_percent // 90')}
-  stale=$(get '.plan.config.stale_usage_minutes // 10')
-  reading=null
-  [ -s "$f" ] && reading=$(jq -c 'if type == "object" then . else null end' "$f" 2>/dev/null || echo null)
-  workers=$(worker_readings)
-  running=$(running_workers)
-  jq -nc --argjson u "$reading" --argjson w "$workers" --argjson running "$running" --arg f "$f" \
+  # The run's thresholds and in-flight pids in one read (#185). A raise is
+  # judged against its own new limit before it is written (cmd_park), so the
+  # answer and the override land in one write.
+  fields reserve ceiling stale pids -- '[.plan.config.usage_reserve.five_hour_reserve_percent // 20,
+    .plan.config.usage_reserve.seven_day_ceiling_percent // 90, .plan.config.stale_usage_minutes // 10,
+    ([.tickets[] | select(.status == "in_flight") | .pid // empty | tostring] | join(" "))]'
+  reserve=${VERDICT_RESERVE:-$reserve}
+  ceiling=${VERDICT_CEILING:-$ceiling}
+  # shellcheck disable=SC2086 # the pids are words
+  running=$(running_workers $pids)
+  # The status-line capture, then every worker's usage.json in this run
+  # (run-ticket.sh writes it: the latest rate_limit_event, with its own time,
+  # or no_plan_windows: true when the events carry no plan window), on stdin,
+  # each ended by \x1e (never in JSON text), and parsed in the verdict's own
+  # jq call (#185): a reading that isn't JSON counts as none, one that isn't
+  # an object too.
+  {
+    if [ -s "$f" ]; then printf '%s' "$(read_text "$f")"; fi
+    printf '\036'
+    for w in "$RUN_DIR"/workers/*/usage.json; do
+      if [ -s "$w" ]; then printf '%s\036' "$(read_text "$w")"; fi
+    done
+  } | jq -Rsc --argjson running "$running" --arg f "$f" \
     --argjson now "$(date +%s)" \
     --argjson reserve "$reserve" --argjson ceiling "$ceiling" --argjson stale "$stale" '
-    def unknown($why): {ok: false, window: "unknown", why: $why, used: null, limit: null, resets_at: null};
+    split("\u001e") as $parts
+    | ($parts[0] | if . == "" then null else (try fromjson catch null | if type == "object" then . else null end) end) as $u
+    | [$parts[1:-1][] | try fromjson catch empty | select(type == "object")] as $w
+    | def unknown($why): {ok: false, window: "unknown", why: $why, used: null, limit: null, resets_at: null};
     # A window Claude Code dropped (its reset passed) or past its own reset is empty.
     def used($w): if $w == null or (($w.resets_at // 0) > 0 and $w.resets_at <= $now) then 0
                   else ($w.used_percentage // 0) end;
@@ -212,12 +225,16 @@ verdict() {
 # when epoch -> a local time the Artisan can read, or "unknown".
 WHEN_JQ='def when: if . == null then "unknown" else (strflocaltime("%a %d %b %H:%M %Z")) end;'
 
-verdict_line() { # verdict-json
-  jq -r "$WHEN_JQ"'
+# The line a verdict says, as a jq def on the verdict.
+VERDICT_LINE_JQ="$WHEN_JQ"'
+  def verdict_line:
     if .ok and (.idle or .no_plan_windows) then "ok \(.why)"
     elif .ok then "ok 5h \(.five_hour | floor)% 7d \(.seven_day | floor)%"
     elif .window == "unknown" then "park unknown: \(.why)"
-    else "park \(.window) \(.used | floor)% (limit \(.limit)%): \(.why); resets \(.resets_at | when)" end' <<<"$1"
+    else "park \(.window) \(.used | floor)% (limit \(.limit)%): \(.why); resets \(.resets_at | when)" end;'
+
+verdict_line() { # verdict-json
+  jq -r "$VERDICT_LINE_JQ"'verdict_line' <<<"$1"
 }
 
 cmd_usage() {
@@ -272,10 +289,18 @@ parked_line() {
 # seen, for the status to show (it only reads). A call whose verdict (ok and
 # line) is the one on record writes nothing, so a repeat leaves the state
 # byte-identical; "at" is when this verdict began, not when it was last read.
+#
+# One read gives the line, whether it is the one on record, and what
+# usage_guard reads of the park next (#185): the verdict's write never
+# changes the park. Sets NOTED_OK, NOTED_PARKED, NOTED_RESUME and
+# NOTED_RESUME_BY.
+NOTED_OK= NOTED_PARKED= NOTED_RESUME= NOTED_RESUME_BY=
 note_verdict() {
   local line= same=
-  line=$(verdict_line "$1")
-  same=$(get --argjson v "$1" --arg line "$line" '.usage_verdict != null and .usage_verdict.ok == $v.ok and .usage_verdict.line == $line')
+  fields line same NOTED_OK NOTED_PARKED NOTED_RESUME NOTED_RESUME_BY -- "$VERDICT_LINE_JQ"'
+    ($v | verdict_line) as $line
+    | [$line, (.usage_verdict != null and .usage_verdict.ok == $v.ok and .usage_verdict.line == $line),
+       $v.ok, (.usage_park != null), (.usage_park.resume != null), .usage_park.resume.by]' --argjson v "$1"
   [ "$same" = true ] && return 0
   apply "$WHEN_JQ"'.usage_verdict = {ok: $v.ok, line: $line, at: $now}' \
     --argjson v "$1" --arg line "$line"
@@ -286,17 +311,17 @@ usage_guard() {
   local v=
   v=$(verdict)
   note_verdict "$v"
-  if [ "$(get '.usage_park != null')" = true ]; then
+  if [ "$NOTED_PARKED" = true ]; then
     # Parked: only the Artisan's resume (or a raised ceiling) lets dispatch
     # carry on, and then only on a fresh reading under the limits.
-    if [ "$(jq -r .ok <<<"$v")" = true ] && [ "$(get '.usage_park.resume != null')" = true ]; then
-      clear_park resume "$(get -r '.usage_park.resume.by')"
+    if [ "$NOTED_OK" = true ] && [ "$NOTED_RESUME" = true ]; then
+      clear_park resume "$NOTED_RESUME_BY"
       return 0
     fi
     parked_line
     exit 18
   fi
-  [ "$(jq -r .ok <<<"$v")" = true ] && return 0
+  [ "$NOTED_OK" = true ] && return 0
   record_park "$v"
   printf 'parked %s\n' "$(verdict_line "$v" | sed 's/^park //')"
   exit 18
@@ -409,16 +434,20 @@ overrun_line() { # gate-json
   jq -r '"overrun \(if .issue then "#" + (.issue | tostring) else "(issue not yet open)" end): projected $\((.projected_usd * 100 | round) / 100) crosses the budget $\(.budget_usd); no new dispatch until the Artisan answers the overrun gate (budget.sh overrun)"' <<<"$1"
 }
 
+# budget_guard: 0 to carry on, with the guard's "ok: ..." line in GUARD_OK
+# (read with the rest, #185); otherwise prints the overrun and exits 17.
+GUARD_OK=
 budget_guard() {
-  local g= p=
-  g=$(open_gate_json)
+  local g= p= over=
+  fields g p over GUARD_OK -- "$PROJECTION_JQ"'projection as $p
+    | [([(.overrun_gates // [])[] | select(.status == "open")] | last // ""), $p, $p.over,
+       "ok: spent $\($p.spent | r2), projected $\($p.projected | r2) of $\($p.budget // "?") budget"]'
   if [ -n "$g" ]; then
     ensure_issue
     overrun_line "$(open_gate_json)"
     exit 17
   fi
-  p=$(project)
-  [ "$(jq -r .over <<<"$p")" = true ] || return 0
+  [ "$over" = true ] || return 0
   open_overrun "$p"
   overrun_line "$(open_gate_json)"
   exit 17
@@ -426,11 +455,13 @@ budget_guard() {
 
 cmd_guard() {
   open_run "${1:-}"
-  [ "$(get '.halted != null')" = false ] \
-    || state_die 12 "budget.sh: the run is halted: $(get '.halted.reason'); nothing dispatches"
+  local halted= reason=
+  fields halted reason -- '[.halted != null, .halted.reason]'
+  [ "$halted" = false ] \
+    || state_die 12 "budget.sh: the run is halted: $reason; nothing dispatches"
   usage_guard
   budget_guard
-  get "$PROJECTION_JQ"'projection as $p | "ok: spent $\($p.spent | r2), projected $\($p.projected | r2) of $\($p.budget // "?") budget"'
+  printf '%s\n' "$GUARD_OK"
 }
 
 # ------------------------------------------------------ the Artisan answers
