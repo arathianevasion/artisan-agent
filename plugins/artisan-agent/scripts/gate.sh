@@ -848,16 +848,21 @@ cmd_check() {
 
 cmd_sync() {
   [ $# -eq 1 ] || usage
-  open_run "$1"
-  local f= st= id= issue= repo= state= carried=
+  # The open gates' issues come with open_run's read (#185), used when no
+  # pending action is folded in first (fold writes in a subshell).
+  local f= st= id= issue= repo= state= carried= open_issues="" folded=""
+  open_run "$1" open_issues -- '[[(.review_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue | tostring] | join(" ")]'
+  [ -n "$RUN_EXTRA" ] || folded=1
   # Actions the Artisan took while the lock was held.
   for f in "$RUN_DIR"/gates/pending/*.json; do
     [ -f "$f" ] || continue
+    folded=1
     fold "$f" || { st=$?; cat "$f.err" >&2; exit "$st"; }
   done
   # A gate closed on the tracker by hand is approved by whoever closed it.
   repo=$(run_repo)
-  for issue in $(get '(.review_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue'); do
+  [ -z "$folded" ] || open_issues=$(get '(.review_gates // [])[] | select(.status == "open" or .status == "deferred") | .issue')
+  for issue in $open_issues; do
     state=$(gh api "repos/$repo/issues/$issue" 2>/dev/null | jq -r '.state // empty') || continue
     if [ "$(printf '%s' "$state" | tr 'A-Z' 'a-z')" = closed ]; then
       GATE=$(recorded "$issue")

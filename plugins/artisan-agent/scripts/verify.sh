@@ -574,8 +574,32 @@ cmd_judge() {
   esac
   # The checks the verifier ran, through checks.sh run. Recorded checks it
   # didn't run make the verdict an error; with none recorded, what it found.
-  local cres=
+  local cres="" cout="" cran=""
   cres="$RUN_DIR/$ck_results"
+  # In one read (#185), when the results file holds one JSON value and the
+  # worker's record is missing, empty or one JSON value: whether the
+  # recorded checks ran, then the results as the steps below make them.
+  # Anything else goes the long way, below.
+  local wrec="$RUN_DIR/$result_file"
+  local -a wsrc=(--arg wr "")
+  [ ! -f "$wrec" ] || wsrc=(--rawfile wr "$wrec")
+  if cout=$(jq -rcs --argjson ck "$ck" "${wsrc[@]}" '
+      if length != 1 then error("not one value") else .[0] end
+      | (try (.recorded == true and (.results | type) == "array"
+          and [.results[].command] == $ck.commands) catch false | tostring),
+        (if (try ((.results | type) == "array") catch false) then
+          ($wr | if . == "" then null else (fromjson | [.checks.results // [] | .[] | .command?]) end) as $listed
+          | . + {worker_listed: $listed}
+          + (if .recorded and $listed != null then {worker_matches: ($listed == [.results[].command])} else {} end)
+        else $ck | {recorded: false, reason, results: [],
+          fallback: "no recorded checks (\(.reason)): the verifier ran none it found"} end)' "$cres" 2>/dev/null) \
+    && [ "${cout%%$'\n'*}" != "$cout" ]; then
+    cran=${cout%%$'\n'*}
+    cres=${cout#*$'\n'}
+    if [ -z "$why" ] && [ "$ck_recorded" = true ] && [ "$cran" != true ]; then
+      why="the verifier did not run the recorded checks"
+    fi
+  else
   if [ -z "$why" ] && [ "$ck_recorded" = true ] \
     && ! jq -e --argjson ck "$ck" '.recorded == true and (.results | type) == "array"
           and [.results[].command] == $ck.commands' "$cres" >/dev/null 2>&1; then
@@ -585,7 +609,6 @@ cmd_judge() {
     cres=$(jq -c . "$cres")
     # What the worker's evidence listed, beside what the verifier ran, so a
     # worker that ran other checks than the recorded ones is visible.
-    local wrec="$RUN_DIR/$result_file"
     cres=$(printf '%s' "$cres" | jq -c --slurpfile w <(jq -c '[.checks.results // [] | .[] | .command?]' "$wrec" 2>/dev/null || echo null) '
       ($w[0] // null) as $listed
       | . + {worker_listed: $listed}
@@ -593,6 +616,7 @@ cmd_judge() {
   else
     cres=$(printf '%s' "$ck" | jq -c '{recorded: false, reason, results: [],
       fallback: "no recorded checks (\(.reason)): the verifier ran none it found"}')
+  fi
   fi
   [ -n "$why" ] || cres=$(ci_only_results "$t" "$ck" "$cres")
   if [ -n "$why" ]; then
