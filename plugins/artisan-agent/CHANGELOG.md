@@ -2,6 +2,15 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.11.0 (2026-11-18)
+
+Runs that don't stall on overage-only accounts, setup that follows the run, a status file for the cockpit, and to-spec checking the spec against your motivation.
+
+- **Usage guard:** on an account with no plan windows (overage billing only, or an API key), a worker's rate-limit events that carry no five-hour or seven-day window are recorded as a fresh "no plan windows" reading. `budget.sh verdict` is then ok, and the budget limits spend, instead of parking every wave down to one ticket at a time. A fresh plan-window reading from any source is still judged as before, and a worker that has seen a plan window never claims none (#251).
+- **Worktree setup:** `worktree_setup` and its timeout come from the run's `plan.config`, so a `state.sh override` counts, and fall back to the project config. Dispatch, the verifier, hands-on, the end gate and now `wave.sh start` all read it in one place. `wave.sh start` sets up the integration worktree; a failing setup exits 6 and leaves no worktree or branch behind. The plan warns under Needs your attention when a project with a `package.json` has an empty `worktree_setup` (#252).
+- **Run status file:** every state write and lock hand-over rewrites `status.json` in the run folder: wave, counts, cost against budget, `next`, waiting on the Artisan, the last event's time, the owning chat and the lock holder, and a text line under 100 characters. It is for display (the Agent Cockpit); nothing in the plugin reads it back. `wave.sh status` and the file share one chain for `next` (#192).
+- **to-spec:** before showing the draft, to-spec reads the "Always ask" lines and, if present, `motivations/<repo>.md` in the individual home. Conflicts and sharpening points go under their own Motivation check heading beside the additions, answered in the same batch. The spec never carries text from the motivation, and scope never widens to match it without your yes (#250).
+
 ## 0.10.0 (2026-11-16)
 
 Fewer gates that hold nothing, criteria a run can read and judge, a Run chat that wakes when a wave ends, working retro sessions, and local suites at background priority.
