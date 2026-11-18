@@ -1032,9 +1032,19 @@ clear_leftover_worktree() {
   fi
 }
 
+# The checks cmd_dispatch makes before it starts a worker: one row (#185).
+DISPATCH_CHECKS='[is_human_check($t), .tickets[$t].status, (.tickets[$t].human == null),
+     (.plan.max_agents // 5), (.tickets[$t].urgent // false),
+     (if (.tickets[$t].urgent // false) == true
+      then [.tickets | to_entries[] | select(.key != $t and .value.status == "in_flight" and (.value.urgent // false))] | length
+      else [.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length end)]'
 cmd_dispatch() {
-  open_run "${1:-}"
   local t="${2:-}" brief=
+  local human_check= status= hands_on= in_flight= max= urgent=
+  # The checks come with open_run's read (#185): the scope check between
+  # them writes nothing. in_flight counts the urgent slot for an urgent
+  # ticket and the Max Agents slots otherwise.
+  open_run "${1:-}" human_check status hands_on max urgent in_flight -- "$STATE_JQ_DEFS$DISPATCH_CHECKS" --arg t "$t"
   [ -n "$t" ] || usage
   shift 2
   while [ $# -gt 0 ]; do
@@ -1044,15 +1054,8 @@ cmd_dispatch() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  local human_check= status= hands_on= in_flight= max= urgent=
-  # One read for every check below (#185); in_flight counts the urgent slot
-  # for an urgent ticket and the Max Agents slots otherwise.
-  fields human_check status hands_on max urgent in_flight -- "$STATE_JQ_DEFS"'
-    [is_human_check($t), .tickets[$t].status, (.tickets[$t].human == null),
-     (.plan.max_agents // 5), (.tickets[$t].urgent // false),
-     (if (.tickets[$t].urgent // false) == true
-      then [.tickets | to_entries[] | select(.key != $t and .value.status == "in_flight" and (.value.urgent // false))] | length
-      else [.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length end)]' --arg t "$t"
+  [ -n "$RUN_EXTRA" ] \
+    || fields human_check status hands_on max urgent in_flight -- "$STATE_JQ_DEFS$DISPATCH_CHECKS" --arg t "$t"
   [ "$human_check" = false ] \
     || die "#$t is a Human check: the Artisan answers it at a gate (gate.sh check); it is never dispatched to a worker"
   [ "$status" = queued ] || die "#$t is $status, not queued"
