@@ -231,12 +231,7 @@ state_version_message() {
 # state file is either the old one or the new one, never a mix. Unchanged
 # content is not rewritten, so repeated reconciling leaves the file untouched.
 state_commit() {
-  local run_dir="$1" tmp="$2"
-  if ! state_valid_file "$tmp"; then
-    state_refuse_write "$tmp"
-    return 1
-  fi
-  state_commit_checked "$run_dir" "$tmp"
+  state_write "$1" "$2" commit .
 }
 
 state_refuse_write() { # tmp
@@ -244,19 +239,71 @@ state_refuse_write() { # tmp
   printf 'refusing to write: not a schema version %s state file\n' "$ARTISAN_STATE_SCHEMA_VERSION" >&2
 }
 
-# state_commit_checked run_dir tmp: state_commit for a temp file already
-# checked to be a state file of this schema version (state_apply checks it in
-# the same jq call that writes it).
-state_commit_checked() {
-  local run_dir="$1" tmp="$2" file=
+# state_write run_dir input apply|commit filter [jq args...]: the one jq call
+# behind every state write (#185). apply: input is the state file, checked to
+# be a schema version state file (else exit 97). commit: input is a finished
+# temp file. The filter's result is checked too (else 98), printed as jq
+# prints it (state_pp, so the file is byte for byte what `jq` would write),
+# and followed by the run status file's line, so neither the checks nor the
+# status file (#192) cost a process of their own. The status line is display
+# only: one that can't be made leaves the last status.json, as before.
+state_write() {
+  local run_dir="$1" input="$2" mode="$3" filter="$4" file= tmp= out= err= rc=0 state= status= old= in=
+  shift 4
   file=$(state_file "$run_dir")
-  if [ -f "$file" ] && cmp -s "$tmp" "$file"; then
+  tmp=$(state_tmp "$run_dir")
+  state_status_inputs "$run_dir"
+  local prog='def __state_ok: type == "object" and .schema_version == $__state_v;
+    if $__state_mode == "commit" or __state_ok then ('"$filter"'
+      ) | if __state_ok
+          then __state_pp("") + "\n\u001e" + (try (. as $__st | ($__st_lock) as $lock | ($__st_runners) as $runners
+                 | ($__st_now) as $now | $__st | ('"$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ"'
+                 ) | tojson) catch "")
+          else "" | halt_error(98) end
+    else "" | halt_error(97) end'
+  if [ "$mode" = commit ]; then
+    # The temp file is the input and the output: read it first.
+    in=
+    IFS= read -r -d '' in <"$input" || true
+    err=$(jq -r --argjson __state_v "$ARTISAN_STATE_SCHEMA_VERSION" --arg __state_mode "$mode" \
+      --argjson __st_lock "$STATE_ST_LOCK" --argjson __st_runners "[$STATE_ST_RUNNERS]" --argjson __st_now "$(state_now)" \
+      "$@" "$STATE_JQ_DEFS$STATE_PP_JQ$prog" 2>&1 >"$tmp" <<<"$in") || rc=$?
+  else
+    err=$(jq -r --argjson __state_v "$ARTISAN_STATE_SCHEMA_VERSION" --arg __state_mode "$mode" \
+      --argjson __st_lock "$STATE_ST_LOCK" --argjson __st_runners "[$STATE_ST_RUNNERS]" --argjson __st_now "$(state_now)" \
+      "$@" "$STATE_JQ_DEFS$STATE_PP_JQ$prog" "$input" 2>&1 >"$tmp") || rc=$?
+  fi
+  out=
+  [ "$rc" -ne 0 ] || { IFS= read -r -d '' out <"$tmp" || true; }
+  if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    if [ "$mode" = commit ]; then
+      state_refuse_write "$tmp"
+    elif [ "$rc" -eq 97 ] || ! state_valid_file "$input"; then
+      rm -f "$tmp"
+      state_version_message "$input" >&2
+    elif [ "$rc" -eq 0 ] || [ "$rc" -eq 98 ]; then
+      state_refuse_write "$tmp"
+    else
+      rm -f "$tmp"
+      [ -z "$err" ] || printf '%s\n' "$err" >&2
+    fi
+    return 1
+  fi
+  state=${out%%$'\036'*}
+  status=${out#*$'\036'}
+  # Unchanged content is not rewritten, so repeated reconciling leaves the
+  # file untouched.
+  old=
+  if [ -f "$file" ]; then IFS= read -r -d '' old <"$file" || true; fi
+  if [ -f "$file" ] && [ "$old" = "$state" ]; then
     rm -f "$tmp"
   else
+    printf '%s' "$state" >"$tmp" || { rm -f "$tmp"; return 1; }
     mv -f "$tmp" "$file" || return $?
   fi
   # The run status file follows every write, the lock's holder included (#192).
-  state_status_write "$run_dir"
+  [ "$status" = $'\n' ] || state_status_put "$run_dir" "$status"
+  return 0
 }
 
 state_tmp() { # run_dir
@@ -264,37 +311,14 @@ state_tmp() { # run_dir
 }
 
 # state_apply run_dir filter [jq args...]
-# Read, transform with jq, rewrite in one step. Caller holds the lock.
-# One jq call checks the file is a state file of this schema version (else
-# exit 97), applies the filter and checks each result is one too (else 98),
-# so the checks cost no process of their own (#185). Only a failure is looked
-# at again, to say which of them it was.
+# Read, transform with jq, rewrite in one step (state_write). Caller holds
+# the lock.
 state_apply() {
-  local run_dir="$1" filter="$2" tmp= file= err= rc=0
+  local run_dir="$1" filter="$2" file=
   shift 2
   file=$(state_file "$run_dir")
   [ -f "$file" ] || { printf 'no state file at %s\n' "$file" >&2; return 1; }
-  tmp=$(state_tmp "$run_dir")
-  err=$(jq --argjson __state_v "$ARTISAN_STATE_SCHEMA_VERSION" "$@" \
-    'if type == "object" and .schema_version == $__state_v then ('"$filter"'
-       ) | if type == "object" and .schema_version == $__state_v then . else "" | halt_error(98) end
-     else "" | halt_error(97) end' "$file" 2>&1 >"$tmp") || rc=$?
-  if [ "$rc" -eq 0 ] && [ -s "$tmp" ]; then
-    state_commit_checked "$run_dir" "$tmp"
-    return
-  fi
-  if [ "$rc" -eq 97 ] || ! state_valid_file "$file"; then
-    rm -f "$tmp"
-    state_version_message "$file" >&2
-    return 1
-  fi
-  if [ "$rc" -eq 0 ] || [ "$rc" -eq 98 ]; then
-    state_refuse_write "$tmp"
-    return 1
-  fi
-  rm -f "$tmp"
-  [ -z "$err" ] || printf '%s\n' "$err" >&2
-  return 1
+  state_write "$run_dir" "$file" apply "$filter" "$@"
 }
 
 # state_require_run_dir run_dir: exits unless a state file exists there.
@@ -312,6 +336,21 @@ state_step() {
   jq "$@" "$filter" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "jq step failed"; }
   mv -f "$tmp.next" "$tmp"
 }
+
+# The state file printed as jq prints it (two-space indent, keys in their
+# order, scalars as tojson writes them), so state_write can put it and the
+# status line in one jq call's output (#185).
+STATE_PP_JQ='
+  def __state_pp($i):
+    if type == "object" then
+      if length == 0 then "{}"
+      else ($i + "  ") as $j
+        | "{\n" + ([to_entries[] | $j + (.key | tojson) + ": " + (.value | __state_pp($j))] | join(",\n")) + "\n" + $i + "}" end
+    elif type == "array" then
+      if length == 0 then "[]"
+      else ($i + "  ") as $j
+        | "[\n" + ([.[] | $j + __state_pp($j)] | join(",\n")) + "\n" + $i + "]" end
+    else tojson end;'
 
 # state_fields file name... -- filter [jq args...]
 # Several values from one jq read of a JSON file (#185): the filter yields an
@@ -824,9 +863,21 @@ state_status_path() { printf '%s/status.json\n' "$1"; }
 # writer (ARTISAN_WRITER_PID), which holds it only for the call. Display only,
 # so it never fails a state write: a failure leaves the last status.json.
 state_status_write() {
-  local run_dir="$1" file="" holder="" tmp="" out="" runners="" f="" p=""
+  local run_dir="$1" file="" out="" new=""
   file=$(state_file "$run_dir")
   [ -f "$file" ] || return 0
+  state_status_inputs "$@"
+  new=$(jq -c --argjson lock "$STATE_ST_LOCK" --argjson runners "[$STATE_ST_RUNNERS]" --argjson now "$(state_now)" \
+    "$STATE_JQ_DEFS$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ" "$file" 2>/dev/null) || return 0
+  state_status_put "$run_dir" "$new"$'\n'
+}
+
+# state_status_inputs run_dir [runner-pid]: what the status line is made
+# with, as state_status_write says: STATE_ST_LOCK (the holder, or null) and
+# STATE_ST_RUNNERS (the runner pids, comma separated).
+STATE_ST_LOCK=null STATE_ST_RUNNERS=
+state_status_inputs() {
+  local run_dir="$1" holder="" runners="" f="" p=""
   for f in "$run_dir"/workers/orchestrator-*/runner.pid; do
     [ -f "$f" ] || continue
     p=
@@ -841,17 +892,21 @@ state_status_write() {
     [ -n "${ARTISAN_WRITER_PID:-}" ] || [ "$holder" != "$$" ] || holder=
   fi
   state_is_uint "$holder" || holder=null
-  out=$(state_status_path "$run_dir")
-  tmp="$run_dir/.status.json.tmp.$$"
-  if ! jq -c --argjson lock "$holder" --argjson runners "[${runners#,}]" --argjson now "$(state_now)" \
-    "$STATE_JQ_DEFS$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ" "$file" >"$tmp" 2>/dev/null; then
-    rm -f "$tmp"
-    return 0
+  STATE_ST_LOCK=$holder
+  STATE_ST_RUNNERS=${runners#,}
+}
+
+# state_status_put run_dir content: status.json gets content, unless it
+# already has it (compared by the shell, no process).
+state_status_put() {
+  local out="" tmp="" old=""
+  out=$(state_status_path "$1")
+  if [ -f "$out" ]; then
+    IFS= read -r -d '' old <"$out" || true
+    [ "$old" != "$2" ] || return 0
   fi
-  if [ -f "$out" ] && cmp -s "$tmp" "$out"; then
-    rm -f "$tmp"
-    return 0
-  fi
+  tmp="$1/.status.json.tmp.$$"
+  printf '%s' "$2" >"$tmp" || { rm -f "$tmp"; return 0; }
   mv -f "$tmp" "$out" || rm -f "$tmp"
   return 0
 }
