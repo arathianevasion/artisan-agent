@@ -851,7 +851,7 @@ urgent_lines() {
 
 cmd_status() {
   open_run "${1:-}"
-  local last= id= attempt= wave= pid= cls= next= reconciled=1 o= parked= reviews= stranded= probe= step= found=
+  local last= id= attempt= wave= pid= cls= next= reconciled=1 o= parked= reviews= stranded= probe= step= found= why=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then
     echo "orchestrator: none"
@@ -904,24 +904,25 @@ cmd_status() {
       # (#205). The usage guard runs from the orchestrator's sweep and from
       # launch, never from here: status writes no guard state and opens no
       # gate (#120); budget.sh parked only reads the park it left.
-      probe=$(jq -nc --argjson r "$reconciled" '{reconciled: ($r == 1)}')
+      # One read per step (#185): its probe, next and why. The probe is
+      # built here as JSON; each key is answered once, so it is only added.
+      if [ "$reconciled" -eq 1 ]; then probe='{"reconciled":true}'; else probe='{"reconciled":false}'; fi
       while :; do
-        step=$(get -c --argjson p "$probe" "$STATE_JQ_DEFS"'run_next($p)')
-        case "$(jq -r '.probe // ""' <<<"$step")" in
+        fields step next why -- "$STATE_JQ_DEFS"'run_next($p) | [.probe // "", .next, .why]' --argjson p "$probe"
+        case "$step" in
           reviews) found=false
             parked=$("$SCRIPT_DIR/gate-action.sh" parked "$RUN_DIR" --record 2>/dev/null) && found=true
-            probe=$(jq -c --argjson v "$found" '.reviews = $v' <<<"$probe") ;;
+            probe="${probe%?},\"reviews\":$found}" ;;
           human) found=false
             parked=$("$SCRIPT_DIR/human.sh" parked "$RUN_DIR" --record 2>/dev/null) && found=true
-            probe=$(jq -c --argjson v "$found" '.human = $v' <<<"$probe") ;;
+            probe="${probe%?},\"human\":$found}" ;;
           stranded) found=false
             stranded=$("$SCRIPT_DIR/gate-action.sh" stranded "$RUN_DIR" 2>/dev/null) && found=true
-            probe=$(jq -c --argjson v "$found" '.stranded = $v' <<<"$probe") ;;
+            probe="${probe%?},\"stranded\":$found}" ;;
           *) break ;;
         esac
       done
-      next=$(jq -r '.next' <<<"$step")
-      case "$(jq -r '.why' <<<"$step")" in
+      case "$why" in
         ci) parked=$(get -r '.ci_park | "parked ci: \(if .tickets then "merge batch \(.batch) (\(.tickets | map("#" + .) | join(", ")))" else "#\(.ticket)" end)'"'"'s merge gate got no verdict from CI: \(.why)\(if .url then " (\(.url))" else "" end); clear it with wave.sh unpark-ci to retry the gate"') ;;
         usage) parked=$("$SCRIPT_DIR/budget.sh" parked "$RUN_DIR" 2>/dev/null || true)
           # Parked on usage and behind open reviews too: both reasons show.
@@ -1555,12 +1556,14 @@ launch_gate() {
 gate_pid() { cat "$RUN_DIR/$(get '.merge_gate.pid_file')" 2>/dev/null || true; }
 
 # The recorded gate's runner is alive: its pid is live and still the runner,
-# never a recycled pid.
+# never a recycled pid. Its pid file and result are read together, once per
+# check (#185), as gate_pid and gate_result read them.
 gate_alive() {
-  local pid=
-  pid=$(gate_pid)
+  local pid="" pf="" rs=""
+  fields pf rs -- '[.merge_gate.pid_file, .merge_gate.result]' || return 1
+  pid=$(cat "$RUN_DIR/$pf" 2>/dev/null || true)
   state_pid_alive "$pid" || return 1
-  ps -o args= -p "$pid" 2>/dev/null | grep -qF "merge-gate.sh run --result $(gate_result)"
+  ps -o args= -p "$pid" 2>/dev/null | grep -qF "merge-gate.sh run --result $RUN_DIR/$rs"
 }
 
 gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(get '.merge_gate.result')"; }
@@ -1590,7 +1593,11 @@ settle_gate() {
 
 # The recorded gate's runner died with no outcome (read twice around the
 # liveness check: an outcome written meanwhile is not a death).
-gate_dead() { [ ! -f "$(gate_result)" ] && ! gate_alive && [ ! -f "$(gate_result)" ]; }
+gate_dead() {
+  local result=""
+  result=$(gate_result)
+  [ ! -f "$result" ] && ! gate_alive && [ ! -f "$result" ]
+}
 
 # revive_gate worktree: a dead CI gate whose run was dispatched gets a fresh
 # runner that waits on that same run (same branch, same run id, no new

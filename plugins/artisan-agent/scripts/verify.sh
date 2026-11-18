@@ -316,18 +316,27 @@ cmd_start() {
     printf -- '- Dependencies (such as node_modules) are installed by the project'"'"'s worktree_setup before you start. "Not found" or a missing module is a setup failure, not a code failure: say so in notes and never mark a criterion unmet for it.\n'
     [ -z "$suite" ] || printf -- '- The full suite: %s\n' "$suite"
     printf -- '- The worker'"'"'s evidence record (a claim to check, not proof): %s\n' "$result"
-    if [ "$(printf '%s' "$checks" | jq -r .recorded)" = true ]; then
+    # Whether the checks are recorded, and their lines or the reason they
+    # are not, in one read (#185).
+    local ckrec="" cklines=""
+    ckrec=$(printf '%s' "$checks" | jq -r --arg l "$leave" --argjson ci "$cionly" '(.recorded | tostring),
+      if (.recorded | tostring) == "true" then (.checks[] | "    - `\(.command)`"
+        + (if .command == $l then ": left to the merge gate, which runs on CI from this machine; the command skips it"
+           elif (.command as $c | $ci | index($c)) != null then ": runs on CI on the worker'"'"'s branch (this machine can'"'"'t run it); the command skips it, and the judge checks the worker'"'"'s CI run for this commit"
+           else "" end))
+      else .reason end') || ckrec=""
+    cklines=${ckrec#*$'\n'}
+    [ "$cklines" != "$ckrec" ] || cklines=
+    ckrec=${ckrec%%$'\n'*}
+    if [ "$ckrec" = true ]; then
       printf -- '- The recorded checks (%s, `## Checks`; each proven to fail at setup). Run exactly these, from your checkout, with this one command. It writes their results where the judge reads them; a verdict without them is an error:\n' "$std"
       printf '    $ %q run%s --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" \
         "$([ "$worker" = 0 ] || printf ' --worker'; [ -z "$leave" ] || printf ' --suite %q' "$leave")" "$std" "$cout"
-      printf '%s' "$checks" | jq -r --arg l "$leave" --argjson ci "$cionly" '.checks[] | "    - `\(.command)`"
-        + (if .command == $l then ": left to the merge gate, which runs on CI from this machine; the command skips it"
-           elif (.command as $c | $ci | index($c)) != null then ": runs on CI on the worker'"'"'s branch (this machine can'"'"'t run it); the command skips it, and the judge checks the worker'"'"'s CI run for this commit"
-           else "" end)'
+      [ -z "$cklines" ] || printf '%s\n' "$cklines"
       printf '  A red one makes every criterion it bears on unmet: cite it in that criterion'"'"'s evidence.checks. If you can'"'"'t tie it to any criterion, every criterion is unmet.\n'
     else
       printf -- '- No recorded checks (%s). Find the project'"'"'s checks yourself (the ticket, README, build files) and run them with this command followed by -- and each command you found, one quoted argument each. It writes their results where the judge reads them and says you fell back:\n' \
-        "$(printf '%s' "$checks" | jq -r .reason)"
+        "$cklines"
       printf '    $ %q run --file %q --out %q\n' "$PLUGIN_DIR/scripts/checks.sh" "$std" "$cout"
       printf '  Begin your notes with "no recorded checks: found <the commands>".\n'
     fi
@@ -648,9 +657,15 @@ cmd_judge() {
   # open one added to; a repeat changes nothing) and the agent ticket says
   # so, then the verdict is recorded with it. A split or comment that fails
   # records nothing: judge again (a crash just after the comment repeats it).
-  local hc="" hcrit=""
-  hcrit=$(jq -c '[.acceptance[] | select(.human == true) | .criterion]' "$contract")
-  if [ "$(jq -r .verdict "$contract")" = pass ] && [ "$hcrit" != "[]" ]; then
+  # What the steps below judge the contract by, in one read (#185): the
+  # verdict and acceptance it reads are never changed by the writes below.
+  local hc="" hcrit="" cverdict="" cagrees="" creason=""
+  state_fields "$contract" cverdict hcrit cagrees creason -- '[.verdict,
+      ([.acceptance[] | select(.human == true) | .criterion] | tojson),
+      ([.acceptance[] | select(.unmeetable.verifier_agrees == true)] | length),
+      "the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0) - (.criteria_gate // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"]' \
+    || die "could not read the evidence contract for #$t"
+  if [ "$cverdict" = pass ] && [ "$hcrit" != "[]" ]; then
     if [ -n "$tpath" ]; then
       jq '.unsure += ["Only a person can verify \(.criteria_human) of its criteria, and it has no tracker ticket to split them from: move them into a Human check by hand"]' \
         "$contract" >"$contract.tmp" && mv "$contract.tmp" "$contract"
@@ -694,7 +709,7 @@ cmd_judge() {
     --arg title "Human check: $ttitle (#$t)"
   remove_worktree "$wt"
 
-  if [ "$(jq -r .verdict "$contract")" = fail ]; then
+  if [ "$cverdict" = fail ]; then
     # A criterion missed is a failed attempt: a fresh worker gets the
     # verifier's findings (wave.sh dispatch), or, after the last attempt,
     # the Artisan gets the ticket.
@@ -707,7 +722,7 @@ cmd_judge() {
         | .tickets[$t].verifications[-1].next = "human"
         | event({event: "human-feedback", ticket: $t, attempt: $n}; $now)' \
         --arg t "$t" --argjson n "$n" --slurpfile e "$contract"
-    elif [ "$(jq '[.acceptance[] | select(.unmeetable.verifier_agrees == true)] | length' "$contract")" -gt 0 ]; then
+    elif [ "$cagrees" -gt 0 ]; then
       # The worker said no worker could meet a criterion here and the
       # verifier agrees (#186): another attempt would fail the same way. The
       # ticket goes to an exception gate (reason "unmeetable") and uses no
@@ -725,7 +740,7 @@ cmd_judge() {
         --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile e "$contract"
     else
     apply 'failed_attempt($t; $r; $now)
-      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$(jq -r '"the verifier found \(.criteria_total - .criteria_met - (.criteria_human // 0) - (.criteria_gate // 0)) of \(.criteria_total) criteria unmet, first: \([.acceptance[] | select((.met | not) and .human != true and .gate != true) | .criterion] | first)"' "$contract")"
+      | .tickets[$t].verifications[-1].next = (if .tickets[$t].status == "queued" then "retry" else "blocked" end)' --arg t "$t" --arg r "$creason"
     fi
     # Work that failed is on the audit trail too: the same contract, on the ticket.
     local body="$RUN_DIR/verify/$t.$n.comment.md"

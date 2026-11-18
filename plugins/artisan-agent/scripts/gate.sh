@@ -881,8 +881,9 @@ cmd_sync() {
   done
   # Risk gates first: one that folds (#241) goes into the slice gate this
   # same sync may open.
-  local num=
-  for id in $(cmd_due "$RUN_DIR" | grep '^risk-' || true) $(cmd_due "$RUN_DIR" | grep -v '^risk-' || true); do
+  local num="" due=""
+  due=$(cmd_due "$RUN_DIR") || due=""
+  for id in $(printf '%s\n' "$due" | grep '^risk-' || true) $(printf '%s\n' "$due" | grep -v '^risk-' || true); do
     [ -z "$(recorded "$id")" ] || continue
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
     if [ -n "$num" ]; then echo "opened #$num $id"

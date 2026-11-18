@@ -95,16 +95,25 @@ if [ ! -f "$exit_record" ]; then
   fi
 fi
 
-case "$(jq -r .reason "$exit_record")" in
+# The exit record's reason and the session's output in one read (#185),
+# when both are what a runner and a session write: one exit record, and a
+# result object. Anything else is read the long way below, as before.
+output=$worker_dir/output.json
+reason= subtype= is_error= result=
+if ! state_fields "$output" reason subtype is_error result -- \
+  '[($e | if length == 1 then .[0].reason else error end), if type == "object" and .type == "result" then (.subtype // ""), (.is_error // false), (.result // "") else error end]' \
+  --slurpfile e "$exit_record" 2>/dev/null; then
+  reason=$(jq -r .reason "$exit_record") || true
+  subtype=
+fi
+case "$reason" in
   deadline) echo "failed deadline"; exit 0 ;;
   stopped) echo "failed stopped"; exit 0 ;;
 esac
 
 # The session's output in one read (#185): not a result object (or no
 # output, or not JSON) is a crash.
-output=$worker_dir/output.json
-subtype= is_error= result=
-if ! state_fields "$output" subtype is_error result -- \
+if [ -z "$subtype" ] && ! state_fields "$output" subtype is_error result -- \
   '[if type == "object" and .type == "result" then (.subtype // ""), (.is_error // false), (.result // "") else error end]' \
   2>/dev/null; then
   echo "failed crashed"

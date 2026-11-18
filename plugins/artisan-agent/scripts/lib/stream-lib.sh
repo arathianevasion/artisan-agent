@@ -12,10 +12,12 @@
 # stream_events type stream-file: every event of that type, in order, one
 # compact JSON object per line. Nothing when the file is missing. A cheap
 # fixed-string grep for the quoted type keeps the per-second poll light; jq
-# then keeps only the lines whose own top-level type it is.
+# then keeps only the lines whose own top-level type it is. With no line
+# naming the type there is nothing for jq to keep, so it is not started (#185).
 stream_events() {
   local type="$1" file="$2"
   [ -f "$file" ] || return 0
+  grep -qF "\"$type\"" "$file" 2>/dev/null || return 0
   { grep -F "\"$type\"" "$file" 2>/dev/null || true; } \
     | jq -cR --arg t "$type" 'fromjson? | select(type == "object" and .type == $t)' 2>/dev/null || true
 }
