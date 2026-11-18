@@ -140,7 +140,8 @@ reconcile() {
         blocked_by: [$b[]? | {number: (.number | tostring), state: (.state | ascii_downcase)}]
       }}' --args $scope)$'\n'
 
-  step "$STATE_JQ_DEFS"'
+  # The last step and the commit in one call (state_finish, #185).
+  state_finish "$RUN_DIR" "$tmp" "$STATE_JQ_DEFS"'
     (reduce $trs[] as $e ({}; . + $e)) as $tr
     | .tickets |= with_entries(
       if .value.status == "queued" and $tr[.key].state == "closed"
@@ -171,9 +172,7 @@ reconcile() {
     | .tickets |= with_entries(.key as $t
         | ([$tr[$t].blocked_by[]? | .number | select($s.tickets[.].status? == "merged")]) as $bs
         | (if .value.status == "queued" and $bs != [] then $s | gate_waits($t; $bs) else [] end) as $w
-        | if $w == [] then .value |= del(.gate_waits) else .value.gate_waits = $w end)' --slurpfile trs /dev/stdin <<<"$tracker"
-
-  state_commit "$RUN_DIR" "$tmp"
+        | if $w == [] then .value |= del(.gate_waits) else .value.gate_waits = $w end)' --slurpfile trs <(printf '%s' "$tracker")
 }
 
 state_with_lock "$RUN_DIR" reconcile

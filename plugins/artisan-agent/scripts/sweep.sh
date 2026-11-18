@@ -138,6 +138,10 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
         else . end
     else .tickets[$t].status = "returned" end'
 
+# The in-flight tickets as the sweep's loop reads them: a line each.
+IN_FLIGHT_ROWS='([.tickets | to_entries[] | select(.value.status == "in_flight")
+    | "\(.key)\u001f\(.value.pid // "")\u001f\(.value.attempts)\u001f\(.value.deadline_at // "")\n"] | add // "")'
+
 sweep() {
   local file= tmp= now= tickets= t= status= pid= attempt= deadline= result= exit_record= session_cost=
   file=$(state_file "$RUN_DIR")
@@ -167,14 +171,17 @@ sweep() {
   # dispatched, so the checks below see it.
   # One read for the loop (#185): ticket and attempts, a line each. A step
   # here changes only its own ticket.
-  local next="" runner="" rows="" n="" ok=""
-  if ! state_fields "$tmp" ok rows -- 'if type == "object" and .schema_version == $v
+  # The in-flight rows below come with this read, unless a launch is taken in.
+  local next="" runner="" rows="" n="" ok="" flying="" flown=""
+  if ! state_fields "$tmp" ok rows flying -- 'if type == "object" and .schema_version == $v
       then [true, ([.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0)
-        | "\(.key)\u001f\(.value.attempts)\n"] | add // "")] else [false, ""] end' \
+        | "\(.key)\u001f\(.value.attempts)\n"] | add // ""), '"$IN_FLIGHT_ROWS"'] else [false, "", ""] end' \
       --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" 2>/dev/null || [ "$ok" != true ]; then
     state_valid_file "$file" || { rm -f "$tmp"; state_die 1 "$(state_version_message "$file")"; }
     # A state file of this version whose tickets can't be listed: none to take in.
     rows=
+  else
+    flown=1
   fi
   while IFS=$'\x1f' read -r t n; do
     [ -n "$t" ] || continue
@@ -189,13 +196,14 @@ sweep() {
           | .dispatched_at = $now | .deadline_at = $deadline | .result = null)
       | event({event: "dispatch", ticket: $t, attempt: .tickets[$t].attempts, pid: $pid, unrecorded: true}; $now)' \
       --arg t "$t" --argjson pid "$runner" --argjson now "$now"
+    flown=
   done <<<"$rows"
 
   # The in-flight tickets with their pid, attempt and deadline, in one read
   # (#185); a step below changes only its own ticket.
   local result_status=""
-  state_fields "$tmp" rows -- '[[.tickets | to_entries[] | select(.value.status == "in_flight")
-    | "\(.key)\u001f\(.value.pid // "")\u001f\(.value.attempts)\u001f\(.value.deadline_at // "")\n"] | add // ""]'
+  if [ -n "$flown" ]; then rows=$flying
+  else state_fields "$tmp" rows -- '['"$IN_FLIGHT_ROWS"']'; fi
   while IFS=$'\x1f' read -r t pid attempt deadline <&3; do
     [ -n "$t" ] || continue
     result="$RESULTS/$t.$attempt.result.json"
@@ -277,10 +285,8 @@ sweep() {
       --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -Rn '[inputs]')"
   done
 
-  step '.costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
+  state_finish "$RUN_DIR" "$tmp" '.costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)
         | .costs.total_usd = (.costs.workers_usd + .costs.orchestrator_usd)'
-
-  state_commit "$RUN_DIR" "$tmp"
 }
 
 # A failed attempt taken back by the repair: its failure entries move to

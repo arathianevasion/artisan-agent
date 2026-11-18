@@ -234,15 +234,25 @@ state_commit() {
   state_write "$1" "$2" commit .
 }
 
+# state_finish run_dir tmp filter [jq args...]: state_step then state_commit
+# in one jq call (#185): the working copy's last step, checked and written as
+# jq prints it (state_pp). A step that fails dies as state_step does.
+state_finish() {
+  local run_dir="$1" tmp="$2" filter="$3"
+  shift 3
+  state_write "$run_dir" "$tmp" finish "$filter" "$@"
+}
+
 state_refuse_write() { # tmp
   rm -f "$1"
   printf 'refusing to write: not a schema version %s state file\n' "$ARTISAN_STATE_SCHEMA_VERSION" >&2
 }
 
-# state_write run_dir input apply|commit filter [jq args...]: the one jq call
-# behind every state write (#185). apply: input is the state file, checked to
-# be a schema version state file (else exit 97). commit: input is a finished
-# temp file. The filter's result is checked too (else 98), printed as jq
+# state_write run_dir input apply|commit|finish filter [jq args...]: the one
+# jq call behind every state write (#185). apply: input is the state file,
+# checked to be a schema version state file (else exit 97). commit: input is a
+# finished temp file, written as it is. finish: input is a working copy, its
+# last step the filter (state_finish). The filter's result is checked too (else 98), printed as jq
 # prints it (state_pp, so the file is byte for byte what `jq` would write),
 # and followed by the run status file's line, so neither the checks nor the
 # status file (#192) cost a process of their own. The status line is display
@@ -254,14 +264,14 @@ state_write() {
   tmp=$(state_tmp "$run_dir")
   state_status_inputs "$run_dir"
   local prog='def __state_ok: type == "object" and .schema_version == $__state_v;
-    if $__state_mode == "commit" or __state_ok then ('"$filter"'
+    if $__state_mode != "apply" or __state_ok then ('"$filter"'
       ) | if __state_ok
           then (try (. as $__st | ($__st_lock) as $lock | ($__st_runners) as $runners
                  | ($__st_now) as $now | $__st | ('"$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ"'
                  ) | tojson) catch "") + "\n" + __state_pp("")
           else "" | halt_error(98) end
     else "" | halt_error(97) end'
-  if [ "$mode" = commit ]; then
+  if [ "$mode" != apply ]; then
     # The temp file is the input and the output: read it first.
     in=
     IFS= read -r -d '' in <"$input" || true
@@ -279,7 +289,12 @@ state_write() {
   out=
   [ "$rc" -ne 0 ] || { { IFS= read -r status; IFS= read -r -d '' out; } <"$tmp" || true; }
   if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
-    if [ "$mode" = commit ]; then
+    if [ "$mode" = finish ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 98 ]; then
+      # The step itself failed: as state_step says it.
+      rm -f "$tmp"
+      [ -z "$err" ] || printf '%s\n' "$err" >&2
+      state_die 1 "jq step failed"
+    elif [ "$mode" != apply ]; then
       state_refuse_write "$tmp"
     elif [ "$rc" -eq 97 ] || ! state_valid_file "$input"; then
       rm -f "$tmp"

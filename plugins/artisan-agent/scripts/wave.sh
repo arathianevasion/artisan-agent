@@ -1376,20 +1376,36 @@ gate_wait_arg() { # value -> validated seconds
   printf '%s\n' "$1"
 }
 
+# What cmd_merge's open_run read of the gate records (#185), for settle_gate
+# while RUN_READ says nothing was written since.
+MERGE_CI_GATE= MERGE_GATE=
+# And merge_one's count of the ticket's merge gates, for finish_merge.
+MERGE_K= MERGE_K_FOR=
 cmd_merge() {
-  open_run "${1:-}"
+  local mbatch=""
+  open_run "${1:-}" mbatch MERGE_CI_GATE MERGE_GATE -- '[(.merge_batch != null), (.ci_gate != null), (.merge_gate != null)]'
+  [ -n "$RUN_EXTRA" ] || { mbatch=$(get '.merge_batch != null'); MERGE_CI_GATE= MERGE_GATE=; }
   shift
-  local wait=$DEFAULT_GATE_WAIT_SECONDS list='[]'
+  # The tickets named, each once, in order: a list in the shell, made JSON
+  # (one jq call) only for a merge batch (#185).
+  local wait=$DEFAULT_GATE_WAIT_SECONDS list='[]' x="" seen=""
+  local -a named=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --wait) [ $# -ge 2 ] || usage; wait=$(gate_wait_arg "$2"); shift 2 ;;
       -*) usage ;;
-      *) list=$(jq -c --arg t "$1" 'if index($t) then . else . + [$t] end' <<<"$list"); shift ;;
+      *) seen=""
+        for x in ${named[@]+"${named[@]}"}; do [ "$x" != "$1" ] || seen=1; done
+        [ -n "$seen" ] || named+=("$1")
+        shift ;;
     esac
   done
-  [ "$(jq length <<<"$list")" -ge 1 ] || usage
+  [ "${#named[@]}" -ge 1 ] || usage
+  if [ "$mbatch" = true ] || [ "${#named[@]}" -gt 1 ]; then
+    list=$(jq -nc '$ARGS.positional' --args "${named[@]}")
+  fi
   # A merge batch in progress is finished first, whichever of its tickets is named.
-  if [ "$(get '.merge_batch != null')" = true ]; then
+  if [ "$mbatch" = true ]; then
     [ "$(get --argjson l "$list" '[.merge_batch.tickets[] | select(. as $t | $l | index($t))] | length > 0')" = true ] \
       || state_die 20 "wave.sh: not merged yet: merge batch $(get '.merge_batch.id') ($(get -r '.merge_batch.tickets | map("#" + .) | join(", ")')) is in progress; finish it first (wave.sh merge $RUN_DIR $(get -r '.merge_batch.tickets | join(" ")'))"
     # Tickets named beside it are not in it: its report names them, to merge next.
@@ -1398,14 +1414,14 @@ cmd_merge() {
     batch_run "$wait"
     return 0
   fi
-  if [ "$(jq length <<<"$list")" -gt 1 ]; then
+  if [ "${#named[@]}" -gt 1 ]; then
     if [ "$("$SCRIPT_DIR/merge-gate.sh" batch)" = on ]; then
       batch_start "$wait" "$list"
       return 0
     fi
-    echo "wave.sh: merge batching is off (merge-gate.sh show): #$(jq -r '.[0]' <<<"$list") merges alone; merge $(jq -r '.[1:] | map("#" + .) | join(", ")' <<<"$list") after it" >&2
+    echo "wave.sh: merge batching is off (merge-gate.sh show): #${named[0]} merges alone; merge $(jq -r '.[1:] | map("#" + .) | join(", ")' <<<"$list") after it" >&2
   fi
-  merge_one "$(jq -r '.[0]' <<<"$list")" "$wait"
+  merge_one "${named[0]}" "$wait"
 }
 
 # merge_one ticket wait: a merge batch of one, the merge as it always was.
@@ -1429,12 +1445,14 @@ merge_one() {
   # Every check below in one read (#185).
   # abandon_pending_resolution changes only the resolve record.
   local verdict= ci_parked= ci_park_why= base_parked= rpre= rsha=
-  fields branch verdict suite ci_parked ci_park_why base_parked retry rpre rsha title -- '[.tickets[$t].branch,
+  fields branch verdict suite ci_parked ci_park_why base_parked retry rpre rsha title MERGE_K -- '[.tickets[$t].branch,
     (.tickets[$t].evidence | if . != null and .verdict == "pass" and .attempt == $n and .commit == $tip then "pass" else "" end),
     (.plan.suite_command // ""), (.ci_park != null), .ci_park.why, (.base_park != null),
     (.tickets[$t].ci_retry != null), .tickets[$t].ci_retry.pre, .tickets[$t].ci_retry.sha,
-    (.plan.tickets[$t].title // "untitled")]' \
+    (.plan.tickets[$t].title // "untitled"),
+    ([.events[] | select(.event == "merge-gate" and .ticket == $t)] | length)]' \
     --arg t "$t" --argjson n "$n" --arg tip "$TIP"
+  MERGE_K_FOR=$t
   # Only verified work merges: a fresh verifier's pass for this attempt at
   # this commit (verify.sh, references/evidence-contract.md).
   [ "$verdict" = pass ] \
@@ -1506,7 +1524,10 @@ finish_merge() {
           then {run_id: .checks.ci_run.run_id, sha: .checks.ci_run.sha} else null end')" \
       'if $r == null then . else . + {reuse: $r} end' <<<"$ci")
   fi
-  k=$(( $(get --arg t "$t" '[.events[] | select(.event == "merge-gate" and .ticket == $t)] | length') + 1 ))
+  # The ticket's gates so far, as merge_one read them while nothing has been
+  # written since (#185).
+  if [ -n "$RUN_READ" ] && [ "$MERGE_K_FOR" = "$t" ]; then k=$((MERGE_K + 1))
+  else k=$(( $(get --arg t "$t" '[.events[] | select(.event == "merge-gate" and .ticket == $t)] | length') + 1 )); fi
   key="$t.$n.g$k"
   mkdir -p "$RUN_DIR/merges" "$RUN_DIR/results"
   apply '.merge_gate = ({ticket: $t, attempt: $n, gate: $k, mode: $mode, pre: $pre, sha: $sha,
@@ -1576,11 +1597,13 @@ gate_result() { printf '%s/%s\n' "$RUN_DIR" "$(get '.merge_gate.result')"; }
 # dispatch); otherwise the gate is undone for a retry (abandon_gate). A
 # ci_gate record from before #142 has no runner, so it is a dead gate.
 settle_gate() {
-  local t="$1" wait="$2" wt="$3" gt=
-  if [ "$(get '.ci_gate != null')" = true ]; then
+  local t="$1" wait="$2" wt="$3" gt="" cg="" mg=""
+  if [ -n "$RUN_READ" ] && [ -n "$MERGE_GATE" ]; then cg=$MERGE_CI_GATE mg=$MERGE_GATE; else cg=$(get '.ci_gate != null'); fi
+  if [ "$cg" = true ]; then
     apply '.merge_gate = (.merge_gate // (.ci_gate + {mode: "ci", deadline: (.ci_gate.at + 1800)})) | .ci_gate = null'
   fi
-  [ "$(get '.merge_gate != null')" = true ] || return 0
+  [ -n "$RUN_READ" ] && [ -n "$mg" ] || mg=$(get '.merge_gate != null')
+  [ "$mg" = true ] || return 0
   gt=$(get '.merge_gate.ticket')
   if gate_dead && ! revive_gate "$wt"; then
     abandon_gate "$wt"
