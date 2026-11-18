@@ -236,3 +236,13 @@ test_the_run_status_text_stays_under_a_hundred_characters() {
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.repo = "o/app"'
   assert_contains "$(status_get .text)" 'app run 20261117-101 · Wave 0/3 · 0/3 merged, 1 in flight, 1 in CI, 1 blocked · $123.46/$456.70'
 }
+
+test_init_refuses_a_run_folder_under_a_claude_folder_and_names_it() {
+  make_project
+  write_plan "$TEST_TMPDIR/plan.json"
+  local bad="$PROJECT/.claude/worktrees/w/.artisan-agent/runs/r1" out=
+  out=$("$SCRIPTS/state.sh" init "$bad" "$TEST_TMPDIR/plan.json" 2>&1) && fail "init accepted a run folder under .claude/"
+  assert_contains "$out" "headless sessions can't write under a .claude/ folder"
+  assert_contains "$out" "$PROJECT/.claude"
+  [ ! -e "$bad" ] || fail "init created the refused run folder"
+}

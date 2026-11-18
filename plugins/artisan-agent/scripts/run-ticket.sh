@@ -148,6 +148,11 @@ case "$role" in
 esac
 [ -z "$lock_from" ] || [ "$role" = orchestrator ] || die_usage "--lock-from is for an orchestrator"
 [ -z "$name" ] || [ "$role" != worker ] || die_usage "a worker is always named worker-<ticket>; --name is for an orchestrator or verifier"
+# A write target (--add-dir) under a .claude/ folder is refused before anything
+# starts: Claude Code protects it, so every write would fail silently (#249).
+# shellcheck source=lib/headless-lib.sh
+. "$(dirname "$0")/lib/headless-lib.sh"
+headless_check_add_dirs ${extra[@]+"${extra[@]}"} || die_usage "refusing $ticket: a write target is under a .claude/ folder"
 poll_seconds=${ARTISAN_RUNNER_POLL_SECONDS:-1}
 is_number "$poll_seconds" || die_usage "ARTISAN_RUNNER_POLL_SECONDS must be a number of seconds, got: $poll_seconds"
 

@@ -219,6 +219,7 @@ cmd_prepare() {
     printf -- '- Evidence threshold: %s\n' "$(jq -r '.plan.config.evidence_threshold // 3' "$rd/state.json")"
     printf -- '- Write the lessons to `%s` and the Artisan'"'"'s actions to `%s`.\n' "$rd/retro/lessons.json" "$rd/retro/actions.jsonl"
   } >"$prompt"
+  headless_check_write_target "$rd" || die "the retro's work folder is under a .claude/ folder"
   headless_args "$PREPARER_TOOLS"
   ( cd "$main" && ARTISAN_ROLE=retro ARTISAN_RUN_DIR=$rd "$CLAUDE" -p "$(cat "$prompt")" \
       --model "$model" --max-budget-usd "$budget" --output-format json \

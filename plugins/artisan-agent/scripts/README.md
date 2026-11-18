@@ -77,6 +77,8 @@ The exit record:
 
 `permission_denials` counts the tool calls the session was denied, from its final result event (the calls themselves are in `output.json`). Every headless session starts with `lib/headless-lib.sh`'s `headless_args`: `--permission-mode dontAsk` and its allowlist, so a tool outside the allowlist is denied at once and never waits on a prompt, whichever `claude` is on PATH (#187). The retro's two other headless steps, `upstream-check.sh run` and `model-prices.sh fetch`, start the same way with allowlists of their own and report a denial in the error when the agent wrote no answer (#214). `model-prices.sh fetch` grants exactly the prices file, its answer file (each by its absolute `//` path) and the pricing page's hosts, and says "price check failed" with each denied call (`headless_denied_calls`) when the agent gave no usable answer (#245). `tests/headless-args.test.sh` fails if any script launches `claude -p` without `headless_args` (the setup hook probe is the one listed exception).
 
+A headless session can't write under a `.claude/` folder (Claude Code protects every one, whatever `--add-dir` grants), so `lib/headless-lib.sh`'s `headless_check_write_target` refuses a write target with a `.claude` path component, naming the protected folder: `state.sh init` for the run folder, `run-ticket.sh` for every `--add-dir` it passes on (workers, orchestrators, verifiers) and `retro.sh` for its work folder; reading under `.claude/` stays allowed (#249; `tests/headless-args.test.sh`).
+
 ## Caps
 
 | Cap | Value | Override |

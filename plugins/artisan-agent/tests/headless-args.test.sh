@@ -39,3 +39,25 @@ test_the_lint_flags_a_launch_without_the_headless_arguments() {
   assert_contains "$run_hits" "bad.sh:2"
   case "$run_hits" in *good.sh*) fail "flagged a launch that has the arguments" ;; esac
 }
+
+test_a_write_target_with_a_claude_component_is_refused_naming_the_folder() {
+  . "$PLUGIN_ROOT/scripts/lib/headless-lib.sh"
+  local out=
+  out=$(headless_check_write_target "/r/.claude/worktrees/w/runs/x" 2>&1) && fail "accepted"
+  assert_contains "$out" "headless sessions can't write under a .claude/ folder"
+  assert_contains "$out" "protected folder /r/.claude;"
+  headless_check_write_target "/r/.claudex/runs" || fail "refused .claudex"
+  headless_check_write_target "/r/my.claude/runs" || fail "refused my.claude"
+  headless_check_write_target "/r/.claude" 2>/dev/null && fail "accepted a path ending in .claude"
+  headless_check_add_dirs --add-dir /ok --add-dir /x/.claude/y 2>/dev/null && fail "add_dirs accepted"
+  headless_check_add_dirs --foo --add-dir /ok || fail "add_dirs refused a fine target"
+}
+
+test_every_script_that_launches_claude_with_an_add_dir_checks_the_target() {
+  local f= hits=""
+  for f in $(find "$PLUGIN_ROOT" -type f -name '*.sh' ! -path '*/tests/*' ! -path '*/.git/*' ! -name headless-lib.sh); do
+    grep -q -e '--add-dir' "$f" || continue
+    grep -q 'headless_check_\|run-ticket.sh' "$f" || hits="$hits $f"
+  done
+  [ -z "$hits" ] || fail "--add-dir without the .claude/ check:$hits"
+}

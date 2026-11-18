@@ -51,6 +51,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 . "$SCRIPT_DIR/lib/state-lib.sh"
 # shellcheck source=lib/config-lib.sh
 . "$SCRIPT_DIR/lib/config-lib.sh"
+# shellcheck source=lib/headless-lib.sh
+. "$SCRIPT_DIR/lib/headless-lib.sh"   # headless_check_write_target: no run folder under .claude/ (#249)
 state_require_jq
 
 usage() { state_usage "$0"; }
@@ -63,7 +65,7 @@ cmd_run_dir() {
 }
 
 cmd_init() {
-  local run_dir="$1" plan="$2"
+  local run_dir="$1" plan="$2" why=""
   [ -f "$plan" ] || state_die 1 "no plan file: $plan"
   jq -e 'type == "object" and (.run_id | type == "string") and (.repo | type == "string")
          and (.integration_branch | type == "string") and (.scope | type == "array")' \
@@ -77,6 +79,7 @@ cmd_init() {
     || state_die 1 "the plan is not approvable: $(jq -r '.merge_gate_flags | length' "$plan") agent criteria need CI, a PR or the full suite, which the merge gate already checks; drop or reword each, or override it (references/human-checks.md, \"Merge-gate flags\")"
   jq -e '(.criteria_missing // []) == []' "$plan" >/dev/null 2>&1 \
     || state_die 1 "the plan is not approvable: no acceptance criteria (body or triage Agent Brief comment) for $(jq -r '.criteria_missing | map("#" + .) | join(", ")' "$plan"); add a checklist under \"## Acceptance criteria\" to each, then rebuild the plan"
+  why=$(headless_check_write_target "$run_dir" 2>&1) || state_die 1 "run folder refused: $why"
   [ ! -e "$(state_file "$run_dir")" ] || state_die 1 "state file already exists in $run_dir"
   mkdir -p "$run_dir/results/findings"
   (cd "$run_dir" && git rev-parse --show-toplevel >/dev/null 2>&1) \

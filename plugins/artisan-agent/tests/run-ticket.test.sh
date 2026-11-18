@@ -499,3 +499,21 @@ test_an_exit_record_counts_no_denials_for_a_session_denied_nothing() {
   wait_for_file "$EXIT_RECORD"
   assert_eq 0 "$(field "$EXIT_RECORD" permission_denials)"
 }
+
+test_an_add_dir_target_under_a_claude_folder_is_refused_before_the_session_starts() {
+  setup_run
+  export FAKE_CLAUDE_MODE=complete
+  local out=
+  out=$(run_ticket -- --add-dir "$TEST_TMPDIR/repo/.claude/worktrees/w/results" 2>&1) && fail "launched with a write target under .claude/"
+  assert_contains "$out" "can't write under a .claude/ folder"
+  assert_contains "$out" "$TEST_TMPDIR/repo/.claude"
+  [ ! -e "$FAKE_CLAUDE_ARGS" ] || fail "the session started"
+  [ ! -d "$RUN/workers" ] || fail "a worker folder was made"
+}
+
+test_an_add_dir_target_elsewhere_still_launches() {
+  setup_run
+  launch complete -- --add-dir "$TEST_TMPDIR/claudette/.claudex/results"
+  wait_for_file "$EXIT_RECORD"
+  assert_eq 0 "$(field "$EXIT_RECORD" exit_code)"
+}
