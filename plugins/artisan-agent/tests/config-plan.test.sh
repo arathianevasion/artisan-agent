@@ -70,6 +70,21 @@ test_defaults_hold_every_setting_from_the_ticket_table() {
   assert_eq '[]' "$(jq -c .main_checkout_runtime <<<"$d")" "main-checkout runtime folders"
 }
 
+# The merge gate's waits before rerunning jobs no runner picked up (#258):
+# 15 then 30 minutes; a list of whole minutes, zero allowed (tests run them so).
+test_runner_wait_minutes_default_to_15_then_30_and_must_be_whole_minutes() {
+  make_project
+  assert_eq '[15,30]' "$(config defaults | jq -c .ci_gate.runner_wait_minutes)"
+  printf 'ci_gate:\n  runner_wait_minutes: [0, 0]\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_eq '[0,0]' "$(cd "$PROJECT" && config show | jq -c .ci_gate.runner_wait_minutes)"
+  local bad="" err=""
+  for bad in '[5, 1.5]' '[-1]' '10' '[soon]'; do
+    printf 'ci_gate:\n  runner_wait_minutes: %s\n' "$bad" >"$PROJECT/.artisan-agent/config.yml"
+    err=$(config show --file "$PROJECT/.artisan-agent/config.yml" 2>&1 || true)
+    assert_contains "$err" "ci_gate.runner_wait_minutes must be a list of whole minutes" "refused: $bad"
+  done
+}
+
 test_a_project_with_no_config_file_gets_every_default() {
   make_project
   rm "$PROJECT/.artisan-agent/config.yml"

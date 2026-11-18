@@ -45,6 +45,7 @@
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
 #                    [--skip-path PATTERN]... [--base SHA] [--reuse-run ID --reuse-sha W]
+#                    [--runner-waits "M..."]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -78,6 +79,20 @@
 #       pushed or dispatched and the record is green with reused: ID,
 #       relied_on {run_id, url, sha: W} and a why naming that run. Otherwise
 #       the gate runs, logging "not reusing run ID: <why>" on stderr.
+#       A run short of runners (#258) is no verdict yet: when its only jobs
+#       that did not pass were cancelled with GitHub's "not acquired by
+#       Runner" annotation (read through gh api
+#       repos/O/N/check-runs/<job id>/annotations) and every job that ran
+#       passed, the gate waits the first of --runner-waits (minutes, default
+#       "15 30", ci_gate.runner_wait_minutes in the config), reruns only those
+#       jobs on the same run (gh run rerun --failed), waits up to a fresh M
+#       minutes for that attempt and judges it again, one rerun per wait. A
+#       rerun that passes is green, a real failure is red as below; with the
+#       waits used up and runners still missing it is 19, the why naming the
+#       runner shortage and the jobs. It uses no base check. The record
+#       (green, red or 19) gains runner_reruns: [{attempt, waited_minutes,
+#       jobs, conclusion}]. A cancel without the annotation, or beside a real
+#       failure, is judged as before.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
 #       --base (#195) is the integration tip before the merge (a merge
@@ -206,12 +221,15 @@ cmd_mode() { mode_json | jq -r .mode; }
 # ----------------------------------------------------------------------- ci
 
 # record why: the gate's record with no conclusion.
-CI_REPO= CI_WF= CI_BRANCH= CI_SHA= CI_DIR= CI_REMOTE=origin
+# With runner reruns (#258), it names them.
+CI_REPO= CI_WF= CI_BRANCH= CI_SHA= CI_DIR= CI_REMOTE=origin CI_RUNNER_WAITS="15 30" RUNNER_RERUNS='[]'
 record() { # run-json why
-  jq -nc --argjson r "$1" --arg why "$2" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" '
+  jq -nc --argjson r "$1" --arg why "$2" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" \
+    --argjson rr "$RUNNER_RERUNS" '
     {mode: "ci", workflow: $wf, branch: $b, sha: $sha,
      run_id: ($r.databaseId // null), url: ($r.url // null), conclusion: ($r.conclusion // null),
      jobs: [($r.jobs // [])[] | {name, conclusion}]}
+    + (if $rr == [] then {} else {runner_reruns: $rr} end)
     + (if $why == "" then {} else {why: $why} end)'
 }
 
@@ -356,11 +374,74 @@ try_skip() {
      why: "CI not dispatched: only release paths changed (\($n) file\(if $n == 1 then "" else "s" end)) since \($g.headSha[0:12]), which run \($g.databaseId) passed"}'
 }
 
+# no_runner_jobs run-view: the jobs GitHub found no runner for (#258), as a
+# JSON list of names, when they are the run's only jobs that did not pass:
+# each cancelled with the "not acquired by Runner" annotation, every other
+# job success, skipped or neutral. Fails otherwise (a real failure, a cancel
+# for any other reason, or annotations it could not read): judged as before.
+no_runner_jobs() {
+  local view="$1" jid="" ann=""
+  jq -e '(.jobs // []) as $j | any($j[]; .conclusion == "cancelled")
+      and all($j[]; .conclusion == "cancelled" or .conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")' \
+    <<<"$view" >/dev/null 2>&1 || return 1
+  for jid in $(jq -r '.jobs[] | select(.conclusion == "cancelled") | .databaseId // "none"' <<<"$view"); do
+    case "$jid" in '' | *[!0-9]*) return 1 ;; esac
+    ann=$(gh api "repos/$CI_REPO/check-runs/$jid/annotations" 2>/dev/null) || return 1
+    jq -e 'any(.[]?; (.message // "") | test("not acquired by runner"; "i"))' <<<"$ann" >/dev/null 2>&1 || return 1
+  done
+  jq -c '[.jobs[] | select(.conclusion == "cancelled") | .name]' <<<"$view"
+}
+
+# runner_retry run-id run-view window: a run short of runners (#258) is
+# rerun, its cancelled jobs only, after each of CI_RUNNER_WAITS minutes, and
+# each attempt waited on up to `window` seconds. Sets RUNNER_VIEW to the run
+# as last seen and RUNNER_RERUNS; returns 0 when the run is to be judged
+# (runners were there, or never missing), else prints the no-verdict record
+# and returns 19.
+RUNNER_VIEW=
+runner_retry() {
+  local id="$1" view="$2" window="$3" jobs="" wait="" att=0 end=0 rr="" waited="" why="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  RUNNER_VIEW=$view
+  jobs=$(no_runner_jobs "$view") || return 0
+  for wait in $CI_RUNNER_WAITS; do
+    sleep $((wait * 60))
+    waited="${waited:+$waited, }$wait"
+    att=$(jq -r '.attempt // 1' <<<"$view")
+    case "$att" in '' | *[!0-9]*) att=1 ;; esac
+    if ! gh run rerun "$id" -R "$CI_REPO" --failed >/dev/null 2>&1; then
+      why="the rerun did not start (gh run rerun failed)"
+      break
+    fi
+    end=$(($(date +%s) + window))
+    while :; do
+      rr=$(gh run view "$id" -R "$CI_REPO" --json databaseId,attempt,headSha,status,conclusion,url,jobs 2>/dev/null) || rr=""
+      if [ -n "$rr" ] && jq -e --argjson a "$att" '(.attempt // 0) > $a and .status == "completed"' <<<"$rr" >/dev/null 2>&1; then break; fi
+      if [ "$(date +%s)" -ge "$end" ]; then rr=""; break; fi
+      sleep "$poll"
+    done
+    if [ -z "$rr" ]; then
+      why="the rerun gave no conclusion in time"
+      break
+    fi
+    RUNNER_RERUNS=$(jq -c --argjson r "$rr" --argjson w "$wait" --argjson j "$jobs" \
+      '. + [{attempt: ($r.attempt // null), waited_minutes: $w, jobs: $j, conclusion: ($r.conclusion // null)}]' <<<"$RUNNER_RERUNS")
+    view=$rr
+    RUNNER_VIEW=$view
+    jobs=$(no_runner_jobs "$view") || return 0
+  done
+  delete_branch
+  record "$view" "no runner: GitHub cancelled $(jq -r 'join(", ")' <<<"$jobs") unrun (not acquired by Runner) on $CI_WF for $CI_SHA$(
+    if [ -z "$waited" ]; then printf ', with no rerun (no runner waits set)'
+    else printf ' and on %s rerun(s), after waiting %s minutes' "$(jq length <<<"$RUNNER_RERUNS")" "$waited"; fi
+    [ -z "$why" ] || printf '; %s' "$why"), so CI did not judge it"
+  return 19
+}
+
 CI_BASE=
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
   local reuse_run="" reuse_sha=""
-  local window=0 red="" attempt=""
+  local window=0 red="" attempt="" w=""
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -377,6 +458,7 @@ cmd_ci() {
       --resume) resume=1; shift ;;
       --reuse-run) [ $# -ge 2 ] || usage; reuse_run=$2; shift 2 ;;
       --reuse-sha) [ $# -ge 2 ] || usage; reuse_sha=$2; shift 2 ;;
+      --runner-waits) [ $# -ge 2 ] || usage; CI_RUNNER_WAITS=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -384,6 +466,9 @@ cmd_ci() {
   case "$CI_BRANCH" in ci/*) ;; *) die "the gate branch must be under ci/, not $CI_BRANCH" ;; esac
   case "$timeout" in '' | *[!0-9]*) die "--timeout-minutes must be a whole number" ;; esac
   case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
+  for w in $CI_RUNNER_WAITS; do
+    case "$w" in *[!0-9]*) die "--runner-waits must be whole numbers of minutes, not \"$CI_RUNNER_WAITS\"" ;; esac
+  done
 
   if [ "$resume" -eq 0 ]; then
     if try_reuse "$reuse_run" "$reuse_sha"; then return 0; fi
@@ -426,6 +511,15 @@ cmd_ci() {
   attempt=$(jq -r '.attempt // 1' <<<"$view")
   case "$attempt" in '' | *[!0-9]*) attempt=1 ;; esac
   [ "$resume" -eq 1 ] && [ "$attempt" -gt 1 ] && [ -n "$CI_BASE" ] || attempt=""
+  # Short of runners (#258): no verdict yet; rerun before judging. A resumed
+  # gate whose later attempt is still short goes on rerunning, not checking.
+  if [ "$conclusion" != success ]; then
+    runner_retry "$id" "$view" "$window" || return $?
+    if [ "$RUNNER_RERUNS" != '[]' ]; then
+      attempt="" view=$RUNNER_VIEW
+      conclusion=$(jq -r '.conclusion // ""' <<<"$view")
+    fi
+  fi
   case "$conclusion" in
     success)
       if [ -z "$attempt" ]; then delete_branch; record "$view" ""; return 0; fi

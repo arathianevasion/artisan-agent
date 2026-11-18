@@ -1509,7 +1509,7 @@ launch_gate() {
   if [ "$mode" = ci ]; then
     args=(ci --repo "$(get '.repo')" --workflow "$(jq -r .workflow <<<"$g")" --branch "$(jq -r .branch <<<"$g")"
           --sha "$(jq -r .sha <<<"$g")" --dir "$(integration_worktree)" --deadline "$(jq -r .deadline <<<"$g")"
-          --base "$(jq -r .pre <<<"$g")")
+          --base "$(jq -r .pre <<<"$g")" --runner-waits "$(runner_waits)")
     # The release allowlist (#168): a merge that only changes these paths over
     # a green commit is recorded green without a dispatch.
     while IFS= read -r p; do args+=(--skip-path "$p"); done < <(skip_paths)
@@ -1647,6 +1647,7 @@ finish_gate() {
       if [ "$rc" -eq 7 ]; then
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs})
+            + (if $g.runner_reruns then {runner_reruns: $g.runner_reruns} else {} end)
             + (if $g.base_check then {base_check: $g.base_check} else {} end))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
         why="CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
@@ -1673,6 +1674,7 @@ finish_gate() {
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .reused then {reused, relied_on, why} else {} end)
+      + (if .runner_reruns then {runner_reruns} else {} end)
       + (if .base_check then {base_check, failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
@@ -1889,6 +1891,7 @@ batch_outcome() {
       + {mode, workflow, branch, sha, run_id, url, conclusion, jobs}
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .failing_tests then {failing_tests} else {} end)
+      + (if .runner_reruns then {runner_reruns} else {} end)
       + (if .base_check then {base_check} else {} end)' <<<"$GATE_JSON")
     note_ci_wait "$rc" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')"
   fi
@@ -2152,6 +2155,16 @@ ci_setting() { # key
   v=$(get --arg k "$1" '.plan.config.ci_gate[$k] // empty')
   [ -n "$v" ] || v=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) | jq -r --arg k "$1" '.ci_gate[$k] // empty')
   printf '%s\n' "$v"
+}
+
+# The merge gate's waits before rerunning jobs no runner picked up (#258):
+# ci_gate.runner_wait_minutes, the plan's, else the project's, as "15 30".
+runner_waits() {
+  local v=""
+  v=$(get -c '.plan.config.ci_gate.runner_wait_minutes // empty')
+  [ -n "$v" ] || v=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) | jq -c '.ci_gate.runner_wait_minutes // empty')
+  [ -n "$v" ] || v='[15, 30]'
+  jq -r 'if type == "array" then map(tostring) | join(" ") else tostring end' <<<"$v"
 }
 
 # abandon_gate worktree: a gate whose runner died with no outcome and nothing

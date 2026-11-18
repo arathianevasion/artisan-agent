@@ -49,6 +49,12 @@
 #                           ci-sha          a head SHA to report instead of the branch's tip
 #                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down
+#                           ci-no-runner    a JSON list of job names no runner picks up (#258): each is
+#                                           cancelled with GitHub's "not acquired by Runner" annotation
+#                                           and the run concludes failure, though every job that ran passed
+#                           ci-no-runner-attempts  how many attempts the shortage lasts (default: all)
+#                           ci-no-runner-runs      how many dispatched runs it hits, from the first (default: all)
+#                         Each job has a databaseId (its check run's id): the run's id x 100 + its place.
 #                         Each -f input is kept on the run as inputs {key: value} (the fake's own
 #                         field; real gh shows inputs only in the run's web page).
 #                         The run's displayTitle is the workflow's run-name, from files the test writes:
@@ -59,7 +65,7 @@
 #                         the run-<id>.json files, newest first: databaseId, workflowName, headBranch,
 #                         headSha, event, status, conclusion, url, createdAt, updatedAt
 #   gh run view <id> [-R repo] [--json fields] [-q filter]
-#                         one run, with jobs [{name, status, conclusion}]
+#                         one run, with jobs [{databaseId, name, status, conclusion}]
 #   gh run view <id> [-R repo] --log-failed
 #                         the failed jobs' log ("<job>\t<step>\t<timestamp> <line>"): the file
 #                         ci-log-failed-<id>, else ci-log-failed, the test writes in $FAKE_GH_DIR;
@@ -67,7 +73,12 @@
 #   gh run rerun <id> [-R repo] [--failed]
 #                         a new attempt of the run (attempt + 1, as GitHub numbers them), concluded
 #                         at once: the file ci-rerun-outcome if the test wrote one, else as the
-#                         dispatch decides for the run's head SHA (so a real failure stays red)
+#                         dispatch decides for the run's head SHA (so a real failure stays red).
+#                         --failed reruns only the jobs that did not pass; a job no runner picks
+#                         up is cancelled again while ci-no-runner-attempts lasts
+#   gh api repos/<repo>/check-runs/<job id>/annotations
+#                         the job's annotations: GitHub's "not acquired by Runner" one for a job
+#                         ci-no-runner cancelled, else []; 404 for a job no run has
 #   gh project view|field-list|item-list <n> --owner O --format json
 #   gh project item-add <n> --owner O --url <issue url> --format json
 #   gh project item-edit --id I --project-id P --field-id F (--single-select-option-id O | --text T | --number N | --date D)
@@ -132,6 +143,20 @@ outcome_for() {
   fi
   printf '%s\n' "$o"
 }
+
+# The jobs no runner picks up for run ID at attempt N (ci-no-runner, while
+# ci-no-runner-attempts and ci-no-runner-runs last), as a JSON list; [] when
+# runners are there.
+no_runner_jobs() { # id attempt
+  local n="" r=""
+  [ -s "$FAKE_GH_DIR/ci-no-runner" ] || { echo '[]'; return 0; }
+  [ ! -s "$FAKE_GH_DIR/ci-no-runner-attempts" ] || n=$(cat "$FAKE_GH_DIR/ci-no-runner-attempts")
+  [ ! -s "$FAKE_GH_DIR/ci-no-runner-runs" ] || r=$(cat "$FAKE_GH_DIR/ci-no-runner-runs")
+  if [ -n "$n" ] && [ "$2" -gt "$n" ]; then echo '[]'; return 0; fi
+  if [ -n "$r" ] && [ "$1" -gt $((9000 + r)) ]; then echo '[]'; return 0; fi
+  cat "$FAKE_GH_DIR/ci-no-runner"
+}
+NO_RUNNER_MESSAGE="The job was not acquired by Runner of type hosted even after multiple attempts"
 
 api_method=GET api_fields= api_input=
 if [ "${1:-}" = api ]; then
@@ -224,6 +249,14 @@ case "${1:-} ${2:-}" in
     r=${path#repos/}; r=${r%%/issues/*}
     case "$path" in repos/*/issues/*) check_repo "$r" ;; esac
     case "$path" in
+      repos/*/check-runs/*/annotations)
+        check_repo "${r%%/check-runs/*}"
+        jid=${path%/annotations}; jid=${jid##*/}
+        job=$(for f in "$FAKE_GH_DIR"/run-*.json; do [ -f "$f" ] || continue
+          jq -c --arg j "$jid" '.jobs[]? | select((.databaseId | tostring) == $j)' "$f"; done | head -n 1)
+        [ -n "$job" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+        jq -c --arg m "$NO_RUNNER_MESSAGE" 'if .no_runner then [{path: ".github", start_line: 1, end_line: 1,
+            annotation_level: "failure", title: "", message: $m}] else [] end' <<<"$job" ;;
       repos/*/issues/*/sub_issues)
         n=${path%/sub_issues}; n=${n##*/}
         need_issue "$n"
@@ -390,11 +423,16 @@ case "${1:-} ${2:-}" in
     while [ -f "$FAKE_GH_DIR/run-$id.json" ]; do id=$((id + 1)); done
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
-      --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" --arg title "$title" '
+      --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" --arg title "$title" \
+      --argjson nr "$(no_runner_jobs "$id" 1)" '
       (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
+      | [$jobs | to_entries[] | {databaseId: ($id * 100 + .key + 1), name: .value}
+          + (if (.value | IN($nr[])) then {status: "completed", conclusion: "cancelled", no_runner: true}
+             else {status: $s.status, conclusion: $s.conclusion} end)] as $j
       | {databaseId: $id, attempt: 1, workflowName: $wf, displayTitle: $title, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
          url: "https://github.com/\($repo)/actions/runs/\($id)", createdAt: $now, updatedAt: $now, inputs: $in}
-        + $s + {jobs: [$jobs[] | {name: ., status: $s.status, conclusion: $s.conclusion}]}' >"$FAKE_GH_DIR/run-$id.json" ;;
+        + $s + (if $s.conclusion == "success" and any($j[]; .no_runner) then {conclusion: "failure"} else {} end)
+        + {jobs: $j}' >"$FAKE_GH_DIR/run-$id.json" ;;
   "run list")
     shift 2
     wf= br= ev= limit=20 filter=
@@ -439,11 +477,11 @@ case "${1:-} ${2:-}" in
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   "run rerun")
     shift 2
-    id=
+    id= failed=false
     while [ $# -gt 0 ]; do
       case "$1" in
         -R|--repo) check_repo "$2"; shift 2 ;;
-        --failed) shift ;;
+        --failed) failed=true; shift ;;
         -*) echo "gh (fake): run rerun: unsupported: $1" >&2; exit 1 ;;
         *) id=$1; shift ;;
       esac
@@ -452,10 +490,14 @@ case "${1:-} ${2:-}" in
     [ -f "$f" ] || { echo "gh: run $id not found (HTTP 404)" >&2; exit 1; }
     outcome=$(outcome_for "$(jq -r .headSha "$f")")
     [ ! -s "$FAKE_GH_DIR/ci-rerun-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-rerun-outcome")
-    jq --arg o "$outcome" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    jq --arg o "$outcome" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson failed "$failed" \
+      --argjson nr "$(no_runner_jobs "$id" "$(( $(jq -r '.attempt // 1' "$f") + 1 ))")" '
       (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
       | .attempt = ((.attempt // 1) + 1) | .updatedAt = $now | . + $s
-      | .jobs = [.jobs[] | . + {status: $s.status, conclusion: $s.conclusion}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f" ;;
+      | .jobs = [.jobs[] | if $failed and .conclusion == "success" then .
+          elif (.name | IN($nr[])) then . + {status: "completed", conclusion: "cancelled", no_runner: true}
+          else . + {status: $s.status, conclusion: $s.conclusion} | del(.no_runner) end]
+      | if .conclusion == "success" and any(.jobs[]; .no_runner) then .conclusion = "failure" else . end' "$f" >"$f.tmp" && mv "$f.tmp" "$f" ;;
   "project "*)
     # A GitHub Project board (#146): project-<owner>-<number>.json, which the
     # test writes: {id, fields: [{id, name, type, options?: [{id, name}]}],
