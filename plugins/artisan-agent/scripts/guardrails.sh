@@ -221,16 +221,16 @@ queue_diverged() {
 cmd_wave_start() {
   [ $# -eq 2 ] || usage
   local run=$1 wave=$2 m= src= wt= ib= ref= pc= tip= version= merged=false changed= base= by= kept=false
-  local fp="" files="" dec="" choice="" did="" inforce=""
+  local fp="" files="" dec="" choice="" did="" inforce="" tc="" ic=""
   state_require_run_dir "$run"
   run=$(cd "$run" && pwd)
   m=$(main_checkout "$run")
   src=$(sources_json "$m" 1)
-  pc=$(jq -r '.product.commit // ""' <<<"$src")
-  ref=$(jq -r '.product.ref // ""' <<<"$src")
-  wt=$(jq -r '.integration.worktree // ""' "$(state_file "$run")")
-  ib=$(jq -r '.integration.branch // ""' "$(state_file "$run")")
-  base=$(jq -r '.integration.base // ""' "$(state_file "$run")")
+  # The sources and the state, one read each (#185).
+  state_fields /dev/stdin pc ref tc ic -- '[(.product.commit // ""), (.product.ref // ""),
+    (.team.commit // "-"), (.individual.commit // "-")]' <<<"$src"
+  state_fields "$(state_file "$run")" wt ib base -- '[(.integration.worktree // ""),
+    (.integration.branch // ""), (.integration.base // "")]'
   by=""
   if [ -n "$pc" ] && [ -n "$wt" ] && [ -d "$wt" ] && ! git -C "$wt" merge-base --is-ancestor "$pc" HEAD; then
     tip=$(git -C "$wt" rev-parse HEAD)
@@ -291,8 +291,7 @@ cmd_wave_start() {
   inforce=$pc
   [ "$kept" != true ] || inforce=$tip
   version=$(jq -r '.version // "unknown"' "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo unknown)
-  "$SCRIPT_DIR/state.sh" wave-start "$run" "$wave" "$version" \
-    "$(jq -r '.team.commit // "-"' <<<"$src")" "${inforce:--}" "$(jq -r '.individual.commit // "-"' <<<"$src")" >/dev/null
+  "$SCRIPT_DIR/state.sh" wave-start "$run" "$wave" "$version" "$tc" "${inforce:--}" "$ic" >/dev/null
   jq -c --arg v "$version" --argjson merged "$merged" --argjson kept "$kept" --arg inforce "$inforce" \
     '{plugin_version: $v, team: .team.commit, product: (if $inforce == "" then .product.commit else $inforce end), individual: .individual.commit, main_merged: $merged, product_kept_base: $kept}' <<<"$src"
 }

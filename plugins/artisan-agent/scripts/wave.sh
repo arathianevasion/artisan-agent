@@ -670,9 +670,10 @@ cmd_launch() {
     fi
   fi
 
-  local was_halted=0
-  [ "$(get '.halted != null')" = false ] || was_halted=1
-  if [ "$(get '.halted != null')" = true ]; then
+  local was_halted=0 halted=""
+  halted=$(get '.halted != null')
+  [ "$halted" = false ] || was_halted=1
+  if [ "$halted" = true ]; then
     [ "$resume" -eq 1 ] || state_die 12 "wave.sh: the run is halted: $(get '.halted.reason'); nothing launches until the Artisan decides (wave.sh launch --resume carries on)"
     apply '
       .decisions |= map(if .kind == "halt" and .status == "waiting"
@@ -690,16 +691,21 @@ cmd_launch() {
     "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
   fi
 
-  [ -n "$model" ] || model=$(get --arg d "$DEFAULT_ORCHESTRATOR_MODEL" '.plan.orchestrator.model // $d')
+  # The plan's model, estimate and deadline for the orchestrator, in one
+  # read (#185); nothing below writes them.
+  local plan_model="" plan_estimate=""
+  fields plan_model plan_estimate deadline -- '[(.plan.orchestrator.model // $d), (.plan.orchestrator.estimate_usd // ""),
+    # The orchestrator outlives every worker it waits on: its deadline is the
+    # longest worker deadline plus half an hour.
+    (.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800))]' \
+    --arg d "$DEFAULT_ORCHESTRATOR_MODEL"
+  [ -n "$model" ] || model=$plan_model
   turns=$(orchestrator_max_turns) || exit 1
   # The estimate: --estimate-usd, else the plan's, else from the turn limit
   # (#216), so the dollar cap (twice it) grows with the turns.
-  [ -n "$estimate" ] || estimate=$(get '.plan.orchestrator.estimate_usd // ""')
+  [ -n "$estimate" ] || estimate=$plan_estimate
   [ -n "$estimate" ] || estimate=$(orchestrator_estimate "$turns") || exit 1
   estimate=$(clamp_estimate "$estimate")
-  # The orchestrator outlives every worker it waits on: its deadline is the
-  # longest worker deadline plus half an hour.
-  deadline=$(get '.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800)')
   minutes=$(awk -v s="$deadline" 'BEGIN { printf "%d", (s / 120 < 1 ? 1 : s / 120) }')
 
   # Its name (#189): a later attempt at the same wave says how it came; the
@@ -818,17 +824,20 @@ record_orchestrator_cost() { # id attempt
 # a gate that has closed); else at the end gate.
 human_checks_line() {
   local n="" at_slice="" waiting=""
-  n=$(get "$STATE_JQ_DEFS"' open_human_checks | length')
-  [ "$n" -gt 0 ] || return 0
-  at_slice=$(get "$STATE_JQ_DEFS"' . as $s | ($s.review_gates // []) as $rg
+  # The count, where they are answered and the reworks they wait on, in one
+  # read (#185); the last two only when any is open.
+  fields n at_slice waiting -- "$STATE_JQ_DEFS"' (open_human_checks | length) as $n
+    | if $n == 0 then [0, "", ""] else [$n,
+    (. as $s | ($s.review_gates // []) as $rg
     | [slice_gates[] | select(.kind == "slice") | select(.id as $id | $rg | all(.id != $id))] as $unopened
     | [open_human_checks[] as $c | ($s | human_check_for($c)) as $a
        | ($s.tickets[$c].human_check.gate // null) as $hg
        | select(any($rg[]; .id == $hg and (.status == "open" or .status == "deferred"))
                 or any($unopened[]; .tickets | index($a))
-                or ($hg != null and ($unopened | length) > 0))] | length')
-  waiting=$(get -r "$STATE_JQ_DEFS"' . as $s | [open_human_checks[] as $c | ($s | check_rework($c)) as $o
-    | select($o != null) | "#\($c) waiting on rework #\($o | split(" ")[1])"] | join(", ")')
+                or ($hg != null and ($unopened | length) > 0))] | length),
+    (. as $s | [open_human_checks[] as $c | ($s | check_rework($c)) as $o
+    | select($o != null) | "#\($c) waiting on rework #\($o | split(" ")[1])"] | join(", "))] end'
+  [ "$n" -gt 0 ] || return 0
   if [ "$at_slice" -eq 0 ]; then
     echo "Human checks: $n open (end gate)"
   elif [ "$at_slice" -eq "$n" ]; then
