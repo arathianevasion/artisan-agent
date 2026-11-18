@@ -141,7 +141,11 @@ RESULT_FILTER="$STATE_JQ_DEFS"'
 sweep() {
   local file= tmp= now= tickets= t= status= pid= attempt= deadline= result= exit_record= session_cost=
   file=$(state_file "$RUN_DIR")
-  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
+  # The check goes with the first read below when no lever request comes
+  # first (#185); with one, it is checked here, before the request is applied.
+  local levers=""
+  for levers in "$RUN_DIR"/levers/*.json; do [ -f "$levers" ] && break; levers=""; done
+  [ -z "$levers" ] || state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
   now=$(state_now)
@@ -163,9 +167,15 @@ sweep() {
   # dispatched, so the checks below see it.
   # One read for the loop (#185): ticket and attempts, a line each. A step
   # here changes only its own ticket.
-  local next="" runner="" rows="" n=""
-  state_fields "$tmp" rows -- '[[.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0)
-    | "\(.key)\u001f\(.value.attempts)\n"] | add // ""]'
+  local next="" runner="" rows="" n="" ok=""
+  if ! state_fields "$tmp" ok rows -- 'if type == "object" and .schema_version == $v
+      then [true, ([.tickets | to_entries[] | select(.value.status == "queued" and (.value.wave // 0) > 0)
+        | "\(.key)\u001f\(.value.attempts)\n"] | add // "")] else [false, ""] end' \
+      --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" 2>/dev/null || [ "$ok" != true ]; then
+    state_valid_file "$file" || { rm -f "$tmp"; state_die 1 "$(state_version_message "$file")"; }
+    # A state file of this version whose tickets can't be listed: none to take in.
+    rows=
+  fi
   while IFS=$'\x1f' read -r t n; do
     [ -n "$t" ] || continue
     next=$(( $n + 1 ))
@@ -301,7 +311,11 @@ repair() {
   local file="" tmp="" now="" d="" key="" out="" pair="" t="" n="" cls="" usd="" result="" id="" a="" gates="" failed_why=""
   local -a returned=()
   file=$(state_file "$RUN_DIR")
-  state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
+  # The check goes with the first read below when no lever request comes
+  # first (#185); with one, it is checked here, before the request is applied.
+  local levers=""
+  for levers in "$RUN_DIR"/levers/*.json; do [ -f "$levers" ] && break; levers=""; done
+  [ -z "$levers" ] || state_valid_file "$file" || state_die 1 "$(state_version_message "$file")"
   tmp=$(state_tmp "$RUN_DIR")
   cp "$file" "$tmp"
   now=$(state_now)

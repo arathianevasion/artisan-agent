@@ -140,15 +140,23 @@ read_text() {
 # five-hour or seven-day reading but a fresh worker reading that saw no plan
 # windows (the account has none): ok, no_plan_windows: true, and the budget
 # cap limits spend.
+# What verdict reads of the state: the thresholds and the in-flight pids.
+VERDICT_INPUTS_JQ='[.plan.config.usage_reserve.five_hour_reserve_percent // 20,
+    .plan.config.usage_reserve.seven_day_ceiling_percent // 90, .plan.config.stale_usage_minutes // 10,
+    ([.tickets[] | select(.status == "in_flight") | .pid // empty | tostring] | join(" "))]'
+# Set by cmd_guard, which reads them with the run (GUARD_RESERVE ...).
+VERDICT_READ= GUARD_RESERVE= GUARD_CEILING= GUARD_STALE= GUARD_PIDS=
 verdict() {
   local f= reserve= ceiling= stale= running= pids= w=
   f=$(usage_file)
   # The run's thresholds and in-flight pids in one read (#185). A raise is
   # judged against its own new limit before it is written (cmd_park), so the
   # answer and the override land in one write.
-  fields reserve ceiling stale pids -- '[.plan.config.usage_reserve.five_hour_reserve_percent // 20,
-    .plan.config.usage_reserve.seven_day_ceiling_percent // 90, .plan.config.stale_usage_minutes // 10,
-    ([.tickets[] | select(.status == "in_flight") | .pid // empty | tostring] | join(" "))]'
+  if [ -n "$VERDICT_READ" ]; then
+    reserve=$GUARD_RESERVE ceiling=$GUARD_CEILING stale=$GUARD_STALE pids=$GUARD_PIDS
+  else
+    fields reserve ceiling stale pids -- "$VERDICT_INPUTS_JQ"
+  fi
   reserve=${VERDICT_RESERVE:-$reserve}
   ceiling=${VERDICT_CEILING:-$ceiling}
   # shellcheck disable=SC2086 # the pids are words
@@ -437,11 +445,19 @@ overrun_line() { # gate-json
 # budget_guard: 0 to carry on, with the guard's "ok: ..." line in GUARD_OK
 # (read with the rest, #185); otherwise prints the overrun and exits 17.
 GUARD_OK=
-budget_guard() {
-  local g= p= over=
-  fields g p over GUARD_OK -- "$PROJECTION_JQ"'projection as $p
+BUDGET_GUARD_JQ="$PROJECTION_JQ"'projection as $p
     | [([(.overrun_gates // [])[] | select(.status == "open")] | last // ""), $p, $p.over,
        "ok: spent $\($p.spent | r2), projected $\($p.projected | r2) of $\($p.budget // "?") budget"]'
+# cmd_guard reads these with the run: the usage guard's writes never change
+# the overrun gates or the projection.
+GUARD_G= GUARD_P= GUARD_OVER= GUARD_BUDGET_READ=
+budget_guard() {
+  local g= p= over=
+  if [ -n "$GUARD_BUDGET_READ" ]; then
+    g=$GUARD_G p=$GUARD_P over=$GUARD_OVER
+  else
+    fields g p over GUARD_OK -- "$BUDGET_GUARD_JQ"
+  fi
   if [ -n "$g" ]; then
     ensure_issue
     overrun_line "$(open_gate_json)"
@@ -454,9 +470,15 @@ budget_guard() {
 }
 
 cmd_guard() {
-  open_run "${1:-}"
   local halted= reason=
-  fields halted reason -- '[.halted != null, .halted.reason]'
+  # Everything the guard reads before it judges, with the run (#185).
+  open_run "${1:-}" halted reason GUARD_RESERVE GUARD_CEILING GUARD_STALE GUARD_PIDS GUARD_G GUARD_P GUARD_OVER GUARD_OK \
+    -- '[.halted != null, .halted.reason] + '"$VERDICT_INPUTS_JQ"' + ('"$BUDGET_GUARD_JQ"')'
+  if [ -n "$RUN_EXTRA" ]; then
+    VERDICT_READ=1 GUARD_BUDGET_READ=1
+  else
+    fields halted reason -- '[.halted != null, .halted.reason]'
+  fi
   [ "$halted" = false ] \
     || state_die 12 "budget.sh: the run is halted: $reason; nothing dispatches"
   usage_guard

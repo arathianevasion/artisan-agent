@@ -137,9 +137,13 @@ recorded() { # id-or-issue: the recorded gate, as JSON, or empty
 # ---------------------------------------------------------------- due/holds
 
 cmd_due() {
-  open_run "${1:-}"
-  jget '. as $s | slice_gates[] | select(. as $g | $s | gate_due($g))
+  # The due gates come with open_run's read (#185), each line as jget prints
+  # it, then "x" so no newline of theirs is cut.
+  local due_filter='. as $s | slice_gates[] | select(. as $g | $s | gate_due($g))
         | select(.id as $id | ($s.review_gates // []) | all(.id != $id)) | .id'
+  local due=""
+  open_run "${1:-}" due -- "$STATE_JQ_DEFS"'[([('"$due_filter"') | (if type == "string" then . else tojson end) + "\n"] | add // "") + "x"]'
+  if [ -n "$RUN_EXTRA" ]; then printf '%s' "${due%x}"; else jget "$due_filter"; fi
 }
 
 cmd_holds() {

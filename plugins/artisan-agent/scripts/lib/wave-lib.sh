@@ -10,18 +10,35 @@ RUN_DIR= FILE= RUN_ID= MAIN= WT_ROOT=
 # branch and worktree, as `get` would print them, while RUN_READ is set.
 # apply clears it, so a value this call may have changed is read again.
 RUN_READ= RUN_REPO= RUN_IB= RUN_IWT=
+#
+# open_run run-dir [name... -- filter [jq args...]]: the names are read too,
+# from the filter's array, in the same call (state_fields), and RUN_EXTRA is
+# set. When it is not set (a state file the read failed on, but the check
+# passed), the caller reads them its usual way.
+RUN_EXTRA=
 open_run() { # run-dir
   [ -n "${1:-}" ] || usage
   state_require_run_dir "$1"
   RUN_DIR=$(cd "$1" && pwd)
   FILE=$(state_file "$RUN_DIR")
-  local ok=""
-  RUN_READ=
-  if state_fields "$FILE" ok RUN_REPO RUN_IB RUN_IWT -- 'if type == "object" and .schema_version == $v
-      then [true, .repo, .integration.branch, (.integration.worktree // "")] else [false, null, null, null] end' \
-      --argjson v "$ARTISAN_STATE_SCHEMA_VERSION" 2>/dev/null; then
+  shift
+  local ok="" extra="[]" pad="" n=0
+  local -a names=() args=()
+  if [ $# -gt 0 ]; then
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do names+=("$1"); pad="$pad, null"; shift; done
+    [ $# -ge 2 ] || usage
+    extra=$2
+    shift 2
+    args=("$@")
+  fi
+  RUN_READ= RUN_EXTRA=
+  if state_fields "$FILE" ok RUN_REPO RUN_IB RUN_IWT ${names[@]+"${names[@]}"} -- 'if type == "object" and .schema_version == $__v
+      then [true, .repo, .integration.branch, (.integration.worktree // "")] + ('"$extra"'
+      ) else [false, null, null, null'"$pad"'] end' \
+      --argjson __v "$ARTISAN_STATE_SCHEMA_VERSION" ${args[@]+"${args[@]}"} 2>/dev/null; then
     [ "$ok" = true ] || die "$(state_version_message "$FILE")"
     RUN_READ=1
+    [ "${#names[@]}" -eq 0 ] || RUN_EXTRA=1
   else
     # Not JSON, or a state file these fields can't be read from: the check
     # alone says which.

@@ -256,9 +256,9 @@ state_write() {
   local prog='def __state_ok: type == "object" and .schema_version == $__state_v;
     if $__state_mode == "commit" or __state_ok then ('"$filter"'
       ) | if __state_ok
-          then __state_pp("") + "\n\u001e" + (try (. as $__st | ($__st_lock) as $lock | ($__st_runners) as $runners
+          then (try (. as $__st | ($__st_lock) as $lock | ($__st_runners) as $runners
                  | ($__st_now) as $now | $__st | ('"$STATE_TITLE_JQ_DEFS$STATE_STATUS_JQ"'
-                 ) | tojson) catch "")
+                 ) | tojson) catch "") + "\n" + __state_pp("")
           else "" | halt_error(98) end
     else "" | halt_error(97) end'
   if [ "$mode" = commit ]; then
@@ -273,8 +273,11 @@ state_write() {
       --argjson __st_lock "$STATE_ST_LOCK" --argjson __st_runners "[$STATE_ST_RUNNERS]" --argjson __st_now "$(state_now)" \
       "$@" "$STATE_JQ_DEFS$STATE_PP_JQ$prog" "$input" 2>&1 >"$tmp") || rc=$?
   fi
+  # The output: the status line (empty when it can't be made), then the
+  # state. Read by the shell, never cut by a pattern: a state over a few
+  # hundred KiB would take bash minutes to match.
   out=
-  [ "$rc" -ne 0 ] || { IFS= read -r -d '' out <"$tmp" || true; }
+  [ "$rc" -ne 0 ] || { { IFS= read -r status; IFS= read -r -d '' out; } <"$tmp" || true; }
   if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
     if [ "$mode" = commit ]; then
       state_refuse_write "$tmp"
@@ -289,8 +292,7 @@ state_write() {
     fi
     return 1
   fi
-  state=${out%%$'\036'*}
-  status=${out#*$'\036'}
+  state=$out
   # Unchanged content is not rewritten, so repeated reconciling leaves the
   # file untouched.
   old=
@@ -302,7 +304,7 @@ state_write() {
     mv -f "$tmp" "$file" || return $?
   fi
   # The run status file follows every write, the lock's holder included (#192).
-  [ "$status" = $'\n' ] || state_status_put "$run_dir" "$status"
+  [ -z "$status" ] || state_status_put "$run_dir" "$status"$'\n'
   return 0
 }
 
@@ -377,7 +379,7 @@ state_fields() {
   fi
   for _sf_name in ${_sf_names[@]+"${_sf_names[@]}"}; do
     _sf_v=${_sf_out%%$'\x1e'*}
-    _sf_out=${_sf_out#*$'\x1e'}
+    _sf_out=${_sf_out:${#_sf_v}+1}
     while [ "${_sf_v%$'\n'}" != "$_sf_v" ]; do _sf_v=${_sf_v%$'\n'}; done
     printf -v "$_sf_name" '%s' "$_sf_v"
   done

@@ -187,8 +187,10 @@ batch_setting() {
 
 cmd_batch() { batch_setting | cut -d' ' -f1; }
 
-# mode_json: how the mode was chosen, {mode, setting, source, os}.
-mode_json() {
+# mode_choose: how the mode was chosen, in MODE (and MODE_SETTING,
+# MODE_SOURCE, MODE_OS); dies on a bad setting.
+MODE= MODE_SETTING= MODE_SOURCE= MODE_OS=
+mode_choose() {
   local setting="" source="" os="" mode=""
   if [ -n "${ARTISAN_MERGE_GATE:-}" ]; then
     setting=$ARTISAN_MERGE_GATE source=ARTISAN_MERGE_GATE
@@ -203,7 +205,13 @@ mode_json() {
     auto) if [ "$os" = macos ]; then mode=local; else mode=ci; fi ;;
     *) die "merge_gate must be auto, local or ci, not \"$setting\" ($source)" ;;
   esac
-  jq -nc --arg m "$mode" --arg s "$setting" --arg src "$source" --arg os "$os" \
+  MODE=$mode MODE_SETTING=$setting MODE_SOURCE=$source MODE_OS=$os
+}
+
+# mode_json: how the mode was chosen, {mode, setting, source, os}.
+mode_json() {
+  mode_choose
+  jq -nc --arg m "$MODE" --arg s "$MODE_SETTING" --arg src "$MODE_SOURCE" --arg os "$MODE_OS" \
     '{mode: $m, setting: $s, source: $src, os: $os}'
 }
 
@@ -216,7 +224,8 @@ cmd_show() {
     '. + {batch: $b, batch_source: $bsrc, priority: $p, priority_source: $psrc}' <<<"$m"
 }
 
-cmd_mode() { mode_json | jq -r .mode; }
+# The mode alone needs no JSON made and read back (#185).
+cmd_mode() { mode_choose; printf '%s\n' "$MODE"; }
 
 # ----------------------------------------------------------------------- ci
 
