@@ -2,6 +2,15 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.12.0 (2026-11-18)
+
+Merge gates that ride out GitHub runner shortages, headless sessions kept out of `.claude/`, and run scripts that start half as many `jq` processes.
+
+- **Runner shortages:** a CI merge gate whose only non-green jobs were cancelled because GitHub never assigned a runner ("not acquired by Runner") is no verdict. The gate reruns just those jobs after 15 minutes, then 30 (`ci_gate.runner_wait_minutes`), with no failed attempt charged and no base check. A shortage that outlasts both reruns parks the run on CI, naming the shortage and the jobs, instead of reading as a red suite. The suite record names the reruns (#258).
+- **Write targets:** headless sessions can't write under a `.claude/` folder, so a run folder there would fail late. `state.sh init` now refuses one up front, `run-ticket.sh` checks every `--add-dir` it passes on, and the retro checks its work folder, each naming the protected folder. Reading under `.claude/` is still allowed (#249).
+- **Fewer processes:** the run scripts read state with one `jq` call per step, not one per field or per ticket: `wave.sh` dispatch, merge, launch and status, `verify.sh`, `gate.sh sync`, `guardrails.sh wave-start`, `budget.sh guard`, `classify-worker.sh`, `reconcile.sh` and `sweep.sh`. Each state write is one `jq` call that checks, writes and makes the status line. On the ten slowest tests, `jq` starts fall by half and wall time by about 28%. Behaviour is unchanged; `tests/helpers/measure-procs.sh` measures it (#185).
+- **Docs:** `scripts/README.md` says `wave.sh start` runs `worktree_setup` and exits 6 when it fails (#257).
+
 ## 0.11.0 (2026-11-18)
 
 Runs that don't stall on overage-only accounts, setup that follows the run, a status file for the cockpit, and to-spec checking the spec against your motivation.
