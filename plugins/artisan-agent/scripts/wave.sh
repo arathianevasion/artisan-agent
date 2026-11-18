@@ -591,9 +591,13 @@ orchestrator_named() {
 
 # Last orchestrator: "id attempt wave pid", or nothing. Its pid is its
 # runner's, from the runner's own pid file ("-" before it has one).
+# cmd_status's open_run reads the last orchestrator too (#185): ORCH_LAST,
+# used while RUN_READ says nothing was written since.
+ORCH_LAST= ORCH_LAST_READ=
 last_orchestrator() {
   local line= pid=
-  line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt) \(.wave)"')
+  if [ -n "$RUN_READ" ] && [ -n "$ORCH_LAST_READ" ]; then line=$ORCH_LAST
+  else line=$(get '(.orchestrators // []) | last // empty | "\(.id) \(.attempt) \(.wave)"'); fi
   [ -n "$line" ] || return 0
   set -- $line
   pid=$(cat "$RUN_DIR/workers/$1.$2/runner.pid" 2>/dev/null || echo -)
@@ -859,7 +863,8 @@ urgent_lines() {
 }
 
 cmd_status() {
-  open_run "${1:-}"
+  open_run "${1:-}" ORCH_LAST -- '[(.orchestrators // []) | last | if . == null then "" else "\(.id) \(.attempt) \(.wave)" end]'
+  [ -z "$RUN_EXTRA" ] || ORCH_LAST_READ=1
   local last= id= attempt= wave= pid= cls= next= reconciled=1 o= parked= reviews= stranded= probe= step= found= why=
   last=$(last_orchestrator)
   if [ -z "$last" ]; then

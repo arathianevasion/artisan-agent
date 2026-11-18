@@ -265,7 +265,18 @@ cmd_start() {
   local criteria= base= ib= wt= id= prompt= cfile= repo= title= path= expected= result= model= estimate= minutes= ref= suite=
   local std= checks= cout= leave= gate= cionly='[]' worker=0
   criteria=$(read_criteria "$t")
-  [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
+  # Their count and the prompt's numbered list in one call (#185); if that
+  # fails, each is read as before.
+  local clist="" ccount="" clines="" clisted=""
+  if clist=$(printf '%s' "$criteria" | jq -r 'length, (to_entries[] | "  \(.key + 1). \(.value)")' 2>/dev/null); then
+    clisted=1
+    ccount=${clist%%$'\n'*}
+    clines=${clist#"$ccount"}
+    clines=${clines#$'\n'}
+  else
+    ccount=$(printf '%s' "$criteria" | jq length) || ccount=""
+  fi
+  [ "$ccount" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
   # Everything the prompt and the launch read of the state, in one read
   # (#185): nothing below writes it before the launch is recorded.
@@ -351,7 +362,8 @@ cmd_start() {
     printf -- '- A criterion measured on the run'"'"'s PR or CI run after merge (a PR run'"'"'s wall time or duration, a run id, a PR'"'"'s CI timing): mark it "met": "human" with evidence.why saying it is measured after merge. No one in the run can observe it; it moves to the Human check and does not fail the ticket.\n'
     printf -- '- A criterion about CI, the merge gate or the PR ("CI green", "the PR shows / lists …", "merge gate green"): mark it "met": "gate" and don'"'"'t judge it. Workers never open PRs and the merge gate runs after you, so nothing in this checkout can show it; wave.sh merge'"'"'s gate is what satisfies it. Never for a criterion about code that runs CI or the merge gate: judge that one.\n'
     printf -- '- The acceptance criteria, verbatim and in order (also in %s):\n' "$cfile"
-    printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
+    if [ -n "$clisted" ]; then printf '%s\n' "$clines"
+    else printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'; fi
   } >"$prompt"
 
   estimate=$(clamp_estimate "$estimate")
