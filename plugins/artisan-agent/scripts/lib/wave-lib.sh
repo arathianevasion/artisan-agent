@@ -231,12 +231,14 @@ queue_sync_decision() {
 # "what" ends the refusal: "not merged", "not verified".
 ATTEMPT= TIP=
 check_returned() {
-  local who="$1" t="$2" what="$3" status= cls= branch= claimed=
-  status=$(get --arg t "$t" '.tickets[$t].status // ""')
+  local who="$1" t="$2" what="$3" status= cls= branch= claimed= hands_done=
+  # One read for the checks below (#185); only a failed attempt writes, and
+  # then the call ends.
+  fields status ATTEMPT hands_done branch claimed -- '.tickets[$t] | [.status // "", .attempts,
+    (.human.done_at // null | . != null), .branch, (.result.commit // "")]' --arg t "$t"
   [ "$status" = returned ] || die "#$t is ${status:-not in the run}, not returned; run sweep.sh first"
-  ATTEMPT=$(get --arg t "$t" '.tickets[$t].attempts')
   # A hands-on ticket the Artisan finished (human.sh) has no worker session.
-  if [ "$(get --arg t "$t" '.tickets[$t].human.done_at // null | . != null')" = true ]; then
+  if [ "$hands_done" = true ]; then
     cls="completed -"
   else
     # A classifier error is not a dead session: stop, and let the caller run it again.
@@ -250,9 +252,7 @@ check_returned() {
       apply 'failed_attempt($t; $r; $now)' --arg t "$t" --arg r "attempt $ATTEMPT did not complete ($cls)"
       state_die 6 "$who: #$t $what: attempt $ATTEMPT is $cls; it is now $(get --arg t "$t" '.tickets[$t].status')" ;;
   esac
-  branch=$(get --arg t "$t" '.tickets[$t].branch')
   TIP=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$branch") || die "no branch $branch"
-  claimed=$(get --arg t "$t" '.tickets[$t].result.commit // ""')
   if [ -n "$claimed" ] && [ "$(git -C "$MAIN" rev-parse -q --verify "$claimed^{commit}" 2>/dev/null)" != "$TIP" ]; then
     block "$t" "the result describes $claimed but $branch is at $TIP"
     state_die 6 "$who: #$t $what: the result file does not describe the branch tip"

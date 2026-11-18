@@ -157,21 +157,20 @@ classify() {
 # changes the Artisan made at an unmeetable-criterion exception gate (#186:
 # tickets.<t>.criteria_changes) applied.
 read_criteria() { # ticket
-  local path= body= issue= crit= changes=
-  path=$(get --arg t "$1" '.plan.tickets[$t].ticket_path // ""')
+  local path= body= issue= crit= changes= repo=
+  fields path repo changes -- '[.plan.tickets[$t].ticket_path // "", .repo, (.tickets[$t].criteria_changes // [])]' --arg t "$1"
   if [ -n "$path" ]; then
     case "$path" in /*) ;; *) path="$MAIN/$path" ;; esac
     [ -f "$path" ] || die "no ticket file $path for #$1"
     body=$(cat "$path")
     crit=$(printf '%s' "$body" | python3 -I "$SCRIPT_DIR/lib/criteria.py" extract) || die "could not read #$1's criteria"
   else
-    issue=$(gh issue view "$1" -R "$(get .repo)" --json body,comments) \
+    issue=$(gh issue view "$1" -R "$repo" --json body,comments) \
       || die "could not read #$1 from the tracker; not verifying blind"
     issue=$(printf '%s' "$issue" | python3 -I "$SCRIPT_DIR/lib/criteria.py" ticket) \
       || die "could not read #$1's criteria; not verifying blind"
     crit=$(printf '%s' "$issue" | jq -c .criteria)
   fi
-  changes=$(get -c --arg t "$1" '.tickets[$t].criteria_changes // []')
   if [ "$changes" = "[]" ]; then printf '%s\n' "$crit"; return 0; fi
   mkdir -p "$RUN_DIR/verify"
   printf '%s\n' "$changes" >"$RUN_DIR/verify/$1.criteria-changes.json"
@@ -268,8 +267,15 @@ cmd_start() {
   criteria=$(read_criteria "$t")
   [ "$(printf '%s' "$criteria" | jq length)" -gt 0 ] \
     || die "#$t has no acceptance criteria (checkbox lines) to verify against"
-  ib=$(get '.integration.branch')
-  base=$(get --arg t "$t" '.tickets[$t].base // ""')
+  # Everything the prompt and the launch read of the state, in one read
+  # (#185): nothing below writes it before the launch is recorded.
+  local result_file=
+  fields ib base repo title path expected suite std result_file model estimate minutes -- '
+    [.integration.branch, (.tickets[$t].base // ""), .repo, (.plan.tickets[$t].title // "untitled"),
+     (.plan.tickets[$t].ticket_path // ""), (.plan.tickets[$t].expected_output // "see the acceptance criteria"),
+     (.plan.suite_command // ""), (.integration.worktree // ""), (.tickets[$t].result.file // ""),
+     (.plan.verifier.model // $dm), (.plan.verifier.estimate_usd // $de), (.plan.verifier.minutes // $dmin)]' \
+    --arg t "$t" --arg dm "$DEFAULT_MODEL" --arg de "$DEFAULT_ESTIMATE_USD" --arg dmin "$DEFAULT_MINUTES"
   [ -n "$base" ] || base=$(git -C "$MAIN" merge-base "refs/heads/$ib" "$tip") || die "no merge base between $ib and #$t's commit"
   id="verify-$t"
   wt="$WT_ROOT/$RUN_ID-$id.$v"
@@ -279,15 +285,9 @@ cmd_start() {
 
   cfile="$RUN_DIR/prompts/$id.$v.criteria.json"
   printf '%s\n' "$criteria" >"$cfile"
-  repo=$(get '.repo')
-  title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
-  path=$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')
-  expected=$(get --arg t "$t" '.plan.tickets[$t].expected_output // "see the acceptance criteria"')
-  suite=$(get '.plan.suite_command // ""')
   # The recorded checks, read at the point of use from what the run has
   # merged (the integration worktree), so a worker's branch can't change the
   # checks it is judged by. Only checks.sh reads them.
-  std=$(get '.integration.worktree // ""')
   [ -n "$std" ] && [ -d "$std" ] || std=$MAIN
   std="$std/CODING_STANDARDS.md"
   checks=$("$SCRIPT_DIR/checks.sh" json --file "$std") || die "could not read the recorded checks in $std"
@@ -302,7 +302,7 @@ cmd_start() {
   cionly=$("$SCRIPT_DIR/checks.sh" ci-only --file "$std" | jq -Rsc 'split("\n") | map(select(. != ""))') \
     || die "could not read the recorded checks in $std"
   if [ "$gate" = ci ] && { [ -n "$leave" ] || [ "$cionly" != '[]' ]; }; then worker=1; fi
-  result="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+  result="$RUN_DIR/$result_file"
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
   prompt="$RUN_DIR/prompts/$id.$v.md"
   {
@@ -345,9 +345,7 @@ cmd_start() {
     printf '%s' "$criteria" | jq -r 'to_entries[] | "  \(.key + 1). \(.value)"'
   } >"$prompt"
 
-  model=$(get --arg d "$DEFAULT_MODEL" '.plan.verifier.model // $d')
-  estimate=$(clamp_estimate "$(get --arg d "$DEFAULT_ESTIMATE_USD" '.plan.verifier.estimate_usd // $d')")
-  minutes=$(get --arg d "$DEFAULT_MINUTES" '.plan.verifier.minutes // $d')
+  estimate=$(clamp_estimate "$estimate")
   local vname=""
   vname=$(verifier_name "$t")   # its session name (#189), recorded with it
   # Recorded before it launches, so no verifier ever runs unrecorded.
@@ -524,7 +522,17 @@ cmd_judge() {
   local t="${2:-}"
   [ -n "$t" ] || usage
   local entry= v= n= done_verdict=
-  entry=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
+  # What judging reads of the state, in one read (#185). The writes below
+  # touch the costs, the verifications' verdicts, the evidence and the
+  # status, never these; an error ends the call (say_again).
+  local wt= ck= ck_results= ck_recorded= result_file= commit= base= vmodel= tpath= repo= ttitle= hands_on=
+  fields entry wt ck ck_results ck_recorded result_file commit base vmodel tpath repo ttitle hands_on -- '
+    .tickets[$t] as $k | ($k.verifications[-1].checks // {recorded: false, reason: "not read for this verifier"}) as $ck
+    | [((($k.verifications // []) | last) as $l | if $l then "\($l.attempt) \($l.worker_attempt) \($l.verdict // "-")" else "" end),
+       ($k.verifications[-1].worktree // ""), $ck, ($ck.results // "verify/checks/\($t).\((($k.verifications // []) | last).attempt).json"), $ck.recorded, ($k.result.file // ""),
+       $k.verifications[-1].commit, $k.verifications[-1].base, ($k.verifications[-1].model // ""),
+       (.plan.tickets[$t].ticket_path // ""), .repo, (.plan.tickets[$t].title // "#\($t)"), ($k.human != null)]' \
+    --arg t "$t"
   [ -n "$entry" ] || die "no verifier has been started for #$t; run verify.sh start"
   set -- $entry
   v=$1 n=$2 done_verdict=$3
@@ -532,11 +540,10 @@ cmd_judge() {
     say_again "$t"
     return 0
   fi
-  local id="verify-$t" cls= verdict= wt=
+  local id="verify-$t" cls= verdict=
   cls=$(classify "$id" "$v")
   case "$cls" in running*) state_die 8 "verify.sh: #$t's verifier is still running" ;; esac
   verdict="$RUN_DIR/results/$id.$v.result.json"
-  wt=$(get --arg t "$t" '.tickets[$t].verifications[-1].worktree // ""')
 
   local vcost= wcost=
   vcost=$(session_cost "$id" "$v")
@@ -558,10 +565,9 @@ cmd_judge() {
   esac
   # The checks the verifier ran, through checks.sh run. Recorded checks it
   # didn't run make the verdict an error; with none recorded, what it found.
-  local ck= cres=
-  ck=$(get -c --arg t "$t" '.tickets[$t].verifications[-1].checks // {recorded: false, reason: "not read for this verifier"}')
-  cres="$RUN_DIR/$(printf '%s' "$ck" | jq -r --arg d "verify/checks/$t.$v.json" '.results // $d')"
-  if [ -z "$why" ] && [ "$(printf '%s' "$ck" | jq -r .recorded)" = true ] \
+  local cres=
+  cres="$RUN_DIR/$ck_results"
+  if [ -z "$why" ] && [ "$ck_recorded" = true ] \
     && ! jq -e --argjson ck "$ck" '.recorded == true and (.results | type) == "array"
           and [.results[].command] == $ck.commands' "$cres" >/dev/null 2>&1; then
     why="the verifier did not run the recorded checks"
@@ -570,7 +576,7 @@ cmd_judge() {
     cres=$(jq -c . "$cres")
     # What the worker's evidence listed, beside what the verifier ran, so a
     # worker that ran other checks than the recorded ones is visible.
-    local wrec="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+    local wrec="$RUN_DIR/$result_file"
     cres=$(printf '%s' "$cres" | jq -c --slurpfile w <(jq -c '[.checks.results // [] | .[] | .command?]' "$wrec" 2>/dev/null || echo null) '
       ($w[0] // null) as $listed
       | . + {worker_listed: $listed}
@@ -593,10 +599,8 @@ cmd_judge() {
     say_again "$t"
   fi
 
-  local commit= base= record= shortstat= files= contract= acc=
-  commit=$(get --arg t "$t" '.tickets[$t].verifications[-1].commit')
-  base=$(get --arg t "$t" '.tickets[$t].verifications[-1].base')
-  record="$RUN_DIR/$(get --arg t "$t" '.tickets[$t].result.file // ""')"
+  local record= shortstat= files= contract= acc=
+  record="$RUN_DIR/$result_file"
   local record_json='{"unsure": ["The worker'"'"'s evidence record was missing or unreadable, so its uncertainties and decisions are unknown"]}'
   [ ! -f "$record" ] || record_json=$(jq -c 'if type == "object" then . else error("not an object") end' "$record" 2>/dev/null || echo "$record_json")
   acc=$(python3 -I "$SCRIPT_DIR/lib/criteria.py" align "$RUN_DIR/prompts/$id.$v.criteria.json" "$verdict" "$record") \
@@ -633,7 +637,7 @@ cmd_judge() {
   contract="$RUN_DIR/verify/$t.$n.evidence.json"
   jq -n --arg t "$t" --argjson n "$n" --argjson v "$v" --arg commit "$commit" --arg base "$base" \
     --arg shortstat "$shortstat" --arg files "$files" --argjson now "$(state_now)" \
-    --arg model "$(get --arg t "$t" '.tickets[$t].verifications[-1].model // ""')" \
+    --arg model "$vmodel" \
     --slurpfile st "$FILE" --slurpfile verdict "$verdict" \
     --argjson acc "$acc" --argjson record "$record_json" --argjson checks "$cres" \
     '$st[0] | ($verdict[0]) as $verdict | '"$CONTRACT_FILTER" >"$contract" \
@@ -647,7 +651,7 @@ cmd_judge() {
   local hc="" hcrit=""
   hcrit=$(jq -c '[.acceptance[] | select(.human == true) | .criterion]' "$contract")
   if [ "$(jq -r .verdict "$contract")" = pass ] && [ "$hcrit" != "[]" ]; then
-    if [ -n "$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')" ]; then
+    if [ -n "$tpath" ]; then
       jq '.unsure += ["Only a person can verify \(.criteria_human) of its criteria, and it has no tracker ticket to split them from: move them into a Human check by hand"]' \
         "$contract" >"$contract.tmp" && mv "$contract.tmp" "$contract"
     else
@@ -660,7 +664,7 @@ cmd_judge() {
     # Said on the agent ticket before the verdict is recorded, so a comment
     # that fails stops here and judging again posts it. Nothing is ticked for
     # them: they are the Human check's now.
-    gh issue comment "$t" -R "$(get .repo)" --body "$(jq -r --arg hc "$hc" '
+    gh issue comment "$t" -R "$repo" --body "$(jq -r --arg hc "$hc" '
       "The verifier marked \(.criteria_human) of this ticket'"'"'s criteria as needing a human check (only a person can verify them), so they moved to Human check #\($hc), for the next slice gate:",
       "", (.acceptance[] | select(.human == true) | "- \(.criterion): \(.evidence.why // "no reason given")")' "$contract")" >/dev/null 2>&1 \
       || die "could not comment on #$t that its criteria moved to Human check #$hc; nothing recorded, judge again"
@@ -687,7 +691,7 @@ cmd_judge() {
                  criteria: [$ev[0].acceptance[] | select(.human == true) | .criterion]}; $now)
       end' \
     --arg t "$t" --argjson n "$n" --argjson v "$v" --slurpfile ev "$contract" \
-    --arg title "Human check: $(get --arg t "$t" '.plan.tickets[$t].title // "#\($t)"') (#$t)"
+    --arg title "Human check: $ttitle (#$t)"
   remove_worktree "$wt"
 
   if [ "$(jq -r .verdict "$contract")" = fail ]; then
@@ -695,7 +699,7 @@ cmd_judge() {
     # verifier's findings (wave.sh dispatch), or, after the last attempt,
     # the Artisan gets the ticket.
     # The next step is kept with the verdict, so judging again says the same.
-    if [ "$(get --arg t "$t" '.tickets[$t].human != null')" = true ]; then
+    if [ "$hands_on" = true ]; then
       # A hands-on ticket is the Artisan's: no fresh worker, no attempt used.
       # It goes back to them with what the verifier found (human.sh verdict).
       apply '.tickets[$t] |= (.status = "queued" | .human.done_at = null
