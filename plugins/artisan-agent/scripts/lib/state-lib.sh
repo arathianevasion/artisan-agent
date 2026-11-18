@@ -231,13 +231,25 @@ state_version_message() {
 # state file is either the old one or the new one, never a mix. Unchanged
 # content is not rewritten, so repeated reconciling leaves the file untouched.
 state_commit() {
-  local run_dir="$1" tmp="$2" file=
-  file=$(state_file "$run_dir")
+  local run_dir="$1" tmp="$2"
   if ! state_valid_file "$tmp"; then
-    rm -f "$tmp"
-    printf 'refusing to write: not a schema version %s state file\n' "$ARTISAN_STATE_SCHEMA_VERSION" >&2
+    state_refuse_write "$tmp"
     return 1
   fi
+  state_commit_checked "$run_dir" "$tmp"
+}
+
+state_refuse_write() { # tmp
+  rm -f "$1"
+  printf 'refusing to write: not a schema version %s state file\n' "$ARTISAN_STATE_SCHEMA_VERSION" >&2
+}
+
+# state_commit_checked run_dir tmp: state_commit for a temp file already
+# checked to be a state file of this schema version (state_apply checks it in
+# the same jq call that writes it).
+state_commit_checked() {
+  local run_dir="$1" tmp="$2" file=
+  file=$(state_file "$run_dir")
   if [ -f "$file" ] && cmp -s "$tmp" "$file"; then
     rm -f "$tmp"
   else
@@ -253,18 +265,36 @@ state_tmp() { # run_dir
 
 # state_apply run_dir filter [jq args...]
 # Read, transform with jq, rewrite in one step. Caller holds the lock.
+# One jq call checks the file is a state file of this schema version (else
+# exit 97), applies the filter and checks each result is one too (else 98),
+# so the checks cost no process of their own (#185). Only a failure is looked
+# at again, to say which of them it was.
 state_apply() {
-  local run_dir="$1" filter="$2" tmp= file=
+  local run_dir="$1" filter="$2" tmp= file= err= rc=0
   shift 2
   file=$(state_file "$run_dir")
   [ -f "$file" ] || { printf 'no state file at %s\n' "$file" >&2; return 1; }
-  state_valid_file "$file" || { state_version_message "$file" >&2; return 1; }
   tmp=$(state_tmp "$run_dir")
-  if ! jq "$@" "$filter" "$file" >"$tmp"; then
+  err=$(jq --argjson __state_v "$ARTISAN_STATE_SCHEMA_VERSION" "$@" \
+    'if type == "object" and .schema_version == $__state_v then ('"$filter"'
+       ) | if type == "object" and .schema_version == $__state_v then . else "" | halt_error(98) end
+     else "" | halt_error(97) end' "$file" 2>&1 >"$tmp") || rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$tmp" ]; then
+    state_commit_checked "$run_dir" "$tmp"
+    return
+  fi
+  if [ "$rc" -eq 97 ] || ! state_valid_file "$file"; then
     rm -f "$tmp"
+    state_version_message "$file" >&2
     return 1
   fi
-  state_commit "$run_dir" "$tmp"
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 98 ]; then
+    state_refuse_write "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  return 1
 }
 
 # state_require_run_dir run_dir: exits unless a state file exists there.
@@ -281,6 +311,30 @@ state_step() {
   shift 2
   jq "$@" "$filter" "$tmp" >"$tmp.next" || { rm -f "$tmp" "$tmp.next"; state_die 1 "jq step failed"; }
   mv -f "$tmp.next" "$tmp"
+}
+
+# state_fields file name... -- filter [jq args...]
+# Several values from one jq read of a JSON file (#185): the filter yields an
+# array, and each name is set to one element, in order, as `$(jq -r ...)` of
+# that element alone gives it: a string raw, anything else as compact JSON
+# (null as "null"), trailing newlines cut. Fails, setting nothing, when jq does
+# (its message on stderr, as a lone `jq -r` would print it).
+state_fields() {
+  local _sf_file="$1" _sf_filter="" _sf_out="" _sf_v="" _sf_name=""
+  local -a _sf_names=()
+  shift
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do _sf_names+=("$1"); shift; done
+  [ $# -ge 2 ] || { printf 'state_fields: usage: file name... -- filter [jq args...]\n' >&2; return 2; }
+  _sf_filter=$2
+  shift 2
+  _sf_out=$(jq -j "$@" '('"$_sf_filter"'
+    ) | .[] | (if type == "string" then . else tojson end) + "\u001e"' "$_sf_file") || return $?
+  for _sf_name in ${_sf_names[@]+"${_sf_names[@]}"}; do
+    _sf_v=${_sf_out%%$'\x1e'*}
+    _sf_out=${_sf_out#*$'\x1e'}
+    while [ "${_sf_v%$'\n'}" != "$_sf_v" ]; do _sf_v=${_sf_v%$'\n'}; done
+    printf -v "$_sf_name" '%s' "$_sf_v"
+  done
 }
 
 # state_usage script: print the script's header comment as its usage, exit 2.

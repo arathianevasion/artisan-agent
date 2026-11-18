@@ -1034,30 +1034,35 @@ cmd_dispatch() {
     esac
   done
   "$SCRIPT_DIR/state.sh" in-scope "$RUN_DIR" "$t" || exit $?
-  [ "$(get --arg t "$t" "$STATE_JQ_DEFS"' is_human_check($t)')" = false ] \
+  local human_check= status= hands_on= in_flight= max= urgent=
+  # One read for every check below (#185); in_flight counts the urgent slot
+  # for an urgent ticket and the Max Agents slots otherwise.
+  fields human_check status hands_on max urgent in_flight -- "$STATE_JQ_DEFS"'
+    [is_human_check($t), .tickets[$t].status, (.tickets[$t].human == null),
+     (.plan.max_agents // 5), (.tickets[$t].urgent // false),
+     (if (.tickets[$t].urgent // false) == true
+      then [.tickets | to_entries[] | select(.key != $t and .value.status == "in_flight" and (.value.urgent // false))] | length
+      else [.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length end)]' --arg t "$t"
+  [ "$human_check" = false ] \
     || die "#$t is a Human check: the Artisan answers it at a gate (gate.sh check); it is never dispatched to a worker"
-  local status= in_flight= max= urgent=
-  status=$(get --arg t "$t" '.tickets[$t].status')
   [ "$status" = queued ] || die "#$t is $status, not queued"
-  [ "$(get --arg t "$t" '.tickets[$t].human == null')" = true ] \
+  [ "$hands_on" = true ] \
     || die "#$t is a hands-on ticket, held for the Artisan (human.sh); it is never dispatched to a worker"
-  max=$(get '.plan.max_agents // 5')
-  urgent=$(get --arg t "$t" '.tickets[$t].urgent // false')
   if [ "$urgent" = true ]; then
     # The one extra slot above Max Agents (lever.sh urgent): a second urgent
     # ticket waits until the first has left it.
-    in_flight=$(get --arg t "$t" '[.tickets | to_entries[] | select(.key != $t and .value.status == "in_flight" and (.value.urgent // false))] | length')
     [ "$in_flight" -lt 1 ] || state_die 9 "wave.sh: the urgent slot is taken: another urgent ticket is in flight; #$t waits"
   else
-    in_flight=$(get '[.tickets[] | select(.status == "in_flight" and ((.urgent // false) | not))] | length')
     [ "$in_flight" -lt "$max" ] || state_die 9 "wave.sh: no free slot: $in_flight of Max Agents $max in flight"
   fi
   # The plan-window guard and the budget (budget.sh, #72): 18 parked, 17 the
   # overrun gate, 12 halted. Work already in flight is never stopped.
   "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
   # Parked on CI (the merge gate got no conclusion): nothing new starts.
-  [ "$(get '.ci_park != null')" = false ] \
-    || state_die 19 "wave.sh: parked on CI: $(get -r '.ci_park.why'); nothing dispatches until the park is cleared (wave.sh unpark-ci)"
+  local ci_parked= ci_park_why=
+  fields ci_parked ci_park_why -- '[.ci_park != null, .ci_park.why]'
+  [ "$ci_parked" = false ] \
+    || state_die 19 "wave.sh: parked on CI: $ci_park_why; nothing dispatches until the park is cleared (wave.sh unpark-ci)"
   # An urgent ticket was approved by being marked urgent: it dispatches at
   # once, whatever blocks it or runs beside it.
   if [ "$urgent" != true ]; then
@@ -1066,14 +1071,15 @@ cmd_dispatch() {
   fi
 
   local ib= base= branch= n= wt= prev= repo= title= path= expected= estimate= minutes= model= turns= deadline= prompt= pid= ref=
-  ib=$(integration_branch)
-  base=$(integration_tip)
+  local pre= attempts=
+  fields ib pre branch attempts prev -- '[.integration.branch, (.merge_gate.pre // .merge_batch.pre // ""),
+    .tickets[$t].branch, .tickets[$t].attempts, (.tickets[$t].worktree // "")]' --arg t "$t"
+  # integration_tip, from the values just read.
+  if [ -n "$pre" ]; then base=$pre; else base=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib"); fi
   # An urgent ticket branches from main, not from the integration branch.
   [ "$urgent" != true ] || base=$(git -C "$MAIN" rev-parse "refs/heads/$(main_branch)") || die "no main branch to branch #$t from"
-  branch=$(get --arg t "$t" '.tickets[$t].branch')
-  n=$(( $(get --arg t "$t" '.tickets[$t].attempts') + 1 ))
+  n=$(( $attempts + 1 ))
   wt="$WT_ROOT/$RUN_ID-$t.$n"
-  prev=$(get --arg t "$t" '.tickets[$t].worktree // ""')
   # A fresh worker never starts while the last attempt's session is still
   # ending in its worktree (a worker can report failed before it exits).
   if [ "$n" -gt 1 ]; then
@@ -1113,15 +1119,32 @@ cmd_dispatch() {
     state_die 6 "wave.sh: #$t attempt $n: $SETUP_ERR; it is now $(get --arg t "$t" '.tickets[$t].status')"
   fi
 
-  repo=$(get '.repo')
-  title=$(get --arg t "$t" '.plan.tickets[$t].title // "untitled"')
-  path=$(get --arg t "$t" '.plan.tickets[$t].ticket_path // ""')
-  expected=$(get --arg t "$t" '.plan.tickets[$t].expected_output // "see the ticket'"'"'s acceptance criteria"')
-  estimate=$(clamp_estimate "$(get --arg t "$t" '.plan.tickets[$t].estimate_usd // 1')")
-  minutes=$(get --arg t "$t" '.plan.tickets[$t].expected.minutes // 30')
-  model=$(get --arg t "$t" '.plan.tickets[$t].model // ""')
-  turns=$(get --arg t "$t" '.plan.tickets[$t].caps.max_turns // ""')
-  deadline=$(get --arg t "$t" '.plan.tickets[$t].caps.deadline_seconds // ""')
+  # Everything the prompt and the launch need, in one read (#185). Each list
+  # comes as its lines, as `get` would print them, with an "x" after them so
+  # no trailing newline of theirs is cut.
+  local plugin_version= n_answers= answers= n_notes= notes= n_changes= changes= n_steering= steering=
+  local n_failures= attempts_allowed= last_failure=
+  fields repo title path expected estimate minutes model turns deadline plugin_version \
+    n_answers answers n_notes notes n_changes changes n_steering steering \
+    n_failures attempts_allowed last_failure -- '
+    def lines(f): ([f | . + "\n"] | add // "") + "x";
+    .plan.tickets[$t] as $p | .tickets[$t] as $k
+    | [.repo, ($p.title // "untitled"), ($p.ticket_path // ""),
+       ($p.expected_output // "see the ticket'"'"'s acceptance criteria"), ($p.estimate_usd // 1),
+       ($p.expected.minutes // 30), ($p.model // ""), ($p.caps.max_turns // ""), ($p.caps.deadline_seconds // ""),
+       (.waves | last | .plugin_version // "unknown"),
+       (($k.answers // []) | length), lines($k.answers[]? | "  - #\(.question): \(.answer)"),
+       (($k.notes // []) | length), lines($k.notes[]? | "  - \(.note) (exception gate #\(.issue))"),
+       (($k.criteria_changes // []) | length),
+       lines($k.criteria_changes[]?
+         | "  - \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
+             elif .action == "split" then "moved to #\(.to); not yours to meet"
+             else "dropped; not yours to meet" end)
+           + (if .why then " (\(.why))" else "" end)),
+       (($k.steering // []) | length), lines($k.steering[]? | "  - \(.note) (attempt \(.attempt))"),
+       ($k.failures | length), ((.plan.attempts_per_ticket // 2) + ($k.extra_attempts // 0)),
+       ($k.failures | last | "\(.reason)")]' --arg t "$t"
+  estimate=$(clamp_estimate "$estimate")
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
 
   mkdir -p "$RUN_DIR/prompts"
@@ -1132,41 +1155,36 @@ cmd_dispatch() {
 You are the worker for ticket $t, attempt $n, in run $RUN_ID.
 - Base: $base ($([ "$urgent" = true ] && echo "main, because this ticket is urgent and ships on its own PR to main" || echo "the integration branch $ib")). Your branch: $branch, already checked out here.
 - Expected output: $expected
-- Plugin version this wave: $(get '.waves | last | .plugin_version // "unknown"'). Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR --ticket $t (an area-scoped guardrail is listed only if this ticket touches its area; plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
+- Plugin version this wave: $plugin_version. Guardrails in force for this wave, with their versions: run $SCRIPT_DIR/guardrails.sh resolve --run-dir $RUN_DIR --ticket $t (an area-scoped guardrail is listed only if this ticket touches its area; plugin version and source commits are in the state file's latest wave). Follow them; product beats team beats individual.
 - Write the evidence record to the result file named below, as in $PLUGIN_DIR/references/evidence-record.md.
 - Do not close the ticket, edit the tracker, merge or push. Do not use git stash; commit instead.
 - Dependencies (such as node_modules) are installed by the project's worktree_setup before you start. If a tool is "not found" or a module is missing, that is a setup failure, not a code failure: say so in your notes and don't change the code to work around it.
 EOF
   [ -z "$brief" ] || printf -- '- Brief: %s\n' "$brief" >>"$prompt"
   # The Artisan's answers to the questions an earlier worker filed (questions.sh).
-  if [ "$(get --arg t "$t" '(.tickets[$t].answers // []) | length')" -gt 0 ]; then
+  if [ "$n_answers" -gt 0 ]; then
     printf -- '- The Artisan has answered what blocked an earlier attempt; treat each answer as decided, and continue from the branch:\n' >>"$prompt"
-    get --arg t "$t" '.tickets[$t].answers[] | "  - #\(.question): \(.answer)"' >>"$prompt"
+    printf '%s' "${answers%x}" >>"$prompt"
   fi
   # Notes the Artisan gave at an exception gate ("retry with notes", gate-action.sh).
-  if [ "$(get --arg t "$t" '(.tickets[$t].notes // []) | length')" -gt 0 ]; then
+  if [ "$n_notes" -gt 0 ]; then
     printf -- '- The Artisan sent this ticket back with notes at its exception gate; follow them:\n' >>"$prompt"
-    get --arg t "$t" '.tickets[$t].notes[] | "  - \(.note) (exception gate #\(.issue))"' >>"$prompt"
+    printf '%s' "${notes%x}" >>"$prompt"
   fi
   # Criteria the Artisan changed at an unmeetable-criterion exception gate
   # (#186): the verifier judges the ticket's criteria with these applied.
-  if [ "$(get --arg t "$t" '(.tickets[$t].criteria_changes // []) | length')" -gt 0 ]; then
+  if [ "$n_changes" -gt 0 ]; then
     printf -- '- The Artisan changed these acceptance criteria at an exception gate; the verifier judges the ticket with them applied, whatever the ticket still says:\n' >>"$prompt"
-    get --arg t "$t" '.tickets[$t].criteria_changes[]
-      | "  - \(.criterion): " + (if .action == "rewrite" then "now reads: \(.as)"
-          elif .action == "split" then "moved to #\(.to); not yours to meet"
-          else "dropped; not yours to meet" end)
-        + (if .why then " (\(.why))" else "" end)' >>"$prompt"
+    printf '%s' "${changes%x}" >>"$prompt"
   fi
   # Steering (lever.sh steer): the Artisan stopped the last attempt and gave notes.
-  if [ "$(get --arg t "$t" '(.tickets[$t].steering // []) | length')" -gt 0 ]; then
+  if [ "$n_steering" -gt 0 ]; then
     printf -- '- The Artisan stopped an earlier attempt to steer you. This is not a failed attempt: continue from the branch, and follow their notes:\n' >>"$prompt"
-    get --arg t "$t" '.tickets[$t].steering[] | "  - \(.note) (attempt \(.attempt))"' >>"$prompt"
+    printf '%s' "${steering%x}" >>"$prompt"
   fi
-  if [ "$n" -gt 1 ] && [ "$(get --arg t "$t" '.tickets[$t].failures | length')" -gt 0 ]; then
+  if [ "$n" -gt 1 ] && [ "$n_failures" -gt 0 ]; then
     printf -- '- This is a retry, attempt %s of %s. The last attempt failed: %s\n' "$n" \
-      "$(get --arg t "$t" '(.plan.attempts_per_ticket // 2) + (.tickets[$t].extra_attempts // 0)')" \
-      "$(get --arg t "$t" '.tickets[$t].failures | last | "\(.reason)"')" >>"$prompt"
+      "$attempts_allowed" "$last_failure" >>"$prompt"
     failure_evidence "$t" "$((n - 1))" >"$RUN_DIR/prompts/$t.$n.failure.md"
     { echo; cat "$RUN_DIR/prompts/$t.$n.failure.md"; } >>"$prompt"
   fi

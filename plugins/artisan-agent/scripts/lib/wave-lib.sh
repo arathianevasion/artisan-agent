@@ -21,6 +21,8 @@ open_run() { # run-dir
 }
 
 get() { jq -r "$@" "$FILE"; }
+# fields name... -- filter [jq args...]: several values in one read (state_fields).
+fields() { state_fields "$FILE" "$@"; }
 
 # worktree_setup wt (#173): the worktree_setup command, run once in a new
 # worktree, with ARTISAN_MAIN set to the main checkout, so the integration,
