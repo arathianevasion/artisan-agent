@@ -177,7 +177,7 @@ uninstall_in_project() { # plugin scope path
     mkdir -p "$ppath" || { echo "failed: cannot recreate $ppath to uninstall $pid ($scope)" >&2; return 1; }
     recreated=1
   fi
-  (cd "$ppath" && CLAUDE_CONFIG_DIR=$CFG "$CLAUDE_BIN" plugin uninstall "$pid" --scope "$scope" >/dev/null) || rc=$?
+  (cd "$ppath" && "$CLAUDE_BIN" plugin uninstall "$pid" --scope "$scope" >/dev/null) || rc=$?
   if [ "$recreated" = 1 ]; then
     while IFS= read -r d; do
       [ -n "$d" ] || continue

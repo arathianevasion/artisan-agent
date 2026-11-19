@@ -12,6 +12,22 @@ fake_host() { # a fake HOME and config dir; nothing outside the scratch dir is t
 
 make_host() { "$HOST_SETUP" apply --workdir "$TEST_TMPDIR/work" >/dev/null; }
 
+test_launcher_exports_config_dir_only_when_the_caller_set_it() {
+  fake_host macos
+  make_host
+  l="$CLAUDE_CONFIG_DIR/artisan-agent/host/start-remote-control.sh"
+  assert_contains "$(cat "$l")" "export CLAUDE_CONFIG_DIR=\"$CLAUDE_CONFIG_DIR\""
+  rm -rf "$CLAUDE_CONFIG_DIR/artisan-agent"
+  local cfg="$CLAUDE_CONFIG_DIR"
+  unset CLAUDE_CONFIG_DIR
+  mkdir -p "$HOME/.claude"
+  make_host
+  l="$HOME/.claude/artisan-agent/host/start-remote-control.sh"
+  case "$(cat "$l")" in *"export CLAUDE_CONFIG_DIR"*) fail "launcher forces CLAUDE_CONFIG_DIR";; esac
+  bash -n "$l"
+  [ "$cfg" = "$HOME/.claude" ] || fail "layout changed"
+}
+
 test_apply_turns_on_remote_control_and_push_and_writes_the_supervisor() {
   fake_host macos
   printf '{"theme":"dark","remoteControlAtStartup":false}\n' >"$CLAUDE_CONFIG_DIR/settings.json"

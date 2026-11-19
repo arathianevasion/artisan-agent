@@ -98,6 +98,8 @@ launcher_path() { printf '%s/start-remote-control.sh\n' "$HOST_DIR"; }
 
 write_launcher() { # workdir name
   local workdir="$1" name="$2"
+  local cfg_line=": # CLAUDE_CONFIG_DIR was not set when this was written, so claude uses its default"
+  [ -z "${CLAUDE_CONFIG_DIR+x}" ] || cfg_line="export CLAUDE_CONFIG_DIR=\"$CFG\""
   write_file "$(launcher_path)" 755 <<EOF
 #!/usr/bin/env bash
 # Keeps Remote Control in server mode alive in tmux (written by host-setup.sh).
@@ -105,7 +107,7 @@ write_launcher() { # workdir name
 # Sessions spawn in worktrees; headless workers have nobody to ask, so a
 # permission prompt they hit is denied.
 export PATH="\$PATH:/opt/homebrew/bin:/usr/local/bin:\$HOME/.local/bin"
-export CLAUDE_CONFIG_DIR="$CFG"
+$cfg_line
 tmux has-session -t $SESSION 2>/dev/null && exit 0
 cd "$workdir" || exit 1
 exec tmux new-session -d -s $SESSION "$CLAUDE_BIN remote-control --spawn worktree --name '$name'"

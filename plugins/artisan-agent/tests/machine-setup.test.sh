@@ -106,6 +106,34 @@ d=json.load(open(sys.argv[1]));print(*sorted(d["skillOverrides"],reverse=True),d
   assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "$TEST_TMPDIR/proj plugin uninstall artisan-agent@artisan-agent --scope project"
 }
 
+# A stub claude that records whether CLAUDE_CONFIG_DIR was in its environment, and its value.
+stub_recording_config_dir() {
+  printf '#!/bin/sh\nif [ "${CLAUDE_CONFIG_DIR+set}" = set ]; then echo "set:$CLAUDE_CONFIG_DIR"; else echo unset; fi >"%s/claude-env"\n' "$TEST_TMPDIR" >"$ARTISAN_CLAUDE_BIN"
+}
+
+test_remove_runs_the_cli_without_config_dir_when_the_caller_never_set_it() {
+  seed_machine
+  stub_recording_config_dir
+  local cfg="$CLAUDE_CONFIG_DIR"
+  unset CLAUDE_CONFIG_DIR CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID
+  # The script reads plugin records from the default $HOME/.claude, which is where seed_machine put them.
+  local out=""
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj") || fail "remove failed: $out"
+  assert_contains "$out" "uninstalled:"
+  assert_eq unset "$(cat "$TEST_TMPDIR/claude-env")" "the CLI must not see CLAUDE_CONFIG_DIR"
+  [ "$cfg" = "$HOME/.claude" ] || fail "seed layout changed"
+}
+
+test_remove_passes_config_dir_through_when_the_caller_set_it() {
+  seed_machine
+  stub_recording_config_dir
+  unset CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID
+  local out=""
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj") || fail "remove failed: $out"
+  assert_contains "$out" "uninstalled:"
+  assert_eq "set:$CLAUDE_CONFIG_DIR" "$(cat "$TEST_TMPDIR/claude-env")"
+}
+
 test_rescan_after_removal_offers_nothing() {
   seed_machine
   "$SCRIPT" remove stale-skill:tdd plugin-skill:implement-plan plugin-skill:debate-me override:tdd >/dev/null
