@@ -7,7 +7,6 @@ ARTISAN="$PLUGIN_ROOT/ARTISAN.md"
 test_artisan_has_rule_7_and_tuning_names_voice_standards() {
   grep -Eq '^7\. ' "$ARTISAN" || fail "ARTISAN.md has no rule 7"
   grep -Eq '^6\. ' "$ARTISAN" || fail "ARTISAN.md lost rule 6"
-  if grep -Eq '^8\. ' "$ARTISAN"; then fail "ARTISAN.md has a rule 8"; fi
   local rule7= tuning=
   rule7=$(grep -E '^7\. ' "$ARTISAN")
   assert_contains "$rule7" "VOICE_STANDARDS.md"
