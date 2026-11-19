@@ -9,7 +9,7 @@ Run a defined set of work to done: a plan, several plans, individual tickets, a 
 
 `/artisan-agent:implement` builds one ticket and ends at the commit and its evidence record. It never closes the ticket or merges, and for a queue that is fatal on its own: the frontier is tickets whose blockers are all **merged**, so if nothing merges, nothing ever unblocks. This skill is the layer above it. It owns the dependency graph, the plan, the dispatch and the reconciliation. It never implements anything itself.
 
-Wherever this skill puts something in front of the Artisan (the plan, a wave digest, a question, the run summary), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Wherever it lists tickets, use a markdown table, never a numbered list: one row per ticket, with its number and a short plain description together (such as "#12 (retry failed uploads)"), its wave or blockers, its model, and its expected output or status.
+Wherever this skill puts something in front of the Artisan (the plan, a wave digest, a question, the run summary), follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md`. Findings tickets, issue comments and wave reports follow the voice standards (`VOICE_STANDARDS.md`; ARTISAN.md rule 7): shared text takes product, then team, then individual; chat only the Artisan reads takes individual first. Wherever it lists tickets, use a markdown table, never a numbered list: one row per ticket, with its number and a short plain description together (such as "#12 (retry failed uploads)"), its wave or blockers, its model, and its expected output or status.
 
 ## Two tiers
 

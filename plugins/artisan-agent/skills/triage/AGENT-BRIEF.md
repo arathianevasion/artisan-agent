@@ -4,6 +4,8 @@ An agent brief is a structured comment posted on a GitHub issue or PR when it mo
 
 The brief states **what the agent should do**, which stretches to both surfaces: for an issue, that's building the change from nothing; for a PR, it's what's left to do *to the existing diff*: finish it, close gaps, address review points. Same principles either way; the PR example below shows the difference.
 
+Write the brief's prose in the voice standards (`VOICE_STANDARDS.md`; ARTISAN.md rule 7), as a ticket others read. Instructions to the agent stay as direct as they need to be.
+
 ## Principles
 
 ### Durability over precision
