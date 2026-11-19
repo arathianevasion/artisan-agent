@@ -564,3 +564,15 @@ test_a_section_with_no_list_still_gets_the_line_at_its_end() {
   assert_contains "$doc" "$(printf 'Just prose here.\n- **Who the Artisan is**')"
   assert_contains "$doc" "$(printf 'skip triage.\n\n## Next')"
 }
+
+# #273: the product voice file is seeded at the repo root and imported beside the
+# front-door pointer; a rerun adds only what's missing and overwrites nothing.
+IMPORT='@VOICE_STANDARDS.md'
+
+test_a_fresh_repo_gets_the_voice_file_and_its_import_beside_the_pointer() {
+  seed
+  local out=; out=$(run_setup)
+  branch_file VOICE_STANDARDS.md | cmp -s - "$PLUGIN_ROOT/templates/VOICE_STANDARDS.md" || fail "the voice file is not the template"
+  assert_contains "$(branch_file CLAUDE.md)" "$(printf 'Start with `/artisan-agent:craft`.\n%s' "$IMPORT")"
+  assert_eq 1 "$(printf '%s\n' "$out" | grep -c '^tune: .*VOICE_STANDARDS.md')" "one summary line says where to tune the voice"
+}

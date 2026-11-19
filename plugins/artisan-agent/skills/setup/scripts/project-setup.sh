@@ -34,6 +34,8 @@ GH=${GH_BIN:-gh}
 CLAUDE_BIN=${ARTISAN_CLAUDE_BIN:-claude}
 BRANCH=artisan-agent/setup
 POINTER='Start with `/artisan-agent:craft`.'
+VOICE=VOICE_STANDARDS.md
+VOICE_IMPORT="@$VOICE"
 HOOK_FILE=.claude/hooks/artisan-agent-block-replaced.sh
 MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
@@ -449,6 +451,19 @@ EOT
     { [ -s "$f" ] && printf '\n'; printf '%s\n' "$POINTER"; } >>"$f"
     echo "changed: ${f##*/} points at /artisan-agent:craft"
   fi
+
+  # The product voice standards (#273): the template, seeded if missing and never
+  # overwritten, and its @ import on the line after the front-door pointer.
+  if [ ! -e "$wt/$VOICE" ]; then
+    cp "$ROOT/templates/$VOICE" "$wt/$VOICE"
+    echo "changed: created $VOICE"
+  fi
+  if ! grep -qsxF "$VOICE_IMPORT" "$f"; then
+    awk -v p="$POINTER" -v imp="$VOICE_IMPORT" '{ print } !done && index($0, p) { print imp; done = 1 }' "$f" >"$tmp/agents.md"
+    cp "$tmp/agents.md" "$f"
+    echo "changed: ${f##*/} imports $VOICE"
+  fi
+  echo "tune: the voice agents write in is $VOICE at the repo root; add your own rules under \"## Your own rules\""
 
   git -C "$wt" add -A
   if git -C "$wt" diff --cached --quiet; then
