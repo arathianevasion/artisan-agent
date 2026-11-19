@@ -4,7 +4,7 @@ How agents write prose a person reads. Code, code comments and briefs written fo
 
 ## Which level wins
 
-It depends on who reads the text (ADR 0003 in artisan-agent):
+It depends on who reads the text (ADR 0003 in arathianevasion/artisan-agent):
 
 - Chat only the Artisan reads (chat turns, grill rounds, wave reports) follows the individual file first.
 - Shared text (tickets, specs, plans, comments, PR bodies, commit messages, ADRs, glossary entries) follows product, then team, then individual.
@@ -22,7 +22,7 @@ Phrases:
 - **R3** No significance inflation (critical, powerful, robust, seamless, "the real X is") unless it's measured.
 - **R4** Name who acts. No false agency.
 - **R5** No "not X, but Y" for effect.
-- **R6** No questions you then answer yourself.
+- **R6** No self-posed questions, rhetorical or answered.
 - **R7** No vague attribution: cite the source or drop the claim.
 - **R8** No flattery or chatbot residue.
 - **R9** Plain words: use, help, start.
@@ -55,4 +55,4 @@ R1–R14, R17, R18 and P1–P3 are adapted from the pattern catalogue in theclay
 
 ## Your own rules
 
-<!-- Add your rules below. They win over the default block above, and a new default version never touches this section. -->
+<!-- Add your rules below. A new default version never touches this section. -->
