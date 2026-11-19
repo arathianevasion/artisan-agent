@@ -243,6 +243,10 @@ _Avoid_: bypass check
 The Artisan's written taste that applies in every project: their individual guardrails, what should always come back to them, and how the pipeline speaks to them. Kept in their individual home.
 _Avoid_: personal standards, preferences
 
+**Voice standards**:
+How agents write any prose a person reads: chat, tickets, specs, plans, comments, PR bodies, commit messages, ADRs, glossary entries, decision cards and evidence records. Held at the team, product and individual levels, and seeded with plain-language rules against AI filler. Code, code comments and briefs written for agents are outside them.
+_Avoid_: voicing preferences, tone guide, style guide
+
 **Area**:
 A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
 _Avoid_: module, zone
