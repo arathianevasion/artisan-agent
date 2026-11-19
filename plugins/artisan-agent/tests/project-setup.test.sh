@@ -576,3 +576,50 @@ test_a_fresh_repo_gets_the_voice_file_and_its_import_beside_the_pointer() {
   assert_contains "$(branch_file CLAUDE.md)" "$(printf 'Start with `/artisan-agent:craft`.\n%s' "$IMPORT")"
   assert_eq 1 "$(printf '%s\n' "$out" | grep -c '^tune: .*VOICE_STANDARDS.md')" "one summary line says where to tune the voice"
 }
+
+drop_voice_from_main() { # a project set up before #273: no voice file, no import
+  git -C "$P" rm -q VOICE_STANDARDS.md
+  grep -vxF "$IMPORT" "$P/CLAUDE.md" >"$TEST_TMPDIR/claude.md"; cp "$TEST_TMPDIR/claude.md" "$P/CLAUDE.md"
+  git -C "$P" commit -q -am "set up before voice standards" && git -C "$P" push -q origin main
+}
+
+test_a_rerun_with_no_voice_file_adds_the_file_and_the_import_only() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  drop_voice_from_main
+  run_setup >/dev/null
+  assert_eq "$(printf 'M\tCLAUDE.md\nA\tVOICE_STANDARDS.md')" "$(git -C "$TEST_TMPDIR/origin.git" diff --name-status main artisan-agent/setup)"
+  assert_eq "+$IMPORT" "$(git -C "$TEST_TMPDIR/origin.git" diff -U0 main artisan-agent/setup -- CLAUDE.md | grep '^+[^+]')"
+  assert_contains "$(branch_file CLAUDE.md)" "$(printf 'Start with `/artisan-agent:craft`.\n%s' "$IMPORT")"
+}
+
+test_a_rerun_with_the_voice_file_and_import_present_changes_nothing() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  local out=; out=$(run_setup)
+  assert_contains "$out" "unchanged: the project is already set up; no PR"
+  assert_eq 1 "$(grep -cxF "$IMPORT" "$P/CLAUDE.md")" "the import appears once"
+}
+
+test_an_edited_voice_file_is_never_overwritten() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  printf -- '- Write in British English.\n' >>"$P/VOICE_STANDARDS.md"
+  grep -vxF "$IMPORT" "$P/CLAUDE.md" >"$TEST_TMPDIR/claude.md"; cp "$TEST_TMPDIR/claude.md" "$P/CLAUDE.md"
+  git -C "$P" commit -q -am "own voice rule, import dropped" && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  assert_eq "$(cat "$P/VOICE_STANDARDS.md")" "$(branch_file VOICE_STANDARDS.md)" "the edited voice file changed"
+  assert_eq "$(printf 'M\tCLAUDE.md')" "$(git -C "$TEST_TMPDIR/origin.git" diff --name-status main artisan-agent/setup)"
+}
+
+test_an_agents_md_only_repo_imports_the_voice_file_there() {
+  seed
+  git -C "$P" mv CLAUDE.md AGENTS.md && git -C "$P" commit -q -m agents && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  assert_contains "$(branch_file AGENTS.md)" "$(printf 'Start with `/artisan-agent:craft`.\n%s' "$IMPORT")"
+  git -C "$TEST_TMPDIR/origin.git" show artisan-agent/setup:CLAUDE.md >/dev/null 2>&1 && fail "CLAUDE.md created"
+  true
+}

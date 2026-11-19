@@ -612,7 +612,7 @@ cmd_finish() {
   url=$(open_pr "$wt")
   if [ -z "$url" ]; then
     url=$(cd "$wt" && "$GH" pr create --head "$BRANCH" --base "${base#origin/}" --title "Set up Artisan Agent" \
-      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, and the front-door pointer. Nothing existing was overwritten.") \
+      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
       || die "gh pr create failed; the branch is pushed and the worktree kept at $wt"
     echo "pr: $url"
   else
