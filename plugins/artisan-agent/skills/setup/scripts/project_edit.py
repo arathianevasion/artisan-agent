@@ -149,12 +149,32 @@ def section_bounds(lines, heading):
     return None
 
 
+def list_end(lines, start, end):
+    """Index just past the section's first contiguous bullet list (indented continuation
+    lines included), or None when the section has no '- ' item."""
+    i = start + 1
+    while i < end and not lines[i].startswith("- "):
+        i += 1
+    if i == end:
+        return None
+    while i < end and (lines[i].startswith("- ") or (lines[i].strip() and lines[i][0] in " \t")):
+        i += 1
+    return i
+
+
 def insert_in_section(lines, start, end, new):
     """Insert new lines after the last non-blank line of the section at start..end,
-    keeping one blank line between the heading and its body and before the next heading."""
+    keeping one blank line between the heading and its body and before the next heading.
+    List items ('- ...') go directly after the section's first bullet list instead, when
+    it has one, so a trailing paragraph stays after the list."""
     k = end
     while k > start + 1 and not lines[k - 1].strip():
         k -= 1
+    if all(n.startswith("- ") for n in new):
+        j = list_end(lines, start, end)
+        if j is not None:
+            lines[j:j] = list(new)
+            return
     block = list(new)
     if k == start + 1:
         block = [""] + block

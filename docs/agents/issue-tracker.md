@@ -12,9 +12,9 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 - **Who the Artisan is** (triage compares ticket authors to this): `gh api user --jq .login`.
+- **Tickets filed by agents** carry the `needs-triage` label (the string `docs/agents/triage-labels.md` maps it to). Tickets the Artisan writes or approves skip triage.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
-- **Tickets filed by agents** carry the `needs-triage` label (the string `docs/agents/triage-labels.md` maps it to). Tickets the Artisan writes or approves skip triage.
 
 ## Pull requests as a triage surface
 
