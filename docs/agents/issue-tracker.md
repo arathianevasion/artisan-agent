@@ -14,6 +14,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Who the Artisan is** (triage compares ticket authors to this): `gh api user --jq .login`.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+- **Tickets filed by agents** carry the `needs-triage` label (the string `docs/agents/triage-labels.md` maps it to). Tickets the Artisan writes or approves skip triage.
 
 ## Pull requests as a triage surface
 
