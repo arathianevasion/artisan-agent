@@ -525,3 +525,42 @@ test_an_unreadable_board_in_the_config_is_kept_and_named() {
   git -C "$P" add -A && git -C "$P" commit -q -m config && git -C "$P" push -q origin main
   assert_contains "$(run_setup 2>&1)" "kept: .artisan-agent/config.yml has a tracker.board config.sh cannot read"
 }
+
+# #266: a new list item goes after the section's list, not after a trailing paragraph.
+upstream_conventions() { # upstream's issue-tracker-github.md shape: a list, then a paragraph
+  printf '# Issue tracker: GitHub\n\n## Conventions\n\n- **Create an issue**: `gh issue create`\n  with a body.\n- **Close**: `gh issue close`\n\nInfer the repo from `git remote -v`.\n\n## When a skill says "publish"\n\nCreate one.\n' >"$P/docs/agents/issue-tracker.md"
+  git -C "$P" commit -q -am "upstream shape" && git -C "$P" push -q origin main
+}
+
+test_a_new_bullet_goes_after_the_conventions_list_before_the_trailing_paragraph() {
+  seed
+  upstream_conventions
+  run_setup >/dev/null
+  local doc=; doc=$(branch_file docs/agents/issue-tracker.md)
+  local want=; want=$(printf '%s\n' '- **Close**: `gh issue close`' \
+    '- **Who the Artisan is** (triage compares ticket authors to this): `gh api user --jq .login`, which was `artisan` at setup.' \
+    '- **Tickets filed by agents** carry the `needs-triage` label (the string `docs/agents/triage-labels.md` maps it to). Tickets the Artisan writes or approves skip triage.' \
+    '' 'Infer the repo from `git remote -v`.')
+  assert_contains "$doc" "$want"
+  assert_contains "$doc" "$(printf 'with a body.\n- **Close**')"
+}
+
+test_a_rerun_after_the_list_insert_changes_nothing() {
+  seed
+  upstream_conventions
+  run_setup >/dev/null
+  merge_setup_pr
+  local out=; out=$("$PLUGIN_ROOT/skills/setup/scripts/project_edit.py" section "$P/docs/agents/issue-tracker.md" Conventions \
+    '- **Tickets filed by agents** carry the `needs-triage` label (the string `docs/agents/triage-labels.md` maps it to). Tickets the Artisan writes or approves skip triage.')
+  assert_contains "$out" "unchanged:"
+}
+
+test_a_section_with_no_list_still_gets_the_line_at_its_end() {
+  seed
+  printf '# Issue tracker: GitHub\n\n## Conventions\n\nJust prose here.\n\n## Next\n\nText.\n' >"$P/docs/agents/issue-tracker.md"
+  git -C "$P" commit -q -am "no list" && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  local doc=; doc=$(branch_file docs/agents/issue-tracker.md)
+  assert_contains "$doc" "$(printf 'Just prose here.\n- **Who the Artisan is**')"
+  assert_contains "$doc" "$(printf 'skip triage.\n\n## Next')"
+}
