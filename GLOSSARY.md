@@ -251,6 +251,10 @@ _Avoid_: voicing preferences, tone guide, style guide
 The ordered path one kind of person who uses a product takes through it, from arriving to getting what they came for: at each step, their goal, what they do and see, and where they go next. A product has several, and every feature has to find its place in one. "User" here means a person using the product being built, such as a player; the Artisan is never called a user.
 _Avoid_: customer journey, user flow, funnel
 
+**Persona**:
+One kind of person who uses a product, named by why they come to it. Each user journey belongs to one persona, and a persona can have several. A product's personas are part of its design conventions.
+_Avoid_: actor, user type, audience
+
 **Area**:
 A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
 _Avoid_: module, zone
