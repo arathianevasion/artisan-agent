@@ -255,6 +255,14 @@ _Avoid_: customer journey, user flow, funnel
 One kind of person who uses a product, named by why they come to it. Each user journey belongs to one persona, and a persona can have several. A product's personas are part of its design conventions.
 _Avoid_: actor, user type, audience
 
+**Design stage**:
+The pipeline step that designs a change to the experience before it is specified. It takes the user journeys the change touches, the design standards and screenshots of those steps as they are on main, and hands spec writing a design package, whatever design tool is used inside it.
+_Avoid_: design phase, UX step
+
+**Design package**:
+What the design stage hands to spec writing: the journey diff on the feature branch, a high-fidelity screenshot of each journey step that changes, a link to the functional prototype when one was built, and the design tool's file link. A functional prototype is recommended when a step's behaviour changes, and the designer may skip it.
+_Avoid_: handoff bundle, mockups, design deliverable
+
 **Area**:
 A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
 _Avoid_: module, zone
