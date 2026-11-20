@@ -113,11 +113,17 @@ cmd_check() {
   else
     cp "$rd/retro/lessons.json" "$combined"
   fi
-  if py check "$combined" "$threshold" >"$rd/retro/checked.json.tmp"; then
-    mv "$rd/retro/checked.json.tmp" "$rd/retro/checked.json"; rm -f "$combined"
+  # The voice files a voice lesson is checked against for the cap: the
+  # individual home's, and the product's as the retro PR will branch from it.
+  local voice=() pv="$rd/retro/.product-voice.md"
+  [ -f "$HOME_DIR/VOICE_STANDARDS.md" ] && voice+=("individual=$HOME_DIR/VOICE_STANDARDS.md")
+  MAIN=$(main_of "$rd")
+  if git -C "$MAIN" show "$(base_ref):VOICE_STANDARDS.md" >"$pv" 2>/dev/null; then voice+=("product=$pv"); else rm -f "$pv"; fi
+  if py check "$combined" "$threshold" ${voice[@]+"${voice[@]}"} >"$rd/retro/checked.json.tmp"; then
+    mv "$rd/retro/checked.json.tmp" "$rd/retro/checked.json"; rm -f "$combined" "$pv"
     jq -r '.lessons[] | "\(.id)\t\(.ask)\t\(.kind)\t\(.home)"' "$rd/retro/checked.json"
   else
-    cat "$rd/retro/checked.json.tmp" >&2; rm -f "$rd/retro/checked.json.tmp" "$combined"; exit 1
+    cat "$rd/retro/checked.json.tmp" >&2; rm -f "$rd/retro/checked.json.tmp" "$combined" "$pv"; exit 1
   fi
 }
 

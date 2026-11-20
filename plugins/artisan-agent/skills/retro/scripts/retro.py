@@ -13,9 +13,11 @@ Usage (python3 -I retro.py <command> ...):
   gate-costs <state.json>
       what the merge gates cost and how long gates waited on the Artisan,
       as the Markdown table the retro's Signals show (the run summary's)
-  check <lessons.json> <threshold>
+  check <lessons.json> <threshold> [individual=<voice file>] [product=<voice file>]
       the preparer's lessons, checked and normalised: each gets its home,
-      and judgement calls become questions. Exit 1 with one line per problem
+      and judgement calls become questions. A voice lesson is checked against
+      the voice file at its level, when given, for the cap. Exit 1 with one
+      line per problem
   render <checked.json> <facts.json> <questions.md> [<motivation.md>]
       the chat round, as Markdown
   questions <ARTISAN.md>...
@@ -429,8 +431,15 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
     }
 
 
-def check(lessons_path, threshold):
+def check(lessons_path, threshold, voice_files=None):
     doc = load(lessons_path)
+    # The voice files as they stand, by level; each kept-by-default voice
+    # lesson is applied in turn, so the cap counts every lesson before it.
+    voice = {}
+    for level, path in (voice_files or {}).items():
+        if os.path.isfile(path):
+            with open(path) as fh:
+                voice[level] = fh.read()
     problems, out, seen = [], [], set()
     lessons = doc.get("lessons")
     if not isinstance(lessons, list):
@@ -464,6 +473,11 @@ def check(lessons_path, threshold):
         ch = l.get("change") or {}
         if kind == "voice":
             problems += voice_lesson(l, where)
+            problem = voice_mode_problem(l)
+            if not problem and l.get("level") in voice:
+                voice[l["level"]], problem = voice_edit(voice[l["level"]], l)
+            if problem:
+                problems.append("%s: %s" % (where, problem))
         elif kind == "calibration":
             if not (ch.get("key") and "value" in ch):
                 problems.append("%s: a calibration lesson needs change.key and change.value" % where)
@@ -835,12 +849,70 @@ def config_set(path, key, value):
 
 VOICE_FILE = "VOICE_STANDARDS.md"
 VOICE_OWN_SECTION = "## Your own rules"
+VOICE_CAP_TOKENS = 1500
+VOICE_MODES = ("append", "merge", "replace")
 
 
 def voice_line(l):
     """The rule line a voice lesson adds: its change.text, else its lesson as a list item."""
     text = ((l.get("change") or {}).get("text") or "").strip() or l["lesson"].strip()
     return text if text.startswith("- ") else "- " + text
+
+
+def voice_tokens(text):
+    """The cap's token estimate: characters / 4."""
+    return len(text) // 4
+
+
+def own_rules(text):
+    """The lines of the Artisan's own section of a voice file."""
+    ls, out, inside = text.splitlines(), [], False
+    for ln in ls:
+        if re.match(r"^#{1,2}\s", ln):
+            inside = ln.strip() == VOICE_OWN_SECTION
+            continue
+        if inside:
+            out.append(ln.strip())
+    return out
+
+
+def voice_mode_problem(l):
+    """What is wrong with a voice lesson's change.mode and change.rule, or None."""
+    ch = l.get("change") or {}
+    mode = ch.get("mode", "append")
+    if mode not in VOICE_MODES:
+        return "change.mode must be append, merge or replace"
+    if mode != "append" and not (ch.get("rule") or "").strip():
+        return "a %s needs change.rule: the rule in the Artisan's own section it takes the place of" % mode
+    return None
+
+
+def voice_edit(text, l):
+    """(TEXT with a voice lesson's rule in the Artisan's own section, problem).
+    An append goes at the end of the section and is refused when it would push
+    the file past the cap; a merge or replace takes the place of change.rule,
+    which must be a rule in that section, and is never refused for size."""
+    problem = voice_mode_problem(l)
+    if problem:
+        return text, problem
+    ch = l.get("change") or {}
+    line = voice_line(l)
+    if ch.get("mode", "append") == "append":
+        new = under_section(text, VOICE_OWN_SECTION, line)
+        if voice_tokens(new) > VOICE_CAP_TOKENS:
+            return text, ("would bring the voice file to about %d tokens, past the cap of about %d: "
+                          "keep it as a merge or replace of an existing rule (change.mode, change.rule)"
+                          % (voice_tokens(new), VOICE_CAP_TOKENS))
+        return new, None
+    rule = ch["rule"].strip()
+    if rule not in own_rules(text):
+        return text, "change.rule %r is not a rule in the Artisan's own section (%s); the default block is never edited" % (
+            rule, VOICE_OWN_SECTION)
+    ls = text.splitlines()
+    start = next(i for i, ln in enumerate(ls) if ln.strip() == VOICE_OWN_SECTION)
+    at = next(i for i in range(start + 1, len(ls)) if ls[i].strip() == rule)
+    ls[at] = line
+    return "\n".join(ls) + "\n", None
 
 
 def voice_apply(root, l):
@@ -852,8 +924,12 @@ def voice_apply(root, l):
         return 1
     with open(path) as fh:
         text = fh.read()
+    new, problem = voice_edit(text, l)
+    if problem:
+        print("%s: %s" % (path, problem), file=sys.stderr)
+        return 1
     with open(path, "w") as fh:
-        fh.write(under_section(text, VOICE_OWN_SECTION, voice_line(l)))
+        fh.write(new)
     print(VOICE_FILE)
     return 0
 
@@ -966,8 +1042,9 @@ def main(argv):
         merged = len([t for t in (s.get("tickets") or {}).values() if t.get("status") == "merged"])
         print(gate_costs_table(merge_gate_costs(s, merged), artisan_wait(s)))
         return 0
-    if cmd == "check" and len(args) == 2:
-        return check(args[0], int(args[1]))
+    if cmd == "check" and len(args) >= 2:
+        files = dict(a.split("=", 1) for a in args[2:])
+        return check(args[0], int(args[1]), files)
     if cmd == "render" and len(args) in (3, 4):
         return render(*args)
     if cmd == "questions" and args:

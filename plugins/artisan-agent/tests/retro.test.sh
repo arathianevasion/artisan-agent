@@ -850,3 +850,61 @@ test_the_artisan_can_keep_a_voice_lesson_at_another_level() {
   assert_eq '- No "Great question" openers' "$(tail -1 "$TEST_TMPDIR/project-wt/retro-r1/VOICE_STANDARDS.md")" "landed at product"
   assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "also landed at individual"
 }
+
+# full_voice_file PATH: a voice file whose own rules bring it just under the
+# cap of about 1,500 tokens (6,000 characters), the last rule being "- Rule 0".
+full_voice_file() {
+  local rules=() i=
+  for i in $(seq 1 60); do rules+=("- Filler rule $i: $(printf 'x%.0s' $(seq 1 70))"); done
+  voice_file "$1" "${rules[@]}"
+  while [ "$(wc -c <"$1")" -lt 5960 ]; do printf -- '- pad\n' >>"$1"; done
+  printf -- '- Rule 0\n' >>"$1"
+}
+
+test_a_voice_lesson_past_the_cap_is_refused_unless_it_merges_or_replaces_a_rule() {
+  voice_run
+  full_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am full
+  local lesson='{id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, and no closing offers to help further", role: "both",
+     scope: "this-project", why: "Corrected twice"}'
+  jq -n "{lessons: [$lesson]}" >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "an append past the cap passed the check"
+  assert_contains "$err" "lesson V1: "
+  assert_contains "$err" "cap"
+  # The same content, marked as a merge with an existing rule, is accepted and takes that rule's place.
+  jq -n "{lessons: [$lesson + {change: {mode: \"merge\", rule: \"- Rule 0\"}}]}" >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "a merge was refused"
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md" before=; before=$(default_block "$f")
+  echo '{"V1":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq '- No "Great question" openers, and no closing offers to help further' "$(tail -1 "$f")" "the merged rule"
+  assert_eq 0 "$(grep -c '^- Rule 0$' "$f" || true)" "the merged rule's old line is still there"
+  assert_eq "$before" "$(default_block "$f")" "the default block changed"
+}
+
+test_a_replace_must_name_a_rule_in_the_artisans_own_section() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "a", role: "both", scope: "this-project", why: "b",
+     change: {mode: "replace", rule: "- **R1** Start with the answer or finding."}},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "c", role: "both", scope: "this-project", why: "d",
+     change: {mode: "replace"}},
+    {id: "V3", kind: "voice", reader: "chat", lesson: "e", role: "both", scope: "this-project", why: "f",
+     change: {mode: "rewrite"}}]}' >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  assert_contains "$err" "lesson V1: "
+  assert_contains "$err" "own section"
+  assert_contains "$err" "lesson V2: "
+  assert_contains "$err" "lesson V3: "
+}
+
+test_deliver_refuses_a_voice_lesson_kept_at_a_level_whose_file_it_would_push_past_the_cap() {
+  voice_run
+  full_voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" commit -am full; gq -C "$PROJECT" push origin main
+  jq -n '{lessons: [{id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, and no closing offers to help further",
+    role: "both", scope: "this-project", why: "Corrected twice"}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"product"}' >"$TEST_TMPDIR/d.json"
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the cap"
+  assert_contains "$err" "cap"
+}
