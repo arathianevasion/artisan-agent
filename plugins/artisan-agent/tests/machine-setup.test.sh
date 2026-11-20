@@ -361,3 +361,15 @@ test_setup_skill_makes_the_voice_offer_with_its_reach_and_recommends_yes() {
   assert_contains "$s" "Recommend yes"
   assert_contains "$s" "voice-import no"
 }
+
+test_voice_import_no_fails_and_leaves_no_temp_file_when_host_json_is_invalid() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local d="$CLAUDE_CONFIG_DIR/artisan-agent" rc=0 out=
+  echo 'not json' >"$d/host.json"
+  out=$("$SCRIPT" voice-import no 2>/dev/null) || rc=$?
+  [ "$rc" != 0 ] || fail "reported success on invalid host.json"
+  assert_not_contains "$out" "changed:"
+  assert_eq "not json" "$(cat "$d/host.json")"
+  assert_eq 1 "$(ls "$d" | grep -c '^host.json')" "temp file left behind"
+}

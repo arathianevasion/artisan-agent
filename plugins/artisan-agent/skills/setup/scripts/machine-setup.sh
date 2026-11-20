@@ -168,7 +168,8 @@ cmd_voice_import() {
       if voice_declined; then echo "unchanged: the voice import decline is recorded in $f"; return 0; fi
       mkdir -p "$HOME_DIR"
       tmp="$f.tmp.$$"
-      { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq '.voice_import_declined = true' >"$tmp" && mv -f "$tmp" "$f"
+      { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq '.voice_import_declined = true' >"$tmp" || { rm -f "$tmp"; echo "failed: $f is not valid JSON; decline not recorded" >&2; return 1; }
+      mv -f "$tmp" "$f"
       echo "changed: voice_import_declined is true in $f" ;;
   esac
 }
