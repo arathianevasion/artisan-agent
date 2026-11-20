@@ -12,3 +12,6 @@ Things that must always come back to the Artisan. Only the Artisan changes this 
 
 - `pr-boundaries`: one PR per slice (set at setup).
 
+## Checks
+
+- `bash plugins/artisan-agent/tests/run.sh -j 8`: proven to fail on 2026-11-19, breaking: an `exit 1` appended to plugins/artisan-agent/scripts/state.sh (runs_locally: always)
