@@ -202,6 +202,16 @@ test_report_renders_voice_overlap_flags_in_a_table() {
   assert_contains "$out" "| no-filler-openers | writing-for-agents | upstream now bans filler openers |"
 }
 
+test_report_on_a_fixture_judgement_renders_voice_overlap_rows() {
+  local w="$TEST_TMPDIR/rw"; mkdir -p "$w"
+  printf 'x\taaaaaaa\tbbbbbbb\n' >"$w/moved.tsv"; : >"$w/mechanical.txt"
+  echo '{"port":[],"behaviour":[],"artisan_md":[],"breaking":[],"voice_overlap":[{"skill":"writing-for-agents","rule":"no-openers","why":"covered"},{"skill":"grilling","rule":"no-recaps","why":"covered too"}]}' >"$w/judgement.json"
+  setup_env; mk_upstream ""
+  local out; out=$(bash "$UC" report "$w" 2>&1) || true
+  assert_contains "$out" "| no-openers | writing-for-agents | covered |"
+  assert_contains "$out" "| no-recaps | grilling | covered too |"
+}
+
 test_upstream_notes_are_read_where_the_retro_delivers_them() {
   # retro.sh delivers to $ARTISAN_HOME/upstream-notes.md; this reads the same file.
   assert_contains "$(grep -n 'upstream-notes.md' "$PLUGIN_ROOT/skills/retro/scripts/retro.sh")" 'HOME_DIR/upstream-notes.md'

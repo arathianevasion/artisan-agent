@@ -208,6 +208,7 @@ cmd_run() {
     printf -- '- Dependency skills (guard/dependencies.list): %s\n' "$(dependency_names | tr '\n' ' ')"
     printf -- '- Write your answer to: %s\n' "$work/judgement.json"
     printf -- '- Mechanical check result: %s\n' "$work/mechanical.txt"
+    printf -- '- Default voice rules to compare upstream against (read the ones that exist): %s\n' "$HOME_DIR/VOICE_STANDARDS.md"
     if [ -s "$HOME_DIR/upstream-notes.md" ]; then
       printf '\n### Upstream notes the retro has kept (individual home upstream-notes.md)\n\n'
       cat "$HOME_DIR/upstream-notes.md"
