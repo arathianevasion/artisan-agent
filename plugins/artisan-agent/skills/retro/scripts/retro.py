@@ -1063,7 +1063,9 @@ def main(argv):
     if cmd == "voice-levels" and len(args) == 1:
         doc = load(args[0])
         for l in doc.get("lessons") or []:
-            if l.get("kind") == "voice" and voice_lesson(l, l["id"]):
+            problems = voice_lesson(l, "lesson %s" % l["id"]) if l.get("kind") == "voice" else []
+            if problems:
+                print("\n".join(problems), file=sys.stderr)
                 return 1
         print(json.dumps(doc, indent=2))
         return 0

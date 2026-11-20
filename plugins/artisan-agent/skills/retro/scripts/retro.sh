@@ -306,8 +306,8 @@ home_file_for() { # kind -> the individual standards file and section a generali
 
 voice_level() { # id level: the Artisan kept a voice lesson at LEVEL, not its default
   jq --arg id "$1" --arg lv "$2" '.lessons |= map(if .id == $id then .level = $lv else . end)' "$CHECKED" >"$CHECKED.tmp"
-  py voice-levels "$CHECKED.tmp" >"$CHECKED" || die "could not set the level of voice lesson $1"
-  rm -f "$CHECKED.tmp"
+  py voice-levels "$CHECKED.tmp" >"$CHECKED.new" || { rm -f "$CHECKED.tmp" "$CHECKED.new"; die "could not set the level of voice lesson $1"; }
+  mv "$CHECKED.new" "$CHECKED"; rm -f "$CHECKED.tmp"
 }
 
 cmd_deliver() {
