@@ -247,6 +247,10 @@ _Avoid_: personal standards, preferences
 How agents write any prose a person reads: chat, tickets, specs, plans, comments, PR bodies, commit messages, ADRs, glossary entries, decision cards and evidence records. Held at the team, product and individual levels, and seeded with plain-language rules against AI filler. Code, code comments and briefs written for agents are outside them.
 _Avoid_: voicing preferences, tone guide, style guide
 
+**User journey**:
+The ordered path one kind of person who uses a product takes through it, from arriving to getting what they came for: at each step, their goal, what they do and see, and where they go next. A product has several, and every feature has to find its place in one. "User" here means a person using the product being built, such as a player; the Artisan is never called a user.
+_Avoid_: customer journey, user flow, funnel
+
 **Area**:
 A named part of a project, defined by its paths, that guardrails and gates can apply to separately. A ticket belongs to every area it touches, and the strictest setting wins.
 _Avoid_: module, zone
