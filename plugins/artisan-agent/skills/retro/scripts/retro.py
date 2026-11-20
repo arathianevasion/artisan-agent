@@ -433,8 +433,10 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
 
 def check(lessons_path, threshold, voice_files=None):
     doc = load(lessons_path)
-    # The voice files as they stand, by level; each kept-by-default voice
-    # lesson is applied in turn, so the cap counts every lesson before it.
+    # The voice files as they stand, by level. Each voice lesson is measured
+    # alone against its file: the Artisan has kept none of them yet, so a
+    # lesson they drop never counts toward the cap. deliver applies the kept
+    # ones in turn, so there the cap counts only the lessons kept.
     voice = {}
     for level, path in (voice_files or {}).items():
         if os.path.isfile(path):
@@ -475,7 +477,7 @@ def check(lessons_path, threshold, voice_files=None):
             problems += voice_lesson(l, where)
             problem = voice_mode_problem(l)
             if not problem and l.get("level") in voice:
-                voice[l["level"]], problem = voice_edit(voice[l["level"]], l)
+                problem = voice_edit(voice[l["level"]], l)[1]
             if problem:
                 problems.append("%s: %s" % (where, problem))
         elif kind == "calibration":
