@@ -909,6 +909,58 @@ test_deliver_refuses_a_voice_lesson_kept_at_a_level_whose_file_it_would_push_pas
   assert_contains "$err" "cap"
 }
 
+# --- the cap counts only kept voice lessons (#300) ----------------------------
+
+# roomy_voice_file PATH: a voice file of 5,940 characters (about 1,485 tokens),
+# with room under the cap for one of two_voice_lessons but not both.
+roomy_voice_file() {
+  local rules=() i=
+  for i in $(seq 1 60); do rules+=("- Filler rule $i: $(printf 'x%.0s' $(seq 1 70))"); done
+  voice_file "$1" "${rules[@]}"
+  while [ "$(wc -c <"$1")" -lt 5934 ]; do printf -- '- pad\n' >>"$1"; done
+  printf '%*s\n' $((5939 - $(wc -c <"$1"))) '' | tr ' ' '-' >>"$1"
+}
+
+# two_voice_lessons: two chat voice lessons, each a 34-character rule line.
+two_voice_lessons() {
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, ever", role: "both",
+     scope: "this-project", why: "Corrected in the run chat"},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "No closing offers to help further", role: "both",
+     scope: "this-project", why: "Corrected at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+}
+
+test_check_measures_each_voice_lesson_against_the_file_as_it_stands() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  assert_eq 5940 "$(wc -c <"$ARTISAN_HOME/VOICE_STANDARDS.md" | tr -d ' ')" "the roomy file's size"
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "a lesson that fits alone was refused for one before it"
+  assert_eq "V1 V2" "$(jq -r '[.lessons[].id] | join(" ")' "$RUN_DIR/retro/checked.json")" "both lessons checked"
+}
+
+test_a_dropped_voice_lesson_never_makes_a_kept_one_look_over_the_cap() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"no","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "the kept lesson was refused"
+  assert_eq '- No closing offers to help further' "$(tail -1 "$ARTISAN_HOME/VOICE_STANDARDS.md")" "the kept rule"
+  assert_eq 0 "$(grep -c 'Great question' "$ARTISAN_HOME/VOICE_STANDARDS.md" || true)" "the dropped rule landed"
+}
+
+test_deliver_counts_every_kept_voice_lesson_toward_the_cap() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "two kept lessons went past the cap"
+  assert_contains "$err" "cap"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+}
+
 test_the_round_says_a_voice_lesson_can_be_kept_at_another_level() {
   voice_run; voice_lessons
   "$RETRO" check "$RUN_DIR" >/dev/null
