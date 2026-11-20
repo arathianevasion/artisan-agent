@@ -725,3 +725,66 @@ test_the_retro_skill_shows_guardrail_healths_open_decision_proposals_with_the_ba
   assert_contains "$signals" "guardrail health"
   assert_contains "$signals" "criterion 8"
 }
+
+# --- voice lessons (#276) ----------------------------------------------------
+
+# voice_file PATH [OWN_RULES...]: a voice standards file shaped like the
+# template: the default rules in their marked block, then the Artisan's own
+# section holding OWN_RULES.
+voice_file() {
+  local path=$1 r=; shift
+  {
+    printf '# Voice standards\n\n## Which level wins\n\nBy reader (ADR 0003).\n\n'
+    printf '<!-- voice-default v1 start: the plugin'"'"'s default rules. -->\n## Default rules\n\n'
+    printf -- '- **R1** Start with the answer or finding.\n- **R10** At most one em-dash per paragraph.\n'
+    printf '<!-- voice-default end -->\n\n## Your own rules\n\n<!-- Add your rules below. A new default version never touches this section. -->\n'
+    for r in "$@"; do printf '%s\n' "$r"; done
+  } >"$path"
+}
+
+# The default block of a voice file, markers included.
+default_block() { awk '/<!-- voice-default v/ { f = 1 } f { print } /<!-- voice-default end/ { f = 0 }' "$1"; }
+
+# voice_run: the sample run with a voice file at the individual and product
+# levels, both committed.
+voice_run() {
+  sample_run
+  voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m voice
+  voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m voice; gq -C "$PROJECT" push origin main
+  mkdir -p "$RUN_DIR/retro"
+}
+
+test_a_voice_lesson_gets_a_voice_file_home_at_the_level_its_reader_sets() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project",
+     why: "Corrected twice in the run chat"},
+    {id: "V2", kind: "voice", reader: "shared", lesson: "PR bodies lead with what changed for the user", role: "product",
+     scope: "this-project", why: "The PR for #10 opened with a recap"},
+    {id: "V3", kind: "voice", lesson: "Name the ticket in a finding title", role: "engineering", scope: "this-project",
+     why: "Two findings had no ticket"},
+    {id: "V4", kind: "voice", reader: "chat", level: "team", lesson: "No emoji", role: "both", scope: "this-project",
+     why: "Asked for at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+  local out=; out=$("$RETRO" check "$RUN_DIR")
+  local c="$RUN_DIR/retro/checked.json"
+  assert_eq individual "$(jq -r '.lessons[] | select(.id == "V1") | .level' "$c")" "chat defaults to individual"
+  assert_eq product "$(jq -r '.lessons[] | select(.id == "V2") | .level' "$c")" "shared text defaults to product"
+  assert_eq product "$(jq -r '.lessons[] | select(.id == "V3") | .level' "$c")" "an unclear reader takes the shared order"
+  assert_eq team "$(jq -r '.lessons[] | select(.id == "V4") | .level' "$c")" "a level the Artisan picked is kept"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "V1") | .home' "$c")" "VOICE_STANDARDS.md"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "V1") | .home' "$c")" "individual"
+  assert_eq 'individual project team' "$(jq -r '[.lessons[] | select(.id == "V1" or .id == "V2" or .id == "V4") | .delivery] | join(" ")' "$c")" deliveries
+  assert_contains "$out" "V1	batch	voice"
+}
+
+test_check_refuses_a_voice_lesson_with_an_unknown_reader_or_level() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "everyone", lesson: "a", role: "both", scope: "this-project", why: "b"},
+    {id: "V2", kind: "voice", level: "company", lesson: "c", role: "both", scope: "this-project", why: "d"}]}' >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  assert_contains "$err" "lesson V1: reader"
+  assert_contains "$err" "lesson V2: level"
+}

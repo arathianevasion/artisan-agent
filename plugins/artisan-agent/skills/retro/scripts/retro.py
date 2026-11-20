@@ -47,7 +47,17 @@ HOMES = {
     "pipeline": ("a ticket in arathianevasion/artisan-agent", "pipeline"),
     "upstream": ("the upstream check", "individual"),
     "experience": ("the satisfaction record", "individual"),
+    "voice": ("voice standards (VOICE_STANDARDS.md)", "by level"),
 }
+# A voice lesson's level -> (home as shown, where it is delivered). The
+# default level follows who reads the text (ADR 0003): chat only the Artisan
+# reads is individual; shared text, and a reader left unclear, is product.
+VOICE_LEVELS = {
+    "individual": ("voice standards, individual level (VOICE_STANDARDS.md in the individual home)", "individual"),
+    "product": ("voice standards, product level (VOICE_STANDARDS.md in the project)", "project"),
+    "team": ("voice standards, team level (a drafted line for the team guardrails repo)", "team"),
+}
+VOICE_READERS = {"chat": "individual", "shared": "product"}
 TASTE = ("engineering-taste", "product-taste", "domain")
 PROMOTABLE = ("mechanical", "engineering-taste", "product-taste")
 APPROVALS = re.compile(r"^\s*(approve|approved|clear|cleared|pass|passed|yes|ok|accept|accepted)\b", re.I)
@@ -445,7 +455,9 @@ def check(lessons_path, threshold):
             kind = l["kind"] = "mechanical"
         l["home"], l["delivery"] = HOMES[kind]
         ch = l.get("change") or {}
-        if kind == "calibration":
+        if kind == "voice":
+            problems += voice_lesson(l, where)
+        elif kind == "calibration":
             if not (ch.get("key") and "value" in ch):
                 problems.append("%s: a calibration lesson needs change.key and change.value" % where)
         elif l["delivery"] == "project":
@@ -488,6 +500,18 @@ def check(lessons_path, threshold):
     doc["smooth"] = not out
     print(json.dumps(doc, indent=2))
     return 0
+
+
+def voice_lesson(l, where):
+    """Gives a voice lesson its level, home and delivery; returns its problems."""
+    reader, level = l.get("reader"), l.get("level")
+    if reader is not None and reader not in VOICE_READERS:
+        return ["%s: reader must be chat or shared" % where]
+    if level is not None and level not in VOICE_LEVELS:
+        return ["%s: level must be individual, product or team" % where]
+    l["level"] = level or VOICE_READERS.get(reader, "product")
+    l["home"], l["delivery"] = VOICE_LEVELS[l["level"]]
+    return []
 
 
 def money(x):
