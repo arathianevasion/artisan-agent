@@ -247,12 +247,16 @@ _Avoid_: personal standards, preferences
 How agents write any prose a person reads: chat, tickets, specs, plans, comments, PR bodies, commit messages, ADRs, glossary entries, decision cards and evidence records. Held at the team, product and individual levels, and seeded with plain-language rules against AI filler. Code, code comments and briefs written for agents are outside them.
 _Avoid_: voicing preferences, tone guide, style guide
 
+**Design standards**:
+A product's design conventions for its users: its personas, where its design system lives, the UX patterns it follows and avoids, its accessibility floor, and the design choices that must come back to an Artisan. Held at the team, product and individual levels; the product level wins, then team, then individual. They point to the design system rather than copying it.
+_Avoid_: style guide, brand guide, design conventions
+
 **User journey**:
 The ordered path one kind of person who uses a product takes through it, from arriving to getting what they came for: at each step, their goal, what they do and see, and where they go next. A product has several, and every feature has to find its place in one. "User" here means a person using the product being built, such as a player; the Artisan is never called a user.
 _Avoid_: customer journey, user flow, funnel
 
 **Persona**:
-One kind of person who uses a product, named by why they come to it. Each user journey belongs to one persona, and a persona can have several. A product's personas are part of its design conventions.
+One kind of person who uses a product, named by why they come to it. Each user journey belongs to one persona, and a persona can have several. A product's personas are kept in its design standards.
 _Avoid_: actor, user type, audience
 
 **Design stage**:
