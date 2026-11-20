@@ -25,7 +25,7 @@ _Avoid_: dashboard, UI
 ### People
 
 **Artisan**:
-The person who holds the roles in a project and instils taste in how its problems are solved.
+A person building on a product, in any role such as designer, engineer or product manager, who instils taste in how its problems are solved. A project can have several Artisans, each holding some of its roles.
 _Avoid_: user, human orchestrator, owner (as a role), craftsman
 
 **Individual home**:
