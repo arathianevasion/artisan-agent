@@ -41,6 +41,17 @@
 #       throwaway worktree (with --pr, pushed and opened as a PR); it applies
 #       from the next wave once merged. Refuses a loosening (5): only a retro,
 #       with evidence, loosens. Refuses a --who that names an agent (2).
+#   guardrails.sh voice --level individual|product|team --who NAME --reason TEXT --text TEXT
+#       [--mode append|merge|replace --rule EXISTING-RULE]
+#       write a wording correction to the voice standards (ARTISAN.md rule 5),
+#       through the retro's voice-lesson writer, cap included. individual: a
+#       commit in the individual home. product: a commit on branch doc/voice-<now>
+#       in a doc-change worktree (doc-change.sh), printed for the Artisan to land
+#       with doc-change.sh finish; never the main checkout. team: the drafted
+#       line is printed, for the Artisan to land in the team repo by PR. Exit 5:
+#       refused past the cap (keep it as a merge or replace); 1 any other
+#       failure of the writer (no voice file, a rule that isn't there). Refuses a --who
+#       that names an agent (2).
 #
 #   guardrails.sh loosen --level individual|product|team --who NAME --reason TEXT
 #       --id ID --strict N --evidence TEXT [--value V] [--rule TEXT] [--run RUN-ID]
@@ -547,6 +558,60 @@ move_guardrail() {
   fi
 }
 
+# ------------------------------------------------------------------- voice
+
+cmd_voice() {
+  local level="" who="" reason="" text="" mode=append rule=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --level) level=${2:-}; shift 2 ;; --who) who=${2:-}; shift 2 ;;
+      --reason) reason=${2:-}; shift 2 ;; --text) text=${2:-}; shift 2 ;;
+      --mode) mode=${2:-}; shift 2 ;; --rule) rule=${2:-}; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  case "$level" in individual | product | team) ;; *) usage ;; esac
+  [ -n "$who" ] && [ -n "$reason" ] && [ -n "$text" ] || usage
+  case "$(printf %s "$who" | tr 'A-Z' 'a-z')" in
+    agent* | worker* | orchestrator* | verifier* | claude*) state_die 2 "guardrails.sh: only a person moves a guardrail; --who $who names an agent" ;;
+  esac
+  local retro=$PLUGIN_DIR/skills/retro/scripts/retro.py lesson=
+  lesson=$(mktemp "${TMPDIR:-/tmp}/voice-lesson.XXXXXX")
+  jq -nc --arg t "$text" --arg m "$mode" --arg r "$rule" \
+    '{kind: "voice", lesson: $t, change: ({mode: $m} + (if $r == "" then {} else {rule: $r} end))}' >"$lesson"
+  local msg=
+  msg=$(printf 'Voice correction: %s\n\nOrigin: %s, %s' "$text" "$who" "$reason")
+  local m= dir= err=
+  # a refusal past the cap is exit 5; any other failure of the writer is 1
+  refuse_voice() { printf '%s\n' "$1" >&2; case "$1" in *"past the cap"*) exit 5 ;; *) exit 1 ;; esac; }
+  case "$level" in
+    team)
+      python3 "$retro" voice-line "$lesson" | sed 's/^/team line to land by PR: /'
+      rm -f "$lesson" ;;
+    individual)
+      dir=$HOME_DIR
+      [ -d "$dir/.git" ] || { rm -f "$lesson"; die "no individual home at $dir; run /artisan-agent:setup first"; }
+      err=$(python3 "$retro" apply "$dir" "$lesson" 2>&1 >/dev/null) \
+        || { rm -f "$lesson"; refuse_voice "$err"; }
+      rm -f "$lesson"
+      commit_in "$dir" "$msg" VOICE_STANDARDS.md
+      printf 'individual: committed the voice correction in %s\n' "$dir" ;;
+    product)
+      m=$(main_checkout)
+      dir=$(cd "$m" && "$SCRIPT_DIR/doc-change.sh" start "voice-$(state_now)-$$") || { rm -f "$lesson"; die "could not start a doc-change worktree"; }
+      if ! err=$(python3 "$retro" apply "$dir" "$lesson" 2>&1 >/dev/null); then
+        rm -f "$lesson"
+        git -C "$m" worktree remove --force "$dir" >/dev/null 2>&1 || true
+        git -C "$m" branch -q -D "doc/$(basename "$dir" | sed 's/^doc-//')" >/dev/null 2>&1 || true
+        refuse_voice "$err"
+      fi
+      rm -f "$lesson"
+      commit_in "$dir" "$msg" VOICE_STANDARDS.md
+      printf 'product: committed the voice correction in the doc-change worktree %s; land it with doc-change.sh finish %s\n' \
+        "$dir" "$(basename "$dir" | sed 's/^doc-//')" ;;
+  esac
+}
+
 # -------------------------------------------------------------------- main
 
 [ $# -ge 1 ] || usage
@@ -559,5 +624,6 @@ case "$cmd" in
   table) cmd_table "$@" ;;
   tighten) cmd_tighten "$@" ;;
   loosen) cmd_loosen "$@" ;;
+  voice) cmd_voice "$@" ;;
   *) usage ;;
 esac
