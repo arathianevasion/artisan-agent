@@ -34,6 +34,8 @@ GH=${GH_BIN:-gh}
 CLAUDE_BIN=${ARTISAN_CLAUDE_BIN:-claude}
 BRANCH=artisan-agent/setup
 POINTER='Start with `/artisan-agent:craft`.'
+VOICE=VOICE_STANDARDS.md
+VOICE_IMPORT="@$VOICE"
 HOOK_FILE=.claude/hooks/artisan-agent-block-replaced.sh
 MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
@@ -450,6 +452,19 @@ EOT
     echo "changed: ${f##*/} points at /artisan-agent:craft"
   fi
 
+  # The product voice standards (#273): the template, seeded if missing and never
+  # overwritten, and its @ import on the line after the front-door pointer.
+  if [ ! -e "$wt/$VOICE" ]; then
+    cp "$ROOT/templates/$VOICE" "$wt/$VOICE"
+    echo "changed: created $VOICE"
+  fi
+  if ! grep -qsxF "$VOICE_IMPORT" "$f"; then
+    awk -v p="$POINTER" -v imp="$VOICE_IMPORT" '{ print } !done && index($0, p) { print imp; done = 1 }' "$f" >"$tmp/agents.md"
+    cp "$tmp/agents.md" "$f"
+    echo "changed: ${f##*/} imports $VOICE"
+  fi
+  echo "tune: the voice agents write in is $VOICE at the repo root; add your own rules under \"## Your own rules\""
+
   git -C "$wt" add -A
   if git -C "$wt" diff --cached --quiet; then
     echo "unchanged: nothing to commit"
@@ -597,7 +612,7 @@ cmd_finish() {
   url=$(open_pr "$wt")
   if [ -z "$url" ]; then
     url=$(cd "$wt" && "$GH" pr create --head "$BRANCH" --base "${base#origin/}" --title "Set up Artisan Agent" \
-      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, and the front-door pointer. Nothing existing was overwritten.") \
+      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
       || die "gh pr create failed; the branch is pushed and the worktree kept at $wt"
     echo "pr: $url"
   else
