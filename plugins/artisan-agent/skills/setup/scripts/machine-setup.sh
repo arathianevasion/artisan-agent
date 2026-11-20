@@ -15,6 +15,12 @@
 #                                   in host.json beside merge_gate: with no argument, print the
 #                                   setting and its source (host.json, ARTISAN_MERGE_BATCH or default)
 #                                   as JSON; with one, record it (other keys kept; a rerun changes nothing)
+#   machine-setup.sh voice-import [state|yes|no]
+#                                   the offer (#275) to @-import the individual voice file in the user
+#                                   CLAUDE.md. state (the default) prints JSON {due, state}: due only when
+#                                   no import line exists and no decline is recorded. yes adds the line once
+#                                   (other content kept); no records voice_import_declined in host.json
+#                                   (other keys kept) and leaves CLAUDE.md alone
 #
 # Everything lives under CLAUDE_CONFIG_DIR (default $HOME/.claude). Nothing is deleted:
 # skill copies move to $CFG/skills/.trash. ARTISAN_CLAUDE_BIN overrides the claude binary.
@@ -66,11 +72,12 @@ cmd_init() {
   local f= path= paths="" ident="" did=0 tools_rc=0
   cmd_check || tools_rc=1   # report now, still set up; the exit status stays non-zero at the end
   mkdir -p "$HOME_DIR"
-  for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md satisfaction.jsonl; do
+  for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md VOICE_STANDARDS.md satisfaction.jsonl; do
     path=$HOME_DIR/$f
     [ -e "$path" ] && continue
     case $f in
       satisfaction.jsonl) : >"$path" ;;
+      VOICE_STANDARDS.md) cp "$HERE/../../../templates/VOICE_STANDARDS.md" "$path" ;;
       *) standards_file "Individual $(printf %s "${f%.md}" | tr "A-Z_" "a-z ")" >"$path" ;;
     esac
     paths="$paths $f"
@@ -129,6 +136,42 @@ cmd_merge_batch() {
   tmp="$f.tmp.$$"
   { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq --arg m "$want" '.merge_batch = $m' >"$tmp" && mv -f "$tmp" "$f"
   echo "changed: merge_batch is $want in $f"
+}
+
+# The individual voice file's import (#275) lives in the user-level CLAUDE.md, so it reaches every
+# repo on the machine. An existing line for the file, in any spelling of its path, means no offer.
+voice_import_line() { printf '@%s/VOICE_STANDARDS.md' "$HOME_DIR"; }
+voice_imported() {
+  grep -qsE '^@.*artisan-agent/VOICE_STANDARDS\.md[[:space:]]*$' "$CFG/CLAUDE.md"
+}
+voice_declined() {
+  [ -f "$HOME_DIR/host.json" ] && [ "$(jq -r '.voice_import_declined // false' "$HOME_DIR/host.json")" = true ]
+}
+
+cmd_voice_import() {
+  local act="${1:-state}" f="$HOME_DIR/host.json" tmp= claude_md="$CFG/CLAUDE.md"
+  case "$act" in state | yes | no) ;; *) echo "usage: machine-setup.sh voice-import [state|yes|no]" >&2; return 2 ;; esac
+  command -v jq >/dev/null 2>&1 || { echo "missing: jq"; return 1; }
+  case "$act" in
+    state)
+      if voice_imported; then echo '{"due":false,"state":"imported"}'
+      elif voice_declined; then echo '{"due":false,"state":"declined"}'
+      else echo '{"due":true,"state":"due"}'; fi ;;
+    yes)
+      if voice_imported; then echo "unchanged: $claude_md already imports the voice file"; return 0; fi
+      mkdir -p "$CFG"
+      # A file with no final newline gets one first, so the import is a line of its own.
+      if [ -s "$claude_md" ] && [ -n "$(tail -c1 "$claude_md")" ]; then echo >>"$claude_md"; fi
+      printf '%s\n' "$(voice_import_line)" >>"$claude_md"
+      echo "changed: $claude_md imports $(voice_import_line)" ;;
+    no)
+      if voice_declined; then echo "unchanged: the voice import decline is recorded in $f"; return 0; fi
+      mkdir -p "$HOME_DIR"
+      tmp="$f.tmp.$$"
+      { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq '.voice_import_declined = true' >"$tmp" || { rm -f "$tmp"; echo "failed: $f is not valid JSON; decline not recorded" >&2; return 1; }
+      mv -f "$tmp" "$f"
+      echo "changed: voice_import_declined is true in $f" ;;
+  esac
 }
 
 cmd_scan() {
@@ -230,5 +273,6 @@ case ${1:-} in
       echo "usage: machine-setup.sh merge-batch [on|off]" >&2; exit 2
     fi
     cmd_merge_batch "$@" ;;
-  *) echo "usage: machine-setup.sh init|check|scan|remove ID...|merge-gate [auto|local|ci]|merge-batch [on|off]" >&2; exit 2 ;;
+  voice-import) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh voice-import [state|yes|no]" >&2; exit 2; }; cmd_voice_import "$@" ;;
+  *) echo "usage: machine-setup.sh init|check|scan|remove ID...|merge-gate [auto|local|ci]|merge-batch [on|off]|voice-import [state|yes|no]" >&2; exit 2 ;;
 esac

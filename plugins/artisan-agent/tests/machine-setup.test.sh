@@ -278,3 +278,98 @@ test_machine_setup_leaves_local_suite_priority_unset() {
   assert_eq null "$(jq '.local_suite_priority' "$f")"
   assert_eq "background default" "$(ARTISAN_MERGE_GATE=local "$PLUGIN_ROOT/scripts/merge-gate.sh" show | jq -r '"\(.priority) \(.priority_source)"')"
 }
+
+# ---- individual voice file and its import (#275)
+
+VOICE_IMPORT_LINE() { echo "@$CLAUDE_CONFIG_DIR/artisan-agent/VOICE_STANDARDS.md"; }
+voice_state() { "$SCRIPT" voice-import state | jq -r '"\(.due) \(.state)"'; }
+
+test_init_seeds_the_individual_voice_file_with_the_marked_block_and_commits_it() {
+  seed_machine
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent"
+  "$SCRIPT" init >/dev/null
+  [ -f "$h/VOICE_STANDARDS.md" ] || fail "no individual voice file"
+  assert_contains "$(cat "$h/VOICE_STANDARDS.md")" "voice-default v1 start"
+  assert_eq "" "$(git -C "$h" status --porcelain)" "voice file committed"
+  git -C "$h" ls-files --error-unmatch VOICE_STANDARDS.md >/dev/null || fail "voice file not tracked"
+}
+
+test_init_leaves_an_existing_voice_file_untouched() {
+  seed_machine
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent"
+  mkdir -p "$h"
+  echo "my voice" >"$h/VOICE_STANDARDS.md"
+  "$SCRIPT" init >/dev/null
+  assert_eq "my voice" "$(cat "$h/VOICE_STANDARDS.md")"
+}
+
+test_voice_import_state_is_due_only_with_no_import_line_and_no_decline() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  assert_eq "true due" "$(voice_state)"
+  printf '@/some/other/VOICE_STANDARDS.md\n' >"$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  assert_eq "true due" "$(voice_state)" "another file's import is not ours"
+  VOICE_IMPORT_LINE >>"$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  assert_eq "false imported" "$(voice_state)"
+}
+
+test_voice_import_yes_adds_the_line_once_and_keeps_the_other_content() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  printf '# Mine\n\nbe nice\n' >"$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  "$SCRIPT" voice-import yes >/dev/null
+  "$SCRIPT" voice-import yes >/dev/null
+  local f="$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  assert_eq 1 "$(grep -cxF "$(VOICE_IMPORT_LINE)" "$f")" "import line count"
+  assert_contains "$(cat "$f")" "be nice"
+  assert_eq "# Mine" "$(head -1 "$f")"
+  assert_eq "false imported" "$(voice_state)"
+}
+
+test_voice_import_yes_creates_the_user_claude_md_when_missing() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  "$SCRIPT" voice-import yes >/dev/null
+  assert_eq "$(VOICE_IMPORT_LINE)" "$(cat "$CLAUDE_CONFIG_DIR/CLAUDE.md")"
+}
+
+test_voice_import_no_records_the_decline_keeps_host_json_and_leaves_claude_md_alone() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local f="$CLAUDE_CONFIG_DIR/artisan-agent/host.json"
+  echo '{"merge_gate": "local", "x": 1}' >"$f"
+  printf 'keep me\n' >"$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  "$SCRIPT" voice-import no >/dev/null
+  assert_eq "local 1 true" "$(jq -r '"\(.merge_gate) \(.x) \(.voice_import_declined)"' "$f")"
+  assert_eq "keep me" "$(cat "$CLAUDE_CONFIG_DIR/CLAUDE.md")"
+  assert_eq "false declined" "$(voice_state)"
+}
+
+test_voice_import_rejects_an_unknown_argument() {
+  seed_machine
+  local rc=0
+  "$SCRIPT" voice-import maybe >/dev/null 2>&1 || rc=$?
+  assert_eq 2 "$rc"
+}
+
+test_setup_skill_makes_the_voice_offer_with_its_reach_and_recommends_yes() {
+  local s=
+  s=$(cat "$PLUGIN_ROOT/skills/setup/SKILL.md")
+  assert_contains "$s" "voice-import state"
+  assert_contains "$s" "every repo on the machine"
+  assert_contains "$s" "repos without Artisan Agent"
+  assert_contains "$s" "Recommend yes"
+  assert_contains "$s" "voice-import no"
+}
+
+test_voice_import_no_fails_and_leaves_no_temp_file_when_host_json_is_invalid() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local d="$CLAUDE_CONFIG_DIR/artisan-agent" rc=0 out=
+  echo 'not json' >"$d/host.json"
+  out=$("$SCRIPT" voice-import no 2>/dev/null) || rc=$?
+  [ "$rc" != 0 ] || fail "reported success on invalid host.json"
+  assert_not_contains "$out" "changed:"
+  assert_eq "not json" "$(cat "$d/host.json")"
+  assert_eq 1 "$(ls "$d" | grep -c '^host.json')" "temp file left behind"
+}
