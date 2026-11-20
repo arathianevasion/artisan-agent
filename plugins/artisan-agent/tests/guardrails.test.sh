@@ -300,3 +300,64 @@ test_a_base_main_contains_still_merges_without_asking() {
   "$G" wave-start "$RUN_DIR" 2 | jq -e '.main_merged == true' >/dev/null
   assert_eq 0 "$(state_get '.decisions | length')"
 }
+
+# --- voice corrections (#278) -------------------------------------------------
+
+# voice_files: a voice file in the individual home and in the product, committed.
+voice_files() {
+  setup_levels
+  local d=
+  for d in "$ARTISAN_HOME" "$PROJECT"; do
+    printf '# Voice standards\n\n## Default rules\n\n- **R1** Lead with the answer.\n\n## Your own rules\n\n' >"$d/VOICE_STANDARDS.md"
+    commit_all "$d" "voice"
+  done
+}
+
+test_an_individual_voice_correction_is_a_commit_in_the_home() {
+  voice_files
+  "$G" voice --level individual --who Andrew --reason "chat opener" --text "No Great question openers" >/dev/null
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "- No Great question openers"
+  assert_contains "$(git -C "$ARTISAN_HOME" log -1 --format=%B)" "Voice correction: No Great question openers"
+  assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)"
+}
+
+test_a_product_voice_correction_goes_into_a_doc_change_worktree_not_the_main_checkout() {
+  voice_files
+  local before= out= wt=
+  before=$(git -C "$PROJECT" rev-parse HEAD)
+  out=$("$G" voice --level product --who Andrew --reason "PR bodies" --text "PR bodies lead with the change")
+  assert_contains "$out" "doc-change worktree"
+  wt=$(printf '%s' "$out" | sed -E 's/.*worktree ([^;]*);.*/\1/')
+  assert_contains "$(cat "$wt/VOICE_STANDARDS.md")" "- PR bodies lead with the change"
+  assert_eq "$before" "$(git -C "$PROJECT" rev-parse HEAD)" "main checkout moved"
+  assert_not_contains "$(cat "$PROJECT/VOICE_STANDARDS.md")" "PR bodies lead"
+  assert_contains "$(git -C "$wt" log -1 --format=%s)" "Voice correction"
+}
+
+test_a_voice_correction_past_the_cap_is_refused_and_writes_nothing() {
+  voice_files
+  local big= head=
+  big=$(printf 'x%.0s' $(seq 1 6200))
+  printf -- '- %s\n' "$big" >>"$ARTISAN_HOME/VOICE_STANDARDS.md"
+  commit_all "$ARTISAN_HOME" fill
+  head=$(git -C "$ARTISAN_HOME" rev-parse HEAD)
+  assert_status 5 "$G" voice --level individual --who Andrew --reason r --text "one more rule to push it over the cap"
+  assert_contains "$("$G" voice --level individual --who Andrew --reason r --text "one more rule to push it over the cap" 2>&1 || true)" "past the cap"
+  assert_eq "$head" "$(git -C "$ARTISAN_HOME" rev-parse HEAD)"
+  printf -- '- %s\n' "$big" >>"$PROJECT/VOICE_STANDARDS.md"
+  commit_all "$PROJECT" fill
+  assert_status 5 "$G" voice --level product --who Andrew --reason r --text "one more rule to push it over the cap"
+  assert_eq "" "$(git -C "$PROJECT" worktree list | grep doc-voice || true)"
+}
+
+test_a_team_voice_correction_is_drafted_not_written() {
+  voice_files
+  local out=
+  out=$("$G" voice --level team --who Andrew --reason r --text "No emoji")
+  assert_contains "$out" "team line to land by PR: - No emoji"
+}
+
+test_a_voice_correction_by_an_agent_is_refused() {
+  voice_files
+  assert_status 2 "$G" voice --level individual --who agent --reason r --text "x"
+}
