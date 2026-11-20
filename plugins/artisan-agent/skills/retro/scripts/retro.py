@@ -665,6 +665,10 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
             out.append("| %s | %s | %s | %s | %s | %s |" % (l["id"], cell(l["lesson"]), cell(home), l["role"],
                                                        l["scope"], cell(l["why"])))
         out += ["", "Recommend: yes to all. Say which to drop, if any.", ""]
+    if any(l.get("kind") == "voice" for l in lessons):
+        out += ["A voice lesson lands at the level shown, set by who reads the text. "
+                "Answer \"individual\", \"product\" or \"team\" for one to land it there instead "
+                "(team: a drafted line for you to land in the team guardrails repo by PR).", ""]
     if asks:
         out += ["### Judgement calls", ""]
         for i, l in enumerate(asks, 1):

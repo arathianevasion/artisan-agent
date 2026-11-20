@@ -1,6 +1,6 @@
 ---
 name: retro
-description: The retro after every run, in the Run chat. A fresh headless session reads the whole run and prepares lessons; the Artisan answers one chat round (obvious lessons batched for one "yes", only judgement calls as questions, the run's signals, their motivation for the product and the satisfaction questions). Kept lessons go to their homes - one project PR, individual-home commits with origin, pipeline tickets, upstream notes - and the answers to the private satisfaction record. Replaces upstream retro. Use after a run ends, or when the Artisan says "retro", "what did we learn", or runs /artisan-agent:retro.
+description: The retro after every run, in the Run chat. A fresh headless session reads the whole run and prepares lessons; the Artisan answers one chat round (obvious lessons batched for one "yes", only judgement calls as questions, the run's signals, their motivation for the product and the satisfaction questions). Kept lessons go to their homes - one project PR, individual-home commits with origin, pipeline tickets, upstream notes, voice lessons at the level the Artisan picks - and the answers to the private satisfaction record. Replaces upstream retro. Use after a run ends, or when the Artisan says "retro", "what did we learn", or runs /artisan-agent:retro.
 ---
 
 # Retro
@@ -25,7 +25,7 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/retro/scripts/retro.sh` (usage at it
 
    On a smooth run (no lessons) it says **"Nothing to learn from this run."** and goes straight to the signals and the satisfaction questions.
 3. **Write down the answers**, from the Artisan's one reply, in the run folder:
-   - `retro/decisions.json`: `{"<id>": "yes" | "no" | "this-project"}` for every lesson. "Yes to all" is `yes` for every batched lesson. For a generalises question, `yes` keeps and promotes it, `this-project` keeps it here only.
+   - `retro/decisions.json`: `{"<id>": "yes" | "no" | "this-project"}` for every lesson. "Yes to all" is `yes` for every batched lesson. For a generalises question, `yes` keeps and promotes it, `this-project` keeps it here only. For a voice lesson, `individual`, `product` or `team` keeps it at that level instead of the one shown.
    - `retro/answers.json`: `{"problem": {"score": 1-5 or "skip", "comment": "..."}, "solution": {...}, "pipeline": {...}, "chores": "..."}`.
 4. **Record the satisfaction answers:** `retro satisfaction <run> retro/answers.json`. It appends one line to `satisfaction.jsonl` in the individual home (date, project, run, scores, comments, chores and the run's facts) and commits it there; it never touches the project. It prints:
    - `why <question> <reason>`: a score of 2 or less, or a fall of 1 or more over three runs. Ask "why?" for all of them in one message, then add each answer as a lesson in their words: `retro add-lesson <run> '{"kind": "...", "lesson": "...", "role": "...", "scope": "this-project", "why": "<question> scored <n>"}'`, choosing the kind (and so the home) from what they said; `experience` when it is about how the run felt.
@@ -53,6 +53,11 @@ Every retro, after the lessons are delivered, run `bash "${CLAUDE_PLUGIN_ROOT}/s
 | Pipeline | a ticket in arathianevasion/artisan-agent | a `needs-triage` ticket there |
 | Upstream | the upstream check | a note in the individual home's `upstream-notes.md`, committed |
 | Artisan experience | the satisfaction record | a `lesson` line in `satisfaction.jsonl`, committed |
+| Voice, individual level | `VOICE_STANDARDS.md` in the individual home | a commit there, origin in its message |
+| Voice, product level | the project's `VOICE_STANDARDS.md` | a commit in the project PR |
+| Voice, team level | the team guardrails repo's `VOICE_STANDARDS.md` | a drafted line only, in `retro/team-voice.md` and the report, for the Artisan to land there by PR |
+
+A voice lesson's level is set by who reads the text (ADR 0003): one about chat only the Artisan reads defaults to individual, one about shared text, or one whose reader is unclear, to product. The Artisan can keep it at any level. Its rule goes at the end of the Artisan's own section (`## Your own rules`), never inside the default block. The cap: a voice file stays under about 1,500 tokens (characters ÷ 4). `check` and `deliver` refuse a lesson that would push the file past it, unless the lesson is a merge or replace of a rule in the Artisan's own section, which takes that rule's place. The retro never edits another repo, so the team file's cap is the Artisan's to keep when they land the line.
 
 A taste lesson a machine can check becomes a check: the script moves an engineering-taste, product-taste or domain lesson marked `checkable` to the check home. A taste or check lesson marked generalises that the Artisan confirms is also promoted: a commit with its origin in the individual home, under `## Lessons` in `CODING_STANDARDS.md` or `PRODUCT_STANDARDS.md`, or, for a check, under `## Checks` in `CODING_STANDARDS.md` naming the check's file so the next project can take it. Pipeline lessons generalise as tickets already; domain and calibration lessons stay with the project. Team-level promotion is by PR to the team guardrails repo with `${CLAUDE_PLUGIN_ROOT}/scripts/guardrails.sh tighten --level team ... --pr`, when the Artisan asks for it.
 

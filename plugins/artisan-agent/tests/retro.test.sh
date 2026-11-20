@@ -908,3 +908,11 @@ test_deliver_refuses_a_voice_lesson_kept_at_a_level_whose_file_it_would_push_pas
   local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the cap"
   assert_contains "$err" "cap"
 }
+
+test_the_round_says_a_voice_lesson_can_be_kept_at_another_level() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "voice standards, individual level"
+  assert_contains "$out" '"individual", "product" or "team"'
+}
