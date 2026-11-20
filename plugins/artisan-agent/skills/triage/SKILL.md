@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Sort incoming tickets in the Decision chat. This replaces upstream `triage`: same roles, grilling and discard mechanism, but in version one **nothing is applied until the Artisan approves it**, and nothing reaches `ready-for-agent` without that approval.
 
-Follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md` for every item you put in front of the Artisan: lead with the problem, arrive with a recommendation, show the reasoning and the strongest rejected alternative. Use `GLOSSARY.md` vocabulary and respect `docs/adr/`. Label strings come from `docs/agents/triage-labels.md`; tracker commands from `docs/agents/issue-tracker.md`.
+Follow `${CLAUDE_PLUGIN_ROOT}/ARTISAN.md` for every item you put in front of the Artisan: lead with the problem, arrive with a recommendation, show the reasoning and the strongest rejected alternative. Use `GLOSSARY.md` vocabulary and respect `docs/adr/`. Tickets and comments you write follow the voice standards (`VOICE_STANDARDS.md`; ARTISAN.md rule 7). Label strings come from `docs/agents/triage-labels.md`; tracker commands from `docs/agents/issue-tracker.md`.
 
 Every comment or ticket posted during triage **must** start with:
 
