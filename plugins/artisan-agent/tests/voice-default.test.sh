@@ -46,3 +46,18 @@ test_the_template_fits_the_cap_of_about_1500_tokens() {
   local chars=; chars=$(wc -c <"$TEMPLATE" | tr -d ' ')
   [ $((chars / 4)) -le 1500 ] || fail "template is $((chars / 4)) tokens (characters / 4), over the 1,500 cap"
 }
+
+test_each_version_older_than_the_templates_is_kept_as_history_for_the_retros_move() {
+  local v= cur= f=
+  cur=$(sed -n 's/^<!-- voice-default v\([0-9]*\) start.*/\1/p' "$TEMPLATE")
+  v=1
+  while [ "$v" -lt "$cur" ]; do
+    [ -f "$(dirname "$TEMPLATE")/voice-default-history/v$v.md" ] || fail "no history for default v$v"
+    v=$((v + 1))
+  done
+  # While the template is at v1, its block is the v1 history.
+  if [ "$cur" = 1 ]; then
+    assert_eq "$(sed -n '/^<!-- voice-default v1 start/,/^<!-- voice-default end/p' "$TEMPLATE")" \
+      "$(cat "$(dirname "$TEMPLATE")/voice-default-history/v1.md")" "history v1 differs from the v1 block"
+  fi
+}
