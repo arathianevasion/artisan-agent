@@ -994,6 +994,8 @@ def voice_move(template_path, text):
     theirs: it keeps its place, and is named in `kept`. Only the block changes."""
     with open(template_path) as fh:
         tpl = voice_block(fh.read())
+    crlf = "\r\n" in text  # a file with Windows line endings keeps them
+    text = text.replace("\r\n", "\n")
     cur = voice_block(text)
     if not tpl or not cur or cur[3] >= tpl[3]:
         return None
@@ -1024,7 +1026,8 @@ def voice_move(template_path, text):
         kept += [{"id": VOICE_RULE.match(ln).group(1), "why": "the new default drops it; yours stays", "yours": ln, "default": None}
                  for ln in extra]
     diff = "\n".join(difflib.unified_diff(cur[1], out, "v%d (your file)" % cur[3], "v%d (new default)" % tpl[3], lineterm="", n=1))
-    return {"from": cur[3], "to": tpl[3], "diff": diff, "kept": kept, "text": "\n".join(cur[0] + out + cur[2])}
+    new_text = "\n".join(cur[0] + out + cur[2])
+    return {"from": cur[3], "to": tpl[3], "diff": diff, "kept": kept, "text": new_text.replace("\n", "\r\n") if crlf else new_text}
 
 
 def voice_moves(template_path, files):
@@ -1033,7 +1036,7 @@ def voice_moves(template_path, files):
         level, path = spec.split("=", 1)
         if not os.path.isfile(path):
             continue
-        with open(path) as fh:
+        with open(path, newline="") as fh:
             move = voice_move(template_path, fh.read())
         if move:
             move.pop("text")
@@ -1044,12 +1047,12 @@ def voice_moves(template_path, files):
 
 
 def voice_upgrade(template_path, path):
-    with open(path) as fh:
+    with open(path, newline="") as fh:
         move = voice_move(template_path, fh.read())
     if not move:
         print("%s has no older default block to replace" % path, file=sys.stderr)
         return 1
-    with open(path, "w") as fh:
+    with open(path, "w", newline="") as fh:
         fh.write(move["text"])
     print(VOICE_FILE)
     return 0

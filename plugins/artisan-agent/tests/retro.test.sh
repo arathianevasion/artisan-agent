@@ -1070,3 +1070,13 @@ test_an_approved_product_move_lands_in_the_retro_prs_voice_file_only() {
   assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
   assert_contains "$(cat "$FAKE_GH_DIR/calls")" "pr create"
 }
+
+test_a_move_keeps_a_voice_file_with_crlf_line_endings_byte_for_byte_outside_the_block() {
+  voice_run; fake_v2_template
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md"
+  voice_file "$f" '- Own rule.'
+  awk '{ printf "%s\r\n", $0 }' "$f" >"$f.crlf"; mv "$f.crlf" "$f"
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m crlf
+  python3 -I "$PLUGIN_ROOT/skills/retro/scripts/retro.py" voice-upgrade "$ARTISAN_VOICE_TEMPLATE" "$f" >/dev/null 2>&1 || true
+  assert_eq "- Own rule.$(printf '\r')" "$(tail -1 "$f")" "the own section lost its line endings"
+}
