@@ -264,7 +264,7 @@ The pipeline step that designs a change to the experience before it is specified
 _Avoid_: design phase, UX step
 
 **Design package**:
-What the design stage hands to spec writing: the journey diff on the feature branch, a screenshot of each journey step that changes (from the prototype or a high-fidelity design), a link to the prototype when one was built, and the design tool's file link when one was used. A functional prototype is recommended when a step's behaviour changes, and high-fidelity design is optional; the designer may skip either.
+What the design stage hands to spec writing: the journey diff on the feature branch, a screenshot of each journey step that changes (from the prototype or a high-fidelity design; for a CLI, a terminal transcript of the command and its output), a link to the prototype when one was built, and the design tool's file link when one was used. A functional prototype is recommended when a step's behaviour changes, and high-fidelity design is optional; the designer may skip either.
 _Avoid_: handoff bundle, mockups, design deliverable
 
 **Area**:
