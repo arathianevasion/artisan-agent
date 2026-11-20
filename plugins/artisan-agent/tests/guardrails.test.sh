@@ -350,6 +350,13 @@ test_a_voice_correction_past_the_cap_is_refused_and_writes_nothing() {
   assert_eq "" "$(git -C "$PROJECT" worktree list | grep doc-voice || true)"
 }
 
+test_a_voice_correction_that_fails_for_another_reason_is_not_a_cap_refusal() {
+  voice_files
+  assert_status 1 "$G" voice --level individual --who Andrew --reason r --text "x" --mode replace --rule "- not a rule"
+  rm "$ARTISAN_HOME/VOICE_STANDARDS.md"
+  assert_status 1 "$G" voice --level individual --who Andrew --reason r --text "x"
+}
+
 test_a_team_voice_correction_is_drafted_not_written() {
   voice_files
   local out=
