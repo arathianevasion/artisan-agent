@@ -31,7 +31,9 @@
 #                                   Never files a retro issue. Rerunning delivers nothing twice
 #
 # decisions.json: {"<lesson id>": "yes" | "no" | "this-project"}. "this-project" keeps a
-# lesson marked generalises without promoting it. Nothing is delivered without one.
+# lesson marked generalises without promoting it. A voice lesson also takes
+# "individual" | "product" | "team": kept at that level instead of its default.
+# Nothing is delivered without one.
 #
 # Environment: ARTISAN_HOME (or ARTISAN_INDIVIDUAL_HOME) the individual home, default
 # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent; ARTISAN_PIPELINE_REPO, default
@@ -296,6 +298,12 @@ home_file_for() { # kind -> the individual standards file and section a generali
   esac
 }
 
+voice_level() { # id level: the Artisan kept a voice lesson at LEVEL, not its default
+  jq --arg id "$1" --arg lv "$2" '.lessons |= map(if .id == $id then .level = $lv else . end)' "$CHECKED" >"$CHECKED.tmp"
+  py voice-levels "$CHECKED.tmp" >"$CHECKED" || die "could not set the level of voice lesson $1"
+  rm -f "$CHECKED.tmp"
+}
+
 cmd_deliver() {
   local pr=0 decisions= ids_project="" id= kind= dec= lf= f=
   RD=$(run_dir "$1"); decisions=$2; shift 2
@@ -307,8 +315,11 @@ cmd_deliver() {
   for id in $(jq -r '.lessons[].id' "$CHECKED"); do
     dec=$(jq -r --arg id "$id" '.[$id] // ""' "$decisions")
     if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
-    case "$dec" in yes|this-project) ;; *) continue ;; esac
     kind=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .kind' "$CHECKED")
+    case "$kind:$dec" in
+      voice:individual|voice:product|voice:team) voice_level "$id" "$dec"; dec=yes ;;
+    esac
+    case "$dec" in yes|this-project) ;; *) continue ;; esac
     lf="$RD/retro/.lesson-$id.json"
     jq --arg id "$id" '.lessons[] | select(.id == $id)' "$CHECKED" >"$lf"
     case "$kind" in
@@ -338,6 +349,25 @@ cmd_deliver() {
           commit_in "$HOME_DIR" "Experience lesson $id (run $RUN): $(jq -r .lesson "$lf")" satisfaction.jsonl
           mark "$id" experience "$HOME_DIR/satisfaction.jsonl"; printf 'experience\t%s\tsatisfaction record\n' "$id"
         fi ;;
+      voice)
+        case "$(jq -r .delivery "$lf")" in
+          individual)
+            need_home
+            if ! delivered "$id" voice; then
+              py apply "$HOME_DIR" "$lf" >/dev/null || die "could not write voice lesson $id to $HOME_DIR"
+              commit_in "$HOME_DIR" "$(printf 'Voice lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" VOICE_STANDARDS.md
+              mark "$id" voice "$HOME_DIR/VOICE_STANDARDS.md"; printf 'voice\t%s\t%s\n' "$id" "$HOME_DIR/VOICE_STANDARDS.md"
+            fi ;;
+          team)
+            # A drafted line only: the Artisan lands it in the team guardrails
+            # repo by PR. The retro never edits another repo.
+            if ! delivered "$id" team; then
+              local line=; line=$(py voice-line "$lf")
+              printf '%s\n  %s\n' "$line" "$(origin_line "$lf")" >>"$RD/retro/team-voice.md"
+              mark "$id" team "$RD/retro/team-voice.md"; printf 'team\t%s\t%s\n' "$id" "$line"
+            fi ;;
+          *) ids_project="$ids_project $id" ;;
+        esac ;;
       *) ids_project="$ids_project $id" ;;
     esac
     # A generalising lesson the Artisan confirmed is promoted to the individual level.

@@ -788,3 +788,65 @@ test_check_refuses_a_voice_lesson_with_an_unknown_reader_or_level() {
   assert_contains "$err" "lesson V1: reader"
   assert_contains "$err" "lesson V2: level"
 }
+
+# voice_lessons: one voice lesson at each level, in the shapes the preparer writes.
+voice_lessons() {
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project",
+     why: "Corrected twice in the run chat"},
+    {id: "V2", kind: "voice", reader: "shared", lesson: "PR bodies lead with what changed for the user", role: "product",
+     scope: "this-project", why: "The PR for #10 opened with a recap", change: {text: "- PR bodies open with what changed for the user."}},
+    {id: "V3", kind: "voice", reader: "chat", level: "team", lesson: "No emoji in status lines", role: "both",
+     scope: "this-project", why: "Asked for at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+}
+
+test_a_kept_individual_voice_lesson_is_a_home_commit_with_origin_in_the_artisans_own_section() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"yes"}' >"$TEST_TMPDIR/d.json"
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md" before= home0= out=
+  before=$(default_block "$f"); home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json")
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "one home commit"
+  assert_contains "$(git -C "$ARTISAN_HOME" log -1 --format=%B)" "Origin: run r1 of owner/repo"
+  assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)" "home left clean"
+  # In the Artisan's own section, after the default block, which is unchanged.
+  assert_eq '- No "Great question" openers' "$(tail -1 "$f")" "the rule ends the own section"
+  assert_eq "$before" "$(default_block "$f")" "the default block changed"
+  assert_contains "$out" "voice	V1	$f"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "an individual lesson made a project branch"
+  # Delivering again changes nothing.
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
+}
+
+test_a_kept_product_voice_lesson_goes_in_the_retro_prs_voice_file_and_a_team_one_is_only_drafted() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V2":"yes","V3":"yes"}' >"$TEST_TMPDIR/d.json"
+  local home0= out= wt="$TEST_TMPDIR/project-wt/retro-r1"
+  home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr)
+  assert_eq 1 "$(git -C "$TEST_TMPDIR/origin.git" rev-list --count main..retro/r1)" "one commit on the PR branch"
+  assert_eq "VOICE_STANDARDS.md" "$(git -C "$wt" diff --name-only main..HEAD)" "the PR changes only the voice file"
+  assert_eq '- PR bodies open with what changed for the user.' "$(tail -1 "$wt/VOICE_STANDARDS.md")" "the rule ends the own section"
+  assert_eq "$(default_block "$PROJECT/VOICE_STANDARDS.md")" "$(default_block "$wt/VOICE_STANDARDS.md")" "the default block changed"
+  assert_contains "$(git -C "$wt" log -1 --format=%B)" "Origin: run r1 of owner/repo"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "| V2 | PR bodies lead with what changed for the user |"
+  # The team lesson: a drafted line only. No other repo, no home commit, no ticket.
+  assert_contains "$out" "team	V3	- No emoji in status lines"
+  assert_contains "$(cat "$RUN_DIR/retro/team-voice.md")" "- No emoji in status lines"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
+  assert_eq 0 "$(grep -c '^issue create' "$FAKE_GH_DIR/calls" || true)" "a ticket was filed"
+  assert_not_contains "$(git -C "$wt" show HEAD)" "No emoji" "the team line went into the project"
+}
+
+test_the_artisan_can_keep_a_voice_lesson_at_another_level() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"product"}' >"$TEST_TMPDIR/d.json"
+  local home0=; home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq '- No "Great question" openers' "$(tail -1 "$TEST_TMPDIR/project-wt/retro-r1/VOICE_STANDARDS.md")" "landed at product"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "also landed at individual"
+}

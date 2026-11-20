@@ -26,7 +26,14 @@ Usage (python3 -I retro.py <command> ...):
       triggers as JSON: {"why": [{question, reason}], "chores": [text]}
   apply <worktree> <lesson.json>
       makes a kept lesson's change in a checkout: text under a section of a
-      file (the file and section made if missing), or a config number set
+      file (the file and section made if missing), or a config number set;
+      a voice lesson's rule goes at the end of the Artisan's own section of
+      the checkout's VOICE_STANDARDS.md (the individual home is a checkout too)
+  voice-line <lesson.json>
+      the rule line a voice lesson adds (a team lesson's drafted line)
+  voice-levels <checked.json>
+      the checked lessons with each voice lesson's home and delivery set
+      again from its level (after the Artisan picks another level)
   promote <file> <section> <line>
       adds LINE under SECTION in an individual standards file
 
@@ -826,9 +833,36 @@ def config_set(path, key, value):
         fh.write("\n".join(ls) + "\n")
 
 
+VOICE_FILE = "VOICE_STANDARDS.md"
+VOICE_OWN_SECTION = "## Your own rules"
+
+
+def voice_line(l):
+    """The rule line a voice lesson adds: its change.text, else its lesson as a list item."""
+    text = ((l.get("change") or {}).get("text") or "").strip() or l["lesson"].strip()
+    return text if text.startswith("- ") else "- " + text
+
+
+def voice_apply(root, l):
+    """Adds a voice lesson's rule at the end of the Artisan's own section of
+    ROOT's voice file. The default block is never edited."""
+    path = os.path.join(root, VOICE_FILE)
+    if not os.path.isfile(path):
+        print("no %s in %s: setup seeds it" % (VOICE_FILE, root), file=sys.stderr)
+        return 1
+    with open(path) as fh:
+        text = fh.read()
+    with open(path, "w") as fh:
+        fh.write(under_section(text, VOICE_OWN_SECTION, voice_line(l)))
+    print(VOICE_FILE)
+    return 0
+
+
 def apply(worktree, lesson_path):
     l = load(lesson_path)
     ch = l.get("change") or {}
+    if l.get("kind") == "voice":
+        return voice_apply(worktree, l)
     if l.get("kind") == "calibration":
         config_set(os.path.join(worktree, ".artisan-agent", "config.yml"), ch["key"], ch["value"])
         print(".artisan-agent/config.yml")
@@ -942,6 +976,16 @@ def main(argv):
         return record(*args)
     if cmd == "apply" and len(args) == 2:
         return apply(*args)
+    if cmd == "voice-line" and len(args) == 1:
+        print(voice_line(load(args[0])))
+        return 0
+    if cmd == "voice-levels" and len(args) == 1:
+        doc = load(args[0])
+        for l in doc.get("lessons") or []:
+            if l.get("kind") == "voice" and voice_lesson(l, l["id"]):
+                return 1
+        print(json.dumps(doc, indent=2))
+        return 0
     if cmd == "promote" and len(args) == 3:
         return promote(*args)
     print(__doc__, file=sys.stderr)
