@@ -40,6 +40,8 @@ run_test() {
   (cd "$tmp" && TEST_TMPDIR="$tmp" ${pre[@]+"${pre[@]}"} "$BASH" -c '
     set -euo pipefail
     for v in $(compgen -v ARTISAN_); do unset "$v"; done
+    # Nor the Claude session the caller runs in (#283).
+    unset CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID
     unset TESTS_TIMES GITHUB_STEP_SUMMARY
     source "$TESTS_DIR/lib.sh"
     source "$1"
