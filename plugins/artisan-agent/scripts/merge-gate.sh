@@ -2,8 +2,8 @@
 # The merge gate's two modes (#139): where the full suite runs after a merge.
 # The project may choose (#343): merge_gate: local | ci in its
 # .artisan-agent/config.yml, read first; left out, the machine chooses:
-# host.json in the individual home holds
-# merge_gate: auto | local | ci (machine-setup.sh merge-gate writes it); auto,
+# host.json in the individual home holds merge_gate: auto | local | ci
+# (machine-setup.sh merge-gate writes it); auto,
 # the default, is local on macOS and ci on Linux. local runs the plan's suite
 # in the integration worktree, as always (wave.sh). ci pushes the merge commit
 # to a throwaway ci/* branch, dispatches the project's gate workflow there and
