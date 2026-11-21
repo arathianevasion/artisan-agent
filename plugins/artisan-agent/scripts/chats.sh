@@ -528,6 +528,43 @@ sweep_orchestrator_exits() { # state-file run-id
   done <<<"$lines"
 }
 
+# Incoming `needs-triage` tickets (#316): the Decision chat's own section.
+# Open decisions and worker questions come first (they can hold a run), then
+# the rest, each oldest first. A ticket is listed once per chat (the chat's
+# record keeps `triage_announced`) and forgotten when it leaves needs-triage.
+# Every open decision or worker question still in needs-triage is a waiting
+# key, so --idle notifies for it once, like a gate.
+sweep_triage() {
+  local rows= current= announced= fresh= out= n= urgent=
+  rows=$(gh issue list -R "$REPO" --limit 10000 --state open --label needs-triage --json number,title,body,labels \
+    | jq -c '[.[] | select(any((.labels // [])[]; .name == "needs-triage"))
+      | (.title // "") as $t | (.body // "") as $b
+      | {number, title: $t,
+         urgent: ($t | test("^(Open decision in|Question from) #")),
+         who: (if ($b | test("^> \\*Filed by ")) then ($b | split("\n")[0] | sub("^> \\*Filed by "; "") | sub(":.*$"; ""))
+               elif ($t | test("^Finding from #")) then ("the worker of #" + ($t | sub("^Finding from #"; "") | sub(":.*$"; "")) + " (a finding)")
+               elif ($t | test("^Retro")) then "a retro"
+               else "a person" end),
+         run: (($b | capture("\\(run (?<r>[^)]+)\\)") | .r) // "")}]
+      | sort_by([(if .urgent then 0 else 1 end), .number])' 2>/dev/null) || return 0
+  [ -n "$rows" ] || rows='[]'
+  current=$(jq -c '[.[].number]' <<<"$rows")
+  announced=$(mem_get '(.triage_announced // []) | tojson')
+  [ -n "$announced" ] || announced='[]'
+  fresh=$(jq -c --argjson a "$announced" 'map(select(.number as $n | $a | index($n) | not))' <<<"$rows")
+  mem_set --argjson cur "$current" --argjson fresh "$fresh" \
+    '.triage_announced = (((.triage_announced // []) + ($fresh | map(.number))) | map(select(. as $n | $cur | index($n))) | unique)'
+  WAITING_KEYS="$WAITING_KEYS$(jq -r '.[] | select(.urgent) | "triage-\(.number)"' <<<"$rows" | tr '\n' ' ')"
+  urgent=$(jq '[.[] | select(.urgent)] | length' <<<"$rows")
+  [ "$urgent" -eq 0 ] || WAITING_TEXT="$WAITING_TEXT$urgent open decision(s) or worker question(s) waiting for triage; "
+  [ "$(jq length <<<"$fresh")" -gt 0 ] || return 0
+  echo
+  echo "## Incoming for triage"
+  echo
+  jq -r '.[] | "- #\(.number) \(.title) (filed by \(.who)\(if .run != "" then ", run " + .run else "" end))\(if .urgent then " **open decision or worker question**" else "" end)"' <<<"$fresh"
+  echo "ACTION triage $(jq -r 'map("#\(.number)") | join(" ")' <<<"$fresh")" >>"$ACTIONS"
+}
+
 cmd_sweep() {
   need_repo
   ACTIONS=$(mktemp "${TMPDIR:-/tmp}/chats-actions.XXXXXX")
@@ -540,6 +577,7 @@ cmd_sweep() {
   echo
   sweep_closed_gates
   sweep_changes
+  [ "$CHAT" != decision ] || sweep_triage
   if [ "$CHAT" = run ]; then
     sweep_plans
     sweep_decisions
