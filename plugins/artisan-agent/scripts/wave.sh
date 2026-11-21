@@ -288,6 +288,29 @@ orchestrator_max_turns() {
 # neither --estimate-usd nor the plan's orchestrator.estimate_usd gives one
 # (#216): its turn limit x orchestrator_usd_per_turn, so its dollar cap
 # (twice the estimate, run-ticket.sh) grows with its turn limit.
+# gate_allowance_seconds: expected gate minutes x the merges still to make
+# (tickets queued, in flight or returned), in seconds (#312). The minutes are
+# measured from the gate workflow's recent runs when the gate runs on CI
+# (merge-gate.sh minutes); with no history, or a local gate, DEFAULT_GATE_MINUTES.
+# The basis goes to stderr, so a launch says what it added.
+DEFAULT_GATE_MINUTES=10
+gate_allowance_seconds() {
+  local merges="" mins="" src="default" wf="" repo="" m=""
+  merges=$(get '[.tickets[]? | select(.status == "queued" or .status == "in_flight" or .status == "returned")] | length')
+  mins=$DEFAULT_GATE_MINUTES
+  if [ "$("$SCRIPT_DIR/merge-gate.sh" mode 2>/dev/null)" = ci ]; then
+    wf=$(get '.plan.config.ci_gate.workflow // empty')
+    repo=$(get -r '.repo // empty')
+    if [ -n "$wf" ] && [ -n "$repo" ] \
+       && m=$("$SCRIPT_DIR/merge-gate.sh" minutes --repo "$repo" --workflow "$wf" 2>/dev/null) \
+       && [ "$(jq -r '.minutes != null' <<<"$m")" = true ]; then
+      mins=$(jq -r '.minutes' <<<"$m") src="measured from $(jq -r '.runs' <<<"$m") gate runs"
+    fi
+  fi
+  echo "wave.sh: orchestrator deadline +$mins min x $merges merge(s) for the merge gate ($src)" >&2
+  awk -v m="$mins" -v n="$merges" 'BEGIN { printf "%d\n", m * n * 60 }'
+}
+
 orchestrator_estimate() { # turns
   local cfg=""
   cfg=$(orchestrator_config) || exit 1
@@ -704,6 +727,15 @@ cmd_launch() {
     (.plan.orchestrator.deadline_seconds // (([.plan.tickets[]?.caps.deadline_seconds // 0] | max // 0) + 1800))]' \
     --arg d "$DEFAULT_ORCHESTRATOR_MODEL"
   [ -n "$model" ] || model=$plan_model
+  # The merge gate's real time (#312): every merge this wave still has to
+  # make runs the whole suite, and a deadline sized from the workers alone
+  # killed orchestrators mid-merge. Added to the derived deadline only; a
+  # deadline the plan sets is the Artisan's own number.
+  if [ "$(get '.plan.orchestrator.deadline_seconds != null')" = false ]; then
+    local gate_secs=""
+    gate_secs=$(gate_allowance_seconds) || exit 1
+    deadline=$((deadline + gate_secs))
+  fi
   turns=$(orchestrator_max_turns) || exit 1
   # The estimate: --estimate-usd, else the plan's, else from the turn limit
   # (#216), so the dollar cap (twice it) grows with the turns.

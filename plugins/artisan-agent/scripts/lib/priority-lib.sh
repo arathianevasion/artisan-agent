@@ -9,8 +9,9 @@
 # host.json in the individual home holds local_suite_priority: background |
 # normal (ARTISAN_LOCAL_SUITE_PRIORITY overrides it, for tests and trials).
 # Missing means background; machine setup leaves it unset. background runs
-# the command under taskpolicy -b on macOS, and under nice -n 10 on Linux,
-# inside ionice -c 3 where ionice works. Children inherit it. normal runs it
+# the command under nice -n 10 on both, inside ionice -c 3 on Linux where it
+# works. Never taskpolicy -b on macOS (#312): it throttles disk and network
+# too and ran a 4-minute suite in about 85. Children inherit it. normal runs it
 # directly, as before #248. A priority tool missing (or refusing) runs the
 # command at normal priority with a one-line note on stderr ("<tool> not
 # found" or "<tool> could not run here"); it never fails the run.
@@ -72,17 +73,15 @@ priority_init() {
   PRIORITY_PREFIX=()
   PRIORITY_READY=1
   [ "${setting%% *}" = background ] || return 0
-  if [ "$(priority_os)" = macos ]; then
-    if priority_tool taskpolicy -b; then PRIORITY_PREFIX=(taskpolicy -b)
-    else echo "$PRIORITY_WHY: ran at normal priority" >&2; fi
-    return 0
-  fi
   if ! priority_tool nice -n 10; then
     echo "$PRIORITY_WHY: ran at normal priority" >&2
     return 0
   fi
+  PRIORITY_PREFIX=(nice -n 10)
+  # ionice is Linux's; macOS has none.
+  [ "$(priority_os)" = macos ] && return 0
   if priority_tool ionice -c 3; then PRIORITY_PREFIX=(ionice -c 3 nice -n 10)
-  else PRIORITY_PREFIX=(nice -n 10); echo "$PRIORITY_WHY: disk at normal priority" >&2; fi
+  else echo "$PRIORITY_WHY: disk at normal priority" >&2; fi
 }
 
 # priority_run command...: run command at this machine's suite priority

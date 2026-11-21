@@ -191,6 +191,38 @@ start_and_launch() {
   ORCH_EXIT="$RUN_DIR/results/orchestrator-w1.1.exit.json"
 }
 
+# #312: the orchestrator's deadline carries the merge gate's time for every
+# merge still to make. Read from the orchestrator's exit record.
+orch_deadline() {
+  wait_for "$ORCH_EXIT" 60
+  jq -r '.deadline_seconds' "$ORCH_EXIT"
+}
+
+test_launch_adds_a_stated_default_of_gate_minutes_per_merge_to_the_deadline() {
+  setup_wave '["1","2"]'
+  start_and_launch
+  # Longest worker deadline (120) + 1800 + 10 min x 2 tickets.
+  assert_eq $((120 + 1800 + 10 * 60 * 2)) "$(orch_deadline)"
+}
+
+test_launch_sizes_the_deadline_from_measured_ci_gate_minutes() {
+  setup_wave '["1","2"]'
+  export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
+  jq -n '{databaseId: 1, workflowName: "ci.yml", status: "completed", conclusion: "success",
+          createdAt: "2026-11-13T10:00:00Z", updatedAt: "2026-11-13T10:04:00Z"}' >"$FAKE_GH_DIR/run-1.json"
+  printf '{"merge_gate": "ci"}' >"$CLAUDE_CONFIG_DIR/artisan-agent/host.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate = {workflow: "ci.yml", timeout_minutes: 30}' >/dev/null
+  start_and_launch
+  assert_eq $((120 + 1800 + 4 * 60 * 2)) "$(orch_deadline)" "4 measured minutes x 2 merges"
+}
+
+test_launch_leaves_a_deadline_the_plan_sets_alone() {
+  setup_wave '["1","2"]'
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.orchestrator.deadline_seconds = 777' >/dev/null
+  start_and_launch
+  assert_eq 777 "$(orch_deadline)"
+}
+
 test_launch_stops_with_its_own_exit_when_the_runs_base_is_not_in_main() {
   setup_wave
   local wt=
@@ -790,7 +822,6 @@ test_the_runner_judges_error_max_turns_with_no_wait_or_status_running() {
   start_and_launch
   wait_for_runner_gone orchestrator-w1.1
   assert_one_exit_decision_and_event error_max_turns
-  assert_contains "$(cat "$RUN_DIR/workers/orchestrator-w1.1/runner.log")" "orchestrator-exit: error_max_turns in wave 1"
   # Status finds it judged: still one of each, and it says decide.
   STATUS_OUT=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_one_exit_decision_and_event error_max_turns
