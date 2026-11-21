@@ -284,10 +284,6 @@ orchestrator_max_turns() {
     | $c | orchestrator_turns_for($t; $ci)'
 }
 
-# orchestrator_estimate turns: the orchestrator's estimate in dollars when
-# neither --estimate-usd nor the plan's orchestrator.estimate_usd gives one
-# (#216): its turn limit x orchestrator_usd_per_turn, so its dollar cap
-# (twice the estimate, run-ticket.sh) grows with its turn limit.
 # gate_allowance_seconds: expected gate minutes x the merges still to make
 # (tickets queued, in flight or returned), in seconds (#312). The minutes are
 # measured from the gate workflow's recent runs when the gate runs on CI
@@ -311,6 +307,10 @@ gate_allowance_seconds() {
   awk -v m="$mins" -v n="$merges" 'BEGIN { printf "%d\n", m * n * 60 }'
 }
 
+# orchestrator_estimate turns: the orchestrator's estimate in dollars when
+# neither --estimate-usd nor the plan's orchestrator.estimate_usd gives one
+# (#216): its turn limit x orchestrator_usd_per_turn, so its dollar cap
+# (twice the estimate, run-ticket.sh) grows with its turn limit.
 orchestrator_estimate() { # turns
   local cfg=""
   cfg=$(orchestrator_config) || exit 1
