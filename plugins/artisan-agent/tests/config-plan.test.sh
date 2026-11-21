@@ -822,3 +822,66 @@ test_no_worktree_setup_warning_when_it_is_set_or_there_is_no_package_json() {
   assert_not_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "worktree_setup\` is empty"
   assert_not_contains "$(plan render "$TEST_TMPDIR/plan2.json")" "### Needs your attention"
 }
+
+# ------------------------------------------- a project's own merge gate (#343)
+
+set_host_gate() { # ci|local: the machine's merge_gate, in the test's host.json
+  jq -n --arg g "$1" '{merge_gate: $g}' >"$CLAUDE_CONFIG_DIR/artisan-agent/host.json"
+}
+
+test_a_projects_merge_gate_beats_the_machines_and_without_one_the_machine_decides() {
+  make_project
+  set_host_gate ci
+  assert_eq ci "$(cd "$PROJECT" && "$SCRIPTS/merge-gate.sh" mode)" "no project setting: the machine's ci"
+  printf 'merge_gate: local\n' >>"$PROJECT/.artisan-agent/config.yml"
+  assert_eq local "$(cd "$PROJECT" && "$SCRIPTS/merge-gate.sh" mode)" "project local over machine ci"
+  # The other way round, and from a linked worktree of the project.
+  set_host_gate local
+  printf 'max_agents: 5\nmerge_gate: ci\n' >"$PROJECT/.artisan-agent/config.yml"
+  git_quiet -C "$PROJECT" worktree add -b wt "$TEST_TMPDIR/wt"
+  assert_eq ci "$(cd "$TEST_TMPDIR/wt" && "$SCRIPTS/merge-gate.sh" mode)" "project ci over machine local, from a worktree"
+  # Left empty means the machine's setting; a bad value is refused naming the file.
+  printf 'merge_gate:\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_eq local "$(cd "$PROJECT" && "$SCRIPTS/merge-gate.sh" mode)" "empty: the machine's local"
+  printf 'merge_gate: cloud\n' >"$PROJECT/.artisan-agent/config.yml"
+  assert_status 1 sh -c "cd '$PROJECT' && '$SCRIPTS/merge-gate.sh' mode"
+}
+
+test_merge_gate_show_names_the_project_config_as_the_source_when_the_project_sets_it() {
+  make_project
+  set_host_gate ci
+  assert_eq "ci $CLAUDE_CONFIG_DIR/artisan-agent/host.json" \
+    "$(cd "$PROJECT" && "$SCRIPTS/merge-gate.sh" show | jq -r '"\(.mode) \(.source)"')" "the machine"
+  printf 'merge_gate: local\n' >>"$PROJECT/.artisan-agent/config.yml"
+  assert_eq "local local $PROJECT/.artisan-agent/config.yml" \
+    "$(cd "$PROJECT" && "$SCRIPTS/merge-gate.sh" show | jq -r '"\(.mode) \(.setting) \(.source)"')" "the project"
+}
+
+test_config_knows_merge_gate_and_its_default_is_empty() {
+  assert_eq null "$(config defaults | jq -c .merge_gate)" "default"
+  make_project
+  printf 'merge_gate: local\n' >>"$PROJECT/.artisan-agent/config.yml"
+  assert_eq '"local"' "$(cd "$PROJECT" && config get merge_gate)"
+}
+
+test_the_plan_names_the_merge_gate_mode_and_where_it_came_from() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  set_host_gate ci
+  printf 'merge_gate: local\n' >>"$PROJECT/.artisan-agent/config.yml"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "The merge gate runs locally, set by the project config"
+  assert_eq null "$(jq -c .merge_gate "$TEST_TMPDIR/plan.json")" "the ci record is untouched"
+  printf 'max_agents: 5\n' >"$PROJECT/.artisan-agent/config.yml"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "The merge gate runs on CI, set by this machine's host.json"
+}
+
+test_a_project_that_gates_on_ci_with_no_gate_workflow_is_refused_at_the_plan_step() {
+  make_project
+  write_draft "$TEST_TMPDIR/draft.json"
+  set_host_gate local
+  printf 'merge_gate: ci\n' >>"$PROJECT/.artisan-agent/config.yml"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "**No gate workflow recorded.**"
+}
