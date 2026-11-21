@@ -128,7 +128,7 @@ Needed the Decision chat: yes
 
 ## Ending a turn
 
-Whenever a turn ends with something only the Artisan can decide, end it with the `Waiting on you:` line (`${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`, "Waiting on you"). That covers a queue of recommendations to approve, a worker question to rule on, and a gate or a plan needing its envelope approved that the sweep or a doorbell surfaced. For example: `Waiting on you: rule on #31 (worker question from #12)`. A turn that only hands work to the Run chat doesn't add it.
+Whenever a turn ends with something only the Artisan can decide, end it with the `Waiting on you:` line (`${CLAUDE_PLUGIN_ROOT}/references/two-chats.md`, "Waiting on you"). That covers a queue of recommendations to approve, a worker question to rule on, incoming tickets the sweep listed under "Incoming for triage" that are still untriaged, and a gate or a plan needing its envelope approved that the sweep or a doorbell surfaced. For example: `Waiting on you: rule on #31 (worker question from #12)`. A turn that only hands work to the Run chat doesn't add it.
 
 ## Recording a miss
 
