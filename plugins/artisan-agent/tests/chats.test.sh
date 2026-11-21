@@ -316,7 +316,7 @@ test_the_run_chat_sweep_has_no_incoming_section_and_keeps_no_triage_record() {
 
 test_two_chats_reference_lists_the_incoming_for_triage_section() {
   assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" "| Incoming for triage | Decision chat only |"
-  assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" "`triage <issues>`"
+  assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" '`triage <issues>`'
 }
 
 test_due_follows_the_sweep_interval() {
