@@ -160,7 +160,8 @@ test_ws_the_setup_timeout_defaults_to_900_seconds() {
 test_ws_a_setup_that_cannot_start_fails_at_once_not_as_a_timeout() {
   setup_wave
   set_setup 'touch deps-installed'
-  set_setup_timeout 300
+  local limit=300   # the setup's own time limit; failing at once means well inside it
+  set_setup_timeout "$limit"
   mkdir -p "$TEST_TMPDIR/nosetsid"
   printf '#!/bin/sh\necho "setsid: failed" >&2\nexit 1\n' >"$TEST_TMPDIR/nosetsid/setsid"
   chmod +x "$TEST_TMPDIR/nosetsid/setsid"
@@ -169,7 +170,7 @@ test_ws_a_setup_that_cannot_start_fails_at_once_not_as_a_timeout() {
   local status=0 started=$SECONDS
   PATH="$TEST_TMPDIR/nosetsid:$PATH" "$SCRIPTS/wave.sh" dispatch "$RUN_DIR" 1 >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
   assert_eq 6 "$status"
-  [ $((SECONDS - started)) -lt 300 ] || fail "dispatch waited out the limit"
+  [ $((SECONDS - started)) -lt $((limit / 2)) ] || fail "dispatch waited out the limit"
   assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "could not start"
   assert_not_contains "$(state_get '.tickets["1"].failures[0].reason')" "setup timeout"
   assert_contains "$(state_get '.tickets["1"].failures[0].reason')" "setsid: failed"
