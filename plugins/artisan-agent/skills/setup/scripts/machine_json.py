@@ -11,6 +11,7 @@
 """
 import json
 import os
+import re
 import sys
 
 # name -> (desired autoUpdate, source to declare if no record of the marketplace exists)
@@ -114,16 +115,47 @@ def enabled_value(path, pid):
 
 
 def restore_enabled(path, pid, value_json):
+    """Add enabledPlugins.pid back by inserting text, so every other byte stays as it is.
+    Falls back to a full rewrite only when the text edit would not give the expected JSON."""
     data = load(path)
     if not isinstance(data, dict):
         return
     plugins = data.get("enabledPlugins")
-    if not isinstance(plugins, dict):
-        plugins = data["enabledPlugins"] = {}
-    if pid in plugins:
+    if isinstance(plugins, dict) and pid in plugins:
         return
-    plugins[pid] = json.loads(value_json)
-    save(path, data)
+    with open(path) as f:
+        text = f.read()
+    want = json.loads(json.dumps(data))
+    want.setdefault("enabledPlugins", {})
+    if not isinstance(want["enabledPlugins"], dict):
+        return
+    want["enabledPlugins"][pid] = json.loads(value_json)
+    entry = "%s: %s" % (json.dumps(pid), value_json)
+    new_text = None
+    m = re.search(r'"enabledPlugins"\s*:\s*\{', text)
+    if m:
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        indent = re.match(r"[ \t]*", text[line_start:]).group(0)
+        unit = indent if indent else "  "
+        rest = text[m.end():]
+        if re.match(r"\s*\}", rest):
+            tail = re.match(r"\s*", rest).end()
+            new_text = text[:m.end()] + "\n" + indent + unit + entry + "\n" + indent + rest[tail:]
+        else:
+            new_text = text[:m.end()] + "\n" + indent + unit + entry + "," + rest
+    if new_text is not None:
+        try:
+            ok = json.loads(new_text) == want
+        except ValueError:
+            ok = False
+        if ok:
+            tmp = path + ".machine-setup.tmp"
+            with open(tmp, "w") as f:
+                f.write(new_text)
+            os.replace(tmp, path)
+            print("restored")
+            return
+    save(path, want)
     print("restored")
 
 

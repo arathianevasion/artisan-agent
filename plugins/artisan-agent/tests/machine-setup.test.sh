@@ -158,6 +158,7 @@ test_remove_uninstalls_when_project_path_is_gone_and_leaves_no_folder_behind() {
   local out=
   out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE") || fail "remove failed: $out"
   assert_contains "$out" "uninstalled: artisan-agent@artisan-agent (project)"
+  case $out in *"kept: enabledPlugins"*) fail "recreated-folder case must not report a restore" ;; esac
   assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "$GONE plugin uninstall artisan-agent@artisan-agent --scope project"
   [ ! -e "$GONE" ] || fail "recreated project folder left behind"
   [ ! -e "$TEST_TMPDIR/deleted parent" ] || fail "recreated parent folder left behind"
@@ -195,6 +196,22 @@ test_remove_re_adds_the_enabled_plugins_key_the_uninstall_deleted() {
 import json,sys
 d=json.load(open(sys.argv[1]));e=d["enabledPlugins"]
 print(e["artisan-agent@artisan-agent"],e["mattpocock-skills@claude-plugins-official"],d["zeta"],d["alpha"])' "$TEST_TMPDIR/proj/.claude/settings.json")"
+}
+
+# The CLI leaves "enabledPlugins": {} in its own formatting; the restore adds one line and no more.
+test_remove_restore_changes_nothing_but_the_added_key() {
+  seed_machine
+  mkdir -p "$TEST_TMPDIR/proj/.claude"
+  printf '#!/bin/sh\nprintf '"'"'{\\n    "zeta": 1,\\n    "enabledPlugins": {},\\n    "alpha": 2\\n}\\n'"'"' >.claude/settings.json\n' >"$ARTISAN_CLAUDE_BIN"
+  printf '{"enabledPlugins": {"artisan-agent@artisan-agent": true}}\n' >"$TEST_TMPDIR/proj/.claude/settings.json"
+  "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj" >/dev/null || fail "remove failed"
+  assert_eq '{
+    "zeta": 1,
+    "enabledPlugins": {
+        "artisan-agent@artisan-agent": true
+    },
+    "alpha": 2
+}' "$(cat "$TEST_TMPDIR/proj/.claude/settings.json")"
 }
 
 test_remove_does_not_add_a_key_the_project_never_had() {
