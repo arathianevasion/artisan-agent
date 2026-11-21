@@ -2,6 +2,16 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.13.0 (2026-11-21)
+
+Voice standards for everything the pipeline writes, a merge gate each project can place, and a suite that passes inside a Claude session.
+
+- **Voice standards:** project setup seeds `VOICE_STANDARDS.md` from the plugin's default template (`voice-default v1`: rules R1–R19 and protections P1–P4, from unslop, MIT) and imports it beside the front-door pointer; a rerun adds only what's missing (#273). `ARTISAN.md` rule 7 says all prose a person reads follows the voice standards, resolved by who reads it (ADR 0003), and `implement`, `implement-plan` and `triage` cite them (#274). Machine setup seeds the individual voice file and offers its import in the user `CLAUDE.md` (#275).
+- **Tuning the voice:** the retro proposes voice lessons and writes kept ones at the level you pick, in your own section, within a cap of about 1,500 tokens; the cap counts only kept lessons (#276, #300). Rule 5's "make this a guardrail?" can write a wording correction to the voice standards (`guardrails.sh voice`) (#278). A newer default arrives at the retro as one move per file, keeping rules you edited (#279). The upstream check covers rule 7 and flags upstream skills that now cover a default voice rule (#277).
+- **Merge gate per project:** `merge_gate: local | ci` in a project's `.artisan-agent/config.yml` overrides the machine's `host.json`. `merge-gate.sh show` and the plan step name where the mode came from; a project `ci` with no gate workflow is refused (#343).
+- **Suite inside a Claude session:** the test runner clears `CLAUDE_CODE_SESSION_ID` and `CLAUDE_SESSION_ID` for every test, three timing tests hold on work they control instead of wall-clock seconds, and no test writes outside its temp folder (#283).
+- **Setup:** a section insert puts a list item after the section's list (#266), and setup passes `CLAUDE_CONFIG_DIR` to `claude` only when the caller set it (#267).
+
 ## 0.12.0 (2026-11-18)
 
 Merge gates that ride out GitHub runner shortages, headless sessions kept out of `.claude/`, and run scripts that start half as many `jq` processes.
