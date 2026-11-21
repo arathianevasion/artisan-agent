@@ -5,6 +5,9 @@
   machine_json.py installs CFG     list project/local-scope installs (TSV)
   machine_json.py overrides CFG N  list hiding skillOverrides keys among names N...
   machine_json.py drop-override CFG NAME
+  machine_json.py enabled-value FILE PID    print enabledPlugins.PID as JSON from a settings file (nothing if absent)
+  machine_json.py restore-enabled FILE PID VALUE_JSON
+      add enabledPlugins.PID back when it is missing; never changes a key that is there
 """
 import json
 import os
@@ -103,6 +106,27 @@ def drop_override(cfg, name):
         print("skipped: no skillOverrides entry " + name)
 
 
+def enabled_value(path, pid):
+    data = load(path)
+    plugins = data.get("enabledPlugins") if isinstance(data, dict) else None
+    if isinstance(plugins, dict) and pid in plugins:
+        print(json.dumps(plugins[pid]))
+
+
+def restore_enabled(path, pid, value_json):
+    data = load(path)
+    if not isinstance(data, dict):
+        return
+    plugins = data.get("enabledPlugins")
+    if not isinstance(plugins, dict):
+        plugins = data["enabledPlugins"] = {}
+    if pid in plugins:
+        return
+    plugins[pid] = json.loads(value_json)
+    save(path, data)
+    print("restored")
+
+
 if __name__ == "__main__":
     cmd, cfg, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
     if cmd == "autoupdate":
@@ -113,5 +137,9 @@ if __name__ == "__main__":
         overrides(cfg, set(rest))
     elif cmd == "drop-override":
         drop_override(cfg, rest[0])
+    elif cmd == "enabled-value":
+        enabled_value(cfg, rest[0])
+    elif cmd == "restore-enabled":
+        restore_enabled(cfg, rest[0], rest[1])
     else:
         sys.exit("unknown command: " + cmd)
