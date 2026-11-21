@@ -150,6 +150,12 @@ tracker:
 # Whether runs live on an always-on host.
 host_configured: false
 
+# Where this project's merge gate runs (#343): local or ci. Left empty, the
+# machine's merge_gate (host.json in the individual home) decides. For a
+# project that needs something the CI runners lack (a build only one machine
+# has), set local; with ci, ci_gate.workflow must be recorded.
+merge_gate:
+
 # The merge gate on CI (#139). A machine whose merge_gate (host.json in the
 # individual home) resolves to ci runs no suite after a merge: it pushes the
 # merge commit to a throwaway ci/* branch and dispatches this workflow there.

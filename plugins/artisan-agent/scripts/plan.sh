@@ -281,8 +281,11 @@ cmd_build() {
     die "$(printf '%s' "$out" | sed 's/^jq: error[^:]*: //; s/ (at <unknown>)$//')"
   fi
   # On a CI machine, what each merge's gate costs in CI time (#139).
-  local gate= wf= mins=
-  gate=$("$SCRIPT_DIR/merge-gate.sh" mode) || exit 1
+  local gate= wf= mins= how=
+  how=$("$SCRIPT_DIR/merge-gate.sh" show) || exit 1
+  gate=$(jq -r .mode <<<"$how")
+  # Which mode and who chose it (#343): the project's config or the machine.
+  out=$(printf '%s' "$out" | jq --argjson h "$how" '.merge_gate_mode = {mode: $h.mode, setting: $h.setting, source: $h.source}')
   if [ "$gate" = ci ]; then
     wf=$(printf '%s' "$out" | jq -r '.config.ci_gate.workflow // empty')
     mins='{"runs": 0, "minutes": null}'
@@ -598,10 +601,17 @@ cmd_render() {
            "**None.** No recorded checks (\($p.recorded_checks.reason)) and the draft names no suite; every merge needs one, so name it before approving."
          else "`\($p.suite_command // "none")`" end ),
       "",
+      ( $p.merge_gate_mode // null | if . == null then empty else
+        "The merge gate runs \(if .mode == "ci" then "on CI" else "locally" end), set by \(
+          if .source == "ARTISAN_MERGE_GATE" then "the ARTISAN_MERGE_GATE environment variable"
+          elif (.source | endswith("/config.yml")) then "the project config (`merge_gate: \(.setting)` in `.artisan-agent/config.yml`)"
+          elif (.source | endswith("host.json")) then "this machine'"'"'s host.json (`merge_gate: \(.setting)`)"
+          else "the default (`auto`: local on macOS, CI on Linux)" end).",
+        "" end ),
       ( $p.merge_gate // null | if . == null or .mode != "ci" then empty else
         "### Merge gate: on CI",
         (if .workflow == null then
-           "**No gate workflow recorded.** This machine runs no suite after a merge, so with no gate workflow (`ci_gate.workflow` in `.artisan-agent/config.yml`) nothing can merge. Record one through project setup, or set this machine'"'"'s `merge_gate` to `local`."
+           "**No gate workflow recorded.** This machine runs no suite after a merge, so with no gate workflow (`ci_gate.workflow` in `.artisan-agent/config.yml`) nothing can merge. Record one through project setup, or set `merge_gate` to `local` (in `.artisan-agent/config.yml` for this project, or in this machine'"'"'s host.json)."
          else
            "Each merge runs no suite here: it waits for `\(.workflow)` on a throwaway `ci/*` branch, and parks the run after \(.timeout_minutes) minutes without a conclusion. "
            + (if .minutes_per_merge == null
