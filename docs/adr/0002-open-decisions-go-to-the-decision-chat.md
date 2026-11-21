@@ -35,3 +35,13 @@ These stay the execution agent's call, recorded as decision cards:
 - Nothing an open decision touches reaches main unruled. A decision raised at a gate after merge never reverts the merge, but the end gate holds until it is ruled on. Add ticket never leaves an incomplete feature shipping with its fix filed for later.
 - The aim is to give the Artisan the highest leverage on product outcomes, not the most decisions. The retro shows the balance: the share of the Artisan's decisions that changed the outcome, beside throughput and how long the run waited on them, as a trend over runs.
 - The line is a guardrail, and guardrail health tracks it both ways. Only an explicit "didn't need the Decision chat" verdict is loosen evidence. A decision first raised at a gate or after merge is tighten evidence.
+
+## Amendment: one chat by default, a second chat optional (2026-11-21)
+
+The "one chat" option above is now the default. Its rejection rested on run reports and gate packets landing mid-decision. Since then, each wave runs in a detached orchestrator, and the chat waits on it as a background task, so it wakes only when the wave ends and learns what happened from files. A report arrives at a turn boundary, not mid-reply. The run's state shows outside any chat, in the run digest's one-line form and the cockpit. A required second chat cost more than it saved: each handoff needed a sweep every few minutes (hundreds of idle turns in a day) or a message to a session name that wasn't unique, and four projects meant eight sessions.
+
+- Every step works in one chat, which holds both decisions and runs. Open decisions still go to the Decision chat's work (triage) as `needs-triage` tickets, and the rule above for what counts as one is unchanged.
+- An Artisan who wants to decide while a run goes on opens a second chat. The chats connect by a doorbell message, never a recurring sweep: the tracker stays the record, and the doorbell rings only when exactly one live session matches the other chat's name, and otherwise says it couldn't.
+- Without a second chat, tickets filed during a run appear in the wave and run reports, and the same chat offers triage.
+
+The cost we accept is crowding: a long grill and a run's reports share one context. A report that arrives during a grill waits until the grill pauses, and a project with heavy decision work during a run is the signal to open a second chat.
