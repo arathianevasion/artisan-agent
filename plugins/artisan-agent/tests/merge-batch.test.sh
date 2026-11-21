@@ -37,7 +37,9 @@ ready() {
 
 merge_batch() { # tickets...
   MERGE_STATUS=0
-  "$SCRIPTS/wave.sh" merge "$RUN_DIR" "$@" >"$TEST_TMPDIR/merge.out" 2>"$TEST_TMPDIR/merge.err" || MERGE_STATUS=$?
+  # --wait is a ceiling, not a duration: the call returns when the batch is
+  # settled. The default (60s) is shorter than four gates on a loaded machine.
+  "$SCRIPTS/wave.sh" merge "$RUN_DIR" "$@" --wait 600 >"$TEST_TMPDIR/merge.out" 2>"$TEST_TMPDIR/merge.err" || MERGE_STATUS=$?
 }
 
 gates() { state_get '[.events[] | select(.event == "merge-gate")] | length'; }
