@@ -185,6 +185,33 @@ test_file_ports_files_one_ticket_per_candidate() {
   assert_contains "$(cat "$FAKE_GH_DIR/issue-3.json")" "ARTISAN.md"
 }
 
+test_judge_brief_names_rule_7_and_asks_for_voice_overlap_flags() {
+  local judge=; judge=$(cat "$PLUGIN_ROOT/skills/retro/JUDGE.md")
+  assert_contains "$judge" "rule 7"
+  assert_contains "$judge" "voice_overlap"
+  assert_contains "$judge" "rule id"
+  assert_contains "$judge" "upstream skill"
+}
+
+test_report_renders_voice_overlap_flags_in_a_table() {
+  setup_env; mk_upstream ""; stub_claude; fake_tracker
+  export JUDGE_JSON='{"port":[],"behaviour":[],"artisan_md":[],"breaking":[],"voice_overlap":[{"skill":"writing-for-agents","rule":"no-filler-openers","why":"upstream now bans filler openers"}]}'
+  local out=; out=$(bash "$UC" run "$TEST_TMPDIR/w")
+  assert_contains "$out" "Voice rules upstream now covers"
+  assert_contains "$out" "| Rule | Upstream skill | Why |"
+  assert_contains "$out" "| no-filler-openers | writing-for-agents | upstream now bans filler openers |"
+}
+
+test_report_on_a_fixture_judgement_renders_voice_overlap_rows() {
+  local w="$TEST_TMPDIR/rw"; mkdir -p "$w"
+  printf 'x\taaaaaaa\tbbbbbbb\n' >"$w/moved.tsv"; : >"$w/mechanical.txt"
+  echo '{"port":[],"behaviour":[],"artisan_md":[],"breaking":[],"voice_overlap":[{"skill":"writing-for-agents","rule":"no-openers","why":"covered"},{"skill":"grilling","rule":"no-recaps","why":"covered too"}]}' >"$w/judgement.json"
+  setup_env; mk_upstream ""
+  local out=; out=$(bash "$UC" report "$w" 2>&1) || true
+  assert_contains "$out" "| no-openers | writing-for-agents | covered |"
+  assert_contains "$out" "| no-recaps | grilling | covered too |"
+}
+
 test_upstream_notes_are_read_where_the_retro_delivers_them() {
   # retro.sh delivers to $ARTISAN_HOME/upstream-notes.md; this reads the same file.
   assert_contains "$(grep -n 'upstream-notes.md' "$PLUGIN_ROOT/skills/retro/scripts/retro.sh")" 'HOME_DIR/upstream-notes.md'

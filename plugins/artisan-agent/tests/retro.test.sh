@@ -725,3 +725,358 @@ test_the_retro_skill_shows_guardrail_healths_open_decision_proposals_with_the_ba
   assert_contains "$signals" "guardrail health"
   assert_contains "$signals" "criterion 8"
 }
+
+# --- voice lessons (#276) ----------------------------------------------------
+
+# voice_file PATH [OWN_RULES...]: a voice standards file shaped like the
+# template: the default rules in their marked block, then the Artisan's own
+# section holding OWN_RULES.
+voice_file() {
+  local path=$1 r=; shift
+  {
+    printf '# Voice standards\n\n## Which level wins\n\nBy reader (ADR 0003).\n\n'
+    printf '<!-- voice-default v1 start: the plugin'"'"'s default rules. -->\n## Default rules\n\n'
+    printf -- '- **R1** Start with the answer or finding.\n- **R10** At most one em-dash per paragraph.\n'
+    printf '<!-- voice-default end -->\n\n## Your own rules\n\n<!-- Add your rules below. A new default version never touches this section. -->\n'
+    for r in "$@"; do printf '%s\n' "$r"; done
+  } >"$path"
+}
+
+# The default block of a voice file, markers included.
+default_block() { awk '/<!-- voice-default v/ { f = 1 } f { print } /<!-- voice-default end/ { f = 0 }' "$1"; }
+
+# voice_run: the sample run with a voice file at the individual and product
+# levels, both committed.
+voice_run() {
+  sample_run
+  voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m voice
+  voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m voice; gq -C "$PROJECT" push origin main
+  mkdir -p "$RUN_DIR/retro"
+}
+
+test_a_voice_lesson_gets_a_voice_file_home_at_the_level_its_reader_sets() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project",
+     why: "Corrected twice in the run chat"},
+    {id: "V2", kind: "voice", reader: "shared", lesson: "PR bodies lead with what changed for the user", role: "product",
+     scope: "this-project", why: "The PR for #10 opened with a recap"},
+    {id: "V3", kind: "voice", lesson: "Name the ticket in a finding title", role: "engineering", scope: "this-project",
+     why: "Two findings had no ticket"},
+    {id: "V4", kind: "voice", reader: "chat", level: "team", lesson: "No emoji", role: "both", scope: "this-project",
+     why: "Asked for at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+  local out=; out=$("$RETRO" check "$RUN_DIR")
+  local c="$RUN_DIR/retro/checked.json"
+  assert_eq individual "$(jq -r '.lessons[] | select(.id == "V1") | .level' "$c")" "chat defaults to individual"
+  assert_eq product "$(jq -r '.lessons[] | select(.id == "V2") | .level' "$c")" "shared text defaults to product"
+  assert_eq product "$(jq -r '.lessons[] | select(.id == "V3") | .level' "$c")" "an unclear reader takes the shared order"
+  assert_eq team "$(jq -r '.lessons[] | select(.id == "V4") | .level' "$c")" "a level the Artisan picked is kept"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "V1") | .home' "$c")" "VOICE_STANDARDS.md"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "V1") | .home' "$c")" "individual"
+  assert_eq 'individual project team' "$(jq -r '[.lessons[] | select(.id == "V1" or .id == "V2" or .id == "V4") | .delivery] | join(" ")' "$c")" deliveries
+  assert_contains "$out" "V1	batch	voice"
+}
+
+test_check_refuses_a_voice_lesson_with_an_unknown_reader_or_level() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "everyone", lesson: "a", role: "both", scope: "this-project", why: "b"},
+    {id: "V2", kind: "voice", level: "company", lesson: "c", role: "both", scope: "this-project", why: "d"}]}' >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  assert_contains "$err" "lesson V1: reader"
+  assert_contains "$err" "lesson V2: level"
+}
+
+# voice_lessons: one voice lesson at each level, in the shapes the preparer writes.
+voice_lessons() {
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project",
+     why: "Corrected twice in the run chat"},
+    {id: "V2", kind: "voice", reader: "shared", lesson: "PR bodies lead with what changed for the user", role: "product",
+     scope: "this-project", why: "The PR for #10 opened with a recap", change: {text: "- PR bodies open with what changed for the user."}},
+    {id: "V3", kind: "voice", reader: "chat", level: "team", lesson: "No emoji in status lines", role: "both",
+     scope: "this-project", why: "Asked for at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+}
+
+test_a_kept_individual_voice_lesson_is_a_home_commit_with_origin_in_the_artisans_own_section() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"yes"}' >"$TEST_TMPDIR/d.json"
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md" before= home0= out=
+  before=$(default_block "$f"); home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json")
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "one home commit"
+  assert_contains "$(git -C "$ARTISAN_HOME" log -1 --format=%B)" "Origin: run r1 of owner/repo"
+  assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)" "home left clean"
+  # In the Artisan's own section, after the default block, which is unchanged.
+  assert_eq '- No "Great question" openers' "$(tail -1 "$f")" "the rule ends the own section"
+  assert_eq "$before" "$(default_block "$f")" "the default block changed"
+  assert_contains "$out" "voice	V1	$f"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "an individual lesson made a project branch"
+  # Delivering again changes nothing.
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
+}
+
+test_a_kept_product_voice_lesson_goes_in_the_retro_prs_voice_file_and_a_team_one_is_only_drafted() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V2":"yes","V3":"yes"}' >"$TEST_TMPDIR/d.json"
+  local home0= out= wt="$TEST_TMPDIR/project-wt/retro-r1"
+  home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr)
+  assert_eq 1 "$(git -C "$TEST_TMPDIR/origin.git" rev-list --count main..retro/r1)" "one commit on the PR branch"
+  assert_eq "VOICE_STANDARDS.md" "$(git -C "$wt" diff --name-only main..HEAD)" "the PR changes only the voice file"
+  assert_eq '- PR bodies open with what changed for the user.' "$(tail -1 "$wt/VOICE_STANDARDS.md")" "the rule ends the own section"
+  assert_eq "$(default_block "$PROJECT/VOICE_STANDARDS.md")" "$(default_block "$wt/VOICE_STANDARDS.md")" "the default block changed"
+  assert_contains "$(git -C "$wt" log -1 --format=%B)" "Origin: run r1 of owner/repo"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "| V2 | PR bodies lead with what changed for the user |"
+  # The team lesson: a drafted line only. No other repo, no home commit, no ticket.
+  assert_contains "$out" "team	V3	- No emoji in status lines"
+  assert_contains "$(cat "$RUN_DIR/retro/team-voice.md")" "- No emoji in status lines"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
+  assert_eq 0 "$(grep -c '^issue create' "$FAKE_GH_DIR/calls" || true)" "a ticket was filed"
+  assert_not_contains "$(git -C "$wt" show HEAD)" "No emoji" "the team line went into the project"
+}
+
+test_the_artisan_can_keep_a_voice_lesson_at_another_level() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"product"}' >"$TEST_TMPDIR/d.json"
+  local home0=; home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq '- No "Great question" openers' "$(tail -1 "$TEST_TMPDIR/project-wt/retro-r1/VOICE_STANDARDS.md")" "landed at product"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "also landed at individual"
+}
+
+# full_voice_file PATH: a voice file whose own rules bring it just under the
+# cap of about 1,500 tokens (6,000 characters), the last rule being "- Rule 0".
+full_voice_file() {
+  local rules=() i=
+  for i in $(seq 1 60); do rules+=("- Filler rule $i: $(printf 'x%.0s' $(seq 1 70))"); done
+  voice_file "$1" "${rules[@]}"
+  while [ "$(wc -c <"$1")" -lt 5960 ]; do printf -- '- pad\n' >>"$1"; done
+  printf -- '- Rule 0\n' >>"$1"
+}
+
+test_a_voice_lesson_past_the_cap_is_refused_unless_it_merges_or_replaces_a_rule() {
+  voice_run
+  full_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am full
+  local lesson='{id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, and no closing offers to help further", role: "both",
+     scope: "this-project", why: "Corrected twice"}'
+  jq -n "{lessons: [$lesson]}" >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "an append past the cap passed the check"
+  assert_contains "$err" "lesson V1: "
+  assert_contains "$err" "cap"
+  # The same content, marked as a merge with an existing rule, is accepted and takes that rule's place.
+  jq -n "{lessons: [$lesson + {change: {mode: \"merge\", rule: \"- Rule 0\"}}]}" >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "a merge was refused"
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md" before=; before=$(default_block "$f")
+  echo '{"V1":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq '- No "Great question" openers, and no closing offers to help further' "$(tail -1 "$f")" "the merged rule"
+  assert_eq 0 "$(grep -c '^- Rule 0$' "$f" || true)" "the merged rule's old line is still there"
+  assert_eq "$before" "$(default_block "$f")" "the default block changed"
+}
+
+test_a_replace_must_name_a_rule_in_the_artisans_own_section() {
+  voice_run
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "a", role: "both", scope: "this-project", why: "b",
+     change: {mode: "replace", rule: "- **R1** Start with the answer or finding."}},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "c", role: "both", scope: "this-project", why: "d",
+     change: {mode: "replace"}},
+    {id: "V3", kind: "voice", reader: "chat", lesson: "e", role: "both", scope: "this-project", why: "f",
+     change: {mode: "rewrite"}}]}' >"$RUN_DIR/retro/lessons.json"
+  local err=; err=$("$RETRO" check "$RUN_DIR" 2>&1 >/dev/null) && fail "check passed"
+  assert_contains "$err" "lesson V1: "
+  assert_contains "$err" "own section"
+  assert_contains "$err" "lesson V2: "
+  assert_contains "$err" "lesson V3: "
+}
+
+test_deliver_refuses_a_voice_lesson_kept_at_a_level_whose_file_it_would_push_past_the_cap() {
+  voice_run
+  full_voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" commit -am full; gq -C "$PROJECT" push origin main
+  jq -n '{lessons: [{id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, and no closing offers to help further",
+    role: "both", scope: "this-project", why: "Corrected twice"}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"V1":"product"}' >"$TEST_TMPDIR/d.json"
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the cap"
+  assert_contains "$err" "cap"
+}
+
+# --- the cap counts only kept voice lessons (#300) ----------------------------
+
+# roomy_voice_file PATH: a voice file of 5,940 characters (about 1,485 tokens),
+# with room under the cap for one of two_voice_lessons but not both.
+roomy_voice_file() {
+  local rules=() i=
+  for i in $(seq 1 60); do rules+=("- Filler rule $i: $(printf 'x%.0s' $(seq 1 70))"); done
+  voice_file "$1" "${rules[@]}"
+  while [ "$(wc -c <"$1")" -lt 5934 ]; do printf -- '- pad\n' >>"$1"; done
+  printf '%*s\n' $((5939 - $(wc -c <"$1"))) '' | tr ' ' '-' >>"$1"
+}
+
+# two_voice_lessons: two chat voice lessons, each a 34-character rule line.
+two_voice_lessons() {
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers, ever", role: "both",
+     scope: "this-project", why: "Corrected in the run chat"},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "No closing offers to help further", role: "both",
+     scope: "this-project", why: "Corrected at the gate"}]}' >"$RUN_DIR/retro/lessons.json"
+}
+
+test_check_measures_each_voice_lesson_against_the_file_as_it_stands() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  assert_eq 5940 "$(wc -c <"$ARTISAN_HOME/VOICE_STANDARDS.md" | tr -d ' ')" "the roomy file's size"
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "a lesson that fits alone was refused for one before it"
+  assert_eq "V1 V2" "$(jq -r '[.lessons[].id] | join(" ")' "$RUN_DIR/retro/checked.json")" "both lessons checked"
+}
+
+test_a_dropped_voice_lesson_never_makes_a_kept_one_look_over_the_cap() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"no","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "the kept lesson was refused"
+  assert_eq '- No closing offers to help further' "$(tail -1 "$ARTISAN_HOME/VOICE_STANDARDS.md")" "the kept rule"
+  assert_eq 0 "$(grep -c 'Great question' "$ARTISAN_HOME/VOICE_STANDARDS.md" || true)" "the dropped rule landed"
+}
+
+test_deliver_counts_every_kept_voice_lesson_toward_the_cap() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "two kept lessons went past the cap"
+  assert_contains "$err" "cap"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+}
+
+test_the_round_says_a_voice_lesson_can_be_kept_at_another_level() {
+  voice_run; voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  local out=; out=$("$RETRO" render "$RUN_DIR")
+  assert_contains "$out" "voice standards, individual level"
+  assert_contains "$out" '"individual", "product" or "team"'
+}
+
+# --- a newer default voice version arrives as a move (#279) -----------------
+
+# fake_v2_template: a template at version 2 (R1 loosened, R10 dropped, R20
+# added) with version 1's block kept as the history that tells an edited
+# default rule from a changed one. Exports ARTISAN_VOICE_TEMPLATE.
+fake_v2_template() {
+  local d="$TEST_TMPDIR/tpl"
+  mkdir -p "$d/voice-default-history"
+  default_block "$PROJECT/VOICE_STANDARDS.md" >"$d/voice-default-history/v1.md"
+  {
+    printf '# Voice standards\n\n## Which level wins\n\nBy reader (ADR 0003).\n\n'
+    printf '<!-- voice-default v2 start: the plugin'"'"'s default rules. -->\n## Default rules\n\n'
+    printf -- '- **R1** Lead with the answer.\n- **R20** Name the file you mean.\n'
+    printf '<!-- voice-default end -->\n\n## Your own rules\n\n<!-- Add your rules below. A new default version never touches this section. -->\n'
+  } >"$d/VOICE_STANDARDS.md"
+  export ARTISAN_VOICE_TEMPLATE="$d/VOICE_STANDARDS.md"
+}
+
+# own_section FILE: everything from the Artisan's own section on.
+own_section() { sed -n '/^## Your own rules$/,$p' "$1"; }
+
+test_the_round_renders_one_move_per_voice_file_older_than_the_template_with_the_blocks_diff() {
+  voice_run; fake_v2_template
+  local out=; out=$("$RETRO" voice-moves "$RUN_DIR")
+  assert_eq 2 "$(grep -c '^### Voice default v1 to v2' <<<"$out")" "one move per file"
+  assert_contains "$out" "individual level"
+  assert_contains "$out" "product level"
+  assert_contains "$out" '+- **R20** Name the file you mean.'
+  assert_contains "$out" '-- **R10** At most one em-dash per paragraph.'
+  assert_contains "$out" "voice-default:individual"
+  # The same moves close the chat round.
+  seed_lessons; "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "### Voice default v1 to v2, individual level"
+}
+
+test_approving_a_move_replaces_the_default_block_and_version_and_leaves_the_own_section_byte_for_byte() {
+  voice_run; fake_v2_template
+  voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md" '- Say "run" for a worker session.' '' '  keep   this spacing,	tabs too'
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m own
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md" own0= home0=
+  own0=$(own_section "$f"); home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  seed_lessons; "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"voice-default:individual":"yes"}' >"$TEST_TMPDIR/d.json"
+  local out=; out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json")
+  assert_eq "$(default_block "$ARTISAN_VOICE_TEMPLATE")" "$(default_block "$f")" "the default block is the template's"
+  assert_eq "$own0" "$(own_section "$f")" "the own section changed"
+  assert_eq 1 "$(grep -c 'voice-default v2 start' "$f")" "the version"
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "one home commit"
+  assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)" "home left clean"
+  assert_contains "$out" "voice-default	individual"
+  # Approved once: the file has no move now, and delivering again changes nothing.
+  assert_not_contains "$("$RETRO" voice-moves "$RUN_DIR")" "individual level" "a move still offered"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
+}
+
+test_a_default_rule_edited_in_the_file_is_kept_and_flagged_in_the_move() {
+  voice_run; fake_v2_template
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md"
+  voice_file "$f" '- My own.'
+  sed -i.bak 's/^- \*\*R1\*\* .*/- **R1** Start with the answer, then the caveat./' "$f"; rm -f "$f.bak"
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m edit
+  local out=; out=$("$RETRO" voice-moves "$RUN_DIR")
+  assert_contains "$out" "R1"
+  assert_contains "$out" "you edited"
+  assert_contains "$out" "- **R1** Start with the answer, then the caveat."
+  seed_lessons; "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"voice-default:individual":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_contains "$(cat "$f")" "- **R1** Start with the answer, then the caveat."
+  assert_not_contains "$(cat "$f")" "Lead with the answer." "the edited rule was overwritten"
+  assert_contains "$(cat "$f")" "- **R20** Name the file you mean."
+  assert_eq 1 "$(grep -c 'voice-default v2 start' "$f")" "the version"
+}
+
+test_a_file_already_at_the_current_version_gets_no_move() {
+  voice_run; fake_v2_template
+  cp "$ARTISAN_VOICE_TEMPLATE" "$ARTISAN_HOME/VOICE_STANDARDS.md"
+  local out=; out=$("$RETRO" voice-moves "$RUN_DIR")
+  assert_not_contains "$out" "individual level"
+  assert_contains "$out" "product level"
+  cp "$ARTISAN_VOICE_TEMPLATE" "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m v2; gq -C "$PROJECT" push origin main
+  assert_eq "" "$("$RETRO" voice-moves "$RUN_DIR")" "a current file got a move"
+}
+
+test_an_approved_product_move_lands_in_the_retro_prs_voice_file_only() {
+  voice_run; fake_v2_template
+  local own0=; own0=$(own_section "$PROJECT/VOICE_STANDARDS.md")
+  seed_lessons; "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"voice-default:product":"yes"}' >"$TEST_TMPDIR/d.json"
+  local wt="$TEST_TMPDIR/project-wt/retro-r1" home0=
+  home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr >/dev/null
+  assert_eq 1 "$(git -C "$TEST_TMPDIR/origin.git" rev-list --count main..retro/r1)" "one commit on the PR branch"
+  assert_eq "VOICE_STANDARDS.md" "$(git -C "$wt" diff --name-only main..HEAD)" "the PR changes only the voice file"
+  assert_eq "$(default_block "$ARTISAN_VOICE_TEMPLATE")" "$(default_block "$wt/VOICE_STANDARDS.md")" "the default block"
+  assert_eq "$own0" "$(own_section "$wt/VOICE_STANDARDS.md")" "the own section"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "pr create"
+}
+
+test_a_move_keeps_a_voice_file_with_crlf_line_endings_byte_for_byte_outside_the_block() {
+  voice_run; fake_v2_template
+  local f="$ARTISAN_HOME/VOICE_STANDARDS.md"
+  voice_file "$f" '- Own rule.'
+  awk '{ printf "%s\r\n", $0 }' "$f" >"$f.crlf"; mv "$f.crlf" "$f"
+  gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m crlf
+  python3 -I "$PLUGIN_ROOT/skills/retro/scripts/retro.py" voice-upgrade "$ARTISAN_VOICE_TEMPLATE" "$f" >/dev/null 2>&1 || true
+  assert_eq "- Own rule.$(printf '\r')" "$(tail -1 "$f")" "the own section lost its line endings"
+}

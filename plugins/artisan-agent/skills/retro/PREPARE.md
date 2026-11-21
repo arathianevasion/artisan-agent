@@ -53,6 +53,7 @@ Every lesson has a kind, and the kind decides its home:
 | `pipeline` | a ticket in arathianevasion/artisan-agent | none; give `ticket: {title, body}` |
 | `upstream` | the upstream check | none |
 | `experience` | the satisfaction record | none |
+| `voice` | voice standards (`VOICE_STANDARDS.md`) at a level | optional `{text?, mode?, rule?}`: `text` is the rule line (default: the lesson as a list item); `mode` is `append` (default), `merge` or `replace`, and a merge or replace names in `rule` the line in the Artisan's own section it takes the place of |
 
 A **taste lesson a machine can check becomes a check**: if a rule from coding standards, product standards or the glossary could be enforced by a lint rule, test, hook or CI job, set `checkable: true` and give the check itself as the `change` (the test file, the lint rule, the CI step), never a line in a standards file; propose it once, not as a rule and a check side by side. A check is runnable code that fails when the rule is broken, written against the project's real files: never a TODO or a placeholder. It is proven to fail before anyone trusts it. Keep project paths relative; `section` is a markdown heading such as `## Always ask`; `text` is added at the end of that section (the file and section are made if missing), or replaces the file when `replace` is true.
 
@@ -73,6 +74,8 @@ Fields, all required unless marked:
       "checkable": false,
       "change": {"path": "CODING_STANDARDS.md", "section": "## Guardrails", "text": "- ..."},
       "ticket": {"title": "...", "body": "..."},
+      "reader": "chat | shared (voice lessons only)",
+      "level": "individual | product | team (voice lessons only, when the Artisan named one)",
       "move": "tighten | loosen | retire",
       "ask": "batch | question",
       "question": "Only for a judgement call: the question, one line.",
@@ -83,7 +86,9 @@ Fields, all required unless marked:
 }
 ```
 
-`move` only for a lesson that moves a guardrail or gate. `evidence` counts events: a calibration with fewer events than the evidence threshold is thin.
+`move` only for a lesson that moves a guardrail or gate. `reader` and `level` only for a voice lesson. `evidence` counts events: a calibration with fewer events than the evidence threshold is thin.
+
+**Voice lessons.** Propose one when the Artisan corrected an agent's wording, or text from the run was padded or packed in a way the voice files don't already rule out. Give `reader`: `chat` when only the Artisan reads that kind of text (it defaults to the individual level), `shared` for tickets, specs, PRs, comments and commits (product). Leave `level` out unless the Artisan named one. Read the project's `VOICE_STANDARDS.md` first. Each voice file is capped at about 1,500 tokens, so near the cap make the lesson a `merge` or `replace` of a rule in the Artisan's own section (`## Your own rules`), never of a default rule.
 
 **Batch or question.** Obvious lessons are batched for one "yes", one line each. Only judgement calls are questions: whether a lesson generalises beyond this project (mark it `generalises` and say whether you checked it holds elsewhere); loosening, tightening or retiring a guardrail; calibration on thin evidence. The script enforces this: it turns those into questions whatever you say, and keeps the rest batched.
 

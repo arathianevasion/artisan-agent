@@ -13,9 +13,11 @@ Usage (python3 -I retro.py <command> ...):
   gate-costs <state.json>
       what the merge gates cost and how long gates waited on the Artisan,
       as the Markdown table the retro's Signals show (the run summary's)
-  check <lessons.json> <threshold>
+  check <lessons.json> <threshold> [individual=<voice file>] [product=<voice file>]
       the preparer's lessons, checked and normalised: each gets its home,
-      and judgement calls become questions. Exit 1 with one line per problem
+      and judgement calls become questions. A voice lesson is checked against
+      the voice file at its level, when given, for the cap. Exit 1 with one
+      line per problem
   render <checked.json> <facts.json> <questions.md> [<motivation.md>]
       the chat round, as Markdown
   questions <ARTISAN.md>...
@@ -26,12 +28,26 @@ Usage (python3 -I retro.py <command> ...):
       triggers as JSON: {"why": [{question, reason}], "chores": [text]}
   apply <worktree> <lesson.json>
       makes a kept lesson's change in a checkout: text under a section of a
-      file (the file and section made if missing), or a config number set
+      file (the file and section made if missing), or a config number set;
+      a voice lesson's rule goes at the end of the Artisan's own section of
+      the checkout's VOICE_STANDARDS.md (the individual home is a checkout too)
+  voice-line <lesson.json>
+      the rule line a voice lesson adds (a team lesson's drafted line)
+  voice-levels <checked.json>
+      the checked lessons with each voice lesson's home and delivery set
+      again from its level (after the Artisan picks another level)
+  voice-moves <template> [<level>=<voice file>]...
+      the move for each voice file whose default block is older than the
+      template's, as JSON: its diff and the default rules it keeps as edited
+  voice-upgrade <template> <voice file>
+      replaces the file's default block and version with the template's,
+      keeping a default rule the Artisan edited; the rest is untouched
   promote <file> <section> <line>
       adds LINE under SECTION in an individual standards file
 
 Standard-library Python 3.
 """
+import difflib
 import json
 import os
 import re
@@ -47,7 +63,17 @@ HOMES = {
     "pipeline": ("a ticket in arathianevasion/artisan-agent", "pipeline"),
     "upstream": ("the upstream check", "individual"),
     "experience": ("the satisfaction record", "individual"),
+    "voice": ("voice standards (VOICE_STANDARDS.md)", "by level"),
 }
+# A voice lesson's level -> (home as shown, where it is delivered). The
+# default level follows who reads the text (ADR 0003): chat only the Artisan
+# reads is individual; shared text, and a reader left unclear, is product.
+VOICE_LEVELS = {
+    "individual": ("voice standards, individual level (VOICE_STANDARDS.md in the individual home)", "individual"),
+    "product": ("voice standards, product level (VOICE_STANDARDS.md in the project)", "project"),
+    "team": ("voice standards, team level (a drafted line for the team guardrails repo)", "team"),
+}
+VOICE_READERS = {"chat": "individual", "shared": "product"}
 TASTE = ("engineering-taste", "product-taste", "domain")
 PROMOTABLE = ("mechanical", "engineering-taste", "product-taste")
 APPROVALS = re.compile(r"^\s*(approve|approved|clear|cleared|pass|passed|yes|ok|accept|accepted)\b", re.I)
@@ -412,8 +438,17 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
     }
 
 
-def check(lessons_path, threshold):
+def check(lessons_path, threshold, voice_files=None):
     doc = load(lessons_path)
+    # The voice files as they stand, by level. Each voice lesson is measured
+    # alone against its file: the Artisan has kept none of them yet, so a
+    # lesson they drop never counts toward the cap. deliver applies the kept
+    # ones in turn, so there the cap counts only the lessons kept.
+    voice = {}
+    for level, path in (voice_files or {}).items():
+        if os.path.isfile(path):
+            with open(path) as fh:
+                voice[level] = fh.read()
     problems, out, seen = [], [], set()
     lessons = doc.get("lessons")
     if not isinstance(lessons, list):
@@ -445,7 +480,14 @@ def check(lessons_path, threshold):
             kind = l["kind"] = "mechanical"
         l["home"], l["delivery"] = HOMES[kind]
         ch = l.get("change") or {}
-        if kind == "calibration":
+        if kind == "voice":
+            problems += voice_lesson(l, where)
+            problem = voice_mode_problem(l)
+            if not problem and l.get("level") in voice:
+                problem = voice_edit(voice[l["level"]], l)[1]
+            if problem:
+                problems.append("%s: %s" % (where, problem))
+        elif kind == "calibration":
             if not (ch.get("key") and "value" in ch):
                 problems.append("%s: a calibration lesson needs change.key and change.value" % where)
         elif l["delivery"] == "project":
@@ -488,6 +530,18 @@ def check(lessons_path, threshold):
     doc["smooth"] = not out
     print(json.dumps(doc, indent=2))
     return 0
+
+
+def voice_lesson(l, where):
+    """Gives a voice lesson its level, home and delivery; returns its problems."""
+    reader, level = l.get("reader"), l.get("level")
+    if reader is not None and reader not in VOICE_READERS:
+        return ["%s: reader must be chat or shared" % where]
+    if level is not None and level not in VOICE_LEVELS:
+        return ["%s: level must be individual, product or team" % where]
+    l["level"] = level or VOICE_READERS.get(reader, "product")
+    l["home"], l["delivery"] = VOICE_LEVELS[l["level"]]
+    return []
 
 
 def money(x):
@@ -620,6 +674,10 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
             out.append("| %s | %s | %s | %s | %s | %s |" % (l["id"], cell(l["lesson"]), cell(home), l["role"],
                                                        l["scope"], cell(l["why"])))
         out += ["", "Recommend: yes to all. Say which to drop, if any.", ""]
+    if any(l.get("kind") == "voice" for l in lessons):
+        out += ["A voice lesson lands at the level shown, set by who reads the text. "
+                "Answer \"individual\", \"product\" or \"team\" for one to land it there instead "
+                "(team: a drafted line for you to land in the team guardrails repo by PR).", ""]
     if asks:
         out += ["### Judgement calls", ""]
         for i, l in enumerate(asks, 1):
@@ -802,9 +860,209 @@ def config_set(path, key, value):
         fh.write("\n".join(ls) + "\n")
 
 
+VOICE_FILE = "VOICE_STANDARDS.md"
+VOICE_OWN_SECTION = "## Your own rules"
+VOICE_CAP_TOKENS = 1500
+VOICE_MODES = ("append", "merge", "replace")
+
+
+def voice_line(l):
+    """The rule line a voice lesson adds: its change.text, else its lesson as a list item."""
+    text = ((l.get("change") or {}).get("text") or "").strip() or l["lesson"].strip()
+    return text if text.startswith("- ") else "- " + text
+
+
+def voice_tokens(text):
+    """The cap's token estimate: characters / 4."""
+    return len(text) // 4
+
+
+def own_rules(text):
+    """The lines of the Artisan's own section of a voice file."""
+    ls, out, inside = text.splitlines(), [], False
+    for ln in ls:
+        if re.match(r"^#{1,2}\s", ln):
+            inside = ln.strip() == VOICE_OWN_SECTION
+            continue
+        if inside:
+            out.append(ln.strip())
+    return out
+
+
+def voice_mode_problem(l):
+    """What is wrong with a voice lesson's change.mode and change.rule, or None."""
+    ch = l.get("change") or {}
+    mode = ch.get("mode", "append")
+    if mode not in VOICE_MODES:
+        return "change.mode must be append, merge or replace"
+    if mode != "append" and not (ch.get("rule") or "").strip():
+        return "a %s needs change.rule: the rule in the Artisan's own section it takes the place of" % mode
+    return None
+
+
+def voice_edit(text, l):
+    """(TEXT with a voice lesson's rule in the Artisan's own section, problem).
+    An append goes at the end of the section and is refused when it would push
+    the file past the cap; a merge or replace takes the place of change.rule,
+    which must be a rule in that section, and is never refused for size."""
+    problem = voice_mode_problem(l)
+    if problem:
+        return text, problem
+    ch = l.get("change") or {}
+    line = voice_line(l)
+    if ch.get("mode", "append") == "append":
+        new = under_section(text, VOICE_OWN_SECTION, line)
+        if voice_tokens(new) > VOICE_CAP_TOKENS:
+            return text, ("would bring the voice file to about %d tokens, past the cap of about %d: "
+                          "keep it as a merge or replace of an existing rule (change.mode, change.rule)"
+                          % (voice_tokens(new), VOICE_CAP_TOKENS))
+        return new, None
+    rule = ch["rule"].strip()
+    if rule not in own_rules(text):
+        return text, "change.rule %r is not a rule in the Artisan's own section (%s); the default block is never edited" % (
+            rule, VOICE_OWN_SECTION)
+    ls = text.splitlines()
+    start = next(i for i, ln in enumerate(ls) if ln.strip() == VOICE_OWN_SECTION)
+    at = next(i for i in range(start + 1, len(ls)) if ls[i].strip() == rule)
+    ls[at] = line
+    return "\n".join(ls) + "\n", None
+
+
+def voice_apply(root, l):
+    """Adds a voice lesson's rule at the end of the Artisan's own section of
+    ROOT's voice file. The default block is never edited."""
+    path = os.path.join(root, VOICE_FILE)
+    if not os.path.isfile(path):
+        print("no %s in %s: setup seeds it" % (VOICE_FILE, root), file=sys.stderr)
+        return 1
+    with open(path) as fh:
+        text = fh.read()
+    new, problem = voice_edit(text, l)
+    if problem:
+        print("%s: %s" % (path, problem), file=sys.stderr)
+        return 1
+    with open(path, "w") as fh:
+        fh.write(new)
+    print(VOICE_FILE)
+    return 0
+
+
+VOICE_START = re.compile(r"^<!-- voice-default v(\d+) start\b")
+VOICE_END = re.compile(r"^<!-- voice-default end\b")
+VOICE_RULE = re.compile(r"^- \*\*(\w+)\*\* ")
+VOICE_HISTORY = "voice-default-history"
+
+
+def voice_block(text):
+    """(lines before, the default block's lines, lines after, version) of a
+    voice file, or None when it has no marked block. Joining the parts with
+    newlines gives the text back byte for byte."""
+    ls = text.split("\n")
+    start = end = None
+    for i, ln in enumerate(ls):
+        if start is None:
+            if VOICE_START.match(ln):
+                start = i
+        elif VOICE_END.match(ln):
+            end = i
+            break
+    if end is None:
+        return None
+    return ls[:start], ls[start:end + 1], ls[end + 1:], int(VOICE_START.match(ls[start]).group(1))
+
+
+def voice_rules(lines):
+    """{rule id: its line} for the rule lines among LINES."""
+    return {m.group(1): ln for ln in lines for m in [VOICE_RULE.match(ln)] if m}
+
+
+def voice_baseline(template_path, version):
+    """The rules of default VERSION, from the template's history folder, or
+    None when it holds none: then an edit can't be told from a new default."""
+    path = os.path.join(os.path.dirname(os.path.abspath(template_path)), VOICE_HISTORY, "v%d.md" % version)
+    if not os.path.isfile(path):
+        return None
+    with open(path) as fh:
+        block = voice_block(fh.read())
+    return voice_rules(block[1]) if block else None
+
+
+def voice_move(template_path, text):
+    """The move a voice file's TEXT needs to reach the template's default
+    block: {from, to, diff, kept, text}, or None when the file has no block, or
+    its block is not older. A default rule the Artisan edited (or took out) is
+    theirs: it keeps its place, and is named in `kept`. Only the block changes."""
+    with open(template_path) as fh:
+        tpl = voice_block(fh.read())
+    crlf = "\r\n" in text  # a file with Windows line endings keeps them
+    text = text.replace("\r\n", "\n")
+    cur = voice_block(text)
+    if not tpl or not cur or cur[3] >= tpl[3]:
+        return None
+    mine = voice_rules(cur[1])
+    base = voice_baseline(template_path, cur[3])
+    new_rules = voice_rules(tpl[1])
+    kept, out = [], []
+    for ln in tpl[1]:
+        m = VOICE_RULE.match(ln)
+        rid = m.group(1) if m else None
+        if rid is None or rid not in mine and (base is None or rid not in base):
+            out.append(ln)  # not a rule, or one the file never had
+        elif base is not None and rid in base and mine.get(rid) == base[rid]:
+            out.append(ln)  # unedited: the new default takes its place
+        elif mine.get(rid) == ln:
+            out.append(ln)
+        elif rid in mine:
+            why = "you edited it" if base is not None else "it differs and the old default is not on file, so it may be your edit"
+            kept.append({"id": rid, "why": why, "yours": mine[rid], "default": ln})
+            out.append(mine[rid])
+        else:
+            kept.append({"id": rid, "why": "you took it out", "yours": None, "default": ln})
+    # Rules the new default drops: the Artisan's own additions and edits stay.
+    extra = [ln for rid, ln in mine.items() if rid not in new_rules and (base is None or rid not in base or ln != base[rid])]
+    if extra:
+        at = max((i for i, ln in enumerate(out) if VOICE_RULE.match(ln)), default=len(out) - 2) + 1
+        out[at:at] = extra
+        kept += [{"id": VOICE_RULE.match(ln).group(1), "why": "the new default drops it; yours stays", "yours": ln, "default": None}
+                 for ln in extra]
+    diff = "\n".join(difflib.unified_diff(cur[1], out, "v%d (your file)" % cur[3], "v%d (new default)" % tpl[3], lineterm="", n=1))
+    new_text = "\n".join(cur[0] + out + cur[2])
+    return {"from": cur[3], "to": tpl[3], "diff": diff, "kept": kept, "text": new_text.replace("\n", "\r\n") if crlf else new_text}
+
+
+def voice_moves(template_path, files):
+    moves = []
+    for spec in files:
+        level, path = spec.split("=", 1)
+        if not os.path.isfile(path):
+            continue
+        with open(path, newline="") as fh:
+            move = voice_move(template_path, fh.read())
+        if move:
+            move.pop("text")
+            move.update(level=level, path=path)
+            moves.append(move)
+    print(json.dumps(moves, indent=2))
+    return 0
+
+
+def voice_upgrade(template_path, path):
+    with open(path, newline="") as fh:
+        move = voice_move(template_path, fh.read())
+    if not move:
+        print("%s has no older default block to replace" % path, file=sys.stderr)
+        return 1
+    with open(path, "w", newline="") as fh:
+        fh.write(move["text"])
+    print(VOICE_FILE)
+    return 0
+
+
 def apply(worktree, lesson_path):
     l = load(lesson_path)
     ch = l.get("change") or {}
+    if l.get("kind") == "voice":
+        return voice_apply(worktree, l)
     if l.get("kind") == "calibration":
         config_set(os.path.join(worktree, ".artisan-agent", "config.yml"), ch["key"], ch["value"])
         print(".artisan-agent/config.yml")
@@ -908,8 +1166,9 @@ def main(argv):
         merged = len([t for t in (s.get("tickets") or {}).values() if t.get("status") == "merged"])
         print(gate_costs_table(merge_gate_costs(s, merged), artisan_wait(s)))
         return 0
-    if cmd == "check" and len(args) == 2:
-        return check(args[0], int(args[1]))
+    if cmd == "check" and len(args) >= 2:
+        files = dict(a.split("=", 1) for a in args[2:])
+        return check(args[0], int(args[1]), files)
     if cmd == "render" and len(args) in (3, 4):
         return render(*args)
     if cmd == "questions" and args:
@@ -918,6 +1177,22 @@ def main(argv):
         return record(*args)
     if cmd == "apply" and len(args) == 2:
         return apply(*args)
+    if cmd == "voice-line" and len(args) == 1:
+        print(voice_line(load(args[0])))
+        return 0
+    if cmd == "voice-levels" and len(args) == 1:
+        doc = load(args[0])
+        for l in doc.get("lessons") or []:
+            problems = voice_lesson(l, "lesson %s" % l["id"]) if l.get("kind") == "voice" else []
+            if problems:
+                print("\n".join(problems), file=sys.stderr)
+                return 1
+        print(json.dumps(doc, indent=2))
+        return 0
+    if cmd == "voice-moves" and args:
+        return voice_moves(args[0], args[1:])
+    if cmd == "voice-upgrade" and len(args) == 2:
+        return voice_upgrade(*args)
     if cmd == "promote" and len(args) == 3:
         return promote(*args)
     print(__doc__, file=sys.stderr)

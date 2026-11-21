@@ -28,3 +28,12 @@ test_skills_that_reach_rule_7_by_artisan_md_are_not_edited_to_cite_voice() {
     assert_not_contains "$(cat "$PLUGIN_ROOT/skills/$s/SKILL.md")" "VOICE_STANDARDS.md" "$s cites voice directly"
   done
 }
+
+test_rule_5_offers_the_voice_standards_with_a_default_level_by_reader() {
+  local rule5=
+  rule5=$(grep -E '^5\. ' "$ARTISAN")
+  assert_contains "$rule5" "VOICE_STANDARDS.md"
+  assert_contains "$rule5" "guardrails.sh voice"
+  assert_contains "$rule5" "individual for a correction to chat"
+  assert_contains "$rule5" "product for one to shared text"
+}

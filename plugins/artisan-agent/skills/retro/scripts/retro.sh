@@ -13,6 +13,9 @@
 #                                   retro/checked.json (homes, questions); exit 1 lists problems
 #   retro.sh render <run-dir>       the chat round as Markdown: lessons, questions,
 #                                   signals, the motivation and the satisfaction questions
+#   retro.sh voice-moves <run-dir>  a newer default voice version, one move per voice file whose
+#                                   default block is older than the template's, with the block's
+#                                   diff; nothing when every file is current (render adds it too)
 #   retro.sh add-lesson <run-dir> <lesson-json>
 #                                   a lesson in the Artisan's own words (a "why?" answer);
 #                                   kept without another question
@@ -31,11 +34,17 @@
 #                                   Never files a retro issue. Rerunning delivers nothing twice
 #
 # decisions.json: {"<lesson id>": "yes" | "no" | "this-project"}. "this-project" keeps a
-# lesson marked generalises without promoting it. Nothing is delivered without one.
+# lesson marked generalises without promoting it. A voice lesson also takes
+# "individual" | "product" | "team": kept at that level instead of its default.
+# Nothing is delivered without one. A voice move is answered under its own key,
+# "voice-default:individual" or "voice-default:product": "yes" replaces only that
+# file's default block and version (the individual home's by a commit there, the
+# project's in the retro PR); the Artisan's own rules are never touched.
 #
 # Environment: ARTISAN_HOME (or ARTISAN_INDIVIDUAL_HOME) the individual home, default
 # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent; ARTISAN_PIPELINE_REPO, default
-# arathianevasion/artisan-agent; GH_BIN, ARTISAN_CLAUDE_BIN stand-ins for gh and claude.
+# arathianevasion/artisan-agent; GH_BIN, ARTISAN_CLAUDE_BIN stand-ins for gh and claude;
+# ARTISAN_VOICE_TEMPLATE the default voice template (default templates/VOICE_STANDARDS.md).
 #
 # Exit status: 0 ok, 1 failed, 2 bad usage, 3 already recorded. Portable to bash 3.2.
 
@@ -47,6 +56,7 @@ py() { python3 -I "$SCRIPT_DIR/retro.py" "$@"; }
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOME_DIR=${ARTISAN_HOME:-${ARTISAN_INDIVIDUAL_HOME:-$CFG/artisan-agent}}
 PIPELINE_REPO=${ARTISAN_PIPELINE_REPO:-arathianevasion/artisan-agent}
+VOICE_TEMPLATE=${ARTISAN_VOICE_TEMPLATE:-$PLUGIN_ROOT/templates/VOICE_STANDARDS.md}
 GH=${GH_BIN:-gh}
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
 # shellcheck source=../../../scripts/lib/headless-lib.sh
@@ -111,11 +121,17 @@ cmd_check() {
   else
     cp "$rd/retro/lessons.json" "$combined"
   fi
-  if py check "$combined" "$threshold" >"$rd/retro/checked.json.tmp"; then
-    mv "$rd/retro/checked.json.tmp" "$rd/retro/checked.json"; rm -f "$combined"
+  # The voice files a voice lesson is checked against for the cap: the
+  # individual home's, and the product's as the retro PR will branch from it.
+  local voice=() pv="$rd/retro/.product-voice.md"
+  [ -f "$HOME_DIR/VOICE_STANDARDS.md" ] && voice+=("individual=$HOME_DIR/VOICE_STANDARDS.md")
+  MAIN=$(main_of "$rd")
+  if git -C "$MAIN" show "$(base_ref):VOICE_STANDARDS.md" >"$pv" 2>/dev/null; then voice+=("product=$pv"); else rm -f "$pv"; fi
+  if py check "$combined" "$threshold" ${voice[@]+"${voice[@]}"} >"$rd/retro/checked.json.tmp"; then
+    mv "$rd/retro/checked.json.tmp" "$rd/retro/checked.json"; rm -f "$combined" "$pv"
     jq -r '.lessons[] | "\(.id)\t\(.ask)\t\(.kind)\t\(.home)"' "$rd/retro/checked.json"
   else
-    cat "$rd/retro/checked.json.tmp" >&2; rm -f "$rd/retro/checked.json.tmp" "$combined"; exit 1
+    cat "$rd/retro/checked.json.tmp" >&2; rm -f "$rd/retro/checked.json.tmp" "$combined" "$pv"; exit 1
   fi
 }
 
@@ -127,18 +143,49 @@ motivation_file() { # repo -> a temp file holding the recorded motivation, or no
   rm -f "$out"; return 1
 }
 
+# voice_moves_json rd: the moves, as a JSON list. The product file is the
+# project's as the retro PR will branch from it.
+voice_moves_json() {
+  local rd=$1 files=() pv="$rd/retro/.product-voice.md"
+  [ -f "$HOME_DIR/VOICE_STANDARDS.md" ] && files+=("individual=$HOME_DIR/VOICE_STANDARDS.md")
+  MAIN=$(main_of "$rd")
+  if git -C "$MAIN" show "$(base_ref):VOICE_STANDARDS.md" >"$pv" 2>/dev/null; then files+=("product=$pv"); else rm -f "$pv"; fi
+  if [ ${#files[@]} -eq 0 ]; then echo '[]'; else py voice-moves "$VOICE_TEMPLATE" "${files[@]}"; fi
+  rm -f "$pv"
+}
+
+cmd_voice_moves() { # the moves as Markdown, one per file; nothing when no file is older
+  local rd= moves=; rd=$(run_dir "$1"); mkdir -p "$rd/retro"
+  moves=$(voice_moves_json "$rd") || die "could not read the voice files"
+  jq -r '.[] | "### Voice default v\(.from) to v\(.to), \(.level) level\n\n" +
+    "\(if .level == "product" then "The project'"'"'s VOICE_STANDARDS.md" else "`\(.path)`" end) holds default v\(.from); the plugin now ships v\(.to). " +
+    "Approving replaces only the default block and its version; your own rules stay as they are. " +
+    "Answer `\"voice-default:\(.level)\": \"yes\"` in decisions.json to take it, once for this file.\n\n" +
+    "```diff\n\(.diff)\n```\n" +
+    (if (.kept | length) > 0 then "\nKept as yours, not overwritten:\n" +
+      ([.kept[] | "- **\(.id)**: \(.why). Yours: `\(.yours // "(taken out)")`. New default: `\(.default // "(none)")`"] | join("\n")) + "\n" else "" end)' <<<"$moves"
+}
+
 cmd_render() {
-  local rd= main= mot=; rd=$(run_dir "$1"); main=$(main_of "$rd")
+  local rd= main= mot= out= mv=; rd=$(run_dir "$1"); main=$(main_of "$rd")
   [ -f "$rd/retro/checked.json" ] || die "no retro/checked.json: run check first"
   [ -f "$rd/retro/facts.json" ] || cmd_facts "$rd" >/dev/null
   py questions "$HOME_DIR/ARTISAN.md" "$PLUGIN_ROOT/ARTISAN.md" >"$rd/retro/questions.json"
   mot="$rd/retro/.motivation.md"
   if motivation_file "$main" "$mot"; then
-    py render "$rd/retro/checked.json" "$rd/retro/facts.json" "$rd/retro/questions.json" "$mot"
+    out=$(py render "$rd/retro/checked.json" "$rd/retro/facts.json" "$rd/retro/questions.json" "$mot")
   else
-    py render "$rd/retro/checked.json" "$rd/retro/facts.json" "$rd/retro/questions.json"
+    out=$(py render "$rd/retro/checked.json" "$rd/retro/facts.json" "$rd/retro/questions.json")
   fi
   rm -f "$mot"
+  # The voice moves go before the signals, with the other things to decide.
+  mv="$rd/retro/.voice-moves.md"; cmd_voice_moves "$rd" >"$mv"
+  if [ -s "$mv" ]; then
+    awk -v f="$mv" '/^### Signals/ && !d { while ((getline l < f) > 0) print l; print ""; d = 1 } { print }' <<<"$out"
+  else
+    printf '%s\n' "$out"
+  fi
+  rm -f "$mv"
 }
 
 cmd_add_lesson() {
@@ -248,8 +295,8 @@ base_ref() {
 }
 
 project_lessons() { # worktree-making, one commit per lesson, one PR
-  local ids=$1 pr=$2 wt= branch= base= id= lf= path= n=0
-  [ -n "$ids" ] || return 0
+  local ids=$1 pr=$2 wt= branch= base= id= lf= path= n=0 voice_note=""
+  [ -n "$ids" ] || [ "${PRODUCT_MOVE:-0}" = 1 ] || return 0
   branch="retro/$RUN"; wt="$(dirname "$MAIN")/$(basename "$MAIN")-wt/retro-$RUN"
   if [ ! -d "$wt" ]; then
     base=$(base_ref)
@@ -269,6 +316,12 @@ project_lessons() { # worktree-making, one commit per lesson, one PR
       "$(jq -r .lesson "$lf")" "$(origin_line "$lf")" "$(jq -r .home "$lf")")" "$path"
     mark "$id" project "$branch"; rm -f "$lf"; n=$((n + 1))
   done
+  if [ "${PRODUCT_MOVE:-0}" = 1 ] && ! delivered voice-default:product project; then
+    if py voice-upgrade "$VOICE_TEMPLATE" "$wt/VOICE_STANDARDS.md" >/dev/null 2>&1; then
+      commit_in "$wt" "$(printf 'Voice default: take the plugin default voice rules (run %s)\n\nReplaces only the default block and its version; the own rules are untouched.' "$RUN")" VOICE_STANDARDS.md
+      mark voice-default:product project "$branch"; voice_note="Voice default: the project's default block is replaced with the plugin's current version; the own rules are untouched."
+    fi
+  fi
   if [ "$(git -C "$wt" rev-list --count "$(base_ref)..HEAD" 2>/dev/null || echo 0)" = 0 ]; then
     git -C "$MAIN" worktree remove --force "$wt" >/dev/null 2>&1 || true
     git -C "$MAIN" branch -D "$branch" >/dev/null 2>&1 || true
@@ -279,6 +332,7 @@ project_lessons() { # worktree-making, one commit per lesson, one PR
     local body= url=
     body=$(jq -r --arg run "$RUN" '"Lessons kept at the retro of run \($run). Merging this PR is the approval; there is no retro issue.\n\n| # | Lesson | Home | Role | Reach |\n|---|---|---|---|---|\n" +
       ([.lessons[] | select(.delivery == "project")] | map("| \(.id) | \(.lesson) | \(.home) | \(.role) | \(.scope) |") | join("\n"))' "$CHECKED")
+    [ -z "$voice_note" ] || body=$(printf '%s\n\n%s' "$body" "$voice_note")
     git -C "$wt" push -q -u origin "$branch" >/dev/null 2>&1 || die "could not push $branch"
     url=$(cd "$wt" && "$GH" pr create --head "$branch" --title "Retro lessons from run $RUN" --body "$body") \
       || die "could not open the PR for $branch"
@@ -296,6 +350,12 @@ home_file_for() { # kind -> the individual standards file and section a generali
   esac
 }
 
+voice_level() { # id level: the Artisan kept a voice lesson at LEVEL, not its default
+  jq --arg id "$1" --arg lv "$2" '.lessons |= map(if .id == $id then .level = $lv else . end)' "$CHECKED" >"$CHECKED.tmp"
+  py voice-levels "$CHECKED.tmp" >"$CHECKED.new" || { rm -f "$CHECKED.tmp" "$CHECKED.new"; die "could not set the level of voice lesson $1"; }
+  mv "$CHECKED.new" "$CHECKED"; rm -f "$CHECKED.tmp"
+}
+
 cmd_deliver() {
   local pr=0 decisions= ids_project="" id= kind= dec= lf= f=
   RD=$(run_dir "$1"); decisions=$2; shift 2
@@ -307,8 +367,11 @@ cmd_deliver() {
   for id in $(jq -r '.lessons[].id' "$CHECKED"); do
     dec=$(jq -r --arg id "$id" '.[$id] // ""' "$decisions")
     if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
-    case "$dec" in yes|this-project) ;; *) continue ;; esac
     kind=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .kind' "$CHECKED")
+    case "$kind:$dec" in
+      voice:individual|voice:product|voice:team) voice_level "$id" "$dec"; dec=yes ;;
+    esac
+    case "$dec" in yes|this-project) ;; *) continue ;; esac
     lf="$RD/retro/.lesson-$id.json"
     jq --arg id "$id" '.lessons[] | select(.id == $id)' "$CHECKED" >"$lf"
     case "$kind" in
@@ -338,6 +401,25 @@ cmd_deliver() {
           commit_in "$HOME_DIR" "Experience lesson $id (run $RUN): $(jq -r .lesson "$lf")" satisfaction.jsonl
           mark "$id" experience "$HOME_DIR/satisfaction.jsonl"; printf 'experience\t%s\tsatisfaction record\n' "$id"
         fi ;;
+      voice)
+        case "$(jq -r .delivery "$lf")" in
+          individual)
+            need_home
+            if ! delivered "$id" voice; then
+              py apply "$HOME_DIR" "$lf" >/dev/null || die "could not write voice lesson $id to $HOME_DIR"
+              commit_in "$HOME_DIR" "$(printf 'Voice lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" VOICE_STANDARDS.md
+              mark "$id" voice "$HOME_DIR/VOICE_STANDARDS.md"; printf 'voice\t%s\t%s\n' "$id" "$HOME_DIR/VOICE_STANDARDS.md"
+            fi ;;
+          team)
+            # A drafted line only: the Artisan lands it in the team guardrails
+            # repo by PR. The retro never edits another repo.
+            if ! delivered "$id" team; then
+              local line=; line=$(py voice-line "$lf")
+              printf '%s\n  %s\n' "$line" "$(origin_line "$lf")" >>"$RD/retro/team-voice.md"
+              mark "$id" team "$RD/retro/team-voice.md"; printf 'team\t%s\t%s\n' "$id" "$line"
+            fi ;;
+          *) ids_project="$ids_project $id" ;;
+        esac ;;
       *) ids_project="$ids_project $id" ;;
     esac
     # A generalising lesson the Artisan confirmed is promoted to the individual level.
@@ -351,6 +433,17 @@ cmd_deliver() {
     fi
     rm -f "$lf"
   done
+  # A newer default voice version, approved once per file (#279).
+  if [ "$(jq -r '."voice-default:individual" // ""' "$decisions")" = yes ] && ! delivered voice-default:individual voice-default \
+      && [ -f "$HOME_DIR/VOICE_STANDARDS.md" ]; then
+    need_home
+    if py voice-upgrade "$VOICE_TEMPLATE" "$HOME_DIR/VOICE_STANDARDS.md" >/dev/null 2>&1; then
+      commit_in "$HOME_DIR" "$(printf 'Voice default: take the plugin default voice rules (run %s)\n\nReplaces only the default block and its version; the own rules are untouched.' "$RUN")" VOICE_STANDARDS.md
+      mark voice-default:individual voice-default "$HOME_DIR/VOICE_STANDARDS.md"; printf 'voice-default\tindividual\t%s\n' "$HOME_DIR/VOICE_STANDARDS.md"
+    fi
+  fi
+  PRODUCT_MOVE=0
+  [ "$(jq -r '."voice-default:product" // ""' "$decisions")" = yes ] && PRODUCT_MOVE=1
   project_lessons "$(echo $ids_project)" "$pr"
   [ "$failed" = 0 ] || return 1   # the next retro reads this one's misses again
   mkdir -p "$MAIN/.artisan-agent/retro"
@@ -365,6 +458,7 @@ case "$cmd" in
   facts) [ $# -eq 1 ] || usage; cmd_facts "$1" ;;
   check) [ $# -eq 1 ] || usage; cmd_check "$1" ;;
   render) [ $# -eq 1 ] || usage; cmd_render "$1" ;;
+  voice-moves) [ $# -eq 1 ] || usage; cmd_voice_moves "$1" ;;
   add-lesson) [ $# -eq 2 ] || usage; cmd_add_lesson "$1" "$2" ;;
   satisfaction) [ $# -eq 2 ] || usage; cmd_satisfaction "$1" "$2" ;;
   motivation) [ $# -eq 2 ] || usage; cmd_motivation "$1" "$2" ;;

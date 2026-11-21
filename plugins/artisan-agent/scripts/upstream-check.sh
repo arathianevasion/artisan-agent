@@ -208,11 +208,12 @@ cmd_run() {
     printf -- '- Dependency skills (guard/dependencies.list): %s\n' "$(dependency_names | tr '\n' ' ')"
     printf -- '- Write your answer to: %s\n' "$work/judgement.json"
     printf -- '- Mechanical check result: %s\n' "$work/mechanical.txt"
+    printf -- '- Default voice rules to compare upstream against (read the ones that exist): %s\n' "$HOME_DIR/VOICE_STANDARDS.md"
     if [ -s "$HOME_DIR/upstream-notes.md" ]; then
       printf '\n### Upstream notes the retro has kept (individual home upstream-notes.md)\n\n'
       cat "$HOME_DIR/upstream-notes.md"
     fi
-    printf '\n### ARTISAN.md (the six rules kept skills must not break)\n\n'
+    printf '\n### ARTISAN.md (the seven rules kept skills must not break)\n\n'
     cat "$PLUGIN_ROOT/ARTISAN.md"
   } >"$judge_prompt"
   headless_args "$JUDGE_TOOLS"
@@ -267,6 +268,12 @@ cmd_report() {
     if [ "$n" -gt 0 ]; then
       printf '**Kept skills that start breaking ARTISAN.md**\n\n'
       jq -r '.artisan_md[] | [.skill, .rule, .why] | @tsv' "$j" | table 'Skill|Rule|Why'
+      printf '\n'
+    fi
+    n=$(jq '(.voice_overlap // []) | length' "$j")
+    if [ "$n" -gt 0 ]; then
+      printf '**Voice rules upstream now covers (drop the duplicate?)**\n\n'
+      jq -r '.voice_overlap[] | [.rule, .skill, .why] | @tsv' "$j" | table 'Rule|Upstream skill|Why'
       printf '\n'
     fi
   } >"$work/report.md"
