@@ -83,6 +83,10 @@ minimum_estimates:
   claude-haiku-5-5: 0.10
   all: 0.50
 
+# Where this project's merge gate runs (#343): ci, whatever the machine's
+# host.json says. The gate workflow is ci_gate.workflow below.
+merge_gate: ci
+
 # Whether runs live on an always-on host.
 host_configured: false
 
