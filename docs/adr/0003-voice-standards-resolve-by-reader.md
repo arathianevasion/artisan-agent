@@ -14,3 +14,4 @@ This keeps a rule that already exists. `ARTISAN.md` "Tuning" lets the Artisan's 
 
 - Every voice standards file states this order at its top, because sessions that import more than one level see them side by side.
 - An agent has to tell who reads the text. Chat is the Artisan's; anything published to the tracker or git is shared. A case that is truly ambiguous takes the shared order.
+- Wave reports are read only by the Artisan, so they follow the individual level first (retro of run s272-1119, 2026-11-20).
