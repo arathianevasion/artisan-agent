@@ -1,0 +1,16 @@
+# The guard tests: tests that check the whole plugin tree, not one seam. Any
+# change to a script can break one, so a worker runs them (tests/run.sh --guard)
+# as well as its ticket's tests. The merge gate runs the full suite.
+#
+#   guard <file>           a whole-tree scanner a worker runs (file without .test.sh)
+#   exclude <file> <why>   a whole-tree scanner left out on purpose
+#
+# guard-list.test.sh fails when a test that scans the tree is in neither list.
+guard tracker
+guard bare-local
+guard jq-args
+guard headless-args
+guard skill-names
+guard script-lookup
+guard design
+guard merge-gate-criteria
