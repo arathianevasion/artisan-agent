@@ -378,6 +378,66 @@ test_resolve_scope_refuses_bad_usage() {
   assert_status 1 "$RS" --repo local/sample 999
 }
 
+# ---- changed journey steps no ticket cites (#332) --------------------------
+# The spec's Experience section lists the changed steps; each ticket built from
+# it cites its steps in a `Steps: <journey>: <step>, ...` line. `check` flags a
+# step no ticket in the plan cites, by name, and refuses approval while it stands.
+
+# A graph with experience_steps, ticket 1 citing "Checkout: Pick a plan".
+steps_graph() {
+  sample_graph
+  jq '.experience_steps = ["Pick a plan", "Confirm payment"] | .tickets["1"].steps = ["Checkout: Pick a plan"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+}
+
+test_check_flags_a_changed_step_no_ticket_cites_by_name() {
+  steps_graph
+  local out=""
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH"
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "Confirm payment"
+  assert_not_contains "$out" "| Pick a plan"
+  assert_contains "$out" "not ready to approve: 1 changed journey step(s) no ticket cites"
+  assert_contains "$("$TP" render "$PLANS" --graph "$GRAPH")" "Confirm payment"
+}
+
+test_check_passes_when_every_step_is_cited_or_there_is_no_experience_section() {
+  steps_graph
+  jq '.tickets["5"].steps = ["Checkout: Confirm payment"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+  steps_graph
+  jq 'del(.experience_steps)' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+  jq '.experience_steps = []' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+}
+
+test_a_citation_names_a_step_whole_never_part_of_one() {
+  steps_graph
+  jq '.experience_steps = ["Pay"] | .tickets["1"].steps = ["Checkout: Payment"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  assert_contains "$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)" "Journey step \"Pay\""
+  jq '.tickets["1"].steps = ["Checkout: Pay"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+}
+
+test_graph_reads_the_specs_changed_steps_and_each_tickets_steps_line() {
+  use_fake_gh
+  jq -n '{number: 44, id: 1044, title: "Spec", state: "open", labels: [],
+    body: "## Solution\nx\n\n## Experience\n\n**Affected journeys**: Checkout (shopper)\n\n**Changed steps**:\n- **Pick a plan** (Checkout) \u2014 [screenshot](http://x/a.png)\n- Confirm payment \u2014 shows the total\n\n**Whys**:\n- Pick a plan: because\n\n## Testing\n- Not a step"}' >"$FAKE_GH_DIR/issue-44.json"
+  jq '.body += "\n\nSteps: Checkout: Pick a plan, Checkout: Confirm payment\nDesign: #9"' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-1.json"
+  local g=; g=$("$TP" graph --repo local/sample --spec 44 1 2)
+  assert_eq "Pick a plan,Confirm payment" "$(jq -r '.experience_steps | join(",")' <<<"$g")"
+  assert_eq "Checkout: Pick a plan|Checkout: Confirm payment" "$(jq -r '.tickets["1"].steps | join("|")' <<<"$g")"
+  assert_eq "null" "$(jq -c '.tickets["2"].steps' <<<"$g")"
+  # The steps as a bullet with the steps nested under it, a journey in front, and a later label not read as a step.
+  jq -n '{number: 45, id: 1045, title: "Spec", state: "open", labels: [], body: "## Experience\n\n- **Changed steps**:\n  - Checkout: Pay \u2014 new\n  - 1. Sign in (SSO)\n- **Whys**: y\n\n### Sub\nx"}' >"$FAKE_GH_DIR/issue-45.json"
+  assert_eq "Checkout: Pay,1. Sign in" "$("$TP" graph --repo local/sample --spec 45 1 | jq -r '.experience_steps | join(",")')"
+  # A spec with no Experience section: no steps to cover.
+  g=$("$TP" graph --repo local/sample --spec 3 1 2)
+  assert_eq "null" "$(jq -c '.experience_steps' <<<"$g")"
+}
+
 # ---- the skill's text -----------------------------------------------------
 
 test_to_plan_skill_has_frontmatter_and_cites_the_shared_files() {

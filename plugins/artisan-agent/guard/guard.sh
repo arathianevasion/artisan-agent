@@ -10,15 +10,11 @@
 #   flag-watch     one upstream skill (plugin:name) per line for the upstream check
 #   settings-json  project-settings fallback: the hook plus the deny rules
 #                  (use --hook-command with an absolute path to block-replaced.sh)
-#   reasons        "<upstream name><TAB><block reason>" per line (used by the hook)
+#   replacements   "<upstream name><TAB><replacement>" per line (used by the hook)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 UPSTREAM=mattpocock-skills
-# Stable text at the start of every block reason; a blocked headless run exits 0,
-# so callers detect the block by this text in the result.
-MARKER="Blocked by the artisan-agent replaced-skill guard:"
-
 list="$HERE/replaced-skills.list"
 # The placeholder is double-quoted so an install path with a space stays one word.
 hook_command='"${CLAUDE_PLUGIN_ROOT}/guard/block-replaced.sh"'
@@ -107,11 +103,7 @@ case "$cmd" in
   deny-json) printf '{"permissions":{"deny":%s}}\n' "$(deny_array)" ;;
   flag-watch) names | while read -r n; do printf '%s:%s\n' "$UPSTREAM" "$n"; done ;;
   settings-json) printf '{"hooks":%s,"permissions":{"deny":%s}}\n' "$(json_hooks_body)" "$(deny_array)" ;;
-  reasons)
-    entries | while read -r name repl; do
-      printf '%s\t%s /%s:%s is replaced in this pipeline. Use %s instead.\n' \
-        "$name" "$MARKER" "$UPSTREAM" "$name" "$repl"
-    done ;;
+  replacements) entries | while read -r name repl; do printf '%s\t%s\n' "$name" "$repl"; done ;;
   -h|--help|help|"") sed -n '2,13p' "$0" ;;
   *) echo "guard.sh: unknown command $cmd" >&2; exit 2 ;;
 esac

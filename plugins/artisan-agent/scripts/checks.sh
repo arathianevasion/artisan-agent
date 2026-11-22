@@ -27,7 +27,7 @@
 #       runs every recorded check (sh -c, in DIR), all of them, in order, and
 #       prints the results as JSON (the evidence record's "checks"):
 #         {recorded: true, file, results: [{command, passed, exit_code,
-#          result, log}], not_run: [each FOUND command, never run]}
+#          result, seconds (how long it ran, #347), log}], not_run: [each FOUND command, never run]}
 #       With none recorded, runs the FOUND commands instead (what the caller
 #       discovered) and says so:
 #         {recorded: false, file, reason, fallback: "no recorded checks
@@ -138,7 +138,7 @@ cmd_ci_only() {
 }
 
 cmd_run() {
-  local json= recorded= logs= i=0 rc= cmd= last= results='[]' out= suite= skipped='[]' ci='[]'
+  local json= recorded= logs= i=0 t0=0 took=0 rc= cmd= last= results='[]' out= suite= skipped='[]' ci='[]'
   json=$(recorded_json)
   recorded=$(printf '%s' "$json" | jq -r .recorded)
   local run=()
@@ -175,12 +175,14 @@ EOF
     fi
     i=$((i + 1))
     rc=0
+    t0=$SECONDS
     (cd "$IN" && priority_run sh -c "$cmd") >"$tmp" 2>&1 </dev/null || rc=$?
+    took=$((SECONDS - t0))
     last=$(awk 'NF { l = $0 } END { print l }' "$tmp" | cut -c1-200)
     local log=
     if [ -n "$logs" ]; then cp "$tmp" "$logs/$i.log"; log="$logs/$i.log"; fi
-    results=$(printf '%s' "$results" | jq -c --arg c "$cmd" --argjson rc "$rc" --arg r "$last" --arg log "$log" \
-      '. + [{command: $c, passed: ($rc == 0), exit_code: $rc, result: $r} + (if $log != "" then {log: $log} else {} end)]')
+    results=$(printf '%s' "$results" | jq -c --arg c "$cmd" --argjson rc "$rc" --arg r "$last" --arg log "$log" --argjson sec "$took" \
+      '. + [{command: $c, passed: ($rc == 0), exit_code: $rc, result: $r, seconds: $sec} + (if $log != "" then {log: $log} else {} end)]')
   done
   rm -f "$tmp"
   out=$(jq -n --argjson j "$json" --argjson res "$results" --argjson skipped "$skipped" --argjson ci "$ci" --args '

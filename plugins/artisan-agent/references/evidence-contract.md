@@ -29,7 +29,7 @@ A ticket that misses a criterion is never merged; it is a failed attempt like an
 | `error <reason>` | 6 | the verifier failed twice for this attempt: blocked |
 | | 8 | the verifier is still running |
 
-The verifier runs on `plan.verifier.model` (default `claude-sonnet-5-5`) with an estimate of `plan.verifier.estimate_usd` (default $0.50, so a $1.00 cap) and a deadline of twice `plan.verifier.minutes` (default 15). It is not a ticket, so it takes no slot under Max Agents.
+The verifier runs on `plan.verifier.model` (default `claude-sonnet-5-5`) with an estimate of `plan.verifier.estimate_usd` (default $0.50, so a $1.00 cap) and a deadline that is, unless the plan sets `plan.verifier.minutes` (then twice it), the measured time of the recorded checks it runs plus a criteria allowance (#347): the slowest time each check took in earlier verifiers' `verify/checks/*.json` (`checks.sh run` records `seconds`), summed, plus the larger of 15 minutes and 3 minutes per criterion (`scripts/verifier-deadline.sh`). A check with no measured time gives the fixed 30 minutes. `plan.sh render` shows the deadline and its source; `verify.sh start` logs it and tells the verifier, whose brief forbids rerunning the full suite by hand. It is not a ticket, so it takes no slot under Max Agents.
 
 ## The verdict
 

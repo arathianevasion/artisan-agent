@@ -208,8 +208,8 @@ test_hook_fallback_writes_a_working_project_hook_only_when_asked() {
   branch_file .claude/hooks/artisan-agent-block-replaced.sh >"$TEST_TMPDIR/hook.sh"
   local out=
   out=$(printf '{"command_name":"mattpocock-skills:triage"}' | bash "$TEST_TMPDIR/hook.sh")
-  assert_eq block "$(printf '%s' "$out" | jq -r .decision)"
-  assert_contains "$out" "Use /artisan-agent:triage instead."
+  assert_eq null "$(printf '%s' "$out" | jq -r '.decision // "null"')"
+  assert_contains "$out" "artisan-agent:triage"
 }
 
 test_hook_probe_reports_whether_plugin_hooks_fire() {

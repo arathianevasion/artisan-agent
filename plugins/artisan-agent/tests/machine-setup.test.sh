@@ -474,3 +474,49 @@ test_init_drafts_a_team_design_file_and_says_where_to_land_it_by_pr() {
   assert_eq "edited draft" "$(cat "$d")"
   assert_not_contains "$out" "land it"
 }
+
+# Alias skills (#374): the bare name of a replaced upstream skill runs the artisan-agent version.
+seed_alias_list() { # one real replacement, one that does not exist, one a personal skill may hold
+  ALIAS_LIST="$TEST_TMPDIR/replaced.list"
+  printf '# comment\nretro /artisan-agent:retro\nghost /artisan-agent:no-such-skill\ntriage /artisan-agent:triage\n' >"$ALIAS_LIST"
+  export ARTISAN_REPLACED_SKILLS_LIST="$ALIAS_LIST"
+}
+
+test_aliases_install_one_per_replaced_skill_whose_replacement_exists() {
+  seed_machine; seed_alias_list
+  local out=""
+  out=$("$SCRIPT" aliases) || fail "aliases failed: $out"
+  assert_contains "$out" "installed: retro"
+  assert_contains "$out" "installed: triage"
+  assert_contains "$out" "skipped: ghost"
+  [ ! -e "$CLAUDE_CONFIG_DIR/skills/ghost" ] || fail "alias for a replacement that does not exist"
+  assert_contains "$(cat "$CLAUDE_CONFIG_DIR/skills/retro/SKILL.md")" "/artisan-agent:retro"
+  assert_contains "$(cat "$CLAUDE_CONFIG_DIR/skills/retro/SKILL.md")" "disable-model-invocation: true"
+}
+
+test_aliases_never_overwrite_a_personal_skill_and_a_rerun_changes_nothing() {
+  seed_machine; seed_alias_list
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills/triage"
+  echo "my own triage" >"$CLAUDE_CONFIG_DIR/skills/triage/SKILL.md"
+  local out="" before="" after=""
+  out=$("$SCRIPT" aliases)
+  assert_contains "$out" "skipped: triage"
+  assert_eq "my own triage" "$(cat "$CLAUDE_CONFIG_DIR/skills/triage/SKILL.md")"
+  before=$(cat "$CLAUDE_CONFIG_DIR/skills/retro/SKILL.md")
+  out=$("$SCRIPT" aliases)
+  after=$(cat "$CLAUDE_CONFIG_DIR/skills/retro/SKILL.md")
+  assert_eq "$before" "$after"
+  assert_contains "$out" "unchanged: retro"
+}
+
+test_scan_does_not_report_aliases_as_stale_but_still_reports_personal_copies() {
+  seed_machine; seed_alias_list
+  mkdir -p "$CLAUDE_CONFIG_DIR/skills/to-spec"
+  echo "my own to-spec" >"$CLAUDE_CONFIG_DIR/skills/to-spec/SKILL.md"
+  "$SCRIPT" aliases >/dev/null
+  local out=""
+  out=$("$SCRIPT" scan)
+  assert_not_contains "$out" "stale-skill:retro"
+  assert_not_contains "$out" "stale-skill:triage"
+  assert_contains "$out" "stale-skill:to-spec"
+}

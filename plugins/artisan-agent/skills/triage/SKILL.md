@@ -1,7 +1,6 @@
 ---
 name: triage
 description: Decision-chat skill that replaces upstream triage. Sorts incoming tickets (from agents, findings or other people) into uncontroversial items first, each with a recommendation, then the controversial queue, each naming its controversy criterion. Every outcome (Do, Defer, Discard, take it myself) needs the Artisan's approval. Use when the Artisan wants to triage, or says "what needs my attention".
-disable-model-invocation: true
 ---
 
 # Triage

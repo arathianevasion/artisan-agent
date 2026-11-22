@@ -56,6 +56,11 @@ Every retro, after the lessons are delivered, run `bash "${CLAUDE_PLUGIN_ROOT}/s
 | Voice, individual level | `VOICE_STANDARDS.md` in the individual home | a commit there, origin in its message |
 | Voice, product level | the project's `VOICE_STANDARDS.md` | a commit in the project PR |
 | Voice, team level | the team guardrails repo's `VOICE_STANDARDS.md` | a drafted line only, in `retro/team-voice.md` and the report, for the Artisan to land there by PR |
+| Design, individual level | `DESIGN_STANDARDS.md` in the individual home | a commit there, origin in its message |
+| Design, product level | the project's `DESIGN_STANDARDS.md` | a commit in the project PR |
+| Design, team level | the team guardrails repo's `DESIGN_STANDARDS.md` | a drafted line only, in `retro/team-design.md` and the report, for the Artisan to land there by PR |
+
+A design lesson's level is the Artisan's pick and defaults to product. Its line goes under `## UX conventions` (or the section it names) in `DESIGN_STANDARDS.md`, made if missing. Unlike a voice file there is no size cap: `check` and `deliver` never refuse a design lesson for length. Answer `individual`, `product` or `team` in `decisions.json` to land it at that level. Tests: `tests/retro.test.sh`.
 
 A voice lesson's level is set by who reads the text (ADR 0003): one about chat only the Artisan reads defaults to individual, one about shared text, or one whose reader is unclear, to product. The Artisan can keep it at any level. Its rule goes at the end of the Artisan's own section (`## Your own rules`), never inside the default block. The cap: a voice file stays under about 1,500 tokens (characters ÷ 4). `check` measures each lesson alone against the file as it stands, and `deliver` counts only the lessons the Artisan kept, so a dropped lesson never makes a kept one look over the cap. Both refuse a lesson that would push the file past it, unless the lesson is a merge or replace of a rule in the Artisan's own section, which takes that rule's place. The retro never edits another repo, so the team file's cap is the Artisan's to keep when they land the line.
 

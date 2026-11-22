@@ -83,6 +83,11 @@
 #   open_decision_overrides  [{ticket, why}], one per --override-open-decision,
 #                  the Artisan's reason for keeping that ticket's open
 #                  decisions in the run
+#   verifier_deadline {deadline_seconds, measured_seconds, allowance_seconds,
+#                  criteria, source, runs, note} (#347): the verifier's
+#                  deadline for the ticket with the most criteria, from the
+#                  recorded checks' measured time (verifier-deadline.sh);
+#                  render shows it and its source.
 #   recorded_checks the recorded checks (checks.sh json over --standards,
 #                  default CODING_STANDARDS.md at the checkout's top):
 #                  {recorded, file, commands, suite} or {recorded: false, reason}
@@ -322,6 +327,15 @@ cmd_build() {
   # Agent Brief comment gave any) can't be verified: the plan isn't approvable.
   out=$(printf '%s' "$out" | jq '.criteria_missing = [.tickets | to_entries[]
     | select((.value.human_check_for // null) == null and .value.acceptance != null and (.value.acceptance | length) == 0) | .key]')
+  # The verifier's deadline (#347), for the ticket with the most criteria: the
+  # recorded checks' measured time plus a criteria allowance, or the fixed
+  # value without history. A plan's own verifier.minutes is not set here.
+  local vcrit= vdl= vleave=
+  vcrit=$(printf '%s' "$out" | jq '[.tickets[] | (.acceptance // []) | length] | max // 0')
+  [ "$gate" != ci ] || vleave=$suite
+  vdl=$("$SCRIPT_DIR/verifier-deadline.sh" ${where[@]+"${where[@]}"} --history "$history" --criteria "$vcrit" \
+    ${vleave:+--leave "$vleave"}) || exit 1
+  out=$(printf '%s' "$out" | jq --argjson v "$vdl" '.verifier_deadline = $v')
   # Open decisions (criterion 8, references/open-decisions.md): each one the
   # draft records stands until the Artisan keeps its ticket with a reason
   # (--override-open-decision) or plan.sh drop takes the ticket out.
@@ -623,6 +637,14 @@ cmd_render() {
          | if .minutes_per_merge != null and $l != null and .minutes_per_merge > $l then
              "**Over the merge gate'"'"'s time limit:** about \(.minutes_per_merge) minutes per merge against a limit of \($l) (`merge_gate_minutes_limit`)."
            else empty end),
+        "" end ),
+      ( $p.verifier_deadline // null | if . == null then empty else
+        "### Verifier deadline",
+        (if ($p.verifier.minutes // null) != null then
+           "Each verifier gets \($p.verifier.minutes * 2) minutes (source: the plan'"'"'s own `verifier.minutes` of \($p.verifier.minutes), doubled; the measured figure would have been \((.deadline_seconds / 60 | ceil)) minutes). It is told not to rerun the full suite by hand."
+         else
+           "Each verifier gets \((.deadline_seconds / 60 | ceil)) minutes at most (\(.criteria) criteria on the widest ticket; source: \(.source)): \(.note). It is told not to rerun the full suite by hand."
+         end),
         "" end ),
       "### Every number this run uses",
       "| Setting | Value |",

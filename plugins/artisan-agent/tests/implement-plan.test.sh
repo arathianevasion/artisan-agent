@@ -69,3 +69,32 @@ test_the_orchestrators_exit_wakes_the_chat_which_notifies_at_once() {
   assert_contains "$skill" "send its \`notify:\` line as a push notification"
   assert_contains "$skill" "an orchestrator's exit is notified idle or not"
 }
+
+# #336: a design tweak during a run reuses existing paths, told apart by the journey test.
+tweak_section() {
+  awk '/^### Design tweaks during a run/{f=1;next} /^### /{f=0} f' "$SKILL_DIR/SKILL.md"
+}
+
+test_a_look_only_tweak_becomes_a_small_change_ticket_in_the_open_run() {
+  local s=
+  s=$(tweak_section)
+  [ -n "$s" ] || fail "no 'Design tweaks during a run' section in the Run chat's instructions"
+  assert_contains "$s" "look-only tweak"
+  assert_contains "$s" "Small change ticket"
+  assert_contains "$s" "lever.sh add"
+}
+
+test_a_journey_changing_tweak_is_filed_as_an_open_decision() {
+  local s=
+  s=$(tweak_section)
+  assert_contains "$s" "journey-changing tweak"
+  assert_contains "$s" "open decision"
+  assert_contains "$s" "--criterion 8"
+  assert_contains "$s" "Decision chat"
+}
+
+test_the_two_tweaks_are_told_apart_by_whether_a_journey_step_changes() {
+  local s=
+  s=$(tweak_section)
+  assert_contains "$s" "whether a journey step changes"
+}

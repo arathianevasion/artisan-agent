@@ -31,6 +31,9 @@ Usage (python3 -I retro.py <command> ...):
       file (the file and section made if missing), or a config number set;
       a voice lesson's rule goes at the end of the Artisan's own section of
       the checkout's VOICE_STANDARDS.md (the individual home is a checkout too)
+  design-line <lesson.json>
+      the line a design lesson adds (a team lesson's drafted line); a design
+      lesson has no size cap
   voice-line <lesson.json>
       the rule line a voice lesson adds (a team lesson's drafted line)
   voice-levels <checked.json>
@@ -67,7 +70,17 @@ HOMES = {
     "upstream": ("the upstream check", "individual"),
     "experience": ("the satisfaction record", "individual"),
     "voice": ("voice standards (VOICE_STANDARDS.md)", "by level"),
+    "design": ("design standards (DESIGN_STANDARDS.md)", "by level"),
 }
+# A design lesson's level -> (home as shown, where it is delivered). It
+# defaults to product: how the product looks and feels is the product's.
+DESIGN_LEVELS = {
+    "individual": ("design standards, individual level (DESIGN_STANDARDS.md in the individual home)", "individual"),
+    "product": ("design standards, product level (DESIGN_STANDARDS.md in the project)", "project"),
+    "team": ("design standards, team level (a drafted line for the team guardrails repo)", "team"),
+}
+DESIGN_FILE = "DESIGN_STANDARDS.md"
+DESIGN_SECTION = "## UX conventions"
 # A voice lesson's level -> (home as shown, where it is delivered). The
 # default level follows who reads the text (ADR 0003): chat only the Artisan
 # reads is individual; shared text, and a reader left unclear, is product.
@@ -490,6 +503,8 @@ def check(lessons_path, threshold, voice_files=None):
                 problem = voice_edit(voice[l["level"]], l)[1]
             if problem:
                 problems.append("%s: %s" % (where, problem))
+        elif kind == "design":
+            problems += design_lesson(l, where)
         elif kind == "calibration":
             if not (ch.get("key") and "value" in ch):
                 problems.append("%s: a calibration lesson needs change.key and change.value" % where)
@@ -545,6 +560,38 @@ def voice_lesson(l, where):
     l["level"] = level or VOICE_READERS.get(reader, "product")
     l["home"], l["delivery"] = VOICE_LEVELS[l["level"]]
     return []
+
+
+def design_lesson(l, where):
+    """Gives a design lesson its level, home and delivery; returns its problems.
+    There is no size cap: a design lesson is never refused for length."""
+    level = l.get("level")
+    if level is not None and level not in DESIGN_LEVELS:
+        return ["%s: level must be individual, product or team" % where]
+    l["level"] = level or "product"
+    l["home"], l["delivery"] = DESIGN_LEVELS[l["level"]]
+    return []
+
+
+def design_line(l):
+    """The line a design lesson adds: its change.text, else its lesson as a list item."""
+    text = ((l.get("change") or {}).get("text") or "").strip() or l["lesson"].strip()
+    return text if text.startswith("- ") else "- " + text
+
+
+def design_apply(root, l):
+    """Adds a design lesson's line under its section (default UX conventions)
+    of ROOT's DESIGN_STANDARDS.md, made if missing."""
+    path = os.path.join(root, DESIGN_FILE)
+    text = ""
+    if os.path.isfile(path):
+        with open(path) as fh:
+            text = fh.read()
+    section = (l.get("change") or {}).get("section") or DESIGN_SECTION
+    with open(path, "w") as fh:
+        fh.write(under_section(text, section, design_line(l)))
+    print(DESIGN_FILE)
+    return 0
 
 
 def money(x):
@@ -677,6 +724,9 @@ def render(checked_path, facts_path, questions_path, motivation_path=None):
             out.append("| %s | %s | %s | %s | %s | %s |" % (l["id"], cell(l["lesson"]), cell(home), l["role"],
                                                        l["scope"], cell(l["why"])))
         out += ["", "Recommend: yes to all. Say which to drop, if any.", ""]
+    if any(l.get("kind") == "design" for l in lessons):
+        out += ["A design lesson lands at the product level unless you answer \"individual\" or \"team\" "
+                "for it (team: a drafted line for you to land in the team guardrails repo by PR).", ""]
     if any(l.get("kind") == "voice" for l in lessons):
         out += ["A voice lesson lands at the level shown, set by who reads the text. "
                 "Answer \"individual\", \"product\" or \"team\" for one to land it there instead "
@@ -1104,6 +1154,8 @@ def apply(worktree, lesson_path):
     ch = l.get("change") or {}
     if l.get("kind") == "voice":
         return voice_apply(worktree, l)
+    if l.get("kind") == "design":
+        return design_apply(worktree, l)
     if l.get("kind") == "calibration":
         config_set(os.path.join(worktree, ".artisan-agent", "config.yml"), ch["key"], ch["value"])
         print(".artisan-agent/config.yml")
@@ -1221,10 +1273,15 @@ def main(argv):
     if cmd == "voice-line" and len(args) == 1:
         print(voice_line(load(args[0])))
         return 0
+    if cmd == "design-line" and len(args) == 1:
+        print(design_line(load(args[0])))
+        return 0
     if cmd == "voice-levels" and len(args) == 1:
         doc = load(args[0])
         for l in doc.get("lessons") or []:
-            problems = voice_lesson(l, "lesson %s" % l["id"]) if l.get("kind") == "voice" else []
+            where = "lesson %s" % l["id"]
+            problems = (voice_lesson(l, where) if l.get("kind") == "voice"
+                        else design_lesson(l, where) if l.get("kind") == "design" else [])
             if problems:
                 print("\n".join(problems), file=sys.stderr)
                 return 1

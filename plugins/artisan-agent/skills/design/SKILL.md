@@ -21,7 +21,7 @@ Before anything else, read the design standards in force: run `${CLAUDE_PLUGIN_R
 
 ## 3. Write the journey diff
 
-Journeys live in the product's `journeys/` folder, one Markdown file per journey, `journeys/<journey-slug>.md`. A journey file names its persona (one from the design standards) and lists ordered steps, each with its goal, its action (what the user does and sees) and its next step (where they go next):
+Journeys live in the product's `docs/journeys/` folder, one Markdown file per journey, `docs/journeys/<journey-slug>.md`. A journey file names its persona (one from the design standards) and lists ordered steps, each with its goal, its action (what the user does and sees) and its next step (where they go next):
 
 ```
 # Journey: <name>
@@ -50,10 +50,20 @@ The prototype branch is never merged.
 
 The designer may design in a tool. Record its file link on the design ticket. Skip this step when no tool is used.
 
+**Check for Figma's MCP server** first: look for its tools among the ones you have (ToolSearch for `figma`). Its remote server is `https://mcp.figma.com/mcp`. Without it, work from screenshots and links alone: the designer's screenshots and the file link they give you are the whole of the tool's part, and the three adapter steps below don't apply. The contract stays screenshots, links and git either way (ADR 0004); the adapter only saves the designer steps.
+
+With the server connected, the adapter does three things, each only when the Artisan or designer asks for it:
+
+- **Read a design**: for a Figma link on the design ticket, `get_design_context` reads the frames and `get_screenshot` renders one, so the journey diff and the prototype brief can follow the design.
+- **Capture main into Figma**: `generate_figma_design` captures the running product's journey steps into a Figma file as the designer's starting point. Capture from main as the "before" screenshots were, never from a checkout with other work in it.
+- **Write a design**: `use_figma` writes and edits frames on the canvas. Writing is remote-server only.
+
+With or without the server, the Figma file's link is the tool link: comment it on the design ticket (`gh issue comment <n> --body "**Tool link:** <figma link>"`) and pass `--tool-link <figma link>` at approval. Figma's tool names change: when one named here is missing, check Figma's current MCP docs and use its replacement.
+
 ## 6. Approve
 
-Not built yet. Approval records the design package on the design ticket and hands it to `to-spec`.
+`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `docs/journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone, and a tool link never replaces a step's screenshot: a Figma design still commits a screenshot per changed step (export the frame, or `get_screenshot` with the server connected). It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
 
 ## 7. Retire at ship
 
-Not built yet. At ship the prototype branch and the package screenshots are deleted; the journey diff stays.
+Retire runs after the merge, not at the cut: cutting a PR isn't shipping it, and a held or rejected PR still needs the prototype branch and the screenshots. Once the PR that carries the design's tickets has merged into `main` (with every PR under it in the stack), `end-gate.sh finish` runs `design.sh retire --design <design slug> --ticket <n> --merge <PR url>` for each design whose feature the run ships; you don't run it by hand. A design whose PR hasn't merged is listed as waiting and left alone; `end-gate.sh finish` again, after the merge, retires it. It deletes the prototype branch and its worktree, deletes the package's screenshots (`docs/journeys/screenshots` on the feature branch, and the "before" folder), and closes the design ticket with the merge it shipped in. The journey diff stays. A run ships a design when a ticket in its scope has a `Design: #<n>` line in its body, so put that line in each ticket that builds the design.

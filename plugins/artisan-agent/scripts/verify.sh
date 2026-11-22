@@ -103,7 +103,9 @@
 #
 # Plan settings (state file, all optional): plan.verifier.model (default
 # claude-sonnet-5-5), plan.verifier.estimate_usd (0.5), plan.verifier.minutes
-# (15). ARTISAN_CLAUDE_ARGS and ARTISAN_MAX_BUDGET_USD apply as in wave.sh.
+# (unset: the deadline is measured, #347, verifier-deadline.sh: the recorded
+# checks' measured time plus a criteria allowance, the fixed 30 minutes
+# without history; set, the deadline is twice it). ARTISAN_CLAUDE_ARGS and ARTISAN_MAX_BUDGET_USD apply as in wave.sh.
 # ARTISAN_VERIFIER_UP_SECONDS: how long start waits for a verifier's runner to
 # record its pid before giving up with 8 (whole seconds, default 10; tests set
 # it shorter where a pid is meant never to come).
@@ -285,8 +287,8 @@ cmd_start() {
     [.integration.branch, (.tickets[$t].base // ""), .repo, (.plan.tickets[$t].title // "untitled"),
      (.plan.tickets[$t].ticket_path // ""), (.plan.tickets[$t].expected_output // "see the acceptance criteria"),
      (.plan.suite_command // ""), (.integration.worktree // ""), (.tickets[$t].result.file // ""),
-     (.plan.verifier.model // $dm), (.plan.verifier.estimate_usd // $de), (.plan.verifier.minutes // $dmin)]' \
-    --arg t "$t" --arg dm "$DEFAULT_MODEL" --arg de "$DEFAULT_ESTIMATE_USD" --arg dmin "$DEFAULT_MINUTES"
+     (.plan.verifier.model // $dm), (.plan.verifier.estimate_usd // $de), (.plan.verifier.minutes // "")]' \
+    --arg t "$t" --arg dm "$DEFAULT_MODEL" --arg de "$DEFAULT_ESTIMATE_USD"
   [ -n "$base" ] || base=$(git -C "$MAIN" merge-base "refs/heads/$ib" "$tip") || die "no merge base between $ib and #$t's commit"
   id="verify-$t"
   wt="$WT_ROOT/$RUN_ID-$id.$v"
@@ -313,6 +315,21 @@ cmd_start() {
   cionly=$("$SCRIPT_DIR/checks.sh" ci-only --file "$std" | jq -Rsc 'split("\n") | map(select(. != ""))') \
     || die "could not read the recorded checks in $std"
   if [ "$gate" = ci ] && { [ -n "$leave" ] || [ "$cionly" != '[]' ]; }; then worker=1; fi
+  # Its deadline (#347): the plan's own minutes (twice them) when it sets
+  # them; else the measured time of the checks it will run plus room for the
+  # criteria (verifier-deadline.sh), or the fixed 30 minutes without history.
+  local dl="" dl_seconds="" dl_source=""
+  if [ -n "$minutes" ]; then
+    dl_seconds=$(awk -v m="$minutes" 'BEGIN { s = m * 2 * 60; if (s > int(s)) s = int(s) + 1; print s }')
+    dl_source="the plan's verifier.minutes ($minutes, doubled)"
+  else
+    minutes=$DEFAULT_MINUTES
+    dl=$("$SCRIPT_DIR/verifier-deadline.sh" --file "$std" --history "$(dirname "$RUN_DIR")" --criteria "$ccount" \
+      ${leave:+--leave "$leave"}) || die "could not work out the verifier's deadline"
+    dl_seconds=$(jq -r .deadline_seconds <<<"$dl")
+    dl_source="$(jq -r '.source + ": " + .note' <<<"$dl") ($(jq -r .runs <<<"$dl") earlier check outputs read)"
+  fi
+  printf 'verify.sh: #%s verifier deadline %s s, %s\n' "$t" "$dl_seconds" "$dl_source" >&2
   result="$RUN_DIR/$result_file"
   if [ -n "$path" ]; then ref="$path (ticket $t)"; else ref="#$t on $repo"; fi
   prompt="$RUN_DIR/prompts/$id.$v.md"
@@ -321,6 +338,8 @@ cmd_start() {
       "$t" "$ref" "$title" "$n" "$RUN_ID" "$PLUGIN_DIR/skills/implement-plan/references/verifier.md"
     printf -- '- You are in a detached checkout of the worker'"'"'s commit %s.\n' "$tip"
     printf -- '- The diff to verify: git diff %s...%s\n' "$base" "$tip"
+    printf -- '- Your deadline is %s minutes of wall-clock time (%s). It covers the recorded checks plus your look at each criterion; at the deadline you are stopped with no verdict. Never rerun the full suite by hand: where a recorded check is the suite it ran it (or the merge gate will), and a second run, or one under load, is what runs out the deadline. Test a criterion with the test files that bear on it.\n' \
+      "$(( (dl_seconds + 59) / 60 ))" "$dl_source"
     printf -- '- Guardrails that apply to this ticket (an area-scoped one only if the ticket touches its area): run %s resolve --run-dir %s --ticket %s\n' \
       "$SCRIPT_DIR/guardrails.sh" "$RUN_DIR" "$t"
     printf -- '- Expected output (from the plan): %s\n' "$expected"
@@ -393,7 +412,7 @@ cmd_start() {
   headless_args "$VERIFIER_TOOLS"
   if ! pid=$("$SCRIPT_DIR/run-ticket.sh" --role verifier --run-dir "$RUN_DIR" --ticket "$id" --attempt "$v" \
     --prompt-file "$prompt" --workdir "$wt" --model "$model" \
-    --estimate-usd "$estimate" --expected-minutes "$minutes" --name "$vname" \
+    --estimate-usd "$estimate" --expected-minutes "$minutes" --deadline-seconds "$dl_seconds" --name "$vname" \
     -- "${HEADLESS_ARGS[@]}" --add-dir "$RUN_DIR" \
     ${EXTRA[@]+"${EXTRA[@]}"}); then
     remove_worktree "$wt"
