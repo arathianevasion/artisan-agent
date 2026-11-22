@@ -338,7 +338,7 @@ cmd_start() {
       "$t" "$ref" "$title" "$n" "$RUN_ID" "$PLUGIN_DIR/skills/implement-plan/references/verifier.md"
     printf -- '- You are in a detached checkout of the worker'"'"'s commit %s.\n' "$tip"
     printf -- '- The diff to verify: git diff %s...%s\n' "$base" "$tip"
-    printf -- '- Your deadline is %s minutes of wall-clock time (%s). It covers the recorded checks plus your look at each criterion; at the deadline you are stopped with no verdict. Never rerun the full suite by hand: the recorded check already ran it, and a second run, or one under load, is what runs out the deadline. Test a criterion with the test files that bear on it.\n' \
+    printf -- '- Your deadline is %s minutes of wall-clock time (%s). It covers the recorded checks plus your look at each criterion; at the deadline you are stopped with no verdict. Never rerun the full suite by hand: where a recorded check is the suite it ran it (or the merge gate will), and a second run, or one under load, is what runs out the deadline. Test a criterion with the test files that bear on it.\n' \
       "$(( (dl_seconds + 59) / 60 ))" "$dl_source"
     printf -- '- Guardrails that apply to this ticket (an area-scoped one only if the ticket touches its area): run %s resolve --run-dir %s --ticket %s\n' \
       "$SCRIPT_DIR/guardrails.sh" "$RUN_DIR" "$t"

@@ -640,7 +640,11 @@ cmd_render() {
         "" end ),
       ( $p.verifier_deadline // null | if . == null then empty else
         "### Verifier deadline",
-        "Each verifier gets \((.deadline_seconds / 60 | ceil)) minutes (\(.criteria) criteria on the widest ticket; source: \(.source)): \(.note). It is told not to rerun the full suite by hand.",
+        (if ($p.verifier.minutes // null) != null then
+           "Each verifier gets \($p.verifier.minutes * 2) minutes (source: the plan'"'"'s own `verifier.minutes` of \($p.verifier.minutes), doubled; the measured figure would have been \((.deadline_seconds / 60 | ceil)) minutes). It is told not to rerun the full suite by hand."
+         else
+           "Each verifier gets \((.deadline_seconds / 60 | ceil)) minutes at most (\(.criteria) criteria on the widest ticket; source: \(.source)): \(.note). It is told not to rerun the full suite by hand."
+         end),
         "" end ),
       "### Every number this run uses",
       "| Setting | Value |",

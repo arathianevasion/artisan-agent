@@ -906,3 +906,11 @@ test_the_approval_shows_the_verifiers_deadline_and_where_it_comes_from() {
   assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "source: measured"
   assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "measured checks 300 s"
 }
+
+test_the_approval_shows_a_plans_own_verifier_minutes_as_the_deadline_source() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") | jq '.verifier = {minutes: 20}' >"$TEST_TMPDIR/plan.json"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "Each verifier gets 40 minutes (source: the plan's own \`verifier.minutes\` of 20, doubled"
+}
