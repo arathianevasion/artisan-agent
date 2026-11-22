@@ -6,6 +6,7 @@
 #   design.sh start --name NAME --step STEP [--step STEP]... [--designer WHO] [--no-fetch]
 #   design.sh status
 #   design.sh resume [#]N
+#   design.sh journey --design SLUG --name NAME --persona WHO --goal G --action A --next N [--goal G --action A --next N]...
 #
 # start: picks the base: with an origin remote, fetches it and uses
 #   origin/<default branch> (with --no-fetch, origin/<default branch> as last
@@ -28,9 +29,29 @@
 # resume: prints design ticket N's branches, links, designer, steps and
 #   screenshots' folder, one "<field>: <value>" per line.
 #
+# journey: writes one user journey file, journeys/<journey slug>.md, on the
+#   feature branch feature/<SLUG> only, and commits it there. The file names
+#   its persona and lists the ordered steps given, each with its goal, what
+#   the user does and sees (action) and where they go next. A --goal starts a
+#   step; the --action and --next after it belong to it. Give only the steps
+#   the change touches: on a product with no journeys the folder starts with
+#   those, and the file written again replaces the steps it had. It works in a
+#   temporary checkout of the feature branch, so the main checkout, the local
+#   default branch and every other branch stay as they were: the journeys on
+#   main change only when the feature merges. Prints the file's path in the
+#   repo and the commit. The file's shape:
+#     # Journey: <name>
+#     **Persona:** <persona>
+#     ## Steps
+#     ### 1. <goal>
+#     - **Goal:** <goal>
+#     - **Action:** <what the user does and sees>
+#     - **Next:** <where they go next>
+#
 # Runs in the product repo (any checkout of it). GH_BIN stands in for gh.
 # Exit status: 0 done; 1 failed (why on stderr); 2 bad usage; 16 no
 # capture_command recorded (project setup records one).
+# (journey: exit 1 when the feature branch is missing or checked out elsewhere.)
 
 set -euo pipefail
 
@@ -130,6 +151,51 @@ Retry when origin is reachable, or pass --no-fetch to start from $base as last f
   printf 'feature branch: %s\nprototype branch: %s\n' "$feature" "$proto"
 }
 
+# One journey file on the feature branch, written in a throwaway checkout of it.
+cmd_journey() {
+  local slug= name= persona= goals=() actions=() nexts=() i= jslug= file= body= wt= sha=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --design) [ $# -ge 2 ] || usage; slug=$2; shift 2 ;;
+      --name) [ $# -ge 2 ] || usage; name=$2; shift 2 ;;
+      --persona) [ $# -ge 2 ] || usage; persona=$2; shift 2 ;;
+      --goal) [ $# -ge 2 ] || usage; goals+=("$2"); actions+=(""); nexts+=(""); shift 2 ;;
+      --action) [ $# -ge 2 ] && [ "${#goals[@]}" -gt 0 ] || usage; actions[${#goals[@]}-1]=$2; shift 2 ;;
+      --next) [ $# -ge 2 ] && [ "${#goals[@]}" -gt 0 ] || usage; nexts[${#goals[@]}-1]=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$name" ] && [ -n "$persona" ] && [ "${#goals[@]}" -gt 0 ] || usage
+  for i in "${!goals[@]}"; do
+    [ -n "${goals[$i]}" ] && [ -n "${actions[$i]}" ] && [ -n "${nexts[$i]}" ] || {
+      printf 'design.sh: step %s needs a goal, an action and a next step\n' "$((i + 1))" >&2; exit 2
+    }
+  done
+  jslug=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  [ -n "$jslug" ] || die "the journey's name needs a letter or digit: $name"
+  has_branch "feature/$slug" || die "no feature branch feature/$slug: start the design first"
+  file="journeys/$jslug.md"
+  body=$(printf '# Journey: %s\n\n**Persona:** %s\n\n## Steps\n' "$name" "$persona")
+  for i in "${!goals[@]}"; do
+    body+=$(printf '\n\n### %s. %s\n- **Goal:** %s\n- **Action:** %s\n- **Next:** %s' \
+      "$((i + 1))" "${goals[$i]}" "${goals[$i]}" "${actions[$i]}" "${nexts[$i]}")
+  done
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/artisan-design.XXXXXX")
+  trap 'git worktree remove --force "$tmp/feature" >/dev/null 2>&1 || true; rm -rf "$tmp"; git worktree prune >/dev/null 2>&1 || true' EXIT
+  wt="$tmp/feature"
+  git worktree add -q "$wt" "feature/$slug" || die "could not check out feature/$slug (is it checked out elsewhere?)"
+  mkdir -p "$wt/journeys"
+  printf '%s\n' "$body" >"$wt/$file"
+  git -C "$wt" add -- "$file"
+  if git -C "$wt" diff --cached --quiet; then
+    printf 'journey file: %s\nfeature branch: feature/%s\nunchanged\n' "$file" "$slug"
+    return
+  fi
+  git -C "$wt" commit -q -m "Journey: $name (design $slug)" || die "committing $file on feature/$slug failed"
+  sha=$(git -C "$wt" rev-parse --short HEAD)
+  printf 'journey file: %s\nfeature branch: feature/%s\ncommit: %s\n' "$file" "$slug" "$sha"
+}
+
 cmd_status() {
   [ $# -eq 0 ] || usage
   local out=
@@ -155,6 +221,7 @@ cmd=$1; shift
 case "$cmd" in
   start) cmd_start "$@" ;;
   status) cmd_status "$@" ;;
+  journey) cmd_journey "$@" ;;
   resume) cmd_resume "$@" ;;
   *) usage ;;
 esac
