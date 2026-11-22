@@ -48,13 +48,13 @@ The issue tracker and triage label vocabulary should have been provided to you (
    Changed steps: <step name>: <one line on what changes>, ...
    ```
 
-   The journey diff is an Always ask item whatever the standards files say, so it is shown in every review of a spec with an Experience section, never summarised away. Approving the spec approves the design package with it (job 8 in `${CLAUDE_PLUGIN_ROOT}/references/jobs.md`).
+   The journey diff is an Always ask item whatever the standards files say. Show it in every review of a spec with an Experience section, never summarised away.
 
    Each item carries a recommendation and the strongest alternative you rejected (ARTISAN.md rules 2 and 3). Say what conflicts or sharpens, not the motivation's own words: the published spec contains no text from the motivation, quoted or paraphrased, because the motivation is private and the spec may be public. Scope never widens to match the motivation without the Artisan's yes. Batch both lists: the Artisan answers once ("accept all, apply 1", "cut 2 and 5"), not piecemeal.
 
 6. **Apply their answers.** Remove every line the Artisan cut, renumber, and fix any other line that depended on a cut one. If they asked for other edits, make them, and show again only what changed. Anything newly added counts as an addition and goes through the same list. Don't publish until the Artisan says the spec is approved.
 
-7. **Publish** the approved spec to the project issue tracker and apply the `ready-for-agent` triage label; no further triage is needed. A line the Artisan cut must not appear anywhere in what you publish, including Further Notes. Give the Artisan the link, and that the next step is `/mattpocock-skills:to-tickets`. When the spec has an Experience section, tell the Artisan, and whoever writes the tickets, that each ticket building a changed step cites journey steps by name, as the Experience section names them (`Steps: <journey>: <step>`), and carries a `Design: #<design ticket>` line so the end gate retires the design at ship.
+7. **Publish** the approved spec to the project issue tracker and apply the `ready-for-agent` triage label; no further triage is needed. A line the Artisan cut must not appear anywhere in what you publish, including Further Notes. Give the Artisan the link, and that the next step is `/mattpocock-skills:to-tickets`. When the spec has an Experience section, say so to the Artisan with the link. Each ticket written from it cites the journey steps it builds by name, as the Experience section names them, in a `Steps: <journey>: <step>, …` line. Each such ticket also carries a `Design: #<design ticket>` line: the design ticket is where the design stage recorded the package, and the end gate reads that line to retire the design when the run ships it.
 
 ## Experience section
 
@@ -63,8 +63,8 @@ Write it only when a design package exists: the design stage approved one for th
 Read the package from the design ticket, and put the section after "Solution" in the spec, with:
 
 - **Affected journeys**: each user journey the change touches, by name, with its persona.
-- **Journey diff**: a link to the journey diff on the feature branch, the `docs/journeys/<journey>.md` files the package names.
-- **Changed steps**: each journey step that changes, by its name in the journey, with its design screenshot from the package (a terminal transcript for a CLI) and the prototype or tool link when the package has one.
+- **Journey diff**: a link to the diff the package records: the compare view of the feature branch against the default branch, limited to `docs/journeys/`.
+- **Changed steps**: each journey step that changes, by its name in the journey, with its design screenshot from the package (a terminal transcript for a CLI) and the prototype or tool link when the package has one. Link each screenshot at the feature branch's commit, not the branch name: the end gate deletes the screenshots from the branch at ship, and a commit link still opens.
 - **Whys**: for each changed step, why the experience changes this way, in the Artisan's words from the design stage. A why you inferred is an addition (step 3).
 
 The step names here are the names tickets cite, so use them exactly as the journey files write them.

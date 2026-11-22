@@ -134,12 +134,13 @@ test_to_spec_writes_an_experience_section_only_with_a_design_package() {
 
 test_to_spec_shows_the_journey_diff_as_always_ask_in_review() {
   grep -q '^ *## Always ask: journey diff' "$TOSPEC" || fail "spec review has no journey diff Always ask block"
-  grep -qi 'approving the spec approves the design package' "$TOSPEC" || fail "spec approval does not cover the package"
+  grep -qi 'approving the spec approves this design package' "$TOSPEC" || fail "spec approval does not cover the package"
   grep -qi 'no second approval' "$TOSPEC" || fail "a second approval is not ruled out"
 }
 
 test_to_spec_tells_tickets_to_cite_journey_steps_by_name() {
-  grep -qi 'cite.*journey steps\? by name\|cites\? .*step.* by name' "$TOSPEC" || fail "tickets are not told to cite steps by name"
+  grep -q 'Each ticket written from it cites the journey steps it builds by name' "$TOSPEC" || fail "tickets are not told to cite steps by name"
+  grep -q '`Steps: <journey>: <step>, …`' "$TOSPEC" || fail "no step citation line for tickets"
 }
 
 test_jobs_list_has_design_the_experience_and_job_8_covers_the_package() {
