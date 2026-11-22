@@ -492,3 +492,20 @@ test_no_step_of_the_design_skill_commits_from_the_decision_chat() {
   # the chat runs no git command that writes: every commit is design.sh's, in its own checkout, or the worker's
   assert_eq "" "$(grep -nE 'git (commit|add|merge|push|checkout|switch|cherry-pick|rebase|reset)' "$SKILL" || true)"
 }
+
+test_a_dispatch_while_the_prototype_worker_still_runs_is_refused() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  # a worker that is still going: it waits for the test to let it finish
+  printf 'while [ ! -e "$FAKE_PROTO/go" ]; do sleep 0.1; done\n' >>"$TEST_TMPDIR/fake-claude"
+  local st=0 err= pid=
+  prototype >/dev/null 2>&1
+  pid=$(cat "$P/.artisan-agent/designs/faster-checkout/prototype.pid")
+  err=$(prototype 2>&1 >/dev/null) || st=$?
+  touch "$FAKE_PROTO/go"
+  assert_eq 1 "$st"
+  assert_contains "$err" "still running (pid $pid)"
+  wait_prototype
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+  assert_eq 1 "$(git rev-list --count main..prototype/faster-checkout)" "a second worker ran"
+}

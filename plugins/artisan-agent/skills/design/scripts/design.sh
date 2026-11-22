@@ -60,6 +60,7 @@
 #   "Where the design system lives" in each design standards file in force
 #   (guardrails.sh design), product first. With none recorded it warns on
 #   stderr and the brief says to use the components already in the code.
+#   Refuses while the last worker it dispatched for SLUG is still running.
 #   Prints the worktree, the branch, the brief, the worker's pid and its log.
 #
 # Runs in the product repo (any checkout of it). GH_BIN stands in for gh;
@@ -278,6 +279,9 @@ cmd_prototype() {
   headless_args "$PROTOTYPE_TOOLS"
   runner=(env ARTISAN_ROLE=prototype "$CLAUDE" -p "$(cat "$brief")" "${HEADLESS_ARGS[@]}")
   [ -z "$model" ] || runner+=(--model "$model")
+  if [ -s "$dir/prototype.pid" ] && kill -0 "$(cat "$dir/prototype.pid")" 2>/dev/null; then
+    die "the prototype worker for $slug is still running (pid $(cat "$dir/prototype.pid")): let it finish or stop it, then dispatch again"
+  fi
   rm -f "$dir/prototype.pid"
   pid=$(detach_start "$dir/prototype.pid" "$log" bash -c 'echo $$ >"$1.tmp" && mv "$1.tmp" "$1"; cd "$2" || exit 1; shift 2; exec "$@"' \
     _ "$dir/prototype.pid" "$wt" "${runner[@]}") || die "the prototype worker did not start; see $log"
