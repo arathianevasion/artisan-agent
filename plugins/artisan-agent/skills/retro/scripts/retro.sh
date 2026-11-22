@@ -411,7 +411,7 @@ edit_preflight() { # decisions
     for br in $(jq -r '[.end_gate.prs[]? | "\(.branch)\t\(.url // .n)"] | .[]' "$RD/state.json" | cut -f1); do
       if git -C "$MAIN" cat-file -e "$br:$path" 2>/dev/null || git -C "$MAIN" cat-file -e "origin/$br:$path" 2>/dev/null; then
         pr=$(jq -r --arg b "$br" '.end_gate.prs[] | select(.branch == $b) | (.url // "PR \(.n)")' "$RD/state.json" | head -1)
-        held="$pr ($br)"
+        held="$pr ($br)"; break
       fi
     done
     if [ -z "$held" ]; then
