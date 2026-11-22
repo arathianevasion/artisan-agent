@@ -314,7 +314,7 @@ test_the_journey_changes_stay_off_main_and_the_checkout() {
   assert_eq "" "$(git ls-tree -r --name-only main | grep '^docs/journeys/' || true)" "main has journeys"
   [ ! -e "$P/docs/journeys" ] || fail "the checkout got the journeys folder"
   assert_eq work "$(git rev-parse --abbrev-ref HEAD)"
-  assert_eq "" "$(git status --porcelain -- journeys)" "the checkout is dirty"
+  assert_eq "" "$(git status --porcelain -- docs/journeys)" "the checkout is dirty"
   assert_eq "" "$(git worktree list | grep -v "^$P " || true)" "a worktree was left behind"
 }
 
@@ -346,7 +346,7 @@ test_a_journey_for_a_design_that_was_not_started_is_refused() {
 
 test_no_plugin_file_names_a_root_journeys_folder() {
   local hits=
-  hits=$(grep -rnE '(^|[^[:alnum:]_/.-])journeys/' "$PLUGIN_ROOT/skills" "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/references" 2>/dev/null || true)
+  hits=$(grep -rnE '(^|[^[:alnum:]_/.-])journeys/' --exclude-dir=tests --exclude=CHANGELOG.md "$PLUGIN_ROOT" 2>/dev/null || true)
   assert_eq "" "$hits" "a root journeys/ folder is named"
 }
 
