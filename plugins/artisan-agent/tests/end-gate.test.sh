@@ -617,11 +617,19 @@ names_design() { # ticket number: the ticket's body now says it builds that desi
   jq --arg b $'Builds it.\nDesign: #'"$2" '.body = $b' "$FAKE_GH_DIR/issue-$1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-$1.json"
 }
 
-finish_run() {
+merge_all_prs() {
+  local f= n=
+  for f in "$FAKE_GH_DIR"/pr-*.json; do
+    jq '.state = "MERGED" | .merge_oid = "abc123"' "$f" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$f"
+  done
+}
+
+finish_run() { # [unmerged]: the PRs merge before finish unless told otherwise (#396)
   product_boundary plan
   "$E" open "$RUN_DIR" >/dev/null
   "$E" approve "$RUN_DIR" >/dev/null
   cut_all
+  [ "${1:-}" = unmerged ] || merge_all_prs
   "$E" finish "$RUN_DIR"
 }
 
@@ -673,4 +681,69 @@ test_a_design_line_with_windows_line_endings_still_names_its_design() {
   jq --arg b $'Builds it.\r\nDesign: #10\r\n' '.body = $b' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-2.json"
   finish_run >/dev/null
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+}
+
+# ------------------------------------------------------------ retire after the merge (#396)
+
+merge_pr() { # n: the PR has merged into its base
+  jq '.state = "MERGED" | .merge_oid = "abc123"' "$FAKE_GH_DIR/pr-$1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/pr-$1.json"
+}
+
+test_finish_leaves_a_design_whose_pr_is_cut_but_not_merged_and_lists_it_as_waiting() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  local out=
+  out=$(finish_run unmerged 2>&1)
+  assert_contains "$out" "design #10 is waiting on the merge of"
+  assert_contains "$out" "Designs waiting on their PR's merge"
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "an unmerged design was retired"
+  assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_eq "docs/journeys/pay.md
+docs/journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/quick-pay | grep '^docs/journeys/')"
+}
+
+test_a_rerun_of_finish_retires_the_design_once_its_pr_has_merged_and_names_the_merge() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  finish_run unmerged >/dev/null 2>&1
+  merge_all_prs
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null && fail "prototype/quick-pay is still there"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[-1].url')"
+}
+
+test_a_stacked_pr_that_merged_into_its_base_waits_for_the_pr_under_it() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  finish_run unmerged >/dev/null 2>&1
+  assert_eq 2 "$(state_get '.end_gate.prs | length')"
+  merge_pr "$(state_get '.end_gate.prs[-1].url' | sed 's|.*/||')"
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "retired before the PR under it merged"
+}
+
+test_a_design_whose_tickets_ride_two_prs_waits_for_the_later_pr_whatever_the_scope_order() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  names_design 2 10 # ticket 2 rides PR 2; the body's one Design line names the design for both
+  jq --arg b $'Builds it.\nDesign: #10' '.body = $b' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-1.json"
+  jq '.plan.scope |= reverse' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  finish_run unmerged >/dev/null 2>&1
+  jq '.state = "MERGED"' "$FAKE_GH_DIR/pr-1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/pr-1.json"
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "retired while PR 2, which also carries its tickets, is unmerged"
+  merge_all_prs
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[1].url')"
+}
+
+test_the_design_skill_and_the_end_gate_reference_say_retire_runs_after_the_merge() {
+  assert_contains "$(cat "$SCRIPTS/../skills/design/SKILL.md")" "Retire runs after the merge, not at the cut"
+  assert_contains "$(cat "$SCRIPTS/../references/end-gate.md")" "after the merge, not at the cut"
 }

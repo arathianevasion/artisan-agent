@@ -57,6 +57,9 @@
 #       the setup).
 #   end-gate.sh finish <run-dir>
 #       once every PR is cut: retires each design whose feature the run ships
+#       and whose PR has merged into main, with every PR under it in the stack
+#       (a design whose PR is cut but not merged is listed as waiting; run
+#       finish again after the merge, even once the run has ended)
 #       (design.sh retire: a ticket in scope whose body has a "Design: #<n>"
 #       line names design ticket <n>; the design's ticket closes with the URL
 #       of the last PR carrying one of its tickets; a design no ticket names is
@@ -637,12 +640,31 @@ cmd_approve() {
   echo "approved: PRs one per $(jq -r .value <<<"$b"); next: end-gate.sh prs, then write each body with upstream pr and end-gate.sh cut"
 }
 
+# pr_unmerged_through <n>: the URLs of the cut PRs 1..n that are not merged yet,
+# space-separated (empty when all are). A stacked PR merges into its base, so a
+# PR counts as shipped to the default branch only once every PR under it has
+# merged too. Fails when a PR's state can't be read.
+pr_unmerged_through() {
+  local n="$1" i= u= st= out= repo=
+  repo=$(get -r .repo)
+  for ((i = 1; i <= n; i++)); do
+    u=$(get -r --argjson n "$i" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+    [ -n "$u" ] || return 1
+    st=$(gh pr view "${u##*/}" -R "$repo" --json state -q .state 2>/dev/null) || return 1
+    [ "$st" = MERGED ] || out="$out${out:+ }$u"
+  done
+  printf '%s\n' "$out"
+}
+
 # retire_designs: design.sh retire for each open design a ticket in scope names
 # ("Design: #<n>" at the start of a line in its body), and no other (#335). Its
-# merge is the last PR that carries one of the design's tickets. Safe to run
-# again: a design already retired has a closed ticket and is skipped.
+# merge is the last PR that carries one of the design's tickets, and a design
+# is retired only once that PR has merged (#396); one whose PR hasn't is left
+# alone and named in $waiting. Safe to run again: a design already retired has
+# a closed ticket and is skipped.
 retire_designs() {
-  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0
+  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last=
+  waiting=
   repo=$(get -r .repo)
   plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
   for t in $(get -r '.plan.scope[]'); do
@@ -658,12 +680,21 @@ retire_designs() {
     jq -e 'any(.labels[]; .name == "design") and (.state | ascii_downcase) == "open"' <<<"$dj" >/dev/null || continue
     slug=$(jq -r .body <<<"$dj" | sed -nE 's/^- \*\*Feature branch:\*\* `feature\/([^`]+)`.*$/\1/p' | head -1)
     [ -n "$slug" ] || { echo "end-gate.sh: design #$d records no feature branch" >&2; rc=1; continue; }
-    url=
+    url=; last=
     for t in $(printf '%s\n' $pairs | sed -n "s/^$d://p"); do
       pr=$(jq -r --arg t "$t" '[.[] | select(.tickets | index($t))] | last | .n // empty' <<<"$plan")
-      [ -z "$pr" ] || url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+      [ -z "$pr" ] || [ -n "$last" -a "$pr" -le "${last:-0}" ] || last=$pr
     done
+    [ -z "$last" ] || { pr=$last; url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty'); }
     [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
+    # Cutting a PR isn't shipping it: retire once the PR, and every PR under it
+    # in the stack, has merged (#396). Until then the design is waiting.
+    unmerged=$(pr_unmerged_through "$pr") || { echo "end-gate.sh: could not read the PRs carrying design #$d" >&2; rc=1; continue; }
+    if [ -n "$unmerged" ]; then
+      echo "end-gate.sh: design #$d is waiting on the merge of $unmerged; run end-gate.sh finish again once it has merged" >&2
+      waiting="$waiting #$d"
+      continue
+    fi
     (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
       || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }
   done
@@ -674,11 +705,20 @@ cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
   local want= have= repo= t= bad=0 done_list=
+  # A rerun after the run ended retires the designs whose PRs have merged since (#396).
+  if [ "$(status_word)" = ended ]; then
+    waiting=
+    retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
+    if [ -n "$waiting" ]; then echo "Run $RUN_ID has ended; designs still waiting on their PR's merge:$waiting."
+    else echo "Run $RUN_ID has ended; every design it ships is retired."; fi
+    return 0
+  fi
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
   want=$(pr_plan "$(get -r '.end_gate.boundary.value')" | jq length)
   have=$(get '(.end_gate.prs // []) | length')
   [ "$have" -ge "$want" ] || refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs)"
   repo=$(get -r .repo)
+  waiting=
   retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
   for t in $(get -r '.plan.scope[]'); do
     if gh issue edit "$t" -R "$repo" --remove-label in-run >/dev/null 2>&1; then done_list="$done_list #$t"
@@ -688,6 +728,7 @@ cmd_finish() {
   apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
     | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
   echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
   # For the run summary: what the merge gates cost (#199).
   echo
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \
