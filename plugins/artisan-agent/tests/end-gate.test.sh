@@ -666,3 +666,11 @@ test_a_design_already_closed_is_not_retired_again() {
   finish_run >/dev/null
   git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "a closed design was retired again"
 }
+
+test_a_design_line_with_windows_line_endings_still_names_its_design() {
+  setup_end
+  design_ticket 10 quick-pay
+  jq --arg b $'Builds it.\r\nDesign: #10\r\n' '.body = $b' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-2.json"
+  finish_run >/dev/null
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+}
