@@ -14,7 +14,7 @@ changed or removed. Each prints "changed: ..." or "unchanged: ..." lines.
       a missing section is appended at the end, missing lines at the section's end.
       A line "- `cmd`: ..." counts as present when "- `cmd`" starts any line there.
   project_edit.py labels-doc FILE
-      make sure the triage-labels doc records all ten labels, then print
+      make sure the triage-labels doc records all eleven labels, then print
       "<tracker label><TAB><meaning>" per label, after a "labels:" line.
 """
 import json
@@ -39,6 +39,7 @@ OUR_LABELS = [
     ("in-run", "Being worked by a run; never re-triaged, edited or relabelled"),
     ("urgent", "Goes ahead of everything else"),
     ("deferred", "Deferred by triage; returns on its recorded condition"),
+    ("design", "A design in progress: its branches, tool link and designer"),
 ]
 
 
@@ -263,7 +264,7 @@ def cmd_labels_doc(path):
             insert_in_section(lines, b[0], b[1], rows)
     if created or missing_up or missing_ours:
         write_lines(path, lines)
-        print("changed: %s records the ten labels" % path)
+        print("changed: %s records the eleven labels" % path)
     else:
         print("unchanged: %s" % path)
     print("labels:")

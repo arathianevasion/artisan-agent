@@ -114,11 +114,11 @@ test_deny_rules_match_the_replaced_skill_list() {
   assert_eq "$("$PLUGIN_ROOT/guard/guard.sh" deny-rules)" "$(branch_file .claude/settings.json | jq -r '.permissions.deny[]')"
 }
 
-test_the_ten_labels_exist_on_the_tracker_and_in_the_doc() {
+test_the_eleven_labels_exist_on_the_tracker_and_in_the_doc() {
   seed
   run_setup >/dev/null
   local l= doc=; doc=$(branch_file docs/agents/triage-labels.md)
-  for l in needs-triage needs-info ready-for-agent ready-for-human wontfix review-gate plan in-run urgent deferred; do
+  for l in needs-triage needs-info ready-for-agent ready-for-human wontfix review-gate plan in-run urgent deferred design; do
     grep -qx "$l" "$TEST_TMPDIR/labels" || fail "label $l not on the tracker"
     assert_contains "$doc" "\`$l\`"
   done
