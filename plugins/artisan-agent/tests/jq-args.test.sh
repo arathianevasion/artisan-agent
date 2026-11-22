@@ -2,7 +2,8 @@
 # or the tracker as the value of --arg or --argjson. Linux refuses one
 # argument over 128 KiB and macOS all of them together over 1 MiB, and jq
 # then never starts. The forms it flags:
-#   - a whole file: $(cat …) or $(< …);
+#   - a whole file: $(cat …) or $(< …), or a filter that reads one
+#     ($(awk … file), $(sed …), $(head …), $(tail …), $(grep …), $(jq … file));
 #   - a tracker response: $(gh …), $(blockers_of …), $(human_checks_view …),
 #     or a variable the same file assigns from `gh api`, `gh issue view`,
 #     blockers_of or human_checks_view (unless that line narrows it with
@@ -29,6 +30,7 @@ FNR == NR {
     v = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
     sub(/^--arg(json)?[[:space:]]+[A-Za-z_][A-Za-z_0-9]*[[:space:]]+"?/, "", v)
     if (v ~ /^\$\([[:space:]]*(cat|<)/) hit = 1
+    else if (v ~ /^\$\([[:space:]]*(awk|sed|head|tail|grep)([[:space:]]|$)/) hit = 1
     else if (v ~ /^\$\((gh|blockers_of|human_checks_view|recorded)$/) hit = 1
     else if (v ~ /^\$\{?(GATE|tracker)([^A-Za-z_0-9]|$)/) hit = 1
     else if (v !~ /^\$\(/) {
@@ -60,6 +62,7 @@ jq -n --argjson v "$(cat "$view")" '$v'
 jq -n --arg body "$(cat body.md)" '$body'
 jq -n --argjson v $(cat f.json) '$v'
 jq -n --argjson v "$(< f.json)" '$v'
+jq -n --argjson lines "$(awk -v from="$seen" 'NR > from' "$f" | jq -Rn '[inputs]')" '$lines'
 SH
   cat >"$d/good.sh" <<'SH'
 jq -n --slurpfile v "$view" '$v[0]'
@@ -70,7 +73,8 @@ SH
   assert_eq "$d/bad.sh:1:jq -n --argjson v \"\$(cat \"\$view\")\" '\$v'
 $d/bad.sh:2:jq -n --arg body \"\$(cat body.md)\" '\$body'
 $d/bad.sh:3:jq -n --argjson v \$(cat f.json) '\$v'
-$d/bad.sh:4:jq -n --argjson v \"\$(< f.json)\" '\$v'" "$out"
+$d/bad.sh:4:jq -n --argjson v \"\$(< f.json)\" '\$v'
+$d/bad.sh:5:jq -n --argjson lines \"\$(awk -v from=\"\$seen\" 'NR > from' \"\$f\" | jq -Rn '[inputs]')\" '\$lines'" "$out"
 }
 
 test_the_check_flags_tracker_responses_scope_maps_and_the_recorded_gate() {

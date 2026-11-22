@@ -250,8 +250,12 @@ sweep() {
     total=$(wc -l <"$f" | tr -d ' ')
     seen=$(jq -r --arg t "$ticket" '.findings_read[$t] // 0' "$tmp")
     [ "$total" -gt "$seen" ] || continue
+    # The new lines go to a file and jq reads them with --rawfile: the file
+    # grows with the worker's findings, so never an argument (#264).
+    awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" >"$tmp.lines"
     step "$STATE_JQ_DEFS"'
-      .findings += ($lines | to_entries | map(
+      ($lines | rtrimstr("\n") | split("\n")) as $lines
+      | .findings += ($lines | to_entries | map(
         {from: $t, seq: ($seen + .key + 1)}
         + ((.value | try fromjson catch null) as $j
            | if ($j | type) == "object" then $j else {raw: .value} end)))
@@ -282,7 +286,8 @@ sweep() {
             else .tickets[$a].questions = ((.tickets[$a].questions // [])
                    + [{ticket: $n, blocking: false, state: "open", raised_by: "finding", from: $t, at: $now}]) end)' \
       --arg t "$ticket" --argjson seen "$seen" --argjson total "$total" --argjson now "$now" \
-      --argjson lines "$(awk -v from="$seen" -v to="$total" 'NR > from && NR <= to' "$f" | jq -Rn '[inputs]')"
+      --rawfile lines "$tmp.lines"
+    rm -f "$tmp.lines"
   done
 
   state_finish "$RUN_DIR" "$tmp" '.costs.workers_usd = ([.tickets[].cost_usd // 0] | add // 0)

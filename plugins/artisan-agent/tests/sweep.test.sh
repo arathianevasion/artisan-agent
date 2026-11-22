@@ -78,6 +78,17 @@ test_a_crashed_worker_that_wrote_nothing_is_a_failed_attempt() {
   assert_contains "$(state_get '.tickets["10"].failures[0].reason')" "gone"
 }
 
+test_a_findings_file_over_the_argument_limit_sweeps() {
+  init_run
+  # 12000 lines of about 100 bytes: over Linux's 128 KiB per argument and macOS's 1 MiB in all.
+  awk 'BEGIN { for (i = 1; i <= 12000; i++) printf "{\"to\":\"11\",\"text\":\"finding %d %s\"}\n", i, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }' \
+    >"$RUN_DIR/results/findings/10.jsonl"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq 12000 "$(state_get '.findings | length')"
+  assert_eq 12000 "$(state_get '.findings_read["10"]')"
+  assert_eq 12000 "$(state_get '.findings[11999].seq')"
+}
+
 test_findings_are_logged_once_and_a_half_written_line_waits() {
   init_run
   printf '{"to":"11","text":"API returns 204"}\nnot json\n{"to":"12","te' >"$RUN_DIR/results/findings/10.jsonl"
