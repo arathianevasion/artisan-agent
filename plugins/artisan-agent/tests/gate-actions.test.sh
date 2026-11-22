@@ -1078,3 +1078,55 @@ test_gate_actions_md_documents_the_triage_action() {
   assert_contains "$(cat "$PLUGIN_ROOT/references/review-gates.md")" '`triage uncertainty <n>`'
   assert_contains "$(sed -n '1,/^set -euo/p' "$A")" "gate-action.sh triage <run-dir> <issue> (--card N | --uncertainty N)"
 }
+
+# A deferred overrun gate (#362): budget.sh overrun only defers it, and the end
+# gate waits on it, so approve and bypass answer it, at the end gate only.
+seed_overrun_gate() { # end-gate-status
+  jq -n '{number: 50, title: "Exception gate: overrun (run r1)", state: "open", labels: [{name: "review-gate"}], body: "x"}' \
+    >"$FAKE_GH_DIR/issue-50.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .overrun_gates = [{id: "overrun-1", kind: "exception", title: "Exception gate: overrun (run r1)", issue: 50,
+       status: "deferred", gate_actions: ["defer"], deferred_at: 5,
+       decision: {card: 1, option: "raise", choice: "raise the budget to $2.75", why: "demo first", by: "Artisan", job: 10, at: 5}},
+      {id: "overrun-2", kind: "exception", title: "Exception gate: overrun 2 (run r1)", issue: 51, status: "open"}]
+    | .end_gate = {status: "'"$1"'", issue: null}'
+}
+
+test_approve_resolves_a_deferred_overrun_gate_at_the_end_gate() {
+  setup_run
+  seed_overrun_gate open
+  "$A" approve "$RUN_DIR" 50 --by Andrew --why "raise applied" >/dev/null
+  assert_eq closed "$(issue_state 50)"
+  assert_eq '{"status":"resolved","by":"Andrew","why":"raise applied"}' \
+    "$(state_get '.overrun_gates[0] | {status, by: .resolution.by, why: .resolution.why}' | jq -c .)"
+  assert_eq "gate-resolved Andrew 50" "$(state_get '.events[-1] | "\(.event) \(.by) \(.issue)"')"
+  assert_eq "No gate is deferred." "$("$A" deferred "$RUN_DIR")"
+  assert_eq open "$(state_get '.overrun_gates[1].status')"
+}
+
+test_bypass_resolves_a_deferred_overrun_gate_at_the_end_gate() {
+  setup_run
+  seed_overrun_gate open
+  "$A" bypass "$RUN_DIR" 50 --by Andrew >/dev/null
+  assert_eq closed "$(issue_state 50)"
+  assert_eq resolved "$(state_get '.overrun_gates[0].status')"
+  assert_eq "gate-resolved" "$(state_get '.events[-1].event')"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-50.md")" "Andrew"
+}
+
+test_an_overrun_gate_is_not_answered_before_the_end_gate() {
+  setup_run
+  seed_overrun_gate "" 
+  assert_status 6 "$A" approve "$RUN_DIR" 50
+  assert_status 6 "$A" bypass "$RUN_DIR" 50
+  assert_eq deferred "$(state_get '.overrun_gates[0].status')"
+  assert_eq open "$(issue_state 50)"
+}
+
+test_an_open_overrun_gate_is_not_resolved_by_approve_or_bypass() {
+  setup_run
+  seed_overrun_gate open
+  assert_status 6 "$A" approve "$RUN_DIR" 51
+  assert_status 6 "$A" bypass "$RUN_DIR" 51
+  assert_status 6 "$A" redirect "$RUN_DIR" 50 --notes x
+}
