@@ -348,18 +348,18 @@ Retry when origin is reachable, or pass --no-fetch to check against $base as las
 
   # A screenshot per changed step, on the feature branch beside the journeys.
   while IFS= read -r s; do
-    f=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots | grep -E "^journeys/screenshots/$s\.[A-Za-z0-9]+$" | head -1 || true)
+    f=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots | awk -v s="journeys/screenshots/$s." 'index($0, s) == 1 && index(substr($0, length(s) + 1), ".") == 0 { print; exit }')
     [ -n "$f" ] || missing="$missing $s"
     shots+="  - \`$s\`: \`$f\` on \`$feature\`"$'\n'
   done <<<"$steps"
   [ -z "$missing" ] || die "no screenshot on $feature for step(s):$missing; commit them to journeys/screenshots/<step>.<ext> beside the journey files, then approve again"
 
-  diff=$(git diff --stat "$cut" "$feature" -- journeys ':!journeys/screenshots')
+  diff=$(git diff "$cut" "$feature" -- journeys ':!journeys/screenshots')
   [ -n "$diff" ] || diff="no journey file differs from the base"
   tl=${tool:-$(printf '%s\n' "$body" | sed -nE 's/^- \*\*Tool link:\*\* (.*)$/\1/p' | head -1)}
   case "$tl" in '' | 'none yet') tl=none ;; esac
 
-  body=$(printf '**Design package: approved**\n\n- **Journey diff:** `%s` from `%s`\n\n```\n%s\n```\n\n- **Screenshots:**\n%s\n- **Prototype:** %s\n- **Tool link:** %s\n' \
+  body=$(printf '**Design package: approved**\n\n- **Journey diff:** `%s` from `%s`\n\n```diff\n%s\n```\n\n- **Screenshots:**\n%s\n- **Prototype:** %s\n- **Tool link:** %s\n' \
     "$feature" "$cut" "$diff" "$shots" "$prototype" "$tl")
   printf '%s' "$body" | "$GH" issue comment "$n" --body-file - >/dev/null || die "gh issue comment $n failed"
   printf 'design package recorded on #%s\n%s\n' "$n" "$body"

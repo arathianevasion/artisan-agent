@@ -537,6 +537,7 @@ test_approve_records_journey_diff_screenshots_prototype_and_tool_link() {
   c=$(comments)
   assert_contains "$c" "Design package: approved"
   assert_contains "$c" "journeys/buy-a-ticket.md"
+  assert_contains "$c" "+- **Goal:** Pick a seat"
   assert_contains "$c" "\`cart\`: \`journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
   assert_contains "$c" "\`pay\`: \`journeys/screenshots/pay.png\`"
   assert_contains "$c" "- **Prototype:** \`prototype/faster-checkout\`"
