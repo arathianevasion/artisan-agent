@@ -52,7 +52,7 @@ The designer may design in a tool. Record its file link on the design ticket. Sk
 
 ## 6. Approve
 
-Not built yet. Approval records the design package on the design ticket and hands it to `to-spec`.
+`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone. It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
 
 ## 7. Retire at ship
 

@@ -8,6 +8,7 @@
 #   design.sh resume [#]N
 #   design.sh journey --design SLUG --name NAME --persona WHO --goal G --action A --next N [--goal G --action A --next N]...
 #   design.sh prototype --design SLUG --change WHAT [--model MODEL]
+#   design.sh approve --design SLUG --ticket [#]N [--tool-link URL] [--no-fetch]
 #
 # start: picks the base: with an origin remote, fetches it and uses
 #   origin/<default branch> (with --no-fetch, origin/<default branch> as last
@@ -62,6 +63,19 @@
 #   stderr and the brief says to use the components already in the code.
 #   Refuses while the last worker it dispatched for SLUG is still running.
 #   Prints the worktree, the branch, the brief, the worker's pid and its log.
+#
+# approve: records the design package on design ticket N, as a comment: the
+#   journey diff (the journey files' change from the base the design was cut
+#   from, on feature/<SLUG>), a screenshot per journey step the ticket lists
+#   (read from journeys/screenshots/<step>.<ext> on the feature branch, beside
+#   the journey files: nothing is copied or committed at approval), the
+#   prototype (its branch, when it has commits of its own; else none) and the
+#   tool link (--tool-link, else the ticket's own, else none). A design with no
+#   prototype and no tool link approves on its screenshots alone. Refuses (1)
+#   while a step has no screenshot on the feature branch, and while the
+#   prototype branch is behind the default branch (origin/<it> after a fetch,
+#   unless --no-fetch; the local one with no origin), naming the rebase. Prints
+#   what it recorded.
 #
 # Runs in the product repo (any checkout of it). GH_BIN stands in for gh;
 # ARTISAN_CLAUDE_BIN for claude.
@@ -288,6 +302,69 @@ cmd_prototype() {
   printf 'worktree: %s\nprototype branch: %s\nbrief: %s\nworker pid: %s\nlog: %s\n' "$wt" "$branch" "$brief" "$pid" "$log"
 }
 
+# The design package, recorded on the design ticket.
+cmd_approve() {
+  local slug= n= tool= no_fetch= json= base= main= feature= proto= cut= err= steps= s= shots= f= diff= prototype= body= tl= missing=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --design) [ $# -ge 2 ] || usage; slug=$2; shift 2 ;;
+      --ticket) [ $# -ge 2 ] || usage; n=${2#\#}; shift 2 ;;
+      --tool-link) [ $# -ge 2 ] || usage; tool=$2; shift 2 ;;
+      --no-fetch) no_fetch=1; shift ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$n" ] || usage
+  case "$n" in *[!0-9]*) usage ;; esac
+  feature="feature/$slug" proto="prototype/$slug"
+  has_branch "$feature" || die "no feature branch $feature: start the design first"
+  json=$("$GH" issue view "$n" --json number,title,body,labels) || die "gh issue view $n failed"
+  jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$json" >/dev/null || die "#$n is not a design ticket (no $LABEL label)"
+  body=$(jq -r .body <<<"$json")
+  steps=$(printf '%s\n' "$body" | sed -nE 's/^- \*\*Journey steps:\*\* (.*)$/\1/p' | head -1 | tr ',' '\n' | sed 's/^ *//; s/ *$//')
+  [ -n "$steps" ] || die "#$n records no journey steps"
+  cut=$(printf '%s\n' "$body" | sed -nE 's/^- \*\*Cut from:\*\* `[^`]*` at ([0-9a-f]+).*$/\1/p' | head -1)
+  [ -n "$cut" ] || die "#$n records no base it was cut from"
+
+  # The prototype must reflect current prod.
+  main=$(main_branch)
+  if git remote get-url origin >/dev/null 2>&1; then
+    base="origin/$main"
+    if [ -z "$no_fetch" ]; then
+      err=$(git fetch -q origin 2>&1) || die "fetching origin failed, so $base may be stale: $(printf '%s' "$err" | tr '\n' ' ')
+Retry when origin is reachable, or pass --no-fetch to check against $base as last fetched."
+    fi
+  else
+    base=$main
+  fi
+  git rev-parse --verify -q "$base^{commit}" >/dev/null || die "no $base to compare the prototype with"
+  if has_branch "$proto" && [ "$(git rev-list --count "$base..$proto")" -gt 0 ]; then
+    git merge-base --is-ancestor "$base" "$proto" \
+      || die "the prototype branch $proto is behind $base: rebase it on $base (git rebase $base $proto in its worktree), then approve again"
+    prototype="\`$proto\`"
+  else
+    prototype=none
+  fi
+
+  # A screenshot per changed step, on the feature branch beside the journeys.
+  while IFS= read -r s; do
+    f=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots | awk -v s="journeys/screenshots/$s." 'index($0, s) == 1 && index(substr($0, length(s) + 1), ".") == 0 { print; exit }')
+    [ -n "$f" ] || missing="$missing $s"
+    shots+="  - \`$s\`: \`$f\` on \`$feature\`"$'\n'
+  done <<<"$steps"
+  [ -z "$missing" ] || die "no screenshot on $feature for step(s):$missing; commit them to journeys/screenshots/<step>.<ext> beside the journey files, then approve again"
+
+  diff=$(git diff "$cut" "$feature" -- journeys ':!journeys/screenshots')
+  [ -n "$diff" ] || diff="no journey file differs from the base"
+  tl=${tool:-$(printf '%s\n' "$body" | sed -nE 's/^- \*\*Tool link:\*\* (.*)$/\1/p' | head -1)}
+  case "$tl" in '' | 'none yet') tl=none ;; esac
+
+  body=$(printf '**Design package: approved**\n\n- **Journey diff:** `%s` from `%s`\n\n```diff\n%s\n```\n\n- **Screenshots:**\n%s\n- **Prototype:** %s\n- **Tool link:** %s\n' \
+    "$feature" "$cut" "$diff" "$shots" "$prototype" "$tl")
+  printf '%s' "$body" | "$GH" issue comment "$n" --body-file - >/dev/null || die "gh issue comment $n failed"
+  printf 'design package recorded on #%s\n%s\n' "$n" "$body"
+}
+
 cmd_status() {
   [ $# -eq 0 ] || usage
   local out=
@@ -315,6 +392,7 @@ case "$cmd" in
   status) cmd_status "$@" ;;
   journey) cmd_journey "$@" ;;
   prototype) cmd_prototype "$@" ;;
+  approve) cmd_approve "$@" ;;
   resume) cmd_resume "$@" ;;
   *) usage ;;
 esac
