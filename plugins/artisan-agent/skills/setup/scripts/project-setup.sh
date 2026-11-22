@@ -36,6 +36,8 @@ BRANCH=artisan-agent/setup
 POINTER='Start with `/artisan-agent:craft`.'
 VOICE=VOICE_STANDARDS.md
 VOICE_IMPORT="@$VOICE"
+DESIGN=DESIGN_STANDARDS.md
+JOURNEY_LINE="- A change to a user journey"
 HOOK_FILE=.claude/hooks/artisan-agent-block-replaced.sh
 MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
@@ -193,6 +195,21 @@ cmd_scan() {
   if git -C "$m" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null; then printf 'setup-branch\t%s\n' "$BRANCH"; fi
   found_checks "$m"
   node_setup_default "$m"
+  design_docs "$m"
+}
+
+# design_docs main: existing design docs (#322), "design-doc<TAB>path", offered as
+# pointers for DESIGN_STANDARDS.md. Nothing is written until the Artisan accepts one.
+design_docs() {
+  local files=
+  files=$(git -C "$1" ls-files)
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(art[-_ ]?bible|style[-_ ]?guide|design[-_ ]?system|design[-_ ]?guidelines?|brand[-_ ]?guide)[^/]*\.(md|mdx|pdf)$' \
+    | sort | sed 's/^/design-doc\t/' || true
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(components|design-system|design-tokens|storybook)/' \
+    | sed -E 's#^(.*/)?(components|design-system|design-tokens|storybook)/.*#\1\2#; s#^(.*/)?([Cc][Oo][Mm][Pp][Oo][Nn][Ee][Nn][Tt][Ss])/.*#\1\2#' \
+    | sort -u | sed 's/^/design-doc\t/' || true
 }
 
 # node_setup_default main: a worktree_setup default (#173) for a Node project,
@@ -462,6 +479,24 @@ EOT
     awk -v p="$POINTER" -v imp="$VOICE_IMPORT" '{ print } !done && index($0, p) { print imp; done = 1 }' "$f" >"$tmp/agents.md"
     cp "$tmp/agents.md" "$f"
     echo "changed: ${f##*/} imports $VOICE"
+  fi
+  # Design standards (#322): seeded if missing, never overwritten and never imported.
+  # Pointers the Artisan accepted (answers: design_pointers) are added when absent.
+  if [ ! -e "$wt/$DESIGN" ]; then
+    cp "$ROOT/templates/$DESIGN" "$wt/$DESIGN"
+    echo "changed: created $DESIGN"
+  fi
+  set -- ; while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    case "$item" in /* | *..* | *[\`]*) die "design_pointers are paths in the repo, got: $item" ;; esac
+    grep -qsF "\`$item\`" "$wt/$DESIGN" || set -- "$@" "- \`$item\`"
+  done <<EOT
+$(jq -r '.design_pointers // [] | .[]' "$answers")
+EOT
+  if [ $# -gt 0 ]; then edit section "$wt/$DESIGN" "Where the design system lives" "$@"; fi
+  # The journey rule holds from day one: added unless a line there already names it.
+  if ! sed -n '/^## Always ask/,/^## /p' "$wt/PRODUCT_STANDARDS.md" | grep -qi 'user journey'; then
+    edit section "$wt/PRODUCT_STANDARDS.md" "Always ask" "$JOURNEY_LINE"
   fi
   echo "tune: the voice agents write in is $VOICE at the repo root; add your own rules under \"## Your own rules\""
 

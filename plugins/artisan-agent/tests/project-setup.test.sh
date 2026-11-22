@@ -623,3 +623,101 @@ test_an_agents_md_only_repo_imports_the_voice_file_there() {
   git -C "$TEST_TMPDIR/origin.git" show artisan-agent/setup:CLAUDE.md >/dev/null 2>&1 && fail "CLAUDE.md created"
   true
 }
+
+# #322: the product design standards file is seeded at project setup, offers pointers to
+# design docs it finds, adds the journey line to Always ask, and never overwrites.
+JOURNEY='- A change to a user journey'
+
+test_a_fresh_repo_gets_design_standards_with_five_sections_and_the_wcag_block() {
+  seed
+  run_setup >/dev/null
+  local d=; d=$(branch_file DESIGN_STANDARDS.md)
+  local s=
+  for s in Personas "Where the design system lives" "UX conventions" "Accessibility floor" "Always ask"; do
+    assert_contains "$d" "## $s"
+  done
+  assert_contains "$d" "WCAG 2.2 AA"
+  assert_contains "$d" "<!-- design-default v1 start"
+  assert_contains "$d" "<!-- design-default v1 end -->"
+  branch_file DESIGN_STANDARDS.md | cmp -s - "$PLUGIN_ROOT/templates/DESIGN_STANDARDS.md" || fail "not the template"
+}
+
+seed_design_docs() {
+  mkdir -p "$P/docs/design" "$P/src/components"
+  printf '# Art bible\n' >"$P/docs/ART_BIBLE.md"
+  printf '# Style guide\n' >"$P/docs/design/style-guide.md"
+  printf 'x\n' >"$P/src/components/Button.tsx"
+  printf '# Art bible 2\n' >"$P/docs/Style Guide.md"
+  git -C "$P" add -A && git -C "$P" commit -q -m "design docs" && git -C "$P" push -q origin main
+}
+
+test_scan_offers_the_design_docs_it_finds_and_setup_writes_only_the_accepted_ones() {
+  seed
+  seed_design_docs
+  local scan=; scan=$("$PS" scan "$P")
+  assert_contains "$scan" "design-doc	docs/ART_BIBLE.md"
+  assert_contains "$scan" "design-doc	docs/design/style-guide.md"
+  assert_contains "$scan" "design-doc	src/components"
+  assert_contains "$scan" "design-doc	docs/Style Guide.md"
+  assert_eq 4 "$(printf '%s\n' "$scan" | grep -c '^design-doc')" "one line per doc, a path with spaces kept whole"
+  answers '{"pr_boundary":"slice","pr_level":"product","design_pointers":["docs/ART_BIBLE.md"],"checks":[]}'
+  run_setup >/dev/null
+  local d=; d=$(branch_file DESIGN_STANDARDS.md)
+  assert_contains "$d" '- `docs/ART_BIBLE.md`'
+  case "$d" in *style-guide*|*components*) fail "a pointer the Artisan did not accept was written" ;; esac
+}
+
+test_no_pointers_are_written_unless_accepted() {
+  seed
+  seed_design_docs
+  run_setup >/dev/null
+  case "$(branch_file DESIGN_STANDARDS.md)" in *ART_BIBLE*) fail "pointer written without acceptance" ;; esac
+  true
+}
+
+test_setup_adds_the_journey_line_to_product_always_ask() {
+  seed
+  run_setup >/dev/null
+  assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "$JOURNEY"
+  assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "- Pricing changes"
+}
+
+test_a_rerun_keeps_an_edited_design_file_and_journey_line() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  printf -- '- Own persona: Ada.\n' >>"$P/DESIGN_STANDARDS.md"
+  sed 's/^- A change to a user journey.*/- Any change to how a person gets through the app (user journey)/' "$P/PRODUCT_STANDARDS.md" >"$TEST_TMPDIR/ps.md"
+  cp "$TEST_TMPDIR/ps.md" "$P/PRODUCT_STANDARDS.md"
+  git -C "$P" commit -q -am "own edits" && git -C "$P" push -q origin main
+  local out=; out=$(run_setup)
+  assert_contains "$out" "unchanged: the project is already set up"
+  assert_eq "$(cat "$P/DESIGN_STANDARDS.md")" "$(git -C "$P" show HEAD:DESIGN_STANDARDS.md)"
+  assert_eq 1 "$(grep -ci 'user journey' "$P/PRODUCT_STANDARDS.md")" "journey line duplicated"
+}
+
+test_a_rerun_adds_only_what_is_missing() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  git -C "$P" rm -q DESIGN_STANDARDS.md
+  grep -v 'user journey' "$P/PRODUCT_STANDARDS.md" >"$TEST_TMPDIR/ps.md"; cp "$TEST_TMPDIR/ps.md" "$P/PRODUCT_STANDARDS.md"
+  git -C "$P" commit -q -am "before design standards" && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  assert_eq "$(printf 'A\tDESIGN_STANDARDS.md\nM\tPRODUCT_STANDARDS.md')" "$(git -C "$TEST_TMPDIR/origin.git" diff --name-status main artisan-agent/setup)"
+}
+
+test_neither_claude_md_nor_agents_md_imports_the_design_standards() {
+  seed
+  run_setup >/dev/null
+  case "$(branch_file CLAUDE.md)" in *DESIGN_STANDARDS*) fail "CLAUDE.md mentions the design standards" ;; esac
+  true
+}
+
+test_an_agents_md_only_repo_does_not_import_the_design_standards_either() {
+  seed
+  git -C "$P" mv CLAUDE.md AGENTS.md && git -C "$P" commit -q -m agents && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  case "$(branch_file AGENTS.md)" in *DESIGN_STANDARDS*) fail "AGENTS.md mentions the design standards" ;; esac
+  true
+}
