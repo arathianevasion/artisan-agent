@@ -237,3 +237,12 @@ test_sp_a_tool_that_refuses_is_named_as_refusing_not_missing() {
   [ -e "$P/ran" ] || fail "the check did not run"
   assert_eq "nice could not run here: ran at normal priority" "$(cat "$TEST_TMPDIR/err")"
 }
+
+# #312, static: the checks reference states the rule and why taskpolicy -b went.
+test_sp_the_checks_reference_states_nice_and_why_background_priority_was_dropped() {
+  local doc="$TESTS_DIR/../references/checks.md"
+  assert_contains "$(cat "$doc")" 'nice -n 10'
+  assert_contains "$(cat "$doc")" 'Never `taskpolicy -b` (#312)'
+  assert_contains "$(cat "$doc")" 'throttles disk and network I/O'
+  assert_contains "$(cat "$doc")" 'about 85 minutes'
+}

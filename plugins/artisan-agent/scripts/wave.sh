@@ -286,7 +286,7 @@ orchestrator_max_turns() {
 
 # gate_allowance_seconds: expected gate minutes x the merges still to make
 # (tickets queued, in flight or returned), in seconds (#312). The minutes are
-# measured from the gate workflow's recent runs when the gate runs on CI
+# the slowest of the gate workflow's recent runs when the gate runs on CI
 # (merge-gate.sh minutes); with no history, or a local gate, DEFAULT_GATE_MINUTES.
 # The basis goes to stderr, so a launch says what it added.
 DEFAULT_GATE_MINUTES=10
@@ -299,8 +299,8 @@ gate_allowance_seconds() {
     repo=$(get -r '.repo // empty')
     if [ -n "$wf" ] && [ -n "$repo" ] \
        && m=$("$SCRIPT_DIR/merge-gate.sh" minutes --repo "$repo" --workflow "$wf" 2>/dev/null) \
-       && [ "$(jq -r '.minutes != null' <<<"$m")" = true ]; then
-      mins=$(jq -r '.minutes' <<<"$m") src="measured from $(jq -r '.runs' <<<"$m") gate runs"
+       && [ "$(jq -r '.slowest != null' <<<"$m")" = true ]; then
+      mins=$(jq -r '.slowest' <<<"$m") src="slowest of the last $(jq -r '.runs' <<<"$m") gate runs"
     fi
   fi
   echo "wave.sh: orchestrator deadline +$mins min x $merges merge(s) for the merge gate ($src)" >&2

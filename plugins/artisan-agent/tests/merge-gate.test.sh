@@ -612,8 +612,8 @@ test_mg_minutes_per_merge_come_from_the_workflows_recent_runs() {
   jq -n '{databaseId: 4, workflowName: "other.yml", status: "completed", conclusion: "success",
           createdAt: "2026-11-13T12:00:00Z", updatedAt: "2026-11-13T14:00:00Z"}' >"$FAKE_GH_DIR/run-4.json"
   # (552 s + 930 s) / 2 = 741 s = 12.35 minutes, rounded up to a tenth.
-  assert_eq '{"runs":2,"minutes":12.4}' "$("$MG" minutes --repo local/sample --workflow ci.yml)"
-  assert_eq '{"runs":0,"minutes":null}' "$("$MG" minutes --repo local/sample --workflow none.yml)"
+  assert_eq '{"runs":2,"minutes":12.4,"slowest":15.5}' "$("$MG" minutes --repo local/sample --workflow ci.yml)"
+  assert_eq '{"runs":0,"minutes":null,"slowest":null}' "$("$MG" minutes --repo local/sample --workflow none.yml)"
 }
 
 # ---- the release skip (#168): merge-gate.sh ci --skip-path
