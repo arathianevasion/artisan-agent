@@ -39,6 +39,8 @@
 #   gh pr view <n|url> [-R repo] --json state,mergeCommit [-q filter]
 #                         from pr-<n>.json: state (OPEN unless the file says otherwise) and
 #                         mergeCommit {oid}; a test merges a PR by setting state and merge_oid
+#   gh pr list [-R repo] --state merged --search <sha> --json number,url [-q filter]
+#                         the merged PRs (state MERGED in pr-<n>.json) whose "commits" list holds <sha>
 #   gh workflow run <file> [-R repo] --ref <branch> [-f key=value]...
 #                         starts a workflow_dispatch run (run-<id>.json, ids from 9001) on the
 #                         branch's tip in the git repo FAKE_GH_REMOTE (a path; the branch must exist
@@ -393,6 +395,22 @@ case "${1:-} ${2:-}" in
     done
     [ -f "$FAKE_GH_DIR/pr-$n.json" ] || { echo "gh: no pull request #$n (HTTP 404)" >&2; exit 1; }
     out=$(jq -c '{state: (.state // "OPEN"), mergeCommit: (if .merge_oid then {oid: .merge_oid} else null end)}' "$FAKE_GH_DIR/pr-$n.json")
+    if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
+  "pr list")
+    shift 2
+    search= filter=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --state|--json) shift 2 ;;
+        --search) search=$2; shift 2 ;;
+        -q|--jq) filter=$2; shift 2 ;;
+        *) echo "gh (fake): pr list: unsupported: $1" >&2; exit 1 ;;
+      esac
+    done
+    out=$(for f in "$FAKE_GH_DIR"/pr-*.json; do [ -f "$f" ] && cat "$f"; done | jq -sc --arg s "$search" --arg repo "${FAKE_GH_REPO:-local/sample}" '
+      [.[] | select(.state == "MERGED" and ((.commits // []) | index($s)))
+       | {number, url: "https://github.com/\($repo)/pull/\(.number)"}]')
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
   "workflow run")
     shift 2
