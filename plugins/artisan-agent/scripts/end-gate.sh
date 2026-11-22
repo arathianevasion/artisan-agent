@@ -663,7 +663,7 @@ pr_unmerged_through() {
 # alone and named in $waiting. Safe to run again: a design already retired has
 # a closed ticket and is skipped.
 retire_designs() {
-  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged=
+  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last=
   waiting=
   repo=$(get -r .repo)
   plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
@@ -680,11 +680,12 @@ retire_designs() {
     jq -e 'any(.labels[]; .name == "design") and (.state | ascii_downcase) == "open"' <<<"$dj" >/dev/null || continue
     slug=$(jq -r .body <<<"$dj" | sed -nE 's/^- \*\*Feature branch:\*\* `feature\/([^`]+)`.*$/\1/p' | head -1)
     [ -n "$slug" ] || { echo "end-gate.sh: design #$d records no feature branch" >&2; rc=1; continue; }
-    url=
+    url=; last=
     for t in $(printf '%s\n' $pairs | sed -n "s/^$d://p"); do
       pr=$(jq -r --arg t "$t" '[.[] | select(.tickets | index($t))] | last | .n // empty' <<<"$plan")
-      [ -z "$pr" ] || url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+      [ -z "$pr" ] || [ -n "$last" -a "$pr" -le "${last:-0}" ] || last=$pr
     done
+    [ -z "$last" ] || { pr=$last; url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty'); }
     [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
     # Cutting a PR isn't shipping it: retire once the PR, and every PR under it
     # in the stack, has merged (#396). Until then the design is waiting.

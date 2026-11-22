@@ -620,7 +620,6 @@ names_design() { # ticket number: the ticket's body now says it builds that desi
 merge_all_prs() {
   local f= n=
   for f in "$FAKE_GH_DIR"/pr-*.json; do
-    n=${f##*pr-}
     jq '.state = "MERGED" | .merge_oid = "abc123"' "$f" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$f"
   done
 }
@@ -725,6 +724,23 @@ test_a_stacked_pr_that_merged_into_its_base_waits_for_the_pr_under_it() {
   merge_pr "$(state_get '.end_gate.prs[-1].url' | sed 's|.*/||')"
   "$E" finish "$RUN_DIR" >/dev/null 2>&1
   git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "retired before the PR under it merged"
+}
+
+test_a_design_whose_tickets_ride_two_prs_waits_for_the_later_pr_whatever_the_scope_order() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  names_design 2 10 # ticket 2 rides PR 2; the body's one Design line names the design for both
+  jq --arg b $'Builds it.\nDesign: #10' '.body = $b' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-1.json"
+  jq '.plan.scope |= reverse' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  finish_run unmerged >/dev/null 2>&1
+  jq '.state = "MERGED"' "$FAKE_GH_DIR/pr-1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/pr-1.json"
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "retired while PR 2, which also carries its tickets, is unmerged"
+  merge_all_prs
+  "$E" finish "$RUN_DIR" >/dev/null 2>&1
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[1].url')"
 }
 
 test_the_design_skill_and_the_end_gate_reference_say_retire_runs_after_the_merge() {
