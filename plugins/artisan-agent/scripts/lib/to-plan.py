@@ -635,28 +635,33 @@ def criteria_missing_warnings(tickets):
 
 def spec_steps(body):
     """The changed journey steps in a spec's Experience section (#332): the
-    bullets under its "Changed steps" label, each by its name (bold, link and
-    the text after " - ", " \u2014 ", ": " or " (" dropped). None with no Experience section."""
-    m = re.search(r"^##\s+Experience\s*$", body or "", re.M | re.I)
+    bullets under its "Changed steps" label (a bare line or a bullet, with the
+    steps nested under it), each by its name: bold and links dropped, cut at
+    the first " - ", en or em dash, or " (" that starts what changes. None
+    with no Experience section; [] with the section but no steps."""
+    m = re.search(r"^(#{2,})\s+Experience\s*$", body or "", re.M | re.I)
     if not m:
         return None
     rest = body[m.end():]
-    nxt = re.search(r"^##\s", rest, re.M)
-    section = rest[:nxt.start()] if nxt else rest
-    lab = re.search(r"^\W*Changed steps\W*$", section, re.M | re.I)
-    if not lab:
-        return []
+    end = re.search(r"^#{1,%d}\s" % len(m.group(1)), rest, re.M)
+    lines = (rest[:end.start()] if end else rest).splitlines()
     names = []
-    for line in section[lab.end():].splitlines():
-        if re.match(r"^\s*\S", line) and not re.match(r"^\s*([-*]|\d+\.)\s", line) and not line.startswith((" ", "\t")):
-            if line.strip():
-                break
+    label_indent = None
+    for line in lines:
+        indent = len(line) - len(line.lstrip())
+        if label_indent is None:
+            if re.match(r"^\W*Changed steps\W*$", line, re.I):
+                label_indent = indent if re.match(r"^\s*([-*]|\d+\.)\s", line) else -1
             continue
-        b = re.match(r"^([-*]|\d+\.)\s+(.*)$", line)
-        if not b:
+        if not line.strip():
             continue
-        t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", b.group(2)).replace("**", "").strip()
-        t = re.split(r"\s+[-\u2013\u2014]\s+|:\s|\s+\(", t)[0].strip()
+        item = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.*)$", line)
+        if indent <= label_indent or (label_indent == -1 and not item and indent == 0):
+            break
+        if not item:
+            continue
+        t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", item.group(1)).replace("**", "").strip()
+        t = re.split(r"\s+[-\u2013\u2014]\s+|\s+\(", t)[0].strip()
         if t and t not in names:
             names.append(t)
     return names
@@ -670,11 +675,21 @@ def ticket_steps(body):
     return out
 
 
+def step_cited(step, cites):
+    """A citation names a step when it is the step's name whole, or the same
+    with a journey in front ("Checkout: Pick a plan"); never a part of a name."""
+    s = str(step).strip().lower()
+    for c in cites:
+        c = str(c).strip().lower()
+        if c == s or c.endswith(": " + s) or s.endswith(": " + c):
+            return True
+    return False
+
+
 def step_flags(tickets, graph):
-    """Each changed step in the graph's experience_steps that no ticket's
-    steps cite (by name, ignoring case; a journey prefix is fine)."""
-    cited = " \n ".join(str(c).lower() for t in tickets.values() for c in t.get("steps") or [])
-    return [s for s in graph.get("experience_steps") or [] if str(s).lower() not in cited]
+    """Each changed step in the graph's experience_steps that no ticket's steps cite."""
+    cites = [c for t in tickets.values() for c in t.get("steps") or []]
+    return [s for s in graph.get("experience_steps") or [] if not step_cited(s, cites)]
 
 
 def step_warnings(tickets, graph):

@@ -413,15 +413,26 @@ test_check_passes_when_every_step_is_cited_or_there_is_no_experience_section() {
   "$TP" check "$PLANS" --graph "$GRAPH"
 }
 
+test_a_citation_names_a_step_whole_never_part_of_one() {
+  steps_graph
+  jq '.experience_steps = ["Pay"] | .tickets["1"].steps = ["Checkout: Payment"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  assert_contains "$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)" "Journey step \"Pay\""
+  jq '.tickets["1"].steps = ["Checkout: Pay"]' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+}
+
 test_graph_reads_the_specs_changed_steps_and_each_tickets_steps_line() {
   use_fake_gh
   jq -n '{number: 44, id: 1044, title: "Spec", state: "open", labels: [],
-    body: "## Solution\nx\n\n## Experience\n\n**Affected journeys**: Checkout (shopper)\n\n**Changed steps**:\n- **Pick a plan** (Checkout) \u2014 [screenshot](http://x/a.png)\n- Confirm payment: shows the total\n\n**Whys**:\n- Pick a plan: because\n\n## Testing\n- Not a step"}' >"$FAKE_GH_DIR/issue-44.json"
+    body: "## Solution\nx\n\n## Experience\n\n**Affected journeys**: Checkout (shopper)\n\n**Changed steps**:\n- **Pick a plan** (Checkout) \u2014 [screenshot](http://x/a.png)\n- Confirm payment \u2014 shows the total\n\n**Whys**:\n- Pick a plan: because\n\n## Testing\n- Not a step"}' >"$FAKE_GH_DIR/issue-44.json"
   jq '.body += "\n\nSteps: Checkout: Pick a plan, Checkout: Confirm payment\nDesign: #9"' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/t" && mv "$FAKE_GH_DIR/t" "$FAKE_GH_DIR/issue-1.json"
   local g=; g=$("$TP" graph --repo local/sample --spec 44 1 2)
   assert_eq "Pick a plan,Confirm payment" "$(jq -r '.experience_steps | join(",")' <<<"$g")"
   assert_eq "Checkout: Pick a plan|Checkout: Confirm payment" "$(jq -r '.tickets["1"].steps | join("|")' <<<"$g")"
   assert_eq "null" "$(jq -c '.tickets["2"].steps' <<<"$g")"
+  # The steps as a bullet with the steps nested under it, a journey in front, and a later label not read as a step.
+  jq -n '{number: 45, id: 1045, title: "Spec", state: "open", labels: [], body: "## Experience\n\n- **Changed steps**:\n  - Checkout: Pay \u2014 new\n  - 1. Sign in (SSO)\n- **Whys**: y\n\n### Sub\nx"}' >"$FAKE_GH_DIR/issue-45.json"
+  assert_eq "Checkout: Pay,1. Sign in" "$("$TP" graph --repo local/sample --spec 45 1 | jq -r '.experience_steps | join(",")')"
   # A spec with no Experience section: no steps to cover.
   g=$("$TP" graph --repo local/sample --spec 3 1 2)
   assert_eq "null" "$(jq -c '.experience_steps' <<<"$g")"
