@@ -87,6 +87,7 @@ test_a_findings_file_over_the_argument_limit_sweeps() {
   assert_eq 12000 "$(state_get '.findings | length')"
   assert_eq 12000 "$(state_get '.findings_read["10"]')"
   assert_eq 12000 "$(state_get '.findings[11999].seq')"
+  assert_eq "" "$(ls "$TMPDIR" 2>/dev/null | grep '^sweep-lines' || true)"
 }
 
 test_findings_are_logged_once_and_a_half_written_line_waits() {

@@ -3,7 +3,7 @@
 # argument over 128 KiB and macOS all of them together over 1 MiB, and jq
 # then never starts. The forms it flags:
 #   - a whole file: $(cat …) or $(< …), or a filter that reads one
-#     ($(awk … file), $(sed …), $(head …), $(tail …), $(grep …), $(jq … file));
+#     ($(awk … file), $(sed …), $(head …), $(tail …), $(grep …));
 #   - a tracker response: $(gh …), $(blockers_of …), $(human_checks_view …),
 #     or a variable the same file assigns from `gh api`, `gh issue view`,
 #     blockers_of or human_checks_view (unless that line narrows it with
