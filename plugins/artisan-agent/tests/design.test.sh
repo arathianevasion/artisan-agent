@@ -134,3 +134,33 @@ test_bad_usage_exits_2() {
   assert_status 2 "$DESIGN" start --step a
   assert_status 2 "$DESIGN" resume
 }
+
+# The skill (static, names not wording): its steps in order, the design
+# standards read in the first, before the design starts.
+SKILL="$PLUGIN_ROOT/skills/design/SKILL.md"
+
+test_the_skill_names_its_steps_in_order() {
+  local want="1. Read the design standards
+2. Start or resume
+3. Write the journey diff
+4. Prototype
+5. High-fidelity design
+6. Approve
+7. Retire at ship"
+  assert_eq "$want" "$(sed -nE 's/^## ([0-9]+\. [^(]*[^ (]).*$/\1/p' "$SKILL")"
+}
+
+test_the_skill_reads_the_design_standards_before_starting() {
+  local first=
+  first=$(sed -n '/^## 1\. /,/^## 2\. /p' "$SKILL")
+  assert_contains "$first" "DESIGN_STANDARDS.md"
+  assert_contains "$first" "guardrails.sh design"
+}
+
+test_the_skill_runs_design_sh_to_start_status_and_resume() {
+  local text=
+  text=$(sed -n '/^## 2\. /,/^## 3\. /p' "$SKILL")
+  assert_contains "$text" "design.sh start"
+  assert_contains "$text" "design.sh status"
+  assert_contains "$text" "design.sh resume"
+}
