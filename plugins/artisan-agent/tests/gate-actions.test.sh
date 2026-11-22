@@ -1116,14 +1116,14 @@ test_bypass_resolves_a_deferred_overrun_gate_at_the_end_gate() {
 
 test_an_overrun_gate_is_not_answered_before_the_end_gate() {
   setup_run
-  seed_overrun_gate "" 
+  seed_overrun_gate ""
   assert_status 6 "$A" approve "$RUN_DIR" 50
   assert_status 6 "$A" bypass "$RUN_DIR" 50
   assert_eq deferred "$(state_get '.overrun_gates[0].status')"
   assert_eq open "$(issue_state 50)"
 }
 
-test_an_open_overrun_gate_is_not_resolved_by_approve_or_bypass() {
+test_an_open_overrun_gate_is_not_resolved_and_a_deferred_one_is_not_redirected() {
   setup_run
   seed_overrun_gate open
   assert_status 6 "$A" approve "$RUN_DIR" 51
