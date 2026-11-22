@@ -589,6 +589,7 @@ def warnings(plans, graph):
         if ext:
             out.append((describe(tickets, n), "waits on #%s, which is outside these tickets and still open." % ", #".join(ext)))
     out += criteria_missing_warnings(tickets)
+    out += step_warnings(tickets, graph)
     out += human_check_warnings(plans, tickets)
     out += merge_gate_warnings(plans, tickets)
     return out
@@ -632,21 +633,91 @@ def criteria_missing_warnings(tickets):
             if not human_check_for(tickets, n) and tickets[n].get("acceptance") == []]
 
 
+def spec_steps(body):
+    """The changed journey steps in a spec's Experience section (#332): the
+    bullets under its "Changed steps" label (a bare line or a bullet, with the
+    steps nested under it), each by its name: bold and links dropped, cut at
+    the first " - ", en or em dash, or " (" that starts what changes. None
+    with no Experience section; [] with the section but no steps."""
+    m = re.search(r"^(#{2,})\s+Experience\s*$", body or "", re.M | re.I)
+    if not m:
+        return None
+    rest = body[m.end():]
+    end = re.search(r"^#{1,%d}\s" % len(m.group(1)), rest, re.M)
+    lines = (rest[:end.start()] if end else rest).splitlines()
+    names = []
+    label_indent = None
+    for line in lines:
+        indent = len(line) - len(line.lstrip())
+        if label_indent is None:
+            if re.match(r"^\W*Changed steps\W*$", line, re.I):
+                label_indent = indent if re.match(r"^\s*([-*]|\d+\.)\s", line) else -1
+            continue
+        if not line.strip():
+            continue
+        item = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.*)$", line)
+        if indent <= label_indent or (label_indent == -1 and not item and indent == 0):
+            break
+        if not item:
+            continue
+        t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", item.group(1)).replace("**", "").strip()
+        t = re.split(r"\s+[-\u2013\u2014]\s+|\s+\(", t)[0].strip()
+        if t and t not in names:
+            names.append(t)
+    return names
+
+
+def ticket_steps(body):
+    """The steps a ticket cites: its `Steps: <journey>: <step>, ...` line."""
+    out = []
+    for m in re.finditer(r"^\s*Steps:\s*(.+)$", body or "", re.M):
+        out += [x.strip() for x in m.group(1).split(", ") if x.strip()]
+    return out
+
+
+def step_cited(step, cites):
+    """A citation names a step when it is the step's name whole, or the same
+    with a journey in front ("Checkout: Pick a plan"); never a part of a name."""
+    s = str(step).strip().lower()
+    for c in cites:
+        c = str(c).strip().lower()
+        if c == s or c.endswith(": " + s) or s.endswith(": " + c):
+            return True
+    return False
+
+
+def step_flags(tickets, graph):
+    """Each changed step in the graph's experience_steps that no ticket's steps cite."""
+    cites = [c for t in tickets.values() for c in t.get("steps") or []]
+    return [s for s in graph.get("experience_steps") or [] if not step_cited(s, cites)]
+
+
+def step_warnings(tickets, graph):
+    return [("Journey step \"%s\"" % cell(s),
+             "is a changed step in the spec's Experience section that no ticket in the plan cites, so no "
+             "ticket builds it. Add it to a ticket's `Steps:` line (then graph again), or write a ticket for it. "
+             "The plan can't be approved while this stands." ) for s in step_flags(tickets, graph)]
+
+
 def check(plans, graph):
     """validate, then refuse approval while an agent ticket has no criteria, or
     an agent criterion needs a person, or CI, a PR or the full suite; the flags
     go to stdout under "Needs your attention"."""
     validate(plans, graph)
     missing = criteria_missing_warnings(graph_tickets(graph))
+    steps = step_warnings(graph_tickets(graph), graph)
     person = human_check_warnings(plans, graph_tickets(graph))
     gate = merge_gate_warnings(plans, graph_tickets(graph))
-    if missing or person or gate:
+    if missing or person or gate or steps:
         print("\n".join(["## Needs your attention", "", "| About | Problem |", "|---|---|"]
-                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in missing + person + gate]))
+                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in missing + steps + person + gate]))
         why = []
         if missing:
             why.append("%d ticket(s) with no readable acceptance criteria; add a checklist to each "
                        "and graph again" % len(missing))
+        if steps:
+            why.append("%d changed journey step(s) no ticket cites; add each to a ticket's Steps line "
+                       "and graph again, or write a ticket for it" % len(steps))
         if person:
             why.append("%d agent criteria read as needing a person; split each into a Human check "
                        "or override it with --why" % len(person))
@@ -726,6 +797,10 @@ def main(argv):
         tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
         ov = add_overrides({}, tickets, json.loads(rest[0]))
         print(json.dumps({k: ov.get(k, []) for k in OVERRIDE_KEYS.values()}))
+    elif cmd == "spec-steps":
+        print(json.dumps(spec_steps(sys.stdin.read())))
+    elif cmd == "ticket-steps":
+        print(json.dumps(ticket_steps(sys.stdin.read())))
     elif cmd == "split-text":
         print(json.dumps(split_human_check(json.load(sys.stdin))))
     elif cmd == "split-files":
