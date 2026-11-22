@@ -88,9 +88,9 @@ test_the_implement_skill_has_workers_run_the_guard_and_ticket_tests() {
   local s=
   s=$(cat "$PLUGIN_ROOT/skills/implement/SKILL.md")
   assert_contains "$s" "tests/run.sh --guard" "SKILL.md does not give the guard command"
-  assert_contains "$s" "guard tests" 
-  assert_contains "$s" "before the result file" 
-  assert_contains "$s" "`tests.not_run`" "SKILL.md does not say where a test it couldn't run goes"
+  assert_contains "$s" "the guard tests, before the result file" "SKILL.md does not have workers run the guard tests before the result file"
+  assert_contains "$s" "Name each test you ran in \`tests.files\`" "SKILL.md does not have workers name the tests they ran"
+  assert_contains "$s" '\`tests.not_run\`' "SKILL.md does not say where a test it couldn't run goes"
 }
 
 test_the_implement_skill_says_not_to_run_the_full_suite() {
