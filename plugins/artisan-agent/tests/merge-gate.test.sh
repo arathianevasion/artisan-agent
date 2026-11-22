@@ -21,7 +21,9 @@ setup_ci() { # [timeout-minutes] [scope-json]
   git_quiet clone --bare "$PROJECT" "$ORIGIN"
   git_quiet -C "$PROJECT" remote add origin "$ORIGIN"
   export FAKE_GH_REMOTE="$ORIGIN" ARTISAN_CI_POLL_SECONDS=0 ARTISAN_MERGE_GATE=ci
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate = {workflow: "ci.yml", timeout_minutes: $m}
+  # The local fallback (#386) is off here, so no test reaches a real ssh host;
+  # its own tests turn it on.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate = {workflow: "ci.yml", timeout_minutes: $m, local_fallback: false}
     | .plan.suite_command = ("touch " + $mark + " && sh check.sh")' \
     --argjson m "${1:-30}" --arg mark "$TEST_TMPDIR/suite-ran-here"
 }
@@ -195,6 +197,7 @@ test_mg_a_cancelled_ci_run_parks_the_run_unblocked_and_clearing_the_park_retries
   local parked_sha= out=
   parked_sha=$(state_get '.ci_park.sha')
   assert_eq "ci 1" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.ticket)"')"
+  assert_eq ci "$(state_get '[.events[] | select(.event == "ci-wait")] | last | .tier')"
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
   assert_contains "$out" "cancelled"
@@ -1096,4 +1099,126 @@ test_mg_worker_ci_a_later_red_run_for_the_same_commit_fails_the_verifier() {
   assert_eq fail "$(state_get '.tickets["1"].evidence.verdict')"
   assert_contains "$(state_get '.tickets["1"].evidence.acceptance[0].evidence.why')" "concluded failure"
   assert_eq "2" "$(state_get '.tickets["1"].evidence.checks.ci_cost.runs')"
+}
+
+# ------------------------------------------- the local fallback (#386)
+
+# A fake ssh in front of PATH: it answers the reachability probe when
+# $FAKE_SSH_UP is set (and logs each call); a remote command runs here, in
+# a shell, as the remote would run it.
+fake_ssh() {
+  mkdir -p "$TEST_TMPDIR/bin"
+  cat >"$TEST_TMPDIR/bin/ssh" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"$FAKE_SSH_LOG"
+[ -n "${FAKE_SSH_UP:-}" ] || exit 255
+case "$*" in *' true') ;; *) [ -z "${FAKE_SSH_DROP:-}" ] || exit 255 ;; esac
+for last; do :; done
+exec sh -c "$last"
+SH
+  chmod +x "$TEST_TMPDIR/bin/ssh"
+  export PATH="$TEST_TMPDIR/bin:$PATH" FAKE_SSH_LOG="$TEST_TMPDIR/ssh.log"
+}
+
+# mg_ci_fallback [extra args]: merge-gate.sh ci on the project's HEAD, with a
+# fallback suite that writes where it ran (its git HEAD) to $TEST_TMPDIR/ran
+# and fails when FAIL_LOCAL is in its tree. Sets MG_OUT and MG_STATUS.
+MG_OUT= MG_STATUS=
+mg_ci_fallback() {
+  MG_STATUS=0
+  MG_OUT=$("$MG" ci --repo local/sample --workflow ci.yml --branch ci/fb-1 \
+    --sha "$(git -C "$PROJECT" rev-parse HEAD)" --dir "$PROJECT" --timeout-minutes 1 \
+    --fallback-command "git rev-parse HEAD >'$TEST_TMPDIR/ran' && [ ! -e FAIL_LOCAL ]" \
+    --fallback-log "$TEST_TMPDIR/fallback.log" "$@" 2>"$TEST_TMPDIR/mg.err") || MG_STATUS=$?
+}
+
+test_mg_fallback_a_failed_dispatch_gates_on_a_local_run_of_the_suite() {
+  setup_ci
+  fake_ssh
+  touch "$FAKE_GH_DIR/ci-unavailable"
+  mg_ci_fallback --fallback-host ""
+  assert_eq 0 "$MG_STATUS" "$MG_OUT $(cat "$TEST_TMPDIR/mg.err")"
+  assert_eq "$(git -C "$PROJECT" rev-parse HEAD)" "$(cat "$TEST_TMPDIR/ran")" "the suite ran on the merge commit"
+  assert_eq "local:$(hostname -s) success true" "$(jq -r '"\(.tier) \(.conclusion) \(.fallback.passed)"' <<<"$MG_OUT")"
+  assert_contains "$(jq -r .fallback.why <<<"$MG_OUT")" "could not dispatch ci.yml"
+  assert_eq "" "$(cat "$FAKE_SSH_LOG" 2>/dev/null)" "no host to try"
+  # Red on the local run is red: exit 7, conclusion failure.
+  touch "$PROJECT/FAIL_LOCAL" && git_quiet -C "$PROJECT" add FAIL_LOCAL && git_quiet -C "$PROJECT" commit -qm fail
+  mg_ci_fallback --fallback-host ""
+  assert_eq 7 "$MG_STATUS" "$MG_OUT"
+  assert_eq "failure false" "$(jq -r '"\(.conclusion) \(.fallback.passed)"' <<<"$MG_OUT")"
+}
+
+test_mg_fallback_a_run_no_runner_starts_gates_locally_on_the_reachable_host() {
+  setup_ci
+  fake_ssh
+  export FAKE_SSH_UP=1
+  echo queued >"$FAKE_GH_DIR/ci-outcome"
+  mg_ci_fallback --fallback-host home-wsl --start-minutes 0
+  assert_eq 0 "$MG_STATUS" "$MG_OUT $(cat "$TEST_TMPDIR/mg.err")"
+  assert_eq "local:home-wsl" "$(jq -r .tier <<<"$MG_OUT")"
+  assert_contains "$(jq -r .fallback.why <<<"$MG_OUT")" "no runner started"
+  assert_eq "$(git -C "$PROJECT" rev-parse HEAD)" "$(cat "$TEST_TMPDIR/ran")" "the remote checkout is the merge commit"
+  assert_contains "$(head -1 "$FAKE_SSH_LOG")" "home-wsl true"
+  assert_eq "" "$(ci_branches)" "the ci branch is gone"
+  # The link drops after the probe: no verdict from there, so it runs here.
+  export FAKE_SSH_DROP=1
+  rm -f "$TEST_TMPDIR/ran"
+  mg_ci_fallback --fallback-host home-wsl --start-minutes 0
+  assert_eq 0 "$MG_STATUS" "$MG_OUT"
+  assert_eq "local:$(hostname -s)" "$(jq -r .tier <<<"$MG_OUT")"
+  unset FAKE_SSH_DROP
+  # The host doesn't answer: this machine runs it.
+  unset FAKE_SSH_UP
+  rm -f "$TEST_TMPDIR/ran"
+  mg_ci_fallback --fallback-host home-wsl --start-minutes 0
+  assert_eq 0 "$MG_STATUS" "$MG_OUT"
+  assert_eq "local:$(hostname -s)" "$(jq -r .tier <<<"$MG_OUT")"
+  [ -s "$TEST_TMPDIR/ran" ] || fail "the suite did not run here"
+}
+
+test_mg_fallback_never_for_a_run_that_started_and_went_red_or_when_off() {
+  setup_ci
+  fake_ssh
+  echo failure >"$FAKE_GH_DIR/ci-outcome"
+  mg_ci_fallback --fallback-host "" --start-minutes 0
+  assert_eq 7 "$MG_STATUS" "$MG_OUT"
+  assert_eq "ci failure" "$(jq -r '"\(.tier) \(.conclusion)"' <<<"$MG_OUT")"
+  [ ! -e "$TEST_TMPDIR/ran" ] || fail "a started red run fell back"
+  # Off (no --fallback-command): a dispatch failure is no verdict, as before.
+  rm -f "$FAKE_GH_DIR/ci-outcome"
+  touch "$FAKE_GH_DIR/ci-unavailable"
+  MG_STATUS=0
+  MG_OUT=$("$MG" ci --repo local/sample --workflow ci.yml --branch ci/fb-2 \
+    --sha "$(git -C "$PROJECT" rev-parse HEAD)" --dir "$PROJECT" 2>/dev/null) || MG_STATUS=$?
+  assert_eq 19 "$MG_STATUS" "$MG_OUT"
+  assert_eq "ci null" "$(jq -r '"\(.tier) \(.fallback)"' <<<"$MG_OUT")"
+}
+
+test_mg_fallback_wave_merge_logs_the_tier_and_the_report_names_it() {
+  setup_ci
+  fake_ssh
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate += {local_fallback: true, fallback_host: ""}'
+  verified_ticket
+  touch "$FAKE_GH_DIR/ci-unavailable"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq merged "$(state_get '.tickets["1"].status')"
+  assert_eq "local:$(hostname -s)" "$(state_get '[.events[] | select(.event == "ci-wait")] | last | .tier')"
+  assert_eq "local:$(hostname -s)" "$(state_get '.tickets["1"].suite.tier')"
+  assert_eq "$(hostname -s)" "$(state_get '.tickets["1"].suite.fallback.host')"
+  local report=
+  report=$("$SCRIPTS/wave.sh" report "$RUN_DIR" 2>/dev/null)
+  assert_eq "[\"local:$(hostname -s)\"]" "$(jq -c '.ci_wait.merges[0].tiers' <<<"$report")"
+}
+
+test_mg_fallback_off_in_the_config_parks_as_before() {
+  setup_ci
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate.local_fallback = false'
+  verified_ticket
+  touch "$FAKE_GH_DIR/ci-unavailable"
+  merge_1
+  assert_eq 19 "$MERGE_STATUS"
+  assert_eq "ci" "$(state_get '[.events[] | select(.event == "parked")] | last | .reason')"
+  [ ! -e "$TEST_TMPDIR/suite-ran-here" ] || fail "the suite ran here with the fallback off"
 }

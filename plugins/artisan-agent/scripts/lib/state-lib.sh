@@ -656,7 +656,8 @@ STATE_JQ_DEFS='
     | {merges: ($w | group_by(if .batch then "b\(.batch)" else "t\(.ticket)" end)
         | map({ticket: (if .[0].batch then null else .[0].ticket end), batch: (.[0].batch // null),
                tickets: (if .[0].batch then (map(.tickets) | add | unique) else [.[0].ticket] end),
-               gates: length, minutes: ((map(.minutes) | add) * 10 | round / 10)})),
+               gates: length, minutes: ((map(.minutes) | add) * 10 | round / 10),
+               tiers: (map(.tier // "ci") | unique)})),
        total_minutes: (($w | map(.minutes) | add // 0) * 10 | round / 10)};
   def gate_answered($g):
     any((.review_gates // [])[]; .id == $g.id and .status != "open");
