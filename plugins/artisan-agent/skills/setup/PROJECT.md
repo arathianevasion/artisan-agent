@@ -23,6 +23,7 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/setup/scripts/project-setup.sh` (run
 | Who the Artisan is; agent tickets carry `needs-triage` | `docs/agents/issue-tracker.md` `## Conventions` | GitHub: `gh api user --jq .login` and the login at setup; local markdown: `git config user.name`, no `gh` call; GitLab: `glab api user` |
 | Front-door pointer | `CLAUDE.md` (or `AGENTS.md` if only that exists) | "Start with `/artisan-agent:craft`." |
 | Product voice standards | `VOICE_STANDARDS.md` at the repo root; `@VOICE_STANDARDS.md` on the line after the front-door pointer | a copy of `${CLAUDE_PLUGIN_ROOT}/templates/VOICE_STANDARDS.md` (the `voice-default` block and an empty "Your own rules" section), made only when the file is missing and never overwritten. The import is how every session in the repo, upstream skills and plain chats included, sees it. No question: `apply` prints one `tune:` line saying where to tune the voice |
+| Product design standards | `DESIGN_STANDARDS.md` at the repo root; "A change to a user journey" in `PRODUCT_STANDARDS.md` `## Always ask` | a copy of `${CLAUDE_PLUGIN_ROOT}/templates/DESIGN_STANDARDS.md` (personas, where the design system lives, UX conventions, accessibility floor, Always ask; empty except a marked `design-default` block setting the floor at WCAG 2.2 AA), made only when missing and never overwritten. `scan` prints a `design-doc` line for each art bible, style guide or components folder it finds; offer them in the defaults summary (not a sixth question) and put the accepted paths in the answers as `design_pointers`, which `apply` adds as pointers under "Where the design system lives" when absent. Never imported into `CLAUDE.md` or `AGENTS.md`: it is read at point of use. The journey line is added unless a line there already names a user journey |
 | Main-checkout protection fallback | the repo's git hooks dir | `${CLAUDE_PLUGIN_ROOT}/guard/install-pre-commit.sh`; local to the clone, not in the PR |
 
 `GLOSSARY.md`, `docs/adr/` and `.out-of-scope/` are created only when needed, by the skills that first need them; setup doesn't create them.
@@ -101,6 +102,7 @@ The worktree is removed afterwards whatever happens; the main checkout is never 
   "hook_fallback": false,
   "ci_gate_workflow": "ci.yml",
   "worktree_setup": "npm ci --prefer-offline",
+  "design_pointers": ["docs/ART_BIBLE.md"],
   "tracker_board": { "owner": "arathianevasion", "number": 1, "fields_at_filing": ["Area"] }
 }
 ```
