@@ -197,6 +197,7 @@ test_mg_a_cancelled_ci_run_parks_the_run_unblocked_and_clearing_the_park_retries
   local parked_sha= out=
   parked_sha=$(state_get '.ci_park.sha')
   assert_eq "ci 1" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.ticket)"')"
+  assert_eq ci "$(state_get '[.events[] | select(.event == "ci-wait")] | last | .tier')"
   out=$("$SCRIPTS/wave.sh" status "$RUN_DIR")
   assert_contains "$out" "next: parked"
   assert_contains "$out" "cancelled"
@@ -1111,6 +1112,7 @@ fake_ssh() {
 #!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_SSH_LOG"
 [ -n "${FAKE_SSH_UP:-}" ] || exit 255
+case "$*" in *' true') ;; *) [ -z "${FAKE_SSH_DROP:-}" ] || exit 255 ;; esac
 for last; do :; done
 exec sh -c "$last"
 SH
@@ -1159,6 +1161,13 @@ test_mg_fallback_a_run_no_runner_starts_gates_locally_on_the_reachable_host() {
   assert_eq "$(git -C "$PROJECT" rev-parse HEAD)" "$(cat "$TEST_TMPDIR/ran")" "the remote checkout is the merge commit"
   assert_contains "$(head -1 "$FAKE_SSH_LOG")" "home-wsl true"
   assert_eq "" "$(ci_branches)" "the ci branch is gone"
+  # The link drops after the probe: no verdict from there, so it runs here.
+  export FAKE_SSH_DROP=1
+  rm -f "$TEST_TMPDIR/ran"
+  mg_ci_fallback --fallback-host home-wsl --start-minutes 0
+  assert_eq 0 "$MG_STATUS" "$MG_OUT"
+  assert_eq "local:$(hostname -s)" "$(jq -r .tier <<<"$MG_OUT")"
+  unset FAKE_SSH_DROP
   # The host doesn't answer: this machine runs it.
   unset FAKE_SSH_UP
   rm -f "$TEST_TMPDIR/ran"
@@ -1197,6 +1206,7 @@ test_mg_fallback_wave_merge_logs_the_tier_and_the_report_names_it() {
   assert_eq merged "$(state_get '.tickets["1"].status')"
   assert_eq "local:$(hostname -s)" "$(state_get '[.events[] | select(.event == "ci-wait")] | last | .tier')"
   assert_eq "local:$(hostname -s)" "$(state_get '.tickets["1"].suite.tier')"
+  assert_eq "$(hostname -s)" "$(state_get '.tickets["1"].suite.fallback.host')"
   local report=
   report=$("$SCRIPTS/wave.sh" report "$RUN_DIR" 2>/dev/null)
   assert_eq "[\"local:$(hostname -s)\"]" "$(jq -c '.ci_wait.merges[0].tiers' <<<"$report")"

@@ -500,15 +500,22 @@ run_started() {
 FB_CMD= FB_LOG= FB_HOST=
 fb_on() { [ -n "$FB_CMD" ]; }
 
+# cancel_queued run-json: cancel a run no runner took, so none starts it
+# after the gate has judged the commit itself.
+cancel_queued() {
+  [ "$1" = '{}' ] || [ -z "$1" ] || gh run cancel "$(jq -r .databaseId <<<"$1")" -R "$CI_REPO" >/dev/null 2>&1 || true
+}
+
 # fb_host_up: FB_HOST answers ssh within a short timeout.
 fb_host_up() {
   [ -n "$FB_HOST" ] || return 1
-  ssh -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" true >/dev/null 2>&1
+  ssh -n -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" true >/dev/null 2>&1
 }
 
 # fb_remote: the suite on FB_HOST, in a clone of the gate's commit made from a
 # bundle sent over ssh, removed after. Output to FB_LOG; its exit status, or
-# FB_NO_CHECKOUT when the clone could not be made there (so it runs here).
+# FB_NO_CHECKOUT when the clone could not be made there, or ssh's 255 when the
+# link failed: then it runs here.
 FB_NO_CHECKOUT=86
 fb_remote() {
   local ref="refs/artisan-gate/$CI_SHA" bundle="" rc=0 q=""
@@ -518,7 +525,7 @@ fb_remote() {
   git -C "$CI_DIR" update-ref -d "$ref"
   if [ "$rc" -ne 0 ]; then rm -f "$bundle"; return 1; fi
   q=$(printf '%s' "$FB_CMD" | sed "s/'/'\\\\''/g")
-  ssh -o BatchMode=yes "$FB_HOST" "d=\$(mktemp -d) && cat >\"\$d/gate.bundle\" && git init -q \"\$d/w\" && cd \"\$d/w\" \
+  ssh -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" "d=\$(mktemp -d) && cat >\"\$d/gate.bundle\" && git init -q \"\$d/w\" && cd \"\$d/w\" \
     && git fetch -q \"\$d/gate.bundle\" $ref && git checkout -q --detach $CI_SHA || { rm -rf \"\$d\"; exit $FB_NO_CHECKOUT; }
     sh -c '$q'; rc=\$?; cd /; rm -rf \"\$d\"; exit \$rc" \
     <"$bundle" >"$FB_LOG" 2>&1 || rc=$?
@@ -536,8 +543,8 @@ fallback() {
     machine=$FB_HOST
     fb_remote || rc=$?
   fi
-  if [ -z "$machine" ] || [ "$rc" -eq "$FB_NO_CHECKOUT" ]; then
-    [ -z "$machine" ] || echo "merge-gate.sh: could not check out $CI_SHA on $machine; running the suite here" >&2
+  if [ -z "$machine" ] || [ "$rc" -eq "$FB_NO_CHECKOUT" ] || [ "$rc" -eq 255 ]; then
+    [ -z "$machine" ] || echo "merge-gate.sh: no verdict from $machine (could not check out $CI_SHA there, or ssh failed: $rc); running the suite here" >&2
     rc=0
     machine=$(hostname -s 2>/dev/null || hostname)
     priority_init || exit 1
@@ -623,7 +630,7 @@ cmd_ci() {
     run=$(find_run)
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
     if fb_on && [ "$(date +%s)" -ge "$start_by" ] && ! run_started "$run"; then
-      [ -z "$run" ] || gh run cancel "$(jq -r .databaseId <<<"$run")" -R "$CI_REPO" >/dev/null 2>&1 || true
+      cancel_queued "$run"
       delete_branch
       fallback "no runner started $CI_WF for $CI_SHA within $start_minutes minutes"
       return $?
@@ -632,6 +639,7 @@ cmd_ci() {
       delete_branch
       [ -n "$run" ] || run='{}'
       if fb_on && ! run_started "$run"; then
+        cancel_queued "$run"
         fallback "no runner started $CI_WF for $CI_SHA within $allowed"
         return $?
       fi

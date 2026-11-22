@@ -182,7 +182,7 @@ merge_gate:
 # the gate run (the push or dispatch failed, or no runner started it within
 # start_wait_minutes), the gate runs the plan's suite itself, on
 # fallback_host when it answers ssh (home-wsl, the Artisan's PC for heavy
-# compute; empty for none), else on the session's machine. A run that
+# compute; "" for none: a bare empty value means the default), else on the session's machine. A run that
 # started and failed never falls back. Set local_fallback: false for a
 # project whose full gate can't run outside CI (claudia-kerman, without KSP);
 # then such a gate parks with no verdict. Source: CI policy of 2026-11-22.

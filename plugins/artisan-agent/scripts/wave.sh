@@ -1767,7 +1767,7 @@ finish_gate() {
       if [ "$rc" -eq 7 ]; then
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs})
-            + (if $g.fallback then {tier: $g.tier, fallback: $g.fallback} else {} end)
+            + {tier: ($g.tier // "ci")} + (if $g.fallback then {fallback: $g.fallback} else {} end)
             + (if $g.runner_reruns then {runner_reruns: $g.runner_reruns} else {} end)
             + (if $g.base_check then {base_check: $g.base_check} else {} end))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
@@ -1800,7 +1800,7 @@ finish_gate() {
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .reused then {reused, relied_on, why} else {} end)
       + (if .runner_reruns then {runner_reruns} else {} end)
-      + (if .fallback then {tier, fallback} else {} end)
+      + {tier: (.tier // "ci")} + (if .fallback then {fallback} else {} end)
       + (if .base_check then {base_check, failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
@@ -2017,7 +2017,7 @@ batch_outcome() {
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .failing_tests then {failing_tests} else {} end)
       + (if .runner_reruns then {runner_reruns} else {} end)
-      + (if .fallback then {tier, fallback} else {} end)
+      + {tier: (.tier // "ci")} + (if .fallback then {fallback} else {} end)
       + (if .base_check then {base_check} else {} end)' <<<"$GATE_JSON")
     note_ci_wait "$rc" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')"
   fi
