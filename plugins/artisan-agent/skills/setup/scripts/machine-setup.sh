@@ -68,16 +68,26 @@ standards_file() { # title
   printf '# %s\n\nIndividual level: these follow the Artisan into every project. Product and team standards win a contradiction.\n\n## Always ask\n\nThings that must always come back to the Artisan.\n' "$1"
 }
 
+# The individual design file starts empty: no personas (they live at product level only).
+design_individual() {
+  printf '# Individual design standards\n\nIndividual level: these follow the Artisan into every project. Product and team standards win a contradiction. Personas live at product level only.\n\n## Where the design system lives\n\nPointers only, never copies.\n\n## UX conventions\n\nPatterns you follow and ones you avoid.\n\n## Accessibility floor\n\n## Always ask\n\nDesign choices that must always come back to you.\n'
+}
+
+design_team() {
+  printf '# Team design standards\n\nTeam level: these apply to every product the team builds. A product'"'"'s own design standards win a contradiction; these win over an individual'"'"'s. Personas live at product level only.\n\n## Where the design system lives\n\nPointers only, never copies: a path or a link per line.\n\n## UX conventions\n\nHow the team'"'"'s products behave: patterns to follow and ones to avoid.\n\n## Accessibility floor\n\n## Always ask\n\nDesign choices that must always come back to the Artisan.\n'
+}
+
 cmd_init() {
-  local f= path= paths="" ident="" did=0 tools_rc=0
+  local f= path= paths="" ident="" did=0 tools_rc=0 draft=
   cmd_check || tools_rc=1   # report now, still set up; the exit status stays non-zero at the end
   mkdir -p "$HOME_DIR"
-  for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md VOICE_STANDARDS.md satisfaction.jsonl; do
+  for f in CODING_STANDARDS.md PRODUCT_STANDARDS.md VOICE_STANDARDS.md DESIGN_STANDARDS.md satisfaction.jsonl; do
     path=$HOME_DIR/$f
     [ -e "$path" ] && continue
     case $f in
       satisfaction.jsonl) : >"$path" ;;
       VOICE_STANDARDS.md) cp "$HERE/../../../templates/VOICE_STANDARDS.md" "$path" ;;
+      DESIGN_STANDARDS.md) design_individual >"$path" ;;
       *) standards_file "Individual $(printf %s "${f%.md}" | tr "A-Z_" "a-z ")" >"$path" ;;
     esac
     paths="$paths $f"
@@ -99,6 +109,14 @@ cmd_init() {
     did=1
   fi
   [ "$did" = 1 ] || echo "unchanged: individual home $HOME_DIR"
+  # The team draft sits outside the individual home (it is not the Artisan's own standard) and is
+  # made only when missing, so a rerun neither overwrites an edited draft nor repeats the offer.
+  draft=$CFG/artisan-agent-drafts/DESIGN_STANDARDS.md
+  if [ ! -e "$draft" ]; then
+    mkdir -p "$(dirname "$draft")"
+    design_team >"$draft"
+    echo "changed: drafted a team design file at $draft; land it by PR as DESIGN_STANDARDS.md at the root of the team guardrails repo (team_guardrails_repo in the project config); projects read it at the point of use, below the product's own"
+  fi
   json autoupdate "$CFG"
   [ "$tools_rc" = 0 ] || echo "setup finished, but jq or perl is missing (see above); install it before running workers" >&2
   return "$tools_rc"

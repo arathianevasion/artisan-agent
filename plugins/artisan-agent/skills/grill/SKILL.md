@@ -37,6 +37,10 @@ Options:
 - If you can't name why the strongest alternative lost, you haven't understood the question. Look more into it before asking.
 - Ask the whole frontier in a round, as `grilling` says.
 
+## Experience pass, only when the change touches the experience
+
+When the plan changes a user journey, add one pass on the experience: who it is for, which steps change and what the user sees. For that pass only, read the design standards at the point of use: run `${CLAUDE_PLUGIN_ROOT}/scripts/guardrails.sh design`, which lists each level's `DESIGN_STANDARDS.md` product first, then team, then individual (product wins a contradiction), and read each with `git -C <dir> show <commit>:<path>`. Personas are at product level only. Never import or copy them. A session that never touches the experience reads nothing and pays nothing.
+
 ## Record decisions as they settle
 
 When an answer settles a decision, record it in the same session, before the next round, as `domain-modeling` directs:

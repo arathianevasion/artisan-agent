@@ -30,6 +30,13 @@
 #       with an `area`) only if that area is among the tickets' areas
 #       (`plan.tickets.<t>.areas`, set by gate-plan.sh propose) or the named
 #       ones; with neither, every guardrail is listed, area-scoped or not.
+#   guardrails.sh design [--run-dir D]
+#       the design standards in force (DESIGN_STANDARDS.md), as JSON
+#       {order, files}: files lists the levels that have one, in precedence order
+#       product, then team, then individual, each {level, dir, commit, path} so
+#       `git -C dir show commit:path` reads it. Sources come from the latest wave's
+#       commits with --run-dir, as committed now without. Read at the point of use
+#       only; no front-door file imports them. Personas live at product level only.
 #   guardrails.sh table [--run-dir D] [--role R] [--ticket T[,T...]] [--areas A[,A...]]
 #       the "Guardrails applied" section for a packet, a markdown table.
 #   guardrails.sh tighten --level individual|product|team --who NAME --reason TEXT
@@ -407,6 +414,46 @@ cmd_table() {
       else empty end )' <<<"$json"
 }
 
+# ------------------------------------------------------------------ design
+
+DESIGN_FILE=DESIGN_STANDARDS.md
+
+cmd_design() {
+  local run="" m= src= repo= tdir= out="[]" level= dir= commit=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run-dir) [ $# -ge 2 ] || usage; run=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  if [ -n "$run" ]; then
+    state_require_run_dir "$run"
+    m=$(main_checkout "$run")
+    src=$(jq -c '(.waves // []) | last // {} | .guardrails // {}
+      | {team: (if .team then {commit: .team} else null end),
+         product: (if .product then {commit: .product} else null end),
+         individual: (if .individual then {commit: .individual} else null end)}' "$(state_file "$run")")
+  else
+    m=$(main_checkout)
+    src=$(sources_json "$m" 0)
+  fi
+  repo=$(team_repo "$m")
+  tdir=""
+  [ -z "$repo" ] || tdir=$(team_dir "$repo")
+  for level in product team individual; do
+    case "$level" in
+      product) dir=$m ;;
+      team) dir=$tdir ;;
+      individual) dir=$HOME_DIR ;;
+    esac
+    commit=$(jq -r --arg l "$level" '.[$l].commit // ""' <<<"$src")
+    [ -n "$dir" ] && [ -n "$commit" ] || continue
+    git -C "$dir" cat-file -e "$commit:$DESIGN_FILE" 2>/dev/null || continue
+    out=$(jq -c --arg l "$level" --arg d "$dir" --arg c "$commit" --arg p "$DESIGN_FILE" '. + [{level: $l, dir: $d, commit: $c, path: $p}]' <<<"$out")
+  done
+  jq -n --argjson f "$out" '{order: ["product", "team", "individual"], files: $f}'
+}
+
 # ----------------------------------------------------------------- tighten
 
 cmd_tighten() { move_guardrail tighten "$@"; }
@@ -625,5 +672,6 @@ case "$cmd" in
   tighten) cmd_tighten "$@" ;;
   loosen) cmd_loosen "$@" ;;
   voice) cmd_voice "$@" ;;
+  design) cmd_design "$@" ;;
   *) usage ;;
 esac
