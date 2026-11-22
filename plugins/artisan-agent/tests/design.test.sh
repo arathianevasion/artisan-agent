@@ -357,3 +357,62 @@ test_the_skill_names_the_journey_format_and_the_write_from_main_step() {
   assert_contains "$text" "from main"
   assert_contains "$text" "feature branch"
 }
+
+# design.sh prototype (#326): a headless prototype worker, dispatched into its
+# own worktree on the prototype branch, briefed with the real components.
+
+# main's design standards point at the design system; the checkout stays on work.
+seed_design_system() {
+  git checkout -q main
+  printf '# Design standards\n\n## Personas\n\n- First-time buyer\n\n## Where the design system lives\n\nPointers only, never copies: a path or a link per line.\n\n- src/components/\n- https://storybook.example/ui\n\n## UX conventions\n\n- No modals\n' >DESIGN_STANDARDS.md
+  git add DESIGN_STANDARDS.md && git commit -q -m standards
+  git checkout -q work
+  export ARTISAN_HOME="$TEST_TMPDIR/home"
+}
+
+# A stand-in claude that records where it ran and what it was told, commits a
+# file there, then marks itself done.
+fake_prototype_claude() {
+  export FAKE_PROTO="$TEST_TMPDIR/proto-run"
+  mkdir -p "$FAKE_PROTO"
+  cat >"$TEST_TMPDIR/fake-claude" <<'SH'
+#!/usr/bin/env bash
+pwd -P >"$FAKE_PROTO/pwd"
+git rev-parse --abbrev-ref HEAD >"$FAKE_PROTO/branch"
+printf '%s\n' "$ARTISAN_ROLE" >"$FAKE_PROTO/role"
+while [ $# -gt 0 ]; do [ "$1" = -p ] && printf '%s' "$2" >"$FAKE_PROTO/prompt"; shift; done
+printf 'prototype\n' >proto.txt && git add proto.txt && git commit -q -m prototype
+touch "$FAKE_PROTO/done"
+SH
+  chmod +x "$TEST_TMPDIR/fake-claude"
+  export ARTISAN_CLAUDE_BIN="$TEST_TMPDIR/fake-claude"
+}
+
+wait_prototype() {
+  local i=0
+  while [ ! -e "$FAKE_PROTO/done" ]; do
+    i=$((i + 1)); [ "$i" -le 100 ] || fail "the prototype worker never ran"
+    sleep 0.1
+  done
+}
+
+prototype() {
+  "$DESIGN" prototype --design faster-checkout --change "Pay in one tap from the cart" "$@"
+}
+
+test_prototype_worker_runs_in_its_own_worktree_on_the_prototype_branch_only() {
+  seed; seed_design_system; fake_prototype_claude
+  start_checkout >/dev/null
+  local main= feature= out=
+  main=$(git rev-parse main) feature=$(git rev-parse feature/faster-checkout)
+  out=$(prototype)
+  wait_prototype
+  assert_eq prototype/faster-checkout "$(cat "$FAKE_PROTO/branch")"
+  assert_eq "$(cd "$P-wt/prototype-faster-checkout" && pwd -P)" "$(cat "$FAKE_PROTO/pwd")"
+  assert_contains "$out" "worktree: $P-wt/prototype-faster-checkout"
+  assert_eq prototype "$(git log -1 --format=%s prototype/faster-checkout)"
+  assert_eq "$main" "$(git rev-parse main)" "main moved"
+  assert_eq "$feature" "$(git rev-parse feature/faster-checkout)" "the feature branch moved"
+  assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "the checkout moved"
+  assert_eq prototype "$(cat "$FAKE_PROTO/role")"
+}

@@ -7,6 +7,7 @@
 #   design.sh status
 #   design.sh resume [#]N
 #   design.sh journey --design SLUG --name NAME --persona WHO --goal G --action A --next N [--goal G --action A --next N]...
+#   design.sh prototype --design SLUG --change WHAT [--model MODEL]
 #
 # start: picks the base: with an origin remote, fetches it and uses
 #   origin/<default branch> (with --no-fetch, origin/<default branch> as last
@@ -48,7 +49,21 @@
 #     - **Action:** <what the user does and sees>
 #     - **Next:** <where they go next>
 #
-# Runs in the product repo (any checkout of it). GH_BIN stands in for gh.
+# prototype: dispatches a headless prototype worker (claude -p, detached, in
+#   its own session, ARTISAN_ROLE=prototype) to build WHAT on the prototype
+#   branch prototype/<SLUG>, in its own worktree, <main checkout>-wt/prototype-<SLUG>
+#   (made if missing, reused if it is already on that branch). The worker never
+#   runs on the feature branch or main, and the prototype branch is never
+#   merged. Its brief, written to
+#   <main checkout>/.artisan-agent/designs/<SLUG>/prototype-brief.md, names the
+#   product's real components as its building blocks: the pointers under
+#   "Where the design system lives" in each design standards file in force
+#   (guardrails.sh design), product first. With none recorded it warns on
+#   stderr and the brief says to use the components already in the code.
+#   Prints the worktree, the branch, the brief, the worker's pid and its log.
+#
+# Runs in the product repo (any checkout of it). GH_BIN stands in for gh;
+# ARTISAN_CLAUDE_BIN for claude.
 # Exit status: 0 done; 1 failed (why on stderr); 2 bad usage; 16 no
 # capture_command recorded (project setup records one).
 # (journey: exit 1 when the feature branch is missing or checked out elsewhere.)
@@ -59,6 +74,12 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 tmp= # the capture worktree's parent; global for the EXIT trap
 PLUGIN_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 GH=${GH_BIN:-gh}
+CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}
+PROTOTYPE_TOOLS="Read,Edit,Write,Glob,Grep,Bash"
+# shellcheck source=../../../scripts/lib/detach-lib.sh
+. "$PLUGIN_ROOT/scripts/lib/detach-lib.sh"
+# shellcheck source=../../../scripts/lib/headless-lib.sh
+. "$PLUGIN_ROOT/scripts/lib/headless-lib.sh"
 LABEL=design
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -196,6 +217,73 @@ cmd_journey() {
   printf 'journey file: %s\nfeature branch: feature/%s\ncommit: %s\n' "$file" "$slug" "$sha"
 }
 
+# The design system pointers in force: the list lines under "Where the design
+# system lives" in each level's design standards, product first.
+design_pointers() {
+  local json= f=
+  json=$("$PLUGIN_ROOT/scripts/guardrails.sh" design) || return 0
+  jq -r '.files[] | "\(.dir)\t\(.commit)\t\(.path)"' <<<"$json" | while IFS=$'\t' read -r d c f; do
+    git -C "$d" show "$c:$f" 2>/dev/null \
+      | awk '/^## /{on = ($0 ~ /^## Where the design system lives/); next} on && /^[-*] /'
+  done
+}
+
+# A headless worker builds the prototype on the prototype branch, in its own worktree.
+cmd_prototype() {
+  local slug= change= model= branch= root= wt= at= pointers= dir= brief= pid= log= runner=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --design) [ $# -ge 2 ] || usage; slug=$2; shift 2 ;;
+      --change) [ $# -ge 2 ] || usage; change=$2; shift 2 ;;
+      --model) [ $# -ge 2 ] || usage; model=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$change" ] || usage
+  branch="prototype/$slug"
+  has_branch "$branch" || die "no prototype branch $branch: start the design first"
+  root=$(main_root)
+  wt="$(dirname "$root")/$(basename "$root")-wt/prototype-$slug"
+  if [ -e "$wt" ]; then
+    at=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || at=
+    [ "$at" = "$branch" ] || die "$wt exists but is not a checkout of $branch: move it, then dispatch again"
+  else
+    mkdir -p "$(dirname "$wt")"
+    git worktree add -q "$wt" "$branch" || die "could not check out $branch into $wt (is it checked out elsewhere?)"
+  fi
+  [ "$(git -C "$wt" symbolic-ref -q --short HEAD)" = "$branch" ] || die "$wt is not on $branch; refusing to dispatch"
+
+  pointers=$(design_pointers)
+  [ -n "$pointers" ] || printf 'design.sh: no design system pointer is recorded under "Where the design system lives" in DESIGN_STANDARDS.md; the worker will use the components it finds in the code\n' >&2
+  dir="$root/.artisan-agent/designs/$slug"
+  mkdir -p "$dir"
+  brief="$dir/prototype-brief.md" log="$dir/prototype.log"
+  {
+    printf '# Prototype worker: design %s\n\n' "$slug"
+    printf 'Build a functional prototype of this change: %s\n\n' "$change"
+    printf '## Where you work\n\n'
+    printf -- '- Only in this worktree, `%s`, on the prototype branch `%s`. Commit there.\n' "$wt" "$branch"
+    printf -- '- Never switch branch, and never touch the feature branch `feature/%s` or the default branch. Never merge or push: the prototype branch is never merged.\n\n' "$slug"
+    printf '## Build it from the real components\n\n'
+    printf 'Make the prototype as close to prod as you can: build it from the product'"'"'s real components, the design system the design standards point to, not mock-ups or new look-alikes.\n\n'
+    if [ -n "$pointers" ]; then
+      printf 'The design system (from DESIGN_STANDARDS.md, "Where the design system lives"):\n\n%s\n\n' "$pointers"
+    else
+      printf 'No design system pointer is recorded in DESIGN_STANDARDS.md: use the components already in the code.\n\n'
+    fi
+    printf 'For a CLI, the prototype is the commands working on this branch.\n\n'
+    printf 'When it works, end with what you built, how to try it, and what you faked.\n'
+  } >"$brief"
+
+  headless_args "$PROTOTYPE_TOOLS"
+  runner=(env ARTISAN_ROLE=prototype "$CLAUDE" -p "$(cat "$brief")" "${HEADLESS_ARGS[@]}")
+  [ -z "$model" ] || runner+=(--model "$model")
+  rm -f "$dir/prototype.pid"
+  pid=$(detach_start "$dir/prototype.pid" "$log" bash -c 'echo $$ >"$1.tmp" && mv "$1.tmp" "$1"; cd "$2" || exit 1; shift 2; exec "$@"' \
+    _ "$dir/prototype.pid" "$wt" "${runner[@]}") || die "the prototype worker did not start; see $log"
+  printf 'worktree: %s\nprototype branch: %s\nbrief: %s\nworker pid: %s\nlog: %s\n' "$wt" "$branch" "$brief" "$pid" "$log"
+}
+
 cmd_status() {
   [ $# -eq 0 ] || usage
   local out=
@@ -222,6 +310,7 @@ case "$cmd" in
   start) cmd_start "$@" ;;
   status) cmd_status "$@" ;;
   journey) cmd_journey "$@" ;;
+  prototype) cmd_prototype "$@" ;;
   resume) cmd_resume "$@" ;;
   *) usage ;;
 esac
