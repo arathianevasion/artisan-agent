@@ -223,7 +223,7 @@ cmd_build() {
            and (.integration_branch | type == "string") and (.scope | type == "array")
            and (.scope | length) > 0;
            "the draft needs run_id, repo, integration_branch and a non-empty scope")
-    | need((.spec // null) == null
+    | need((has("spec") | not) or .spec == null
            or ((.spec | type) == "object" and (.spec.number | type) == "number" and (.spec.title | type) == "string");
            "the draft spec must be {number, title} (number a number, title a string), got \(.spec | tojson)")
     | .scope |= map(tostring)
