@@ -32,7 +32,7 @@
 # resume: prints design ticket N's branches, links, designer, steps and
 #   screenshots' folder, one "<field>: <value>" per line.
 #
-# journey: writes one user journey file, journeys/<journey slug>.md, on the
+# journey: writes one user journey file, docs/journeys/<journey slug>.md, on the
 #   feature branch feature/<SLUG> only, and commits it there. The file names
 #   its persona and lists the ordered steps given, each with its goal, what
 #   the user does and sees (action) and where they go next. A --goal starts a
@@ -68,7 +68,7 @@
 # approve: records the design package on design ticket N, as a comment: the
 #   journey diff (the journey files' change from the base the design was cut
 #   from, on feature/<SLUG>), a screenshot per journey step the ticket lists
-#   (read from journeys/screenshots/<step>.<ext> on the feature branch, beside
+#   (read from docs/journeys/screenshots/<step>.<ext> on the feature branch, beside
 #   the journey files: nothing is copied or committed at approval), the
 #   prototype (its branch, when it has commits of its own; else none) and the
 #   tool link (--tool-link, else the ticket's own, else none). A design with no
@@ -80,7 +80,7 @@
 #
 # retire: the end gate runs it when the design's feature ships (#335):
 #   deletes the prototype branch prototype/<SLUG> (and its worktree), deletes
-#   the package's screenshots (journeys/screenshots on feature/<SLUG>, as one
+#   the package's screenshots (docs/journeys/screenshots on feature/<SLUG>, as one
 #   commit made in a temporary checkout, and the "before" folder under
 #   <main checkout>/.artisan-agent/designs/<SLUG>), and closes design ticket N
 #   with a comment naming the merge it shipped in (--merge: a PR URL or commit).
@@ -221,7 +221,7 @@ cmd_journey() {
   jslug=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
   [ -n "$jslug" ] || die "the journey's name needs a letter or digit: $name"
   has_branch "feature/$slug" || die "no feature branch feature/$slug: start the design first"
-  file="journeys/$jslug.md"
+  file="docs/journeys/$jslug.md"
   body=$(printf '# Journey: %s\n\n**Persona:** %s\n\n## Steps\n' "$name" "$persona")
   for i in "${!goals[@]}"; do
     body+=$(printf '\n\n### %s. %s\n- **Goal:** %s\n- **Action:** %s\n- **Next:** %s' \
@@ -231,7 +231,7 @@ cmd_journey() {
   trap 'git worktree remove --force "$tmp/feature" >/dev/null 2>&1 || true; rm -rf "$tmp"; git worktree prune >/dev/null 2>&1 || true' EXIT
   wt="$tmp/feature"
   git worktree add -q "$wt" "feature/$slug" || die "could not check out feature/$slug (is it checked out elsewhere?)"
-  mkdir -p "$wt/journeys"
+  mkdir -p "$wt/docs/journeys"
   printf '%s\n' "$body" >"$wt/$file"
   git -C "$wt" add -- "$file"
   if git -C "$wt" diff --cached --quiet; then
@@ -359,13 +359,13 @@ Retry when origin is reachable, or pass --no-fetch to check against $base as las
 
   # A screenshot per changed step, on the feature branch beside the journeys.
   while IFS= read -r s; do
-    f=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots | awk -v s="journeys/screenshots/$s." 'index($0, s) == 1 && index(substr($0, length(s) + 1), ".") == 0 { print; exit }')
+    f=$(git ls-tree -r --name-only "$feature" -- docs/journeys/screenshots | awk -v s="docs/journeys/screenshots/$s." 'index($0, s) == 1 && index(substr($0, length(s) + 1), ".") == 0 { print; exit }')
     [ -n "$f" ] || missing="$missing $s"
     shots+="  - \`$s\`: \`$f\` on \`$feature\`"$'\n'
   done <<<"$steps"
-  [ -z "$missing" ] || die "no screenshot on $feature for step(s):$missing; commit them to journeys/screenshots/<step>.<ext> beside the journey files, then approve again"
+  [ -z "$missing" ] || die "no screenshot on $feature for step(s):$missing; commit them to docs/journeys/screenshots/<step>.<ext> beside the journey files, then approve again"
 
-  diff=$(git diff "$cut" "$feature" -- journeys ':!journeys/screenshots')
+  diff=$(git diff "$cut" "$feature" -- docs/journeys ':!docs/journeys/screenshots')
   [ -n "$diff" ] || diff="no journey file differs from the base"
   tl=${tool:-$(printf '%s\n' "$body" | sed -nE 's/^- \*\*Tool link:\*\* (.*)$/\1/p' | head -1)}
   case "$tl" in '' | 'none yet') tl=none ;; esac
@@ -409,12 +409,12 @@ cmd_retire() {
 
   # The screenshots on the feature branch: one commit, journey files untouched.
   if has_branch "$feature"; then
-    files=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots)
+    files=$(git ls-tree -r --name-only "$feature" -- docs/journeys/screenshots)
     if [ -n "$files" ]; then
       tmp=$(mktemp -d "${TMPDIR:-/tmp}/artisan-design.XXXXXX")
       trap 'git worktree remove --force "$tmp/feature" >/dev/null 2>&1 || true; rm -rf "$tmp"; git worktree prune >/dev/null 2>&1 || true' EXIT
       git worktree add -q "$tmp/feature" "$feature" || die "could not check out $feature (is it checked out elsewhere?)"
-      git -C "$tmp/feature" rm -q -r -- journeys/screenshots || die "could not remove the screenshots on $feature"
+      git -C "$tmp/feature" rm -q -r -- docs/journeys/screenshots || die "could not remove the screenshots on $feature"
       git -C "$tmp/feature" commit -q -m "Retire design $slug: delete the package's screenshots, keep the journey diff" \
         || die "committing the screenshots' removal on $feature failed"
     fi

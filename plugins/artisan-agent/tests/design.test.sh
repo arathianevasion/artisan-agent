@@ -281,7 +281,7 @@ test_a_journey_file_names_its_persona_and_lists_ordered_steps() {
   start_checkout >/dev/null
   journey >/dev/null
   local f=
-  f=$(git show feature/faster-checkout:journeys/buy-a-ticket.md)
+  f=$(git show feature/faster-checkout:docs/journeys/buy-a-ticket.md)
   assert_contains "$f" "# Journey: Buy a ticket"
   assert_contains "$f" "**Persona:** First-time buyer"
   assert_eq "### 1. Pick a seat
@@ -297,11 +297,11 @@ test_a_journey_file_names_its_persona_and_lists_ordered_steps() {
 test_with_no_journeys_only_the_touched_steps_are_written_on_the_feature_branch() {
   seed
   start_checkout >/dev/null
-  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/' || true)" "journeys before"
+  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/' || true)" "journeys before"
   "$DESIGN" journey --design faster-checkout --name "Buy a ticket" --persona "First-time buyer" \
     --goal "Pay" --action "Enters card details" --next "Confirmation" >/dev/null
-  assert_eq "journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
-  assert_eq 1 "$(git show feature/faster-checkout:journeys/buy-a-ticket.md | grep -c '^### ')"
+  assert_eq "docs/journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/')"
+  assert_eq 1 "$(git show feature/faster-checkout:docs/journeys/buy-a-ticket.md | grep -c '^### ')"
 }
 
 test_the_journey_changes_stay_off_main_and_the_checkout() {
@@ -311,10 +311,10 @@ test_the_journey_changes_stay_off_main_and_the_checkout() {
   main=$(git rev-parse main)
   journey >/dev/null
   assert_eq "$main" "$(git rev-parse main)" "main moved"
-  assert_eq "" "$(git ls-tree -r --name-only main | grep '^journeys/' || true)" "main has journeys"
-  [ ! -e "$P/journeys" ] || fail "the checkout got the journeys folder"
+  assert_eq "" "$(git ls-tree -r --name-only main | grep '^docs/journeys/' || true)" "main has journeys"
+  [ ! -e "$P/docs/journeys" ] || fail "the checkout got the journeys folder"
   assert_eq work "$(git rev-parse --abbrev-ref HEAD)"
-  assert_eq "" "$(git status --porcelain -- journeys)" "the checkout is dirty"
+  assert_eq "" "$(git status --porcelain -- docs/journeys)" "the checkout is dirty"
   assert_eq "" "$(git worktree list | grep -v "^$P " || true)" "a worktree was left behind"
 }
 
@@ -325,9 +325,9 @@ test_a_second_journey_is_its_own_file_and_a_rewrite_replaces_steps() {
   "$DESIGN" journey --design faster-checkout --name "Refund" --persona "Buyer" \
     --goal "Ask" --action "Opens help" --next "End" >/dev/null
   assert_contains "$(journey)" "unchanged"
-  assert_eq "journeys/buy-a-ticket.md
-journeys/refund.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
-  assert_eq 2 "$(git show feature/faster-checkout:journeys/buy-a-ticket.md | grep -c '^### ')"
+  assert_eq "docs/journeys/buy-a-ticket.md
+docs/journeys/refund.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/')"
+  assert_eq 2 "$(git show feature/faster-checkout:docs/journeys/buy-a-ticket.md | grep -c '^### ')"
 }
 
 test_a_journey_step_without_goal_action_and_next_is_refused() {
@@ -336,7 +336,7 @@ test_a_journey_step_without_goal_action_and_next_is_refused() {
   assert_status 2 "$DESIGN" journey --design faster-checkout --name J --persona p --goal g --action a
   assert_status 2 "$DESIGN" journey --design faster-checkout --name J --persona p --action a --next n
   assert_status 2 "$DESIGN" journey --design faster-checkout --name J --goal g --action a --next n
-  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/' || true)"
+  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/' || true)"
 }
 
 test_a_journey_for_a_design_that_was_not_started_is_refused() {
@@ -344,11 +344,17 @@ test_a_journey_for_a_design_that_was_not_started_is_refused() {
   assert_status 1 "$DESIGN" journey --design nope --name J --persona p --goal g --action a --next n
 }
 
+test_no_plugin_file_names_a_root_journeys_folder() {
+  local hits=
+  hits=$(grep -rnE '(^|[^[:alnum:]_/.-])journeys/' --exclude-dir=tests --exclude=CHANGELOG.md "$PLUGIN_ROOT" 2>/dev/null || true)
+  assert_eq "" "$hits" "a root journeys/ folder is named"
+}
+
 test_the_skill_names_the_journey_format_and_the_write_from_main_step() {
   local text=
   text=$(sed -n '/^## 3\. /,/^## 4\. /p' "$SKILL")
   assert_contains "$text" "design.sh journey"
-  assert_contains "$text" "journeys/"
+  assert_contains "$text" "docs/journeys/"
   assert_contains "$text" "**Persona:**"
   assert_contains "$text" "- **Goal:**"
   assert_contains "$text" "- **Action:**"
@@ -541,8 +547,8 @@ test_a_dispatch_while_the_prototype_worker_still_runs_is_refused() {
 add_screenshots() {
   local wt="$TEST_TMPDIR/shots" s=
   git worktree add -q "$wt" feature/faster-checkout
-  mkdir -p "$wt/journeys/screenshots"
-  for s in "$@"; do printf 'after %s\n' "$s" >"$wt/journeys/screenshots/$s.png"; done
+  mkdir -p "$wt/docs/journeys/screenshots"
+  for s in "$@"; do printf 'after %s\n' "$s" >"$wt/docs/journeys/screenshots/$s.png"; done
   git -C "$wt" add -A && git -C "$wt" commit -q -m screenshots
   git worktree remove --force "$wt"
 }
@@ -561,10 +567,10 @@ test_approve_records_journey_diff_screenshots_prototype_and_tool_link() {
   local c=
   c=$(comments)
   assert_contains "$c" "Design package: approved"
-  assert_contains "$c" "journeys/buy-a-ticket.md"
+  assert_contains "$c" "docs/journeys/buy-a-ticket.md"
   assert_contains "$c" "+- **Goal:** Pick a seat"
-  assert_contains "$c" "\`cart\`: \`journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
-  assert_contains "$c" "\`pay\`: \`journeys/screenshots/pay.png\`"
+  assert_contains "$c" "\`cart\`: \`docs/journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
+  assert_contains "$c" "\`pay\`: \`docs/journeys/screenshots/pay.png\`"
   assert_contains "$c" "- **Prototype:** \`prototype/faster-checkout\`"
   assert_contains "$c" "- **Tool link:** https://figma.example/f/1"
 }
@@ -593,7 +599,7 @@ test_the_packages_screenshots_are_read_from_the_feature_branch_and_a_missing_one
   assert_eq 1 "$st"
   assert_contains "$err" "no screenshot on feature/faster-checkout for step(s): pay"
   assert_eq "" "$(git status --porcelain --untracked-files=no)" "approve touched the checkout"
-  assert_eq journeys/screenshots/cart.png "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+  assert_eq docs/journeys/screenshots/cart.png "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/')"
 }
 
 # #337: a Figma design is not a substitute for the screenshots; the package
@@ -615,8 +621,8 @@ test_approve_with_a_figma_tool_link_carries_a_screenshot_per_changed_step() {
   local c=
   c=$(comments)
   assert_contains "$c" "- **Tool link:** https://www.figma.com/design/abc/Checkout"
-  assert_contains "$c" "\`cart\`: \`journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
-  assert_contains "$c" "\`pay\`: \`journeys/screenshots/pay.png\` on \`feature/faster-checkout\`"
+  assert_contains "$c" "\`cart\`: \`docs/journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
+  assert_contains "$c" "\`pay\`: \`docs/journeys/screenshots/pay.png\` on \`feature/faster-checkout\`"
 }
 
 test_a_design_with_no_prototype_and_no_tool_link_approves_on_screenshots_alone() {
@@ -653,8 +659,8 @@ test_retire_deletes_the_package_screenshots_and_leaves_the_journey_diff() {
   shipped_design
   git worktree remove --force "$TEST_TMPDIR/pt"
   retire >/dev/null
-  assert_eq "journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
-  assert_contains "$(git diff main feature/faster-checkout --stat)" "journeys/buy-a-ticket.md"
+  assert_eq "docs/journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/')"
+  assert_contains "$(git diff main feature/faster-checkout --stat)" "docs/journeys/buy-a-ticket.md"
   assert_eq "" "$(git diff main feature/faster-checkout --name-only | grep screenshots || true)"
   [ ! -e "$P/.artisan-agent/designs/faster-checkout" ] || fail "the before screenshots are still there"
   assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "retire moved the checkout"

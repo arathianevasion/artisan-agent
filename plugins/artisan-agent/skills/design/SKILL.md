@@ -21,7 +21,7 @@ Before anything else, read the design standards in force: run `${CLAUDE_PLUGIN_R
 
 ## 3. Write the journey diff
 
-Journeys live in the product's `journeys/` folder, one Markdown file per journey, `journeys/<journey-slug>.md`. A journey file names its persona (one from the design standards) and lists ordered steps, each with its goal, its action (what the user does and sees) and its next step (where they go next):
+Journeys live in the product's `docs/journeys/` folder, one Markdown file per journey, `docs/journeys/<journey-slug>.md`. A journey file names its persona (one from the design standards) and lists ordered steps, each with its goal, its action (what the user does and sees) and its next step (where they go next):
 
 ```
 # Journey: <name>
@@ -62,8 +62,8 @@ With or without the server, the Figma file's link is the tool link: comment it o
 
 ## 6. Approve
 
-`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone, and a tool link never replaces a step's screenshot: a Figma design still commits a screenshot per changed step (export the frame, or `get_screenshot` with the server connected). It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
+`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `docs/journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone, and a tool link never replaces a step's screenshot: a Figma design still commits a screenshot per changed step (export the frame, or `get_screenshot` with the server connected). It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
 
 ## 7. Retire at ship
 
-At ship the end gate runs `design.sh retire --design <design slug> --ticket <n> --merge <PR url>` for each design whose feature the run ships (`end-gate.sh finish`); you don't run it by hand. It deletes the prototype branch and its worktree, deletes the package's screenshots (`journeys/screenshots` on the feature branch, and the "before" folder), and closes the design ticket with the merge it shipped in. The journey diff stays. A run ships a design when a ticket in its scope has a `Design: #<n>` line in its body, so put that line in each ticket that builds the design.
+At ship the end gate runs `design.sh retire --design <design slug> --ticket <n> --merge <PR url>` for each design whose feature the run ships (`end-gate.sh finish`); you don't run it by hand. It deletes the prototype branch and its worktree, deletes the package's screenshots (`docs/journeys/screenshots` on the feature branch, and the "before" folder), and closes the design ticket with the merge it shipped in. The journey diff stays. A run ships a design when a ticket in its scope has a `Design: #<n>` line in its body, so put that line in each ticket that builds the design.
