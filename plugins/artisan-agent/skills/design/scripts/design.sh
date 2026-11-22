@@ -19,8 +19,8 @@
 #   ticket, labelled design, recording both branches, the tool link (none yet),
 #   the designer (WHO, or the gh login), the journey steps, the screenshots'
 #   folder and the base it was cut from (its ref and commit). It never moves
-#   the main checkout or any local branch but the two it cuts. <slug> is NAME in lower case, with each
-#   run of other characters a "-". A capture that fails, or a branch that
+#   the main checkout or any local branch but the two it cuts. <slug> is NAME
+#   in lower case, with each run of other characters a "-". A capture that fails, or a branch that
 #   already exists, stops it before anything is created; so does a gh failure,
 #   which deletes the branches it cut and the screenshots' folder if it made it. Prints the ticket, the
 #   branches and each screenshot's path.

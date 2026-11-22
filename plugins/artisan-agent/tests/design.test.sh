@@ -235,7 +235,7 @@ test_with_an_origin_start_fetches_and_cuts_and_captures_from_origin_main() {
   assert_eq "prod build" "$(cat "$P/.artisan-agent/designs/faster-checkout/before/cart.png")"
   assert_eq "$local_main" "$(git rev-parse main)" "start moved local main"
   assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "start moved the checkout"
-  assert_eq "" "$(git config --get branch.feature/faster-checkout.merge || true)" "the feature branch tracks origin's main"
+  assert_eq "" "$(git config --get branch.feature/faster-checkout.merge || true)" "the feature branch should track nothing"
   assert_contains "$(issue 1 | jq -r .body)" "- **Cut from:** \`origin/main\` at $prod"
 }
 
