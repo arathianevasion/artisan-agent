@@ -117,3 +117,34 @@ test_grill_experience_pass_ends_with_the_journey_diff_in_words() {
 test_wayfinder_is_not_edited() {
   [ ! -e "$PLUGIN_ROOT/skills/wayfinder" ] || fail "wayfinder ships in the plugin (ADR 0001)"
 }
+
+# #328: the design package comes into the spec as its Experience section.
+test_to_spec_writes_an_experience_section_only_with_a_design_package() {
+  local s=
+  s=$(sed -n '/^## Experience section/,/^## /p' "$TOSPEC")
+  [ -n "$s" ] || fail "to-spec has no Experience section instructions"
+  grep -q 'design package' <<<"$s" || fail "Experience section is not tied to the design package"
+  grep -qi 'affected journeys' <<<"$s" || fail "no affected journeys"
+  grep -qi 'journey diff' <<<"$s" || fail "no journey diff link"
+  grep -qi 'changed step' <<<"$s" || fail "no changed steps"
+  grep -qi 'screenshot' <<<"$s" || fail "no design screenshots"
+  grep -qi 'why' <<<"$s" || fail "no experience whys"
+  grep -qi 'no design package.*no Experience section\|without a design package.*no Experience section' <<<"$s" || fail "Experience section is not left out without a package"
+}
+
+test_to_spec_shows_the_journey_diff_as_always_ask_in_review() {
+  grep -q '^ *## Always ask: journey diff' "$TOSPEC" || fail "spec review has no journey diff Always ask block"
+  grep -qi 'approving the spec approves the design package' "$TOSPEC" || fail "spec approval does not cover the package"
+  grep -qi 'no second approval' "$TOSPEC" || fail "a second approval is not ruled out"
+}
+
+test_to_spec_tells_tickets_to_cite_journey_steps_by_name() {
+  grep -qi 'cite.*journey steps\? by name\|cites\? .*step.* by name' "$TOSPEC" || fail "tickets are not told to cite steps by name"
+}
+
+test_jobs_list_has_design_the_experience_and_job_8_covers_the_package() {
+  local jobs="$PLUGIN_ROOT/references/jobs.md"
+  grep -q '^| 25 | Design the experience: direct the prototype and any high-fidelity design | Human-led | Product (design) | Solution |$' "$jobs" || fail "no design-the-experience job"
+  grep -q '^| 8 | Approve the spec, including its design package |' "$jobs" || fail "job 8 does not cover the design package"
+  grep -q '^| 21 | Decide which lessons become guardrails' "$jobs" || fail "job 21 was renumbered"
+}

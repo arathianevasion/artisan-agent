@@ -39,7 +39,7 @@ Each human-led or approved step names its focus: **problem**, **solution** or **
 | 5 | Find the facts a decision needs | Autonomous (the Artisan can add facts) | — | — |
 | 6 | Settle a term in the glossary | Approved | either | Problem |
 | 7 | Judge the map complete | Approved | Product | Problem |
-| 8 | Approve the spec | Approved | Product | Problem |
+| 8 | Approve the spec, including its design package | Approved | Product | Problem |
 | 9 | Approve how work is sliced | Approved | Engineering | Solution |
 | 10 | Set a run's scope, review gates, Max Agents and budget | Human-led | Engineering | Solution |
 | 11 | Group tickets into waves and choose each agent's model | Autonomous within the run's limits | — | — |
@@ -56,6 +56,7 @@ Each human-led or approved step names its focus: **problem**, **solution** or **
 | 22 | Approve taking an upstream skill update | Approved | Engineering | Pipeline |
 | 23 | Loosen or tighten a guardrail or gate | Human-led | either | Pipeline |
 | 24 | Decide which tickets go into which plan | Approved | Product | Problem |
+| 25 | Design the experience: direct the prototype and any high-fidelity design | Human-led | Product (design) | Solution |
 | — | Choose the route | Approved | Product | Problem |
 
 ## Notes
@@ -64,3 +65,5 @@ Each human-led or approved step names its focus: **problem**, **solution** or **
 - **Job 20** is an open question. It can't be answered on the day of the run, so it isn't part of the retro, and no step is built for it in version one.
 - **Route choice** has no number. It is the front door's proposal of Effort, Feature, Small change or Bug, which the Artisan approves or changes.
 - Only a person moves a job between colours, through job 23.
+- **Job 8** covers the design package: approving a spec with an Experience section approves its design package too. There is no second approval.
+- **Job 25** was planned as job 21 in the design stage spec (#297), but job numbers are stable and 21 was already taken, so it takes the next free number.
