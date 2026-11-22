@@ -43,7 +43,7 @@ test_craft_files_straight_to_ready_for_agent_and_cites_existing_files() {
 route_section() { sed -n "/^\*\*$1\*\*/,/^\*\*[A-Z]/p" "$CRAFT"; }
 
 test_craft_route_proposal_asks_the_design_question_and_records_the_answer() {
-  local body; body=$(sed -n '/^## 2\./,/^## 3\./p' "$CRAFT")
+  local body=; body=$(sed -n '/^## 2\./,/^## 3\./p' "$CRAFT")
   assert_contains "$body" 'design question'
   assert_contains "$body" 'what a persona sees or does'
   assert_contains "$body" 'records the answer with the route'
@@ -52,10 +52,10 @@ test_craft_route_proposal_asks_the_design_question_and_records_the_answer() {
 test_craft_feature_and_effort_name_the_design_stage_before_to_spec() {
   local r= n=
   for r in Effort Feature; do
-    local sec; sec=$(route_section "$r")
+    local sec=; sec=$(route_section "$r")
     n=$(printf '%s\n' "$sec" | grep -n '/artisan-agent:design' | head -1 | cut -d: -f1 || true)
     [ -n "$n" ] || fail "$r route does not name /artisan-agent:design"
-    local s; s=$(printf '%s\n' "$sec" | grep -n '/artisan-agent:to-spec' | head -1 | cut -d: -f1 || true)
+    local s=; s=$(printf '%s\n' "$sec" | grep -n '/artisan-agent:to-spec' | head -1 | cut -d: -f1 || true)
     [ -n "$s" ] || fail "$r route does not name /artisan-agent:to-spec"
     [ "$n" -lt "$s" ] || fail "$r route names design after to-spec"
   done
@@ -63,7 +63,7 @@ test_craft_feature_and_effort_name_the_design_stage_before_to_spec() {
 
 test_craft_small_change_names_light_stage_and_bug_names_skip_and_exception() {
   assert_contains "$(route_section 'Small change')" 'light design stage'
-  local bug; bug=$(route_section 'Bug')
+  local bug=; bug=$(route_section 'Bug')
   assert_contains "$bug" 'design stage is skipped'
   assert_contains "$bug" 'unless the fix changes the journey'
 }

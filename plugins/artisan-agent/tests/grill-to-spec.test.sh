@@ -109,7 +109,7 @@ test_to_spec_without_a_motivation_file_changes_nothing() {
 }
 
 test_grill_experience_pass_ends_with_the_journey_diff_in_words() {
-  local sec; sec=$(sed -n '/^## Experience pass/,/^## Record/p' "$GRILL")
+  local sec=; sec=$(sed -n '/^## Experience pass/,/^## Record/p' "$GRILL")
   assert_contains "$sec" 'journey diff in words'
   assert_contains "$sec" '/artisan-agent:design'
 }
