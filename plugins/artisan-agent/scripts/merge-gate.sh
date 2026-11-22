@@ -656,7 +656,8 @@ base_check() {
   # A base run that lost jobs to a runner shortage (#261) is no verdict on
   # the base: rerun those jobs once, and if runners are still missing it is
   # unjudged, never red.
-  if [ "$bdone" -eq 2 ]; then
+  # (Not when the merge commit's rerun passed: flaky no matter the base.)
+  if [ "$bdone" -eq 2 ] && [ "$rconc" != success ]; then
     base_runner_retry "$brun" "$window"
     case "$BASE_RUNNER" in
       rerun) brun=$BASE_RUNNER_VIEW bconc=$(jq -r '.conclusion // ""' <<<"$brun") ;;

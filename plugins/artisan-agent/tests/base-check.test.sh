@@ -111,7 +111,19 @@ test_bc_a_base_run_still_short_of_runners_after_one_rerun_is_unjudged_never_red(
   assert_eq null "$(state_get '.base_park | tojson')" "the base is not called red"
   assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "base-red")] | length')"
   assert_eq "unchecked null" "$(state_get '.tickets["1"].suite.base_check | "\(.verdict) \(.base.conclusion)"')"
+  assert_contains "$(state_get '.tickets["1"].suite.base_check.base.unjudged')" "not acquired by Runner"
   assert_eq "" "$(ci_branches)"
+}
+
+test_bc_a_flaky_merge_run_does_not_wait_on_or_rerun_a_base_short_of_runners() {
+  setup_ci
+  verified_ticket
+  base_short
+  echo success >"$FAKE_GH_DIR/ci-rerun-outcome"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq flaky "$(state_get '.tickets["1"].suite.base_check.verdict')"
+  assert_eq 0 "$(grep -c '^run rerun 9002' "$FAKE_GH_DIR/calls")" "the base cannot change a flaky verdict"
 }
 
 test_bc_a_base_run_whose_rerun_finds_runners_and_passes_is_judged_green() {
