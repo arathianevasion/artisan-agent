@@ -5,7 +5,7 @@ description: Design-stage skill in the Decision chat. Designs a change to the ex
 
 # Design
 
-The design stage designs a change to the experience before `to-spec` writes it down. It runs in the Decision chat. Nothing here writes product code: a prototype is written by a dispatched worker on the prototype branch, never by this chat.
+The design stage designs a change to the experience before `to-spec` writes it down. It runs in the Decision chat. Nothing here writes product code: a prototype is written by a dispatched worker on the prototype branch, never by this chat. No step commits from the Decision chat: `design.sh` makes its commits in its own checkout of the branch, and the prototype worker in its own worktree.
 
 `${CLAUDE_PLUGIN_ROOT}/skills/design/scripts/design.sh` does the mechanical parts. Run it from the product repo.
 
@@ -39,7 +39,12 @@ A product with no journeys yet gets only the steps the change touches, written f
 
 ## 4. Prototype
 
-Recommended when a step's behaviour changes. A dispatched prototype worker builds it from the product's real components on the prototype branch, in its own worktree. The prototype branch is never merged. For a CLI the prototype is the commands working on that branch.
+When a step's behaviour changes, recommend a functional prototype; the Artisan decides. A look-only change needs only screenshots, no prototype.
+
+- **Build it**: `design.sh prototype --design <design slug> --change "<what the prototype shows>" [--model <model>]`. It dispatches a headless prototype worker into its own worktree, `<repo>-wt/prototype-<slug>`, on the prototype branch only, never the feature branch or main, and returns at once with the worktree, the brief, the worker's pid and its log. Its brief names the product's real components as the building blocks: the pointers under "Where the design system lives" in the design standards. So the prototype is as close to prod as it can be. With no pointer recorded it warns: offer to add one to `DESIGN_STANDARDS.md` before dispatching. For a CLI the prototype is the commands working on the prototype branch. Direct the worker with the Artisan: to change course, run `design.sh prototype` again with the new `--change`; it reuses the worktree.
+- **Skip it**: when the Artisan skips a recommended prototype, record it on the design ticket, `gh issue comment <n> --body "**Prototype:** skipped by the Artisan: <why>"`, so the skip is on record when the design is approved.
+
+The prototype branch is never merged.
 
 ## 5. High-fidelity design (optional)
 

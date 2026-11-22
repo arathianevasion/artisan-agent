@@ -470,3 +470,25 @@ test_a_second_dispatch_reuses_the_prototype_worktree() {
   assert_eq prototype/faster-checkout "$(cat "$FAKE_PROTO/branch")"
   assert_eq 2 "$(git rev-list --count main..prototype/faster-checkout)"
 }
+
+test_the_skill_dispatches_the_prototype_worker_with_design_sh() {
+  local text=
+  text=$(sed -n '/^## 4\. /,/^## 5\. /p' "$SKILL")
+  assert_contains "$text" "design.sh prototype --design"
+  assert_contains "$text" "real components"
+  assert_contains "$text" "Where the design system lives"
+}
+
+test_the_skill_recommends_a_functional_prototype_on_behaviour_change_and_records_a_skip() {
+  local text=
+  text=$(sed -n '/^## 4\. /,/^## 5\. /p' "$SKILL")
+  assert_contains "$text" "recommend a functional prototype"
+  assert_contains "$text" "look-only"
+  assert_contains "$text" "**Prototype:** skipped"
+}
+
+test_no_step_of_the_design_skill_commits_from_the_decision_chat() {
+  assert_contains "$(cat "$SKILL")" "No step commits from the Decision chat"
+  # the chat runs no git command that writes: every commit is design.sh's, in its own checkout, or the worker's
+  assert_eq "" "$(grep -nE 'git (commit|add|merge|push|checkout|switch|cherry-pick|rebase|reset)' "$SKILL" || true)"
+}
