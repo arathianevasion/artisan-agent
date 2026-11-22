@@ -28,10 +28,12 @@ test_a_bare_string_spec_is_refused_naming_the_shape() {
 test_a_spec_missing_its_title_or_number_is_refused() {
   make_project
   local s
-  for s in '{"number":66}' '{"title":"X"}' '{"number":"66","title":"X"}' '{"number":66,"title":7}'; do
+  for s in 'false' '{"number":66}' '{"title":"X"}' '{"number":"66","title":"X"}' '{"number":66,"title":7}'; do
     draft "$TEST_TMPDIR/d.json" "$s"
-    assert_status 1 "$SCRIPTS/plan.sh" build --draft "$TEST_TMPDIR/d.json" --config "$PROJECT/.artisan-agent/config.yml"
-    assert_contains "$(build_in_project "$TEST_TMPDIR/d.json")" "{number, title}"
+    local out= rc=0
+    out=$(build_in_project "$TEST_TMPDIR/d.json") || rc=$?
+    assert_eq 1 "$rc" "build refused spec $s"
+    assert_contains "$out" "{number, title}"
   done
 }
 
