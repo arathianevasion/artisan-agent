@@ -1,6 +1,6 @@
 # Background priority for local suites and checks (#248, lib/priority-lib.sh):
 # every suite and recorded check the pipeline starts on this machine (checks.sh
-# run, the local merge gate, end-gate.sh urgent-finish) runs under taskpolicy -b
+# run, the local merge gate, end-gate.sh urgent-finish) runs under nice -n 10 (never taskpolicy -b, #312)
 # on macOS and nice -n 10 (plus ionice -c 3) on Linux, unless host.json says
 # local_suite_priority: normal. Fake uname, taskpolicy, nice and ionice on PATH
 # record each call and run what follows; no real process's priority changes.
@@ -70,13 +70,14 @@ test_sp_checks_run_under_nice_and_ionice_on_linux_by_default() {
   assert_contains "$(cat "$CALLS")" "nice -n 10 sh -c ./check.sh"
 }
 
-test_sp_checks_run_under_taskpolicy_on_macos_by_default() {
+test_sp_checks_run_under_nice_not_taskpolicy_on_macos_by_default() {
   fake_os macos
   recorded_check
   run_checks >/dev/null 2>"$TEST_TMPDIR/err" || fail "checks.sh run: $(cat "$TEST_TMPDIR/err")"
   [ -e "$P/ran" ] || fail "the check did not run"
-  assert_contains "$(cat "$CALLS")" "taskpolicy -b sh -c ./check.sh"
-  assert_not_contains "$(cat "$CALLS")" "nice"
+  assert_contains "$(cat "$CALLS")" "nice -n 10 sh -c ./check.sh"
+  assert_not_contains "$(cat "$CALLS")" "taskpolicy"
+  assert_not_contains "$(cat "$CALLS")" "ionice"
 }
 
 test_sp_the_worker_and_verifier_checks_are_lowered_too() {
@@ -94,7 +95,8 @@ test_sp_the_local_merge_gate_suite_runs_in_the_background_on_both() {
   assert_contains "$(cat "$CALLS")" "nice -n 10 sh -c ./check.sh"
   fake_os macos
   run_local_gate >/dev/null 2>&1 || fail "the gate failed"
-  assert_contains "$(cat "$CALLS")" "taskpolicy -b sh -c ./check.sh"
+  assert_contains "$(cat "$CALLS")" "nice -n 10 sh -c ./check.sh"
+  assert_not_contains "$(cat "$CALLS")" "taskpolicy"
 }
 
 test_sp_normal_starts_the_commands_directly() {
@@ -167,13 +169,13 @@ test_sp_a_missing_tool_runs_at_normal_priority_with_a_note() {
   assert_contains "$(cat "$TEST_TMPDIR/err")" "ran at normal priority"
 }
 
-test_sp_a_missing_taskpolicy_on_macos_runs_at_normal_priority_with_a_note() {
+test_sp_a_missing_nice_on_macos_runs_at_normal_priority_with_a_note() {
   fake_os macos
   recorded_check
-  without_tools taskpolicy
+  without_tools nice
   run_checks >/dev/null 2>"$TEST_TMPDIR/err" || fail "checks.sh run failed"
   [ -e "$P/ran" ] || fail "the check did not run"
-  assert_contains "$(cat "$TEST_TMPDIR/err")" "taskpolicy not found: ran at normal priority"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "nice not found: ran at normal priority"
 }
 
 test_sp_without_ionice_linux_still_lowers_the_cpu_priority() {
@@ -234,4 +236,13 @@ test_sp_a_tool_that_refuses_is_named_as_refusing_not_missing() {
   run_checks >/dev/null 2>"$TEST_TMPDIR/err" || fail "checks.sh run failed"
   [ -e "$P/ran" ] || fail "the check did not run"
   assert_eq "nice could not run here: ran at normal priority" "$(cat "$TEST_TMPDIR/err")"
+}
+
+# #312, static: the checks reference states the rule and why taskpolicy -b went.
+test_sp_the_checks_reference_states_nice_and_why_background_priority_was_dropped() {
+  local doc="$TESTS_DIR/../references/checks.md"
+  assert_contains "$(cat "$doc")" 'nice -n 10'
+  assert_contains "$(cat "$doc")" 'Never `taskpolicy -b` (#312)'
+  assert_contains "$(cat "$doc")" 'throttles disk and network I/O'
+  assert_contains "$(cat "$doc")" 'about 85 minutes'
 }
