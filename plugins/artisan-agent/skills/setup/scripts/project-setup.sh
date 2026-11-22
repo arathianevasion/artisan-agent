@@ -6,12 +6,14 @@
 #   project-setup.sh begin [REPO]          make or reuse the setup worktree; prints its path
 #   project-setup.sh apply WT ANSWERS      add every missing item in the setup worktree WT and
 #                                          commit; ANSWERS is a JSON file (see PROJECT.md)
-#   project-setup.sh labels WT             create the ten labels missing from the GitHub tracker
+#   project-setup.sh labels WT             create the eleven labels missing from the GitHub tracker
 #   project-setup.sh pre-commit [REPO]     install guard/pre-commit.sh (main-checkout fallback)
 #   project-setup.sh hook-probe [REPO]     prints "fires" or "silent": does the plugin's
 #                                          replaced-skill hook fire here? (headless claude, $0 if it fires)
 #   project-setup.sh prove-check [--ref REF] [--prepare CMD] --break CMD -- CHECK...
 #                                          prove CHECK fails on a deliberate break in a throwaway worktree
+#   project-setup.sh prove-capture CMD    run capture command CMD once, here, into a throwaway folder:
+#                                          "proven<TAB><captured file>" or "failed<TAB><why>" (exit 1)
 #   project-setup.sh motivation get [REPO]          print the recorded motivation (exit 1: none)
 #   project-setup.sh motivation set [REPO] < TEXT   record it in the individual home and commit there
 #   project-setup.sh motivation update [REPO] < TEXT  replace it (the retro, on the Artisan's yes) and commit
@@ -36,6 +38,8 @@ BRANCH=artisan-agent/setup
 POINTER='Start with `/artisan-agent:craft`.'
 VOICE=VOICE_STANDARDS.md
 VOICE_IMPORT="@$VOICE"
+DESIGN=DESIGN_STANDARDS.md
+JOURNEY_LINE="- A change to a user journey"
 HOOK_FILE=.claude/hooks/artisan-agent-block-replaced.sh
 MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
@@ -193,6 +197,59 @@ cmd_scan() {
   if git -C "$m" rev-parse -q --verify "refs/heads/$BRANCH" >/dev/null; then printf 'setup-branch\t%s\n' "$BRANCH"; fi
   found_checks "$m"
   node_setup_default "$m"
+  capture_scan "$m"
+  design_docs "$m"
+}
+
+# capture_scan main: the capture command (#323). A recorded one,
+# "capture-command<TAB>recorded<TAB><command>", so a rerun doesn't ask again;
+# else a proposal from the project type, "capture-command<TAB>proposed<TAB><kind><TAB><command>":
+# a Playwright config means a web app, a package.json bin or a Cargo.toml a CLI.
+# Nothing is proposed for anything else (a game's e2e harness): setup asks.
+capture_scan() {
+  local m=$1 cur= bin=
+  if [ -f "$m/.artisan-agent/config.yml" ]; then
+    cur=$("$ROOT/scripts/config.sh" show --file "$m/.artisan-agent/config.yml" 2>/dev/null | jq -r '.capture_command // empty') || cur=
+  fi
+  if [ -n "$cur" ]; then printf 'capture-command\trecorded\t%s\n' "$cur"; return; fi
+  if ls "$m"/playwright.config.* >/dev/null 2>&1; then
+    printf 'capture-command\tproposed\tweb\t%s\n' 'npx playwright test --grep "$ARTISAN_CAPTURE_STEP"'
+  elif [ -f "$m/package.json" ] && bin=$(jq -r 'if (.bin | type) == "string" then .bin elif (.bin | type) == "object" then (.bin | to_entries | .[0].value // empty) else empty end' "$m/package.json" 2>/dev/null) && [ -n "$bin" ]; then
+    printf 'capture-command\tproposed\tcli\tnode %s %s\n' "$bin" '"$ARTISAN_CAPTURE_STEP" --help'
+  elif [ -f "$m/Cargo.toml" ]; then
+    printf 'capture-command\tproposed\tcli\t%s\n' 'cargo run -q -- "$ARTISAN_CAPTURE_STEP" --help'
+  fi
+}
+
+# cmd_prove_capture CMD: run the capture command once, in the current
+# directory, through the one entry point (scripts/capture.sh), into a
+# throwaway folder outside the repo that is kept so setup can show the file.
+cmd_prove_capture() {
+  [ $# -eq 1 ] && [ -n "$1" ] || usage
+  local dir= out= err=
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-capture-proof.XXXXXX")
+  if out=$("$ROOT/scripts/capture.sh" setup-proof "$dir" --command "$1" 2>"$dir.err"); then
+    rm -f "$dir.err"
+    printf 'proven\t%s\n' "${out%%$'\n'*}"
+  else
+    err=$(sed 's/^capture.sh: //' "$dir.err" | tr '\n' ' ' | sed 's/ *$//'); rm -f "$dir.err"
+    printf 'failed\t%s\n' "$err"
+    return 1
+  fi
+}
+
+# design_docs main: existing design docs (#322), "design-doc<TAB>path", offered as
+# pointers for DESIGN_STANDARDS.md. Nothing is written until the Artisan accepts one.
+design_docs() {
+  local files=
+  files=$(git -C "$1" ls-files)
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(art[-_ ]?bible|style[-_ ]?guide|design[-_ ]?system|design[-_ ]?guidelines?|brand[-_ ]?guide)[^/]*\.(md|mdx|pdf)$' \
+    | sort | sed 's/^/design-doc\t/' || true
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(components|design-system|design-tokens|storybook)/' \
+    | sed -E 's#^(.*/)?(components|design-system|design-tokens|storybook)/.*#\1\2#; s#^(.*/)?([Cc][Oo][Mm][Pp][Oo][Nn][Ee][Nn][Tt][Ss])/.*#\1\2#' \
+    | sort -u | sed 's/^/design-doc\t/' || true
 }
 
 # node_setup_default main: a worktree_setup default (#173) for a Node project,
@@ -250,7 +307,7 @@ hook_script() { # a self-contained copy of block-replaced.sh with the reasons ba
 }
 
 cmd_apply() {
-  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf= ws= cur_ws= q= board= cur_board=
+  local wt=$1 answers=$2 kind= f= login= line= team= boundary= level= item= tmp= check= break_cmd= break_desc= prepare= outcome= proven= who= gate_wf= cur_wf= ws= cur_ws= q= board= cur_board= cc= cur_cc=
   [ -d "$wt" ] || die "no worktree at $wt (run begin first)"
   [ -f "$answers" ] || die "no answers file at $answers"
   command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -319,6 +376,28 @@ cmd_apply() {
       printf "worktree_setup: '%s'\n" "$q" >>"$tmp/config.yml"
       cp "$tmp/config.yml" "$f"
       echo "changed: worktree_setup is $ws"
+    fi
+  fi
+  # capture_command (#323): proven by running it once, recorded only when it
+  # captured something and the config has none yet; a recorded one is kept.
+  cc=$(jq -r '.capture_command // ""' "$answers")
+  if [ -n "$cc" ]; then
+    cur_cc=$("$ROOT/scripts/config.sh" show --file "$f" | jq -r '.capture_command // empty') || die "cannot read $f"
+    if [ "$cur_cc" = "$cc" ]; then
+      echo "unchanged: capture_command is $cc"
+    elif [ -n "$cur_cc" ]; then
+      echo "kept: .artisan-agent/config.yml has capture_command: $cur_cc; change it by hand if you want $cc"
+    elif outcome=$(cd "$wt" && cmd_prove_capture "$cc"); then
+      q=$(printf '%s' "$cc" | sed "s/'/''/g")
+      if grep -q '^capture_command:[[:space:]]*$' "$f"; then
+        CC_LINE="capture_command: '$q'" awk '/^capture_command:[[:space:]]*$/ { print ENVIRON["CC_LINE"]; next } { print }' "$f" >"$tmp/config.yml"
+      else
+        { cat "$f"; printf "capture_command: '%s'\n" "$q"; } >"$tmp/config.yml"
+      fi
+      cp "$tmp/config.yml" "$f"
+      echo "changed: capture_command is $cc (proven: captured ${outcome#proven$'\t'})"
+    else
+      echo "not recorded: capture_command failed: ${outcome#failed$'\t'}"
     fi
   fi
   # The board (#146): tracker.board from the answers' tracker_board, else from
@@ -422,7 +501,7 @@ $(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_
 EOT
   if [ $# -gt 0 ]; then edit section "$wt/CODING_STANDARDS.md" "Checks" "$@"; fi
 
-  # The ten labels, recorded in the triage-labels doc.
+  # The eleven labels, recorded in the triage-labels doc.
   edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '/^labels:$/,$d'
 
   # Who the Artisan is, and agent-filed tickets carry needs-triage (read by triage).
@@ -463,6 +542,24 @@ EOT
     cp "$tmp/agents.md" "$f"
     echo "changed: ${f##*/} imports $VOICE"
   fi
+  # Design standards (#322): seeded if missing, never overwritten and never imported.
+  # Pointers the Artisan accepted (answers: design_pointers) are added when absent.
+  if [ ! -e "$wt/$DESIGN" ]; then
+    cp "$ROOT/templates/$DESIGN" "$wt/$DESIGN"
+    echo "changed: created $DESIGN"
+  fi
+  set -- ; while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    case "$item" in /* | *..* | *[\`]*) die "design_pointers are paths in the repo, got: $item" ;; esac
+    grep -qsF "\`$item\`" "$wt/$DESIGN" || set -- "$@" "- \`$item\`"
+  done <<EOT
+$(jq -r '.design_pointers // [] | .[]' "$answers")
+EOT
+  if [ $# -gt 0 ]; then edit section "$wt/$DESIGN" "Where the design system lives" "$@"; fi
+  # The journey rule holds from day one: added unless a line there already names it.
+  if ! sed -n '/^## Always ask/,/^## /p' "$wt/PRODUCT_STANDARDS.md" | grep -qi 'user journey'; then
+    edit section "$wt/PRODUCT_STANDARDS.md" "Always ask" "$JOURNEY_LINE"
+  fi
   echo "tune: the voice agents write in is $VOICE at the repo root; add your own rules under \"## Your own rules\""
 
   git -C "$wt" add -A
@@ -485,12 +582,12 @@ EOH
     then continue; fi
     case "$name" in
       review-gate) color=5319e7 ;; plan) color=0e8a16 ;; in-run) color=fbca04 ;;
-      urgent) color=b60205 ;; deferred) color=c5def5 ;; *) color=ededed ;;
+      urgent) color=b60205 ;; deferred) color=c5def5 ;; design) color=d4c5f9 ;; *) color=ededed ;;
     esac
     (cd "$wt" && "$GH" label create "$name" --color "$color" --description "$desc" >/dev/null) || die "gh label create $name failed"
     echo "changed: created label $name"
   done
-  echo "labels: the ten labels exist on the tracker"
+  echo "labels: the eleven labels exist on the tracker"
 }
 
 cmd_pre_commit() {
@@ -612,7 +709,7 @@ cmd_finish() {
   url=$(open_pr "$wt")
   if [ -z "$url" ]; then
     url=$(cd "$wt" && "$GH" pr create --head "$BRANCH" --base "${base#origin/}" --title "Set up Artisan Agent" \
-      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
+      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the eleven labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
       || die "gh pr create failed; the branch is pushed and the worktree kept at $wt"
     echo "pr: $url"
   else
@@ -631,6 +728,7 @@ case "$cmd" in
   pre-commit) cmd_pre_commit "$@" ;;
   hook-probe) cmd_hook_probe "$@" ;;
   prove-check) cmd_prove_check "$@" ;;
+  prove-capture) cmd_prove_capture "$@" ;;
   motivation) cmd_motivation "$@" ;;
   individual) [ $# -eq 2 ] || usage; cmd_individual "$@" ;;
   finish) [ $# -eq 1 ] || usage; cmd_finish "$@" ;;

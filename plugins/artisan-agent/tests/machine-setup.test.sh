@@ -432,3 +432,45 @@ test_voice_import_no_fails_and_leaves_no_temp_file_when_host_json_is_invalid() {
   assert_eq "not json" "$(cat "$d/host.json")"
   assert_eq 1 "$(ls "$d" | grep -c '^host.json')" "temp file left behind"
 }
+
+# ---- design standards at the individual and team levels (#330)
+
+test_init_seeds_an_empty_individual_design_file_and_commits_it() {
+  seed_machine
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent" t=
+  "$SCRIPT" init >/dev/null
+  [ -f "$h/DESIGN_STANDARDS.md" ] || fail "no individual design file"
+  t=$(cat "$h/DESIGN_STANDARDS.md")
+  assert_contains "$t" "Individual level"
+  assert_contains "$t" "## Always ask"
+  assert_not_contains "$t" "## Personas"   # personas live at product level only
+  assert_eq "" "$(git -C "$h" status --porcelain)" "design file committed"
+  git -C "$h" ls-files --error-unmatch DESIGN_STANDARDS.md >/dev/null || fail "design file not tracked"
+}
+
+test_init_never_overwrites_an_individual_design_file() {
+  seed_machine
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent"
+  mkdir -p "$h"
+  echo "my design" >"$h/DESIGN_STANDARDS.md"
+  "$SCRIPT" init >/dev/null
+  "$SCRIPT" init >/dev/null
+  assert_eq "my design" "$(cat "$h/DESIGN_STANDARDS.md")"
+}
+
+test_init_drafts_a_team_design_file_and_says_where_to_land_it_by_pr() {
+  seed_machine
+  local out= d="$CLAUDE_CONFIG_DIR/artisan-agent-drafts/DESIGN_STANDARDS.md"
+  out=$("$SCRIPT" init)
+  [ -f "$d" ] || fail "no team draft at $d"
+  assert_contains "$(cat "$d")" "Team level"
+  assert_not_contains "$(cat "$d")" "## Personas"
+  assert_contains "$out" "$d"
+  assert_contains "$out" "team guardrails repo"
+  assert_contains "$out" "by PR"
+  # a rerun neither overwrites the draft nor repeats the offer
+  echo "edited draft" >"$d"
+  out=$("$SCRIPT" init)
+  assert_eq "edited draft" "$(cat "$d")"
+  assert_not_contains "$out" "land it"
+}

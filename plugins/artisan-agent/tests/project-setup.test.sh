@@ -114,11 +114,11 @@ test_deny_rules_match_the_replaced_skill_list() {
   assert_eq "$("$PLUGIN_ROOT/guard/guard.sh" deny-rules)" "$(branch_file .claude/settings.json | jq -r '.permissions.deny[]')"
 }
 
-test_the_ten_labels_exist_on_the_tracker_and_in_the_doc() {
+test_the_eleven_labels_exist_on_the_tracker_and_in_the_doc() {
   seed
   run_setup >/dev/null
   local l= doc=; doc=$(branch_file docs/agents/triage-labels.md)
-  for l in needs-triage needs-info ready-for-agent ready-for-human wontfix review-gate plan in-run urgent deferred; do
+  for l in needs-triage needs-info ready-for-agent ready-for-human wontfix review-gate plan in-run urgent deferred design; do
     grep -qx "$l" "$TEST_TMPDIR/labels" || fail "label $l not on the tracker"
     assert_contains "$doc" "\`$l\`"
   done
@@ -622,4 +622,162 @@ test_an_agents_md_only_repo_imports_the_voice_file_there() {
   assert_contains "$(branch_file AGENTS.md)" "$(printf 'Start with `/artisan-agent:craft`.\n%s' "$IMPORT")"
   git -C "$TEST_TMPDIR/origin.git" show artisan-agent/setup:CLAUDE.md >/dev/null 2>&1 && fail "CLAUDE.md created"
   true
+}
+
+# #322: the product design standards file is seeded at project setup, offers pointers to
+# design docs it finds, adds the journey line to Always ask, and never overwrites.
+JOURNEY='- A change to a user journey'
+
+test_a_fresh_repo_gets_design_standards_with_five_sections_and_the_wcag_block() {
+  seed
+  run_setup >/dev/null
+  local d=; d=$(branch_file DESIGN_STANDARDS.md)
+  local s=
+  for s in Personas "Where the design system lives" "UX conventions" "Accessibility floor" "Always ask"; do
+    assert_contains "$d" "## $s"
+  done
+  assert_contains "$d" "WCAG 2.2 AA"
+  assert_contains "$d" "<!-- design-default v1 start"
+  assert_contains "$d" "<!-- design-default v1 end -->"
+  branch_file DESIGN_STANDARDS.md | cmp -s - "$PLUGIN_ROOT/templates/DESIGN_STANDARDS.md" || fail "not the template"
+}
+
+seed_design_docs() {
+  mkdir -p "$P/docs/design" "$P/src/components"
+  printf '# Art bible\n' >"$P/docs/ART_BIBLE.md"
+  printf '# Style guide\n' >"$P/docs/design/style-guide.md"
+  printf 'x\n' >"$P/src/components/Button.tsx"
+  printf '# Art bible 2\n' >"$P/docs/Style Guide.md"
+  git -C "$P" add -A && git -C "$P" commit -q -m "design docs" && git -C "$P" push -q origin main
+}
+
+test_scan_offers_the_design_docs_it_finds_and_setup_writes_only_the_accepted_ones() {
+  seed
+  seed_design_docs
+  local scan=; scan=$("$PS" scan "$P")
+  assert_contains "$scan" "design-doc	docs/ART_BIBLE.md"
+  assert_contains "$scan" "design-doc	docs/design/style-guide.md"
+  assert_contains "$scan" "design-doc	src/components"
+  assert_contains "$scan" "design-doc	docs/Style Guide.md"
+  assert_eq 4 "$(printf '%s\n' "$scan" | grep -c '^design-doc')" "one line per doc, a path with spaces kept whole"
+  answers '{"pr_boundary":"slice","pr_level":"product","design_pointers":["docs/ART_BIBLE.md"],"checks":[]}'
+  run_setup >/dev/null
+  local d=; d=$(branch_file DESIGN_STANDARDS.md)
+  assert_contains "$d" '- `docs/ART_BIBLE.md`'
+  case "$d" in *style-guide*|*components*) fail "a pointer the Artisan did not accept was written" ;; esac
+}
+
+test_no_pointers_are_written_unless_accepted() {
+  seed
+  seed_design_docs
+  run_setup >/dev/null
+  case "$(branch_file DESIGN_STANDARDS.md)" in *ART_BIBLE*) fail "pointer written without acceptance" ;; esac
+  true
+}
+
+test_setup_adds_the_journey_line_to_product_always_ask() {
+  seed
+  run_setup >/dev/null
+  assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "$JOURNEY"
+  assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "- Pricing changes"
+}
+
+test_a_rerun_keeps_an_edited_design_file_and_journey_line() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  printf -- '- Own persona: Ada.\n' >>"$P/DESIGN_STANDARDS.md"
+  sed 's/^- A change to a user journey.*/- Any change to how a person gets through the app (user journey)/' "$P/PRODUCT_STANDARDS.md" >"$TEST_TMPDIR/ps.md"
+  cp "$TEST_TMPDIR/ps.md" "$P/PRODUCT_STANDARDS.md"
+  git -C "$P" commit -q -am "own edits" && git -C "$P" push -q origin main
+  local out=; out=$(run_setup)
+  assert_contains "$out" "unchanged: the project is already set up"
+  assert_eq "$(cat "$P/DESIGN_STANDARDS.md")" "$(git -C "$P" show HEAD:DESIGN_STANDARDS.md)"
+  assert_eq 1 "$(grep -ci 'user journey' "$P/PRODUCT_STANDARDS.md")" "journey line duplicated"
+}
+
+test_a_rerun_adds_only_what_is_missing() {
+  seed
+  run_setup >/dev/null
+  merge_setup_pr
+  git -C "$P" rm -q DESIGN_STANDARDS.md
+  grep -v 'user journey' "$P/PRODUCT_STANDARDS.md" >"$TEST_TMPDIR/ps.md"; cp "$TEST_TMPDIR/ps.md" "$P/PRODUCT_STANDARDS.md"
+  git -C "$P" commit -q -am "before design standards" && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  assert_eq "$(printf 'A\tDESIGN_STANDARDS.md\nM\tPRODUCT_STANDARDS.md')" "$(git -C "$TEST_TMPDIR/origin.git" diff --name-status main artisan-agent/setup)"
+}
+
+test_neither_claude_md_nor_agents_md_imports_the_design_standards() {
+  seed
+  run_setup >/dev/null
+  case "$(branch_file CLAUDE.md)" in *DESIGN_STANDARDS*) fail "CLAUDE.md mentions the design standards" ;; esac
+  true
+}
+
+test_an_agents_md_only_repo_does_not_import_the_design_standards_either() {
+  seed
+  git -C "$P" mv CLAUDE.md AGENTS.md && git -C "$P" commit -q -m agents && git -C "$P" push -q origin main
+  run_setup >/dev/null
+  case "$(branch_file AGENTS.md)" in *DESIGN_STANDARDS*) fail "AGENTS.md mentions the design standards" ;; esac
+  true
+}
+
+# The capture command (#323): proposed from the project type, proven by running
+# it once, recorded only when it captured something, kept on a rerun.
+test_setup_proposes_a_capture_command_from_the_project_type() {
+  seed
+  assert_not_contains "$("$PS" scan "$P")" "capture-command	proposed"
+  printf 'export default {}\n' >"$P/playwright.config.ts"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	web	npx playwright test --grep "$ARTISAN_CAPTURE_STEP"'
+  rm "$P/playwright.config.ts"
+  printf '{"name":"mycli","bin":{"mycli":"bin/mycli.js"}}\n' >"$P/package.json"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	cli	node bin/mycli.js "$ARTISAN_CAPTURE_STEP" --help'
+  rm "$P/package.json"
+  printf '[package]\nname = "tool"\n' >"$P/Cargo.toml"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	cli	cargo run -q -- "$ARTISAN_CAPTURE_STEP" --help'
+}
+
+test_prove_capture_runs_the_command_once_and_shows_the_captured_file() {
+  seed
+  local out= path=
+  out=$(cd "$P" && "$PS" prove-capture 'printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"')
+  assert_contains "$out" "proven	"
+  path=${out#proven	}
+  assert_eq PNG "$(cat "$path")"
+  assert_eq "" "$(git -C "$P" status --porcelain)" "the proof writes nothing into the repo"
+  local st=0
+  out=$(cd "$P" && "$PS" prove-capture 'echo "no browser" >&2; exit 4') || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$out" "failed	"
+  assert_contains "$out" "no browser"
+}
+
+test_setup_records_a_proven_capture_command_and_a_rerun_keeps_it() {
+  seed
+  local wt= stub='printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"'
+  wt=$("$PS" begin "$P")
+  answers "$(jq -n --arg c "$stub" '{capture_command: $c}')"
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "changed: capture_command is $stub (proven: captured "
+  assert_eq "$stub" "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq -r .capture_command)"
+  answers '{}'
+  assert_not_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "capture_command"
+  answers '{"capture_command":"echo other"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "kept: .artisan-agent/config.yml has capture_command: $stub"
+  assert_eq "$stub" "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq -r .capture_command)"
+  "$PS" finish "$wt" >/dev/null
+  merge_setup_pr
+  assert_contains "$("$PS" scan "$P")" "capture-command	recorded	$stub"
+}
+
+test_a_capture_command_that_fails_at_setup_is_not_recorded_and_setup_says_why() {
+  seed
+  local wt= out=
+  wt=$("$PS" begin "$P")
+  answers '{"capture_command":"echo \"chromium missing\" >&2; exit 2"}'
+  out=$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")
+  assert_contains "$out" "not recorded: capture_command failed:"
+  assert_contains "$out" "chromium missing"
+  assert_eq null "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq .capture_command)"
+  answers '{"capture_command":"true"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "captured nothing"
 }
