@@ -209,6 +209,20 @@ merge_gate_minutes_limit: 6
 #     - .claude-plugin/marketplace.json
 merge_gate_skip_paths: []
 
+# How to capture one step of a user journey from a running build (#323), for
+# the design stage and build. A shell command run by scripts/capture.sh in
+# the repo root, with ARTISAN_CAPTURE_STEP (the step's name) and
+# ARTISAN_CAPTURE_DIR (the folder) set. A command that writes a file into the
+# folder (a screenshot) has captured that file; one that writes none but
+# prints output (a CLI) is captured as a transcript, <step>.txt, holding the
+# command and its output. Project setup proposes one from the project type,
+# runs it once and records it only if it captured something; a recorded one
+# is kept on a rerun. Empty means the product has no capture yet.
+# Examples:
+#   capture_command: npx playwright test e2e/capture.spec.ts --grep "$ARTISAN_CAPTURE_STEP"
+#   capture_command: ./bin/mycli "$ARTISAN_CAPTURE_STEP" --help
+capture_command:
+
 # A shell command run once in every new integration, worker, verifier,
 # hands-on and end-gate worktree, with the worktree as its working directory and
 # ARTISAN_MAIN set to the main checkout, so the worktree has its dependencies
