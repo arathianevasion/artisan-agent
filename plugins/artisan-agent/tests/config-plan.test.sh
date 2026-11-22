@@ -885,3 +885,24 @@ test_a_project_that_gates_on_ci_with_no_gate_workflow_is_refused_at_the_plan_ste
   (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
   assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "**No gate workflow recorded.**"
 }
+
+test_the_approval_shows_the_verifiers_deadline_and_where_it_comes_from() {
+  make_project
+  record_checks
+  write_draft "$TEST_TMPDIR/draft.json"
+  # No earlier run measured the checks: the fixed value, said so.
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json") >"$TEST_TMPDIR/plan.json"
+  assert_eq default "$(jq -r .verifier_deadline.source "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "### Verifier deadline"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "Each verifier gets 30 minutes"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "source: default"
+  # Earlier runs measured both checks: measured time plus the criteria allowance.
+  local h="$TEST_TMPDIR/runs"
+  mkdir -p "$h/old/verify/checks"
+  jq -n '{recorded: true, results: [{command: "sh test.sh", seconds: 240}, {command: "sh lint.sh", seconds: 60}]}' >"$h/old/verify/checks/1.1.json"
+  (cd "$PROJECT" && plan build --draft "$TEST_TMPDIR/draft.json" --history "$h") >"$TEST_TMPDIR/plan.json"
+  assert_eq measured "$(jq -r .verifier_deadline.source "$TEST_TMPDIR/plan.json")"
+  assert_eq 300 "$(jq -r .verifier_deadline.measured_seconds "$TEST_TMPDIR/plan.json")"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "source: measured"
+  assert_contains "$(plan render "$TEST_TMPDIR/plan.json")" "measured checks 300 s"
+}
