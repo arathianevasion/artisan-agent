@@ -165,6 +165,21 @@ test_the_end_gate_lists_and_waits_on_a_deferred_overrun_gate() {
   assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "| #50 | overrun | Artisan |"
 }
 
+test_the_end_gate_approves_once_gate_action_has_resolved_the_deferred_overrun_gate() {
+  setup_end
+  jq -n '{number: 50, title: "overrun", state: "open", labels: [], body: "x"}' >"$FAKE_GH_DIR/issue-50.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .overrun_gates = [{id: "overrun-1", kind: "exception", title: "Exception gate: overrun (run r1)", issue: 50,
+       status: "deferred", gate_actions: ["defer"], deferred_at: 5,
+       decision: {card: 1, option: "raise", choice: "raise", why: "demo", by: "Artisan", job: 10, at: 5}}]'
+  product_boundary slice
+  "$E" open "$RUN_DIR" >/dev/null
+  assert_status 6 "$E" approve "$RUN_DIR"
+  "$SCRIPTS/gate-action.sh" approve "$RUN_DIR" 50 --by Andrew >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+}
+
 test_a_run_with_no_overrun_gates_lists_no_deferred_gate() {
   setup_end
   assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "No gate is deferred."

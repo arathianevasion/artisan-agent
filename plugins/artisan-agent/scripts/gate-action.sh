@@ -14,6 +14,11 @@
 #                  [--level team|product|individual --reach ticket|area|everywhere [--area A]]
 #       a review gate: keep all and close it (gate.sh approve). Refused (6)
 #       on an exception gate, which is bypassed or deferred, never approved.
+#       A deferred overrun gate (budget.sh overrun deferred it, #131) is
+#       resolved the same way, at the end gate only (end-gate.sh open first):
+#       the gate closes as resolved, its issue closes, event gate-resolved;
+#       the end gate then stops waiting on it. Refused (6) while it is open
+#       or before the end gate. The same for bypass.
 #   gate-action.sh redirect <run-dir> <issue> (--notes TEXT | --mine [--notes TEXT])
 #                  [--by NAME] [--why W] [--bug]
 #       a review gate: send it back. --notes opens a rework ticket in this
@@ -153,7 +158,7 @@ hold() {
   if [ -n "$GATE" ]; then
     local before=
     before=$(g .status)
-    find_gate "$(g .issue)"
+    if [ "$KIND" = overrun ]; then OVERRUN_OK=1 find_gate "$(g .issue)"; else find_gate "$(g .issue)"; fi
     [ "$(g .status)" = "$before" ] || refuse "gate #$(g .issue) was answered meanwhile; it is now $(g .status)"
   fi
 }
@@ -203,8 +208,14 @@ find_gate() { # issue
     GATE=$(jq -c --arg k "$1" '(.exception_gates // [])[] | select((.issue | tostring) == $k)' "$FILE")
     LIST=exception_gates
   fi
+  # An overrun gate (#131) is answered only by approve and bypass at the end gate (#362).
+  if [ -z "$GATE" ] && [ "${OVERRUN_OK:-0}" = 1 ]; then
+    GATE=$(jq -c --arg k "$1" '(.overrun_gates // [])[] | select((.issue | tostring) == $k)' "$FILE")
+    LIST=overrun_gates
+  fi
   [ -n "$GATE" ] || refuse "#$1 is not a gate of this run"
   KIND=$(jq -r '.kind // "slice"' <<<"$GATE")
+  [ "$LIST" != overrun_gates ] || KIND=overrun
   case "$(jq -r .status <<<"$GATE")" in
     open | deferred) ;;
     *) refuse "gate #$1 is $(jq -r .status <<<"$GATE"), not open" ;;
@@ -245,6 +256,7 @@ record_answer() {
   local status="$1" choice="$2" field="$3" extra="$4" job=13
   shift 4
   [ "$KIND" != exception ] || job=15
+  [ "$KIND" != overrun ] || job=10
   apply '
     '"$extra"'
     | ($rec + {by: $by, at: $now} + (if $why != "" then {why: $why} else {} end)
@@ -408,10 +420,36 @@ hashes() { printf '%s\n' "$@" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g'; }
 
 # ------------------------------------------------------ review-gate actions
 
+# overrun_resolve approve|bypass issue args...: at the end gate, a deferred
+# overrun gate's raise (or cut or stop) is already applied by budget.sh
+# overrun; the gate only waits to be reviewed with the run (#362). The gate
+# resolves, its issue closes and the end gate stops waiting on it.
+overrun_resolve() {
+  local how="$1" issue="$2"
+  shift 2
+  parse_opts "$@"
+  [ "$(g .status)" = deferred ] \
+    || refuse "overrun gate #$issue is open: answer it with budget.sh overrun (raise, cut or stop) first"
+  [ "$(get '.end_gate.status // ""')" = open ] \
+    || refuse "overrun gate #$issue is answered at the end gate, once it is open (end-gate.sh open)"
+  REDIRECT=
+  hold
+  comment "$issue" "Resolved by $BY at the end gate ($how): the overrun was answered when it was deferred and is reviewed with the run.${WHY:+ Why: $WHY}"
+  gh issue close "$issue" -R "$(repo)" >/dev/null || die "could not close #$issue"
+  record_answer resolved "$how" resolution '.' --argjson rec '{}'
+  echo "resolved #$issue by $BY ($how)"
+}
+
 cmd_approve() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  find_gate "$2"
+  OVERRUN_OK=1 find_gate "$2"
+  if [ "$KIND" = overrun ]; then
+    local i="$2"
+    shift 2
+    overrun_resolve approve "$i" "$@"
+    return 0
+  fi
   [ "$KIND" != exception ] \
     || refuse "#$2 is an exception gate: it is bypassed or deferred, never approved. Choose retry with notes, reslice, take it myself or drop (gate-action.sh chat)"
   shift
@@ -523,6 +561,10 @@ cmd_bypass() {
   open_run "$1"
   local issue="$2"
   shift 2
+  if OVERRUN_OK=1 find_gate "$issue" && [ "$KIND" = overrun ]; then
+    overrun_resolve bypass "$issue" "$@"
+    return 0
+  fi
   parse_opts "$@"
   find_gate "$issue"
   REDIRECT=

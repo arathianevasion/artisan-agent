@@ -51,7 +51,7 @@ An exception gate covers what has no ticket to triage. It opens for every `excep
 | the worker said no worker could meet a criterion here and the verifier agrees (`verify.sh judge`, #186) | `Exception gate: #<t> has criteria no worker can meet (run <id>)` | `unmeetable` |
 | anything else that blocked it (an unresolved conflict, a result describing another commit, a diff missing its expected output) | `Exception gate: #<t> is blocked (run <id>)` | `blocked` |
 
-The overrun gate, the third kind of exception, is #72's.
+The overrun gate, the third kind of exception, is #72's. A deferred overrun gate is resolved at the end gate with `gate-action.sh approve` or `bypass` (#362): it closes as `resolved` (under `resolution`, event `gate-resolved`), refused (6) while it is open or before the end gate is open; `end-gate.sh approve` waits until none is deferred.
 
 `gate-action.sh sync`, run by `wave.sh status` before `gate.sh sync`, opens it: a `review-gate` issue (no per-kind label) with the ticket, why it stopped, its attempts, the suite log for a red check, the failing tests of a red CI merge gate (#176), its cost and the six choices; a native blocker of the in-run tickets the ticket blocks; recorded in `exception_gates` and on its `exception` decision (`issue`, `gate`). A repeat opens nothing new.
 

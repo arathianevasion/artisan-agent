@@ -45,7 +45,7 @@ If the issue can't be opened, the gate holds dispatch all the same and the next 
 
 **The packet.** Header (kind, role, tickets, what it blocks); summary line (3 decisions, the count of uncertainties; Problem: the projection against the budget; Solution: choose an option; Verification: the spend when it opened); **decision cards**, the options: 1 raise the budget (suggested: the projection plus the allowance), 2 cut scope (the queued tickets, largest first), 3 stop; **uncertainties**, the discovered complexity: each ticket that ran over, by how much, its attempts and failures and what its worker was unsure of; **evidence**, the spend per ticket: estimate, spent, still to come, over by, then orchestrators and the run; the **overall action**.
 
-**Defer only.** The overrun gate can't be approved, bypassed or redirected (spec #44, "Gates and packets"). The Artisan's answer is one card, and the gate is deferred: the run carries on under that card and the issue stays open until the end gate, where the overrun is reviewed with the run. In the chat, show `budget.sh packet <run-dir>` and wait for the Artisan's choice.
+**Defer only.** The overrun gate can't be redirected, and it is approved or bypassed only at the end gate (spec #44, "Gates and packets"; #362). The Artisan's answer is one card, and the gate is deferred: the run carries on under that card and the issue stays open until the end gate, where the overrun is reviewed with the run: `gate-action.sh approve` or `bypass` resolves it there. In the chat, show `budget.sh packet <run-dir>` and wait for the Artisan's choice.
 
 | The Artisan says | Call | Effect |
 |---|---|---|
