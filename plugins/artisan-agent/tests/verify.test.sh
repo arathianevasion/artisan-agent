@@ -695,3 +695,115 @@ test_v_the_verifier_brief_and_the_orchestrator_reference_cite_criterion_8s_refer
   done
   assert_contains "$(cat "$PLUGIN_ROOT/skills/implement-plan/references/verifier.md")" '"open_decisions"'
 }
+
+# --- #347: the verifier's deadline is the recorded checks' measured time plus
+# room for the criteria, not a fixed 30 minutes.
+
+# vd_standards file cmd...: a standards file recording each cmd.
+vd_standards() {
+  local f=$1; shift
+  { printf '# Coding standards\n\n## Checks\n\n'
+    for c in "$@"; do printf -- '- `%s`: proven to fail on 2026-11-01, breaking: x\n' "$c"; done; } >"$f"
+}
+# vd_history runs-dir run command seconds: an earlier verifier's checks output.
+vd_history() {
+  mkdir -p "$1/$2/verify/checks"
+  jq -n --arg c "$3" --argjson s "$4" '{recorded: true, results: [{command: $c, passed: true, exit_code: 0, result: "ok", seconds: $s}]}' \
+    >"$1/$2/verify/checks/1.$RANDOM.json"
+}
+vd() { "$SCRIPTS/verifier-deadline.sh" "$@"; }
+
+test_v_the_deadline_is_the_measured_check_time_plus_the_criteria_allowance() {
+  local s="$TEST_TMPDIR/vd.md" h="$TEST_TMPDIR/vdruns" out=
+  vd_standards "$s" "sh suite.sh"
+  vd_history "$h" r1 "sh suite.sh" 300
+  vd_history "$h" r2 "sh suite.sh" 420
+  out=$(vd --file "$s" --history "$h" --criteria 8)
+  # Slowest measured run (420) + 8 criteria x 180 s (above the 900 s floor).
+  assert_eq measured "$(jq -r .source <<<"$out")"
+  assert_eq 420 "$(jq -r .measured_seconds <<<"$out")"
+  assert_eq 1440 "$(jq -r .allowance_seconds <<<"$out")"
+  assert_eq 1860 "$(jq -r .deadline_seconds <<<"$out")"
+  assert_eq 2 "$(jq -r .runs <<<"$out")"
+}
+
+test_v_the_criteria_allowance_has_a_floor() {
+  local s="$TEST_TMPDIR/vd.md" h="$TEST_TMPDIR/vdruns" out=
+  vd_standards "$s" "sh suite.sh"
+  vd_history "$h" r1 "sh suite.sh" 100
+  out=$(vd --file "$s" --history "$h" --criteria 2)
+  assert_eq 900 "$(jq -r .allowance_seconds <<<"$out")"
+  assert_eq 1000 "$(jq -r .deadline_seconds <<<"$out")"
+}
+
+test_v_without_history_the_deadline_is_the_fixed_thirty_minutes_and_says_so() {
+  local s="$TEST_TMPDIR/vd.md" out=
+  vd_standards "$s" "sh suite.sh"
+  out=$(vd --file "$s" --history "$TEST_TMPDIR/none" --criteria 20)
+  assert_eq default "$(jq -r .source <<<"$out")"
+  assert_eq 1800 "$(jq -r .deadline_seconds <<<"$out")"
+  assert_contains "$(jq -r .note <<<"$out")" "no measured time for sh suite.sh"
+  # A check with no measured time among measured ones is the same: fixed.
+  vd_standards "$s" "sh suite.sh" "sh lint.sh"
+  vd_history "$TEST_TMPDIR/vdruns" r1 "sh suite.sh" 300
+  out=$(vd --file "$s" --history "$TEST_TMPDIR/vdruns" --criteria 3)
+  assert_eq default "$(jq -r .source <<<"$out")"
+  assert_eq 1800 "$(jq -r .deadline_seconds <<<"$out")"
+}
+
+test_v_a_suite_the_verifier_leaves_to_the_merge_gate_adds_no_time() {
+  local s="$TEST_TMPDIR/vd.md" h="$TEST_TMPDIR/vdruns" out=
+  vd_standards "$s" "sh suite.sh" "sh lint.sh"
+  vd_history "$h" r1 "sh suite.sh" 600
+  vd_history "$h" r1 "sh lint.sh" 20
+  out=$(vd --file "$s" --history "$h" --criteria 1 --leave "sh suite.sh")
+  assert_eq 20 "$(jq -r .measured_seconds <<<"$out")"
+  out=$(vd --file "$s" --history "$h" --criteria 1)
+  assert_eq 620 "$(jq -r .measured_seconds <<<"$out")"
+}
+
+test_v_start_gives_the_verifier_the_measured_deadline_and_the_no_full_suite_rule() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  returned_ticket
+  # An earlier run measured the recorded check at 700 s; this ticket has 2 criteria.
+  vd_history "$(dirname "$RUN_DIR")" earlier "sh check.sh" 700
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>"$TEST_TMPDIR/start.err" >/dev/null
+  judge_verifier 1
+  assert_eq $((700 + 900)) "$(jq -r .deadline_seconds "$RUN_DIR/results/verify-1.1.exit.json")"
+  assert_contains "$(cat "$TEST_TMPDIR/start.err")" "verifier deadline 1600 s, measured"
+  local prompt=
+  prompt=$(cat "$RUN_DIR/prompts/verify-1.1.md")
+  assert_contains "$prompt" "Your deadline is 27 minutes"
+  assert_contains "$prompt" "Never rerun the full suite by hand"
+}
+
+test_v_start_without_history_keeps_the_fixed_deadline() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  returned_ticket
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>"$TEST_TMPDIR/start.err" >/dev/null
+  judge_verifier 1
+  assert_eq 1800 "$(jq -r .deadline_seconds "$RUN_DIR/results/verify-1.1.exit.json")"
+  assert_contains "$(cat "$TEST_TMPDIR/start.err")" "default:"
+}
+
+test_v_a_plans_own_verifier_minutes_still_set_the_deadline() {
+  setup_wave
+  record_checks
+  write_checking_verifier
+  returned_ticket
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.verifier.minutes = 3' >/dev/null
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 2>"$TEST_TMPDIR/start.err" >/dev/null
+  judge_verifier 1
+  assert_eq 360 "$(jq -r .deadline_seconds "$RUN_DIR/results/verify-1.1.exit.json")"
+}
+
+test_v_checks_run_records_how_long_each_check_took() {
+  local s="$TEST_TMPDIR/vd.md" out=
+  vd_standards "$s" "sleep 1"
+  out=$("$SCRIPTS/checks.sh" run --file "$s" --in "$TEST_TMPDIR")
+  [ "$(jq -r '.results[0].seconds' <<<"$out")" -ge 1 ] || fail "no seconds recorded: $out"
+}
