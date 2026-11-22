@@ -50,9 +50,19 @@ The prototype branch is never merged.
 
 The designer may design in a tool. Record its file link on the design ticket. Skip this step when no tool is used.
 
+**Check for Figma's MCP server** first: look for its tools among the ones you have (ToolSearch for `figma`). Its remote server is `https://mcp.figma.com/mcp`. Without it, work from screenshots and links alone: the designer's screenshots and the file link they give you are the whole of the tool's part, and nothing below applies. The contract stays screenshots, links and git either way (ADR 0004); the adapter only saves the designer steps.
+
+With the server connected, the adapter does three things, each only when the Artisan or designer asks for it:
+
+- **Read a design**: for a Figma link on the design ticket, `get_design_context` reads the frames and `get_screenshot` renders one, so the journey diff and the prototype brief can follow the design.
+- **Capture main into Figma**: `generate_figma_design` captures the running product's journey steps into a Figma file as the designer's starting point. Capture from main as the "before" screenshots were, never from a checkout with other work in it; for a live site rather than localhost, Figma's docs have the agent inject its capture script, for example with Playwright.
+- **Write a design**: `use_figma` writes and edits frames on the canvas. Writing is remote-server only.
+
+The Figma file's link is the tool link: comment it on the design ticket (`gh issue comment <n> --body "**Tool link:** <figma link>"`) and pass `--tool-link <figma link>` at approval. Figma's tool names change: when one named here is missing, check Figma's current MCP docs and use its replacement.
+
 ## 6. Approve
 
-`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone. It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
+`design.sh approve --design <design slug> --ticket <n> [--tool-link <url>] [--no-fetch]` records the design package on the design ticket: the journey diff, a screenshot per changed step (read from `journeys/screenshots/<step>.<ext>` on the feature branch, beside the journey files; nothing is copied at approval), the prototype branch when there is one and the tool link when there is one. A design with neither approves on its screenshots alone, and a tool link never replaces a step's screenshot: a Figma design still commits a screenshot per changed step (export the frame, or `get_screenshot` with the server connected). It refuses while the prototype branch is behind the default branch, naming the rebase, and while a step has no screenshot. Then hand the package to `to-spec`.
 
 ## 7. Retire at ship
 

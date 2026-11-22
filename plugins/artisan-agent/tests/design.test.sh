@@ -487,6 +487,29 @@ test_the_skill_recommends_a_functional_prototype_on_behaviour_change_and_records
   assert_contains "$text" "**Prototype:** skipped"
 }
 
+# #337: the Figma adapter, used only when Figma's MCP server is connected.
+test_the_skill_checks_for_figmas_mcp_server_and_falls_back_to_screenshots_and_links() {
+  local text=
+  text=$(sed -n '/^## 5\. /,/^## 6\. /p' "$SKILL")
+  assert_contains "$text" "Check for Figma's MCP server"
+  assert_contains "$text" "Without it, work from screenshots and links alone"
+  assert_contains "$text" "ADR 0004"
+}
+
+test_with_figmas_server_the_skill_reads_captures_main_writes_and_records_the_tool_link() {
+  local text=
+  text=$(sed -n '/^## 5\. /,/^## 6\. /p' "$SKILL")
+  assert_contains "$text" "**Read a design**"
+  assert_contains "$text" "get_design_context"
+  assert_contains "$text" "**Capture main into Figma**"
+  assert_contains "$text" "generate_figma_design"
+  assert_contains "$text" "**Write a design**"
+  assert_contains "$text" "use_figma"
+  assert_contains "$text" "The Figma file's link is the tool link"
+  assert_contains "$text" "--tool-link <figma link>"
+  assert_contains "$(sed -n '/^## 6\. /,/^## 7\. /p' "$SKILL")" "a tool link never replaces a step's screenshot"
+}
+
 test_no_step_of_the_design_skill_commits_from_the_decision_chat() {
   assert_contains "$(cat "$SKILL")" "No step commits from the Decision chat"
   # the chat runs no git command that writes: every commit is design.sh's, in its own checkout, or the worker's
@@ -569,6 +592,29 @@ test_the_packages_screenshots_are_read_from_the_feature_branch_and_a_missing_one
   assert_contains "$err" "no screenshot on feature/faster-checkout for step(s): pay"
   assert_eq "" "$(git status --porcelain --untracked-files=no)" "approve touched the checkout"
   assert_eq journeys/screenshots/cart.png "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+}
+
+# #337: a Figma design is not a substitute for the screenshots; the package
+# from a tool link still carries one per changed step.
+test_approve_with_a_figma_tool_link_still_refuses_a_step_with_no_screenshot() {
+  seed; start_checkout >/dev/null
+  add_screenshots cart
+  local st=0 err=
+  err=$(approve --tool-link https://www.figma.com/design/abc/Checkout 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "no screenshot on feature/faster-checkout for step(s): pay"
+  [ ! -e "$FAKE_GH_DIR/comments-1.md" ] || fail "a package was recorded"
+}
+
+test_approve_with_a_figma_tool_link_carries_a_screenshot_per_changed_step() {
+  seed; start_checkout >/dev/null
+  add_screenshots cart pay
+  approve --tool-link https://www.figma.com/design/abc/Checkout >/dev/null
+  local c=
+  c=$(comments)
+  assert_contains "$c" "- **Tool link:** https://www.figma.com/design/abc/Checkout"
+  assert_contains "$c" "\`cart\`: \`journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
+  assert_contains "$c" "\`pay\`: \`journeys/screenshots/pay.png\` on \`feature/faster-checkout\`"
 }
 
 test_a_design_with_no_prototype_and_no_tool_link_approves_on_screenshots_alone() {
