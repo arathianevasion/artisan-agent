@@ -158,6 +158,7 @@ test_remove_uninstalls_when_project_path_is_gone_and_leaves_no_folder_behind() {
   local out=
   out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE") || fail "remove failed: $out"
   assert_contains "$out" "uninstalled: artisan-agent@artisan-agent (project)"
+  case $out in *"kept: enabledPlugins"*) fail "recreated-folder case must not report a restore" ;; esac
   assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "$GONE plugin uninstall artisan-agent@artisan-agent --scope project"
   [ ! -e "$GONE" ] || fail "recreated project folder left behind"
   [ ! -e "$TEST_TMPDIR/deleted parent" ] || fail "recreated parent folder left behind"
@@ -174,6 +175,64 @@ test_remove_keeps_recreated_folder_that_the_uninstall_filled_and_reports_failure
   rm -rf "$GONE"
   if "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$GONE" >/dev/null 2>&1; then fail "a failing uninstall must fail"; fi
   [ ! -e "$GONE" ] || fail "folder left behind after a failed uninstall"
+}
+
+# The real CLI deletes the plugin's enabledPlugins key (and reformats the file) on a project-scope
+# uninstall. This stub does the same, from inside the project.
+stub_claude_deleting_enabled_key() {
+  printf '#!/bin/sh\npython3 -I -c '"'"'import json,sys\nf=sys.argv[1]\nd=json.load(open(f))\nd["enabledPlugins"].pop(sys.argv[2],None)\njson.dump(d,open(f,"w"),indent=4,sort_keys=True)'"'"' "$PWD/.claude/%s" "$3"\n' "$1" >"$ARTISAN_CLAUDE_BIN"
+}
+
+test_remove_re_adds_the_enabled_plugins_key_the_uninstall_deleted() {
+  seed_machine
+  mkdir -p "$TEST_TMPDIR/proj/.claude"
+  printf '{"enabledPlugins": {"artisan-agent@artisan-agent": true, "mattpocock-skills@claude-plugins-official": true}, "zeta": 1, "alpha": 2}\n' >"$TEST_TMPDIR/proj/.claude/settings.json"
+  stub_claude_deleting_enabled_key settings.json
+  local out=
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj") || fail "remove failed: $out"
+  assert_contains "$out" "kept: enabledPlugins.artisan-agent@artisan-agent in $TEST_TMPDIR/proj/.claude/settings.json"
+  assert_contains "$out" "uninstalled: artisan-agent@artisan-agent (project)"
+  assert_eq "True True 1 2" "$(python3 -I -c '
+import json,sys
+d=json.load(open(sys.argv[1]));e=d["enabledPlugins"]
+print(e["artisan-agent@artisan-agent"],e["mattpocock-skills@claude-plugins-official"],d["zeta"],d["alpha"])' "$TEST_TMPDIR/proj/.claude/settings.json")"
+}
+
+# The CLI leaves "enabledPlugins": {} in its own formatting; the restore adds one line and no more.
+test_remove_restore_changes_nothing_but_the_added_key() {
+  seed_machine
+  mkdir -p "$TEST_TMPDIR/proj/.claude"
+  printf '#!/bin/sh\nprintf '"'"'{\\n    "zeta": 1,\\n    "enabledPlugins": {},\\n    "alpha": 2\\n}\\n'"'"' >.claude/settings.json\n' >"$ARTISAN_CLAUDE_BIN"
+  printf '{"enabledPlugins": {"artisan-agent@artisan-agent": true}}\n' >"$TEST_TMPDIR/proj/.claude/settings.json"
+  "$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj" >/dev/null || fail "remove failed"
+  assert_eq '{
+    "zeta": 1,
+    "enabledPlugins": {
+        "artisan-agent@artisan-agent": true
+    },
+    "alpha": 2
+}' "$(cat "$TEST_TMPDIR/proj/.claude/settings.json")"
+}
+
+test_remove_does_not_add_a_key_the_project_never_had() {
+  seed_machine
+  mkdir -p "$TEST_TMPDIR/proj/.claude"
+  printf '{"enabledPlugins": {"other@x": true}}\n' >"$TEST_TMPDIR/proj/.claude/settings.json"
+  stub_claude_deleting_enabled_key settings.json
+  local out=
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:project:$TEST_TMPDIR/proj") || fail "remove failed"
+  case $out in *"kept: enabledPlugins"*) fail "reported a restore for a key that was never there" ;; esac
+  assert_eq "other@x" "$(python3 -I -c 'import json,sys;print(*json.load(open(sys.argv[1]))["enabledPlugins"])' "$TEST_TMPDIR/proj/.claude/settings.json")"
+}
+
+test_remove_restores_the_key_in_settings_local_for_local_scope() {
+  seed_machine
+  mkdir -p "$TEST_TMPDIR/proj/.claude"
+  printf '{"enabledPlugins": {"artisan-agent@artisan-agent": true}}\n' >"$TEST_TMPDIR/proj/.claude/settings.local.json"
+  stub_claude_deleting_enabled_key settings.local.json
+  local out=
+  out=$("$SCRIPT" remove "project-install:artisan-agent@artisan-agent:local:$TEST_TMPDIR/proj") || fail "remove failed"
+  assert_contains "$out" "kept: enabledPlugins.artisan-agent@artisan-agent in $TEST_TMPDIR/proj/.claude/settings.local.json"
 }
 
 # A directory holding only the named tools (as stubs), to stand in for PATH.

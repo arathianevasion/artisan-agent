@@ -210,7 +210,13 @@ trash_skill() {
 # run inside the project's path. When that folder is gone, recreate it (only the missing
 # levels), run the CLI's own uninstall, then remove the levels we created if still empty.
 uninstall_in_project() { # plugin scope path
-  local pid=$1 scope=$2 ppath=$3 d= created="" recreated=0 rc=0
+  local pid=$1 scope=$2 ppath=$3 d= created="" recreated=0 rc=0 sfile= enabled=
+  # The CLI also deletes the plugin's enabledPlugins key from the project's settings. Project setup
+  # wrote that key on purpose, so note it now (only when the folder is there) and add it back after.
+  if [ -d "$ppath" ]; then
+    case $scope in local) sfile=$ppath/.claude/settings.local.json ;; *) sfile=$ppath/.claude/settings.json ;; esac
+    if [ -f "$sfile" ]; then enabled=$(json enabled-value "$sfile" "$pid" 2>/dev/null || true); fi
+  fi
   if [ ! -d "$ppath" ]; then
     d=$ppath
     while [ ! -d "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
@@ -228,6 +234,9 @@ uninstall_in_project() { # plugin scope path
     done <<EOF_CREATED
 $created
 EOF_CREATED
+  fi
+  if [ -n "$enabled" ] && [ -f "$sfile" ] && [ -n "$(json restore-enabled "$sfile" "$pid" "$enabled")" ]; then
+    echo "kept: enabledPlugins.$pid in $sfile"
   fi
   if [ "$rc" = 0 ]; then
     if [ "$recreated" = 1 ]; then echo "uninstalled: $pid ($scope) at $ppath (project folder was gone; recreated it for the uninstall and removed it again)"
