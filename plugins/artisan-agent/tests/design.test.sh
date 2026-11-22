@@ -164,3 +164,46 @@ test_the_skill_runs_design_sh_to_start_status_and_resume() {
   assert_contains "$text" "design.sh status"
   assert_contains "$text" "design.sh resume"
 }
+
+# Review fixes: start stops before creating anything, keeping capture's
+# "no capture command" status, and undoes its branches when gh fails.
+nothing_created() {
+  [ ! -e "$FAKE_GH_DIR/issue-1.json" ] || fail "a ticket was opened"
+  assert_status 1 git rev-parse --verify -q refs/heads/feature/faster-checkout
+  assert_status 1 git rev-parse --verify -q refs/heads/prototype/faster-checkout
+  [ ! -e "$P/.artisan-agent/designs/faster-checkout" ] || fail "a before folder was left"
+}
+
+test_no_recorded_capture_command_exits_16_and_creates_nothing() {
+  seed
+  printf 'max_agents: 2\n' >.artisan-agent/config.yml
+  assert_status 16 start_checkout
+  nothing_created
+}
+
+test_a_step_name_that_is_not_a_file_name_is_refused_before_capturing() {
+  seed
+  assert_status 2 "$DESIGN" start --name "Faster checkout" --step cart --step ../x --designer ana
+  nothing_created
+}
+
+test_a_capture_failing_on_a_later_step_leaves_no_before_folder() {
+  seed
+  printf "capture_command: '[ \"\$ARTISAN_CAPTURE_STEP\" = pay ] && exit 3; cp build.txt \"\$ARTISAN_CAPTURE_DIR/\$ARTISAN_CAPTURE_STEP.png\"'\n" >.artisan-agent/config.yml
+  assert_status 1 start_checkout
+  nothing_created
+}
+
+test_a_failing_gh_issue_create_deletes_the_branches_it_cut() {
+  seed
+  export GH_BIN="$TEST_TMPDIR/gh"
+  printf '#!/bin/sh\n[ "$1 $2" = "issue create" ] && exit 1\nexec gh "$@"\n' >"$GH_BIN" && chmod +x "$GH_BIN"
+  assert_status 1 start_checkout
+  nothing_created
+}
+
+test_resume_takes_a_bare_number() {
+  seed
+  start_checkout >/dev/null
+  assert_contains "$("$DESIGN" resume 1)" "feature branch: feature/faster-checkout"
+}
