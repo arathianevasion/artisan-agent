@@ -39,7 +39,7 @@ Options:
 
 ## Experience pass, only when the change touches the experience
 
-When the plan changes a user journey, add one pass on the experience: who it is for, which steps change and what the user sees. For that pass only, read the design standards at the point of use: run `${CLAUDE_PLUGIN_ROOT}/scripts/guardrails.sh design`, which lists each level's `DESIGN_STANDARDS.md` product first, then team, then individual (product wins a contradiction), and read each with `git -C <dir> show <commit>:<path>`. Personas are at product level only. Never import or copy them. A session that never touches the experience reads nothing and pays nothing.
+When the plan changes a user journey, add one pass on the experience: who it is for, which steps change and what the user sees. For that pass only, read the design standards at the point of use: run `${CLAUDE_PLUGIN_ROOT}/scripts/guardrails.sh design`, which lists each level's `DESIGN_STANDARDS.md` product first, then team, then individual (product wins a contradiction), and read each with `git -C <dir> show <commit>:<path>`. Personas are at product level only. Never import or copy them. Settle the journey diff in words: for each journey step that changes, what the persona sees and does now and what they will see and do after. End the pass by stating that journey diff in words and getting the Artisan's confirmation. Then the design stage runs (`/artisan-agent:design`), then `/artisan-agent:to-spec`. A session that never touches the experience reads nothing and pays nothing.
 
 ## Record decisions as they settle
 

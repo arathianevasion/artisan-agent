@@ -28,6 +28,7 @@ Put the proposal in front of the Artisan as one message:
 
 - the route and **why**, naming which test answer decided it and the part of the request that decided it (rule 3 in ARTISAN.md);
 - the strongest alternative route and why it lost;
+- the **design question**: does the change alter what a persona sees or does at any journey step? Give your answer and the step that decided it (a bug fix that leaves the journey as it is answers no). The Artisan approves it with the route, so it costs no extra step, and craft records the answer with the route: in the ticket you draft (section 4) or, for Effort and Feature, in the one line you hand over with the first command. If they change it, adopt their answer;
 - the steps of the route with the **exact command** for each (below);
 - a prompt to approve or change the route. If they change it, adopt their route without argument.
 
@@ -39,22 +40,26 @@ Name our replacements as `/artisan-agent:<name>` always, even when the skill shi
 
 **Effort** (foggy; no statable destination):
 
-1. `/mattpocock-skills:wayfinder`: map the effort. Typed only (only the Artisan can invoke it), so the Artisan types it.
-2. `/artisan-agent:to-spec`: turn the decisions into a spec.
-3. `/mattpocock-skills:to-tickets`: slice the spec into tickets. Typed only; the Artisan iterates the slicing until happy, so approval of the slices happens there.
-4. `/artisan-agent:to-plan`: chunk the tickets into plans.
-5. `/artisan-agent:implement-plan`: run them.
+1. `/mattpocock-skills:wayfinder`: map the effort. Typed only (only the Artisan can invoke it), so the Artisan types it. Experience questions are ordinary map tickets; `wayfinder` itself stays as it is.
+2. `/artisan-agent:design`: when the design question is yes, design the change to the experience between the map and the spec. Skip it when the answer is no.
+3. `/artisan-agent:to-spec`: turn the decisions into a spec.
+4. `/mattpocock-skills:to-tickets`: slice the spec into tickets. Typed only; the Artisan iterates the slicing until happy, so approval of the slices happens there.
+5. `/artisan-agent:to-plan`: chunk the tickets into plans.
+6. `/artisan-agent:implement-plan`: run them.
 
 **Feature** (clear, more than one ticket):
 
-1. `/artisan-agent:grill`: settle the decisions, writing terms and ADRs as they settle.
-2. `/artisan-agent:to-spec`
-3. `/mattpocock-skills:to-tickets` (typed only; the Artisan iterates the slicing).
-4. `/artisan-agent:implement-plan`. Offer `/artisan-agent:to-plan` between 3 and 4 only if the Artisan wants chunks; don't push it.
+1. `/artisan-agent:grill`: settle the decisions, writing terms and ADRs as they settle. When the design question is yes, it adds an experience pass that settles the journey diff in words.
+2. `/artisan-agent:design`: when the design question is yes, design the change to the experience before the spec. Skip it when the answer is no.
+3. `/artisan-agent:to-spec`
+4. `/mattpocock-skills:to-tickets` (typed only; the Artisan iterates the slicing).
+5. `/artisan-agent:implement-plan`. Offer `/artisan-agent:to-plan` between 4 and 5 only if the Artisan wants chunks; don't push it.
 
-**Small change** (clear, one ticket): draft one ticket with acceptance criteria, section 4.
+**Small change** (clear, one ticket): draft one ticket with acceptance criteria, section 4. When the design question is yes, run a light design stage while drafting the ticket, usually a prototype (`/artisan-agent:design` says how); when no, there is no design step.
 
-**Bug** (one ticket, something is broken): run `/mattpocock-skills:diagnosing-bugs` yourself (through the Skill tool) to reproduce it and find the cause, then draft one ticket whose acceptance is a failing test, section 4.
+**Bug** (one ticket, something is broken): run `/mattpocock-skills:diagnosing-bugs` yourself (through the Skill tool) to reproduce it and find the cause, then draft one ticket whose acceptance is a failing test, section 4. The design stage is skipped unless the fix changes the journey; if diagnosis shows it does, the answer to the design question is yes and a light design stage runs while drafting.
+
+The Artisan can start `/artisan-agent:design` at any time, inside or outside a route.
 
 For Effort and Feature, you hand the Artisan the first command and stop. You don't run `wayfinder`, `to-tickets`, `grill` or `to-spec` for them. At each step the Artisan finishes, if they come back to you, name the next command again.
 
@@ -65,7 +70,7 @@ Draft the ticket as the Artisan would want to approve it, following the durable-
 - **Small change:** the problem, the behaviour wanted, and acceptance criteria that can each be checked. If you can't write checkable criteria, the destination isn't statable: go back to section 2 and propose the bigger route.
 - **Bug:** after `diagnosing-bugs` finishes, the ticket carries the **reproduction** (the exact steps or command and what is observed against what is expected), the **cause** found, and acceptance written as a **failing test**: "a test that reproduces the bug fails before the fix and passes after, and the suite stays green". Name the seam the test belongs at. If diagnosis can't reproduce the bug or find a cause, say so and propose the way forward (more evidence, or a bigger route); don't draft an unprovable ticket.
 
-Show the draft and wait for approval or edits. Don't file anything first.
+Put the approved answer to the design question in the ticket, in one line. Show the draft and wait for approval or edits. Don't file anything first.
 
 **Once the Artisan approves it**, create the issue and apply `ready-for-agent` (plus `bug` or `enhancement` as the category) in one step. A ticket the Artisan approved **skips triage**: don't apply `needs-triage` and don't ask them to approve it twice. Don't start running it.
 

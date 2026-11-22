@@ -107,3 +107,13 @@ test_to_spec_reads_always_ask_lines_at_the_motivation_step() {
 test_to_spec_without_a_motivation_file_changes_nothing() {
   grep -qF 'With no motivation file, nothing changes' "$TOSPEC" || fail "no-motivation-file behaviour unsaid"
 }
+
+test_grill_experience_pass_ends_with_the_journey_diff_in_words() {
+  local sec=; sec=$(sed -n '/^## Experience pass/,/^## Record/p' "$GRILL")
+  assert_contains "$sec" 'journey diff in words'
+  assert_contains "$sec" '/artisan-agent:design'
+}
+
+test_wayfinder_is_not_edited() {
+  [ ! -e "$PLUGIN_ROOT/skills/wayfinder" ] || fail "wayfinder ships in the plugin (ADR 0001)"
+}
