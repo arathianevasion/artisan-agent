@@ -86,6 +86,69 @@ test_bc_a_red_gate_whose_rerun_passes_merges_files_a_flaky_finding_and_uses_no_a
   assert_eq "" "$(state_get '.base_park // empty')"
 }
 
+# A base run that lost a job to a runner shortage (#261): the merge commit
+# fails for real (hello.txt), the base's macos job is cancelled "not acquired
+# by Runner" while its other job passed. The base run is rerun, its cancelled
+# job only, once; the plan's config sets the runner wait to zero minutes.
+base_short() { # [attempts the shortage lasts]
+  echo hello.txt >"$FAKE_GH_DIR/ci-red-if-file"
+  echo '["bash 5.2", "macos"]' >"$FAKE_GH_DIR/ci-jobs"
+  echo '["macos"]' >"$FAKE_GH_DIR/ci-no-runner"
+  echo 2 >"$FAKE_GH_DIR/ci-no-runner-from-run"
+  [ -z "${1:-}" ] || echo "$1" >"$FAKE_GH_DIR/ci-no-runner-attempts"
+  cp "$TESTS_DIR/fixtures/ci-logs/failed.log" "$FAKE_GH_DIR/ci-log-failed"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.config.ci_gate.runner_wait_minutes = [0, 0]'
+}
+
+test_bc_a_base_run_still_short_of_runners_after_one_rerun_is_unjudged_never_red() {
+  setup_ci
+  verified_ticket
+  base_short
+  merge_1
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq 1 "$(grep -c '^run rerun 9002 -R local/sample --failed' "$FAKE_GH_DIR/calls")" "the base run is rerun once"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "api repos/local/sample/check-runs/900202/annotations"
+  assert_eq null "$(state_get '.base_park | tojson')" "the base is not called red"
+  assert_eq 0 "$(state_get '[.decisions[] | select(.kind == "base-red")] | length')"
+  assert_eq "unchecked null" "$(state_get '.tickets["1"].suite.base_check | "\(.verdict) \(.base.conclusion)"')"
+  assert_contains "$(state_get '.tickets["1"].suite.base_check.base.unjudged')" "not acquired by Runner"
+  assert_eq "" "$(ci_branches)"
+}
+
+test_bc_a_flaky_merge_run_does_not_wait_on_or_rerun_a_base_short_of_runners() {
+  setup_ci
+  verified_ticket
+  base_short
+  echo success >"$FAKE_GH_DIR/ci-rerun-outcome"
+  merge_1
+  assert_eq 0 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq flaky "$(state_get '.tickets["1"].suite.base_check.verdict')"
+  assert_eq 0 "$(grep -c '^run rerun 9002' "$FAKE_GH_DIR/calls")" "the base cannot change a flaky verdict"
+}
+
+test_bc_a_base_run_whose_rerun_finds_runners_and_passes_is_judged_green() {
+  setup_ci
+  verified_ticket
+  base_short 1
+  merge_1
+  assert_eq 7 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq 1 "$(grep -c '^run rerun 9002 -R local/sample --failed' "$FAKE_GH_DIR/calls")"
+  assert_eq "new success" "$(state_get '.tickets["1"].suite.base_check | "\(.verdict) \(.base.conclusion)"')"
+  assert_eq null "$(state_get '.base_park | tojson')"
+}
+
+test_bc_a_base_run_whose_rerun_fails_for_real_stays_red() {
+  setup_ci
+  verified_ticket
+  base_short 1
+  echo failure >"$FAKE_GH_DIR/ci-rerun-outcome"
+  merge_1
+  assert_eq 19 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq 1 "$(grep -c '^run rerun 9002 -R local/sample --failed' "$FAKE_GH_DIR/calls")"
+  assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "the base is red"
+  assert_eq "1 9002" "$(state_get '.base_park | "\(.ticket) \(.run_id)"')"
+}
+
 test_bc_only_failures_new_against_the_base_go_to_the_retry() {
   setup_ci
   verified_ticket

@@ -112,6 +112,11 @@
 #         new        some failures are new against the base: exit 7, with
 #                    failing_tests only the new ones when the base was red
 #         unchecked  neither gave a verdict in time: exit 7, as before
+#       A base run whose only jobs that did not pass were never acquired by a
+#       runner (#261, the same test as above) is rerun once on those jobs; a
+#       rerun that passes or fails for real is judged as any base run, and
+#       one still short of runners (or silent in time) leaves the base
+#       unjudged: the verdict is never base-red, and base gains unjudged: why.
 #       Both branches are deleted after (a base run still going when the
 #       rerun passed is left to finish). With --resume, a run already at a
 #       later attempt was cut off mid check: that attempt is the rerun, so
@@ -573,6 +578,38 @@ cmd_ci() {
   esac
 }
 
+# base_runner_retry base-run window: a base run that concluded with only
+# runner-less jobs (#261, no_runner_jobs) is rerun once, its cancelled jobs
+# only, after the first of CI_RUNNER_WAITS minutes, and waited on up to
+# `window` seconds. Sets BASE_RUNNER: "" the run is judged as it stands (no
+# runner shortage); rerun, with BASE_RUNNER_VIEW the rerun's run, to judge
+# it; unjudged, runners were still missing (or the rerun gave nothing in
+# time), so the base is no verdict.
+BASE_RUNNER= BASE_RUNNER_VIEW=
+base_runner_retry() {
+  local brun="$1" window="$2" bid="" view="" rr="" att=1 end=0 wait="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  BASE_RUNNER= BASE_RUNNER_VIEW=
+  bid=$(jq -r '.databaseId // empty' <<<"$brun")
+  [ -n "$bid" ] || return 0
+  view=$(gh run view "$bid" -R "$CI_REPO" --json databaseId,attempt,status,conclusion,url,jobs 2>/dev/null) || return 0
+  jq -e '(.conclusion // "") | IN("failure", "timed_out", "cancelled")' <<<"$view" >/dev/null 2>&1 || return 0
+  no_runner_jobs "$view" >/dev/null || return 0
+  BASE_RUNNER=unjudged
+  for wait in $CI_RUNNER_WAITS; do sleep $((wait * 60)); break; done
+  att=$(jq -r '.attempt // 1' <<<"$view")
+  case "$att" in '' | *[!0-9]*) att=1 ;; esac
+  gh run rerun "$bid" -R "$CI_REPO" --failed >/dev/null 2>&1 || return 0
+  end=$(($(date +%s) + window))
+  while :; do
+    rr=$(gh run view "$bid" -R "$CI_REPO" --json databaseId,attempt,status,conclusion,url,jobs 2>/dev/null) || rr=""
+    if [ -n "$rr" ] && jq -e --argjson a "$att" '(.attempt // 0) > $a and .status == "completed"' <<<"$rr" >/dev/null 2>&1; then break; fi
+    if [ "$(date +%s)" -ge "$end" ]; then return 0; fi
+    sleep "$poll"
+  done
+  no_runner_jobs "$rr" >/dev/null && return 0
+  BASE_RUNNER=rerun BASE_RUNNER_VIEW=$(jq -c . <<<"$rr")
+}
+
 # base_check run-id red-record window [rerun-attempt rerun-conclusion]: a
 # red run, checked before it counts (#195). At once: its failed jobs rerun
 # on the merge commit, and the gate workflow on the base. Waits up to
@@ -583,7 +620,7 @@ cmd_ci() {
 # passed.
 base_check() {
   local id="$1" red="$2" window="$3" att0="" end=0 rr="" brun="" btests='null' bbranch="$CI_BRANCH-base"
-  local rdone=0 bdone=0 rconc="" bconc="" verdict="" out="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  local rdone=0 bdone=0 rconc="" bconc="" verdict="" out="" poll=${ARTISAN_CI_POLL_SECONDS:-20} bunjudged=false
   # done: 0 waiting, 1 nothing to wait on (it never started), 2 concluded.
   if [ -n "${4:-}" ]; then
     att0=$(($4 - 1)) rdone=2 rconc=$5
@@ -616,6 +653,17 @@ base_check() {
     [ "$(date +%s)" -lt "$end" ] || break
     sleep "$poll"
   done
+  # A base run that lost jobs to a runner shortage (#261) is no verdict on
+  # the base: rerun those jobs once, and if runners are still missing it is
+  # unjudged, never red.
+  # (Not when the merge commit's rerun passed: flaky no matter the base.)
+  if [ "$bdone" -eq 2 ] && [ "$rconc" != success ]; then
+    base_runner_retry "$brun" "$window"
+    case "$BASE_RUNNER" in
+      rerun) brun=$BASE_RUNNER_VIEW bconc=$(jq -r '.conclusion // ""' <<<"$brun") ;;
+      unjudged) bconc="" bunjudged=true ;;
+    esac
+  fi
   delete_branch
   delete_branch "$bbranch"
   [ -n "$brun" ] || brun='{}'
@@ -624,7 +672,7 @@ base_check() {
   esac
   # The same test: the same job and name (its line may move with the change).
   out=$(jq -c --arg rc "$rconc" --arg bc "$bconc" --argjson ra "$((att0 + 1))" --argjson rr "${rr:-null}" \
-      --argjson b "$brun" --argjson bt "$btests" --arg bsha "$CI_BASE" --arg bb "$bbranch" '
+      --argjson b "$brun" --argjson bt "$btests" --argjson bu "$bunjudged" --arg bsha "$CI_BASE" --arg bb "$bbranch" '
     (.failing_tests.tests // []) as $mine | ($bt.tests // []) as $theirs
     | ($bc == "failure" or $bc == "timed_out") as $bred
     | [$mine[] | . as $x | select(any($theirs[]; .job == $x.job and .name == $x.name) | not)] as $new
@@ -634,8 +682,9 @@ base_check() {
        else "unchecked" end) as $v
     | . + {base_check: {verdict: $v,
             rerun: {attempt: (if $rc == "" then null else $ra end), conclusion: (if $rc == "" then null else $rc end)},
-            base: {sha: $bsha, branch: $bb, run_id: ($b.databaseId // null), url: ($b.url // null),
-                   conclusion: (if $bc == "" then null else $bc end), failing_tests: $bt}}}
+            base: ({sha: $bsha, branch: $bb, run_id: ($b.databaseId // null), url: ($b.url // null),
+                   conclusion: (if $bc == "" then null else $bc end), failing_tests: $bt}
+                   + (if $bu then {unjudged: "no runner: its jobs were not acquired by Runner, even on a rerun"} else {} end))}}
     | if $v == "flaky" then .conclusion = "success" | .jobs = (if $rr == null then .jobs else [($rr.jobs // [])[] | {name, conclusion}] end)
       elif $v == "new" and $bred and $theirs != [] then
         .failing_tests = {tests: $new, total: ($new | length), truncated: false, also_on_base: (($mine | length) - ($new | length))}
