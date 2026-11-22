@@ -9,6 +9,7 @@
 #   design.sh journey --design SLUG --name NAME --persona WHO --goal G --action A --next N [--goal G --action A --next N]...
 #   design.sh prototype --design SLUG --change WHAT [--model MODEL]
 #   design.sh approve --design SLUG --ticket [#]N [--tool-link URL] [--no-fetch]
+#   design.sh retire --design SLUG --ticket [#]N --merge REF
 #
 # start: picks the base: with an origin remote, fetches it and uses
 #   origin/<default branch> (with --no-fetch, origin/<default branch> as last
@@ -76,6 +77,16 @@
 #   prototype branch is behind the default branch (origin/<it> after a fetch,
 #   unless --no-fetch; the local one with no origin), naming the rebase. Prints
 #   what it recorded.
+#
+# retire: the end gate runs it when the design's feature ships (#335):
+#   deletes the prototype branch prototype/<SLUG> (and its worktree), deletes
+#   the package's screenshots (journeys/screenshots on feature/<SLUG>, as one
+#   commit made in a temporary checkout, and the "before" folder under
+#   <main checkout>/.artisan-agent/designs/<SLUG>), and closes design ticket N
+#   with a comment naming the merge it shipped in (--merge: a PR URL or commit).
+#   The journey files, the journey diff, stay on feature/<SLUG>. Safe to run
+#   again: what is already gone is skipped and a closed ticket is left closed.
+#   Refuses (1) while the prototype worker is still running.
 #
 # Runs in the product repo (any checkout of it). GH_BIN stands in for gh;
 # ARTISAN_CLAUDE_BIN for claude.
@@ -365,6 +376,61 @@ Retry when origin is reachable, or pass --no-fetch to check against $base as las
   printf 'design package recorded on #%s\n%s\n' "$n" "$body"
 }
 
+# At ship: the prototype and the package's screenshots go; the journey diff stays.
+cmd_retire() {
+  local slug= n= merge= feature= proto= root= wt= pidf= json= state= dir= files= comment=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --design) [ $# -ge 2 ] || usage; slug=$2; shift 2 ;;
+      --ticket) [ $# -ge 2 ] || usage; n=${2#\#}; shift 2 ;;
+      --merge) [ $# -ge 2 ] || usage; merge=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$slug" ] && [ -n "$n" ] && [ -n "$merge" ] || usage
+  case "$n" in *[!0-9]*) usage ;; esac
+  feature="feature/$slug" proto="prototype/$slug"
+  json=$("$GH" issue view "$n" --json number,labels,state) || die "gh issue view $n failed"
+  jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$json" >/dev/null || die "#$n is not a design ticket (no $LABEL label)"
+  state=$(jq -r '.state | ascii_downcase' <<<"$json")
+  root=$(main_root)
+  dir="$root/.artisan-agent/designs/$slug"
+  pidf="$dir/prototype.pid"
+  if [ -s "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then
+    die "the prototype worker for $slug is still running (pid $(cat "$pidf")): stop it, then retire again"
+  fi
+
+  # The prototype: any worktree on its branch first, then the branch (never merged).
+  while IFS= read -r wt; do
+    [ "$wt" = "$root" ] || git worktree remove --force "$wt" || die "could not remove the prototype worktree $wt"
+  done < <(git worktree list --porcelain | awk -v b="refs/heads/$proto" '/^worktree /{w=substr($0,10)} $0=="branch " b{print w}')
+  git worktree prune
+  if has_branch "$proto"; then git branch -D -q "$proto" >/dev/null || die "could not delete $proto"; fi
+
+  # The screenshots on the feature branch: one commit, journey files untouched.
+  if has_branch "$feature"; then
+    files=$(git ls-tree -r --name-only "$feature" -- journeys/screenshots)
+    if [ -n "$files" ]; then
+      tmp=$(mktemp -d "${TMPDIR:-/tmp}/artisan-design.XXXXXX")
+      trap 'git worktree remove --force "$tmp/feature" >/dev/null 2>&1 || true; rm -rf "$tmp"; git worktree prune >/dev/null 2>&1 || true' EXIT
+      git worktree add -q "$tmp/feature" "$feature" || die "could not check out $feature (is it checked out elsewhere?)"
+      git -C "$tmp/feature" rm -q -r -- journeys/screenshots || die "could not remove the screenshots on $feature"
+      git -C "$tmp/feature" commit -q -m "Retire design $slug: delete the package's screenshots, keep the journey diff" \
+        || die "committing the screenshots' removal on $feature failed"
+    fi
+  fi
+  rm -rf "$dir"
+
+  if [ "$state" = closed ]; then
+    printf 'design ticket: #%s already closed\n' "$n"
+  else
+    comment=$(printf '**Retired at ship.** Shipped in %s. The prototype branch `%s` and the package screenshots are deleted; the journey diff stays on main.' "$merge" "$proto")
+    "$GH" issue close "$n" --comment "$comment" >/dev/null || die "gh issue close $n failed"
+    printf 'design ticket: #%s closed (shipped in %s)\n' "$n" "$merge"
+  fi
+  printf 'retired: %s\n' "$slug"
+}
+
 cmd_status() {
   [ $# -eq 0 ] || usage
   local out=
@@ -393,6 +459,7 @@ case "$cmd" in
   journey) cmd_journey "$@" ;;
   prototype) cmd_prototype "$@" ;;
   approve) cmd_approve "$@" ;;
+  retire) cmd_retire "$@" ;;
   resume) cmd_resume "$@" ;;
   *) usage ;;
 esac

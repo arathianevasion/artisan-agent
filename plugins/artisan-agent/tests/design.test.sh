@@ -580,3 +580,73 @@ test_a_design_with_no_prototype_and_no_tool_link_approves_on_screenshots_alone()
   assert_contains "$(comments)" "- **Tool link:** none"
   assert_contains "$(comments)" "pay"
 }
+
+# design.sh retire (#335): at ship the prototype and the package's screenshots
+# go, the journey diff stays, and the design ticket closes with its merge.
+retire() { "$DESIGN" retire --design faster-checkout --ticket 1 --merge https://example/pr/9 "$@"; }
+
+shipped_design() {
+  seed; start_checkout >/dev/null
+  journey >/dev/null
+  add_screenshots cart pay
+  git worktree add -q "$TEST_TMPDIR/pt" prototype/faster-checkout
+  printf 'proto\n' >"$TEST_TMPDIR/pt/proto.txt"
+  git -C "$TEST_TMPDIR/pt" add -A && git -C "$TEST_TMPDIR/pt" commit -q -m proto
+}
+
+test_retire_deletes_the_prototype_branch_and_its_worktree() {
+  shipped_design
+  retire >/dev/null
+  git rev-parse --verify -q refs/heads/prototype/faster-checkout >/dev/null && fail "the prototype branch is still there"
+  [ ! -e "$TEST_TMPDIR/pt" ] || true
+  assert_eq "" "$(git worktree list | grep prototype || true)"
+}
+
+test_retire_deletes_the_package_screenshots_and_leaves_the_journey_diff() {
+  shipped_design
+  git worktree remove --force "$TEST_TMPDIR/pt"
+  retire >/dev/null
+  assert_eq "journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+  assert_contains "$(git diff main feature/faster-checkout --stat)" "journeys/buy-a-ticket.md"
+  assert_eq "" "$(git diff main feature/faster-checkout --name-only | grep screenshots || true)"
+  [ ! -e "$P/.artisan-agent/designs/faster-checkout" ] || fail "the before screenshots are still there"
+  assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "retire moved the checkout"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)"
+}
+
+test_retire_closes_the_design_ticket_with_the_merge_it_shipped_in() {
+  shipped_design
+  retire >/dev/null
+  assert_eq closed "$(issue 1 | jq -r .state)"
+  assert_contains "$(comments)" "Shipped in https://example/pr/9"
+}
+
+test_retiring_twice_is_harmless() {
+  shipped_design
+  retire >/dev/null
+  retire >/dev/null
+  assert_eq closed "$(issue 1 | jq -r .state)"
+  assert_eq 1 "$(grep -c 'Retired at ship' "$FAKE_GH_DIR/comments-1.md")" "the ticket was closed twice"
+}
+
+test_retire_refuses_a_ticket_that_is_not_a_design() {
+  seed; start_checkout >/dev/null
+  jq '.labels = []' "$FAKE_GH_DIR/issue-1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-1.json"
+  local st=0 err=
+  err=$(retire 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "is not a design ticket"
+  git rev-parse --verify -q refs/heads/prototype/faster-checkout >/dev/null || fail "the prototype was deleted"
+}
+
+test_retire_needs_the_merge_it_shipped_in() {
+  seed; start_checkout >/dev/null
+  assert_status 2 "$DESIGN" retire --design faster-checkout --ticket 1
+}
+
+test_the_skill_says_the_end_gate_retires_designs() {
+  local s=
+  s=$(cat "$PLUGIN_ROOT/skills/design/SKILL.md")
+  assert_contains "$s" "design.sh retire"
+  assert_not_contains "$s" "Not built yet"
+}

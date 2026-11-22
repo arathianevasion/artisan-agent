@@ -56,7 +56,11 @@
 #       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
 #       the setup).
 #   end-gate.sh finish <run-dir>
-#       once every PR is cut: removes the in-run label from every ticket in
+#       once every PR is cut: retires each design whose feature the run ships
+#       (design.sh retire: a ticket in scope whose body has a "Design: #<n>"
+#       line names design ticket <n>; the design's ticket closes with the URL
+#       of the last PR carrying one of its tickets; a design no ticket names is
+#       left alone), removes the in-run label from every ticket in
 #       scope, records the run's end and prints the merge gate costs
 #       (retro.py gate-costs) and the retro offer.
 #
@@ -633,6 +637,39 @@ cmd_approve() {
   echo "approved: PRs one per $(jq -r .value <<<"$b"); next: end-gate.sh prs, then write each body with upstream pr and end-gate.sh cut"
 }
 
+# retire_designs: design.sh retire for each open design a ticket in scope names
+# ("Design: #<n>" at the start of a line in its body), and no other (#335). Its
+# merge is the last PR that carries one of the design's tickets. Safe to run
+# again: a design already retired has a closed ticket and is skipped.
+retire_designs() {
+  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0
+  repo=$(get -r .repo)
+  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  for t in $(get -r '.plan.scope[]'); do
+    body=$(gh issue view "$t" -R "$repo" --json body --jq .body 2>/dev/null) || { echo "end-gate.sh: could not read #$t to look for its design" >&2; rc=1; continue; }
+    for d in $(printf '%s\n' "$body" | sed -nE 's/^[Dd]esign: #([0-9]+).*$/\1/p'); do
+      pairs="$pairs$d:$t "
+    done
+  done
+  for d in $(printf '%s\n' $pairs | cut -d: -f1 | sort -un); do
+    case "$seen" in *" $d "*) continue ;; esac
+    seen="$seen$d "
+    dj=$(gh issue view "$d" -R "$repo" --json labels,state,body 2>/dev/null) || { echo "end-gate.sh: could not read design #$d" >&2; rc=1; continue; }
+    jq -e 'any(.labels[]; .name == "design") and (.state | ascii_downcase) == "open"' <<<"$dj" >/dev/null || continue
+    slug=$(jq -r .body <<<"$dj" | sed -nE 's/^- \*\*Feature branch:\*\* `feature\/([^`]+)`.*$/\1/p' | head -1)
+    [ -n "$slug" ] || { echo "end-gate.sh: design #$d records no feature branch" >&2; rc=1; continue; }
+    url=
+    for t in $(printf '%s\n' $pairs | sed -n "s/^$d://p"); do
+      pr=$(jq -r --arg t "$t" '[.[] | select(.tickets | index($t))] | last | .n // empty' <<<"$plan")
+      [ -z "$pr" ] || url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+    done
+    [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
+    (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
+      || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }
+  done
+  return "$rc"
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
@@ -642,6 +679,7 @@ cmd_finish() {
   have=$(get '(.end_gate.prs // []) | length')
   [ "$have" -ge "$want" ] || refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs)"
   repo=$(get -r .repo)
+  retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
   for t in $(get -r '.plan.scope[]'); do
     if gh issue edit "$t" -R "$repo" --remove-label in-run >/dev/null 2>&1; then done_list="$done_list #$t"
     else echo "end-gate.sh: could not remove in-run from #$t" >&2; bad=1; fi
