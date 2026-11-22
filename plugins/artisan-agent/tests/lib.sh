@@ -1,6 +1,14 @@
 # Assertions for script tests. Sourced by run.sh into each test's process.
 # Portable to bash 3.2 (macOS) and GNU userland (Linux).
 
+# A test runs in its own folder, TEST_TMPDIR, which run.sh makes its working
+# directory. Started anywhere else, its relative writes would land in the
+# caller's folder (#283): stop before any test code runs.
+if [ "$(pwd -P)" != "$(cd "$TEST_TMPDIR" && pwd -P)" ]; then
+  echo "lib.sh: a test must run in its own TEST_TMPDIR (start it with tests/run.sh), not in $(pwd -P)" >&2
+  exit 1
+fi
+
 fail() {
   printf '  %s\n' "$*" >&2
   exit 1

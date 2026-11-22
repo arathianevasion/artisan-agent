@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The merge gate's two modes (#139): where the full suite runs after a merge.
-# The machine chooses, not the project: host.json in the individual home holds
-# merge_gate: auto | local | ci (machine-setup.sh merge-gate writes it); auto,
+# The project may choose (#343): merge_gate: local | ci in its
+# .artisan-agent/config.yml, read first; left out, the machine chooses:
+# host.json in the individual home holds merge_gate: auto | local | ci
+# (machine-setup.sh merge-gate writes it); auto,
 # the default, is local on macOS and ci on Linux. local runs the plan's suite
 # in the integration worktree, as always (wave.sh). ci pushes the merge commit
 # to a throwaway ci/* branch, dispatches the project's gate workflow there and
@@ -12,7 +14,8 @@
 #
 # Usage:
 #   merge-gate.sh mode
-#       local or ci: the mode this machine's merge gate runs in.
+#       local or ci: the mode this project's merge gate runs in here: the
+#       project's merge_gate, else host.json's, else auto.
 #   merge-gate.sh show
 #       how it was chosen, as JSON: {mode, setting, source, os, batch,
 #       batch_source, priority, priority_source}. priority is the local
@@ -138,7 +141,7 @@
 #       exit 0 when the workflow file has a workflow_dispatch trigger; 1 and a
 #       line naming it otherwise (setup refuses such a gate workflow).
 #
-# Environment: ARTISAN_MERGE_GATE (auto|local|ci) and ARTISAN_MERGE_BATCH
+# Environment: ARTISAN_MERGE_GATE (auto|local|ci, ahead of the project's) and ARTISAN_MERGE_BATCH
 # (on|off) and ARTISAN_LOCAL_SUITE_PRIORITY (background|normal) override
 # host.json, for tests and trials; ARTISAN_HOST_OS (macos|linux) stands in for uname;
 # ARTISAN_HOME, CLAUDE_CONFIG_DIR place host.json (as login-check.sh);
@@ -187,6 +190,23 @@ batch_setting() {
 
 cmd_batch() { batch_setting | cut -d' ' -f1; }
 
+# project_gate: the project's own merge_gate (#343), in PROJECT_GATE and
+# PROJECT_GATE_FILE; fails when this directory is in no git checkout, the
+# project has no config file or leaves merge_gate out or empty. The file is
+# <main checkout>/.artisan-agent/config.yml, as config.sh reads it; one that
+# can't be read ends the script, as a bad setting does.
+PROJECT_GATE= PROJECT_GATE_FILE=
+project_gate() {
+  local common="" file="" v=""
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  file="$(dirname "$common")/.artisan-agent/config.yml"
+  [ -f "$file" ] || return 1
+  v=$("$(cd "$(dirname "$0")" && pwd)/config.sh" show --file "$file") || exit 1
+  v=$(jq -r '.merge_gate // empty' <<<"$v")
+  [ -n "$v" ] || return 1
+  PROJECT_GATE=$v PROJECT_GATE_FILE=$file
+}
+
 # mode_choose: how the mode was chosen, in MODE (and MODE_SETTING,
 # MODE_SOURCE, MODE_OS); dies on a bad setting.
 MODE= MODE_SETTING= MODE_SOURCE= MODE_OS=
@@ -194,6 +214,8 @@ mode_choose() {
   local setting="" source="" os="" mode=""
   if [ -n "${ARTISAN_MERGE_GATE:-}" ]; then
     setting=$ARTISAN_MERGE_GATE source=ARTISAN_MERGE_GATE
+  elif project_gate; then
+    setting=$PROJECT_GATE source=$PROJECT_GATE_FILE
   elif [ -f "$HOST_FILE" ] && setting=$(jq -er '.merge_gate // empty' "$HOST_FILE" 2>/dev/null); then
     source=$HOST_FILE
   else

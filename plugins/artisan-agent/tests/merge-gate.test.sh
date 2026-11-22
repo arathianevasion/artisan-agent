@@ -424,7 +424,7 @@ test_mg_the_verifier_on_a_local_machine_runs_every_recorded_check() {
 setup_slow_local() {
   setup_ci
   export ARTISAN_MERGE_GATE=local
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = ("echo run >>" + $d + "/suite-runs && sh check.sh && { [ ! -e " + $d + "/slow ] || sleep $(cat " + $d + "/slow); }")' \
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.suite_command = ("echo run >>" + $d + "/suite-runs && sh check.sh && { [ ! -e " + $d + "/slow ] || sleep $(cat " + $d + "/slow); } && while [ -e " + $d + "/hold ]; do sleep 0.1; done")' \
     --arg d "$TEST_TMPDIR"
 }
 
@@ -439,12 +439,13 @@ merge_1_wait() { # seconds
 
 test_mg_a_suite_slower_than_the_callers_limit_still_merges_and_runs_once() {
   setup_slow_local
-  echo 4 >"$TEST_TMPDIR/slow"
+  # The suite holds until the test lets it go, so "slower than the limit" never
+  # depends on how fast this machine is.
+  touch "$TEST_TMPDIR/hold"
   verified_ticket
-  local t0=$SECONDS result=
+  local result=
   merge_1_wait 1
   assert_eq 20 "$MERGE_STATUS" "gate running: $(cat "$TEST_TMPDIR/merge.err")"
-  [ $((SECONDS - t0)) -lt 4 ] || fail "merge waited on the whole suite ($((SECONDS - t0))s)"
   assert_contains "$(cat "$TEST_TMPDIR/merge.err")" "merge gate is running"
   assert_eq "local 1 1" "$(state_get '.merge_gate | "\(.mode) \(.ticket) \(.attempt)"')"
   result=$(gate_result)
@@ -453,6 +454,8 @@ test_mg_a_suite_slower_than_the_callers_limit_still_merges_and_runs_once() {
   merge_1_wait 0
   assert_eq 20 "$MERGE_STATUS"
   assert_eq returned "$(state_get '.tickets["1"].status')"
+  [ ! -e "$result" ] || fail "the suite finished while it was held"
+  rm "$TEST_TMPDIR/hold"
   wait_for "$result" 30
   merge_1_wait 0
   assert_eq 0 "$MERGE_STATUS" "finish: $(cat "$TEST_TMPDIR/merge.err")"

@@ -24,3 +24,43 @@ EOF
   assert_eq before "$(cat result)" "result file touched"
   [ ! -e rundir/leak ] || fail "run dir touched"
 }
+
+# The Claude session's id must not reach a test either (#283): a suite run by
+# an orchestrator inside a Claude session would otherwise see its session.
+write_session_probe() { # dir
+  mkdir -p "$1"
+  cat > "$1/probe.test.sh" <<'EOF2'
+test_probe() {
+  [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] || { echo "leaked CLAUDE_CODE_SESSION_ID=$CLAUDE_CODE_SESSION_ID" >&2; exit 1; }
+  [ -z "${CLAUDE_SESSION_ID:-}" ] || { echo "leaked CLAUDE_SESSION_ID=$CLAUDE_SESSION_ID" >&2; exit 1; }
+}
+EOF2
+}
+
+test_the_claude_session_ids_are_cleared_from_each_test() {
+  write_session_probe suite
+  CLAUDE_CODE_SESSION_ID=sess-a CLAUDE_SESSION_ID=sess-b \
+    bash "$TESTS_DIR/run.sh" suite > out 2>&1 || fail "a session id reached the test: $(cat out)"
+  assert_contains "$(cat out)" "1 passed, 0 failed" "probe did not run"
+}
+
+test_the_measuring_helper_clears_the_claude_session_ids_too() {
+  mkdir -p fake/helpers bin
+  cp "$TESTS_DIR/helpers/measure-procs.sh" fake/helpers/
+  cp "$TESTS_DIR/lib.sh" fake/
+  write_session_probe fake
+  # A stand-in strace: drops its options (the last is -o <file>), runs the command.
+  printf '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\nshift 2\nexec "$@"\n' >bin/strace
+  chmod +x bin/strace
+  PATH="$PWD/bin:$PATH" CLAUDE_CODE_SESSION_ID=sess-a CLAUDE_SESSION_ID=sess-b \
+    bash fake/helpers/measure-procs.sh probe:test_probe >out 2>&1 || fail "a session id reached the measured test: $(cat out)"
+}
+
+test_a_test_started_outside_its_own_folder_stops_before_it_writes_anything() {
+  local status=0
+  mkdir elsewhere
+  (cd elsewhere && TEST_TMPDIR="$TEST_TMPDIR" bash -c 'source "$1"; touch stray' _ "$TESTS_DIR/lib.sh") >out 2>&1 || status=$?
+  assert_eq 1 "$status" "lib.sh let a test run outside TEST_TMPDIR"
+  assert_contains "$(cat out)" "tests/run.sh"
+  [ ! -e elsewhere/stray ] || fail "the test wrote into the folder it was started from"
+}

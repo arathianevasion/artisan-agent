@@ -2151,7 +2151,7 @@ batch_close() {
 
 # ------------------------------------------------------------ CI merge gate
 
-NO_GATE_WORKFLOW="this machine gates merges on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set this machine's merge_gate to local (machine-setup.sh merge-gate local)"
+NO_GATE_WORKFLOW="this project's merge gate runs on CI (merge-gate.sh show), but the project records no gate workflow (ci_gate.workflow in .artisan-agent/config.yml, which project setup records); record it, or set merge_gate to local (in .artisan-agent/config.yml for this project, or machine-setup.sh merge-gate local for the machine)"
 
 # ------------------------------------------------- the base check (#195)
 
