@@ -494,6 +494,9 @@ test_the_skill_checks_for_figmas_mcp_server_and_falls_back_to_screenshots_and_li
   assert_contains "$text" "Check for Figma's MCP server"
   assert_contains "$text" "Without it, work from screenshots and links alone"
   assert_contains "$text" "ADR 0004"
+  # The link is recorded with or without the server; only the adapter's tools need it.
+  assert_contains "$text" "With or without the server, the Figma file's link is the tool link"
+  assert_eq "" "$(printf '%s\n' "$text" | grep -n 'nothing below applies' || true)"
 }
 
 test_with_figmas_server_the_skill_reads_captures_main_writes_and_records_the_tool_link() {
@@ -505,7 +508,6 @@ test_with_figmas_server_the_skill_reads_captures_main_writes_and_records_the_too
   assert_contains "$text" "generate_figma_design"
   assert_contains "$text" "**Write a design**"
   assert_contains "$text" "use_figma"
-  assert_contains "$text" "The Figma file's link is the tool link"
   assert_contains "$text" "--tool-link <figma link>"
   assert_contains "$(sed -n '/^## 6\. /,/^## 7\. /p' "$SKILL")" "a tool link never replaces a step's screenshot"
 }
