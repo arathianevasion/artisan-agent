@@ -56,4 +56,4 @@ The designer may design in a tool. Record its file link on the design ticket. Sk
 
 ## 7. Retire at ship
 
-Not built yet. At ship the prototype branch and the package screenshots are deleted; the journey diff stays.
+At ship the end gate runs `design.sh retire --design <design slug> --ticket <n> --merge <PR url>` for each design whose feature the run ships (`end-gate.sh finish`); you don't run it by hand. It deletes the prototype branch and its worktree, deletes the package's screenshots (`journeys/screenshots` on the feature branch, and the "before" folder), and closes the design ticket with the merge it shipped in. The journey diff stays. A run ships a design when a ticket in its scope has a `Design: #<n>` line in its body, so put that line in each ticket that builds the design.

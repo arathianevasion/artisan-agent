@@ -592,3 +592,85 @@ test_a_discard_on_a_gate_raised_open_decision_settles_it_and_the_end_gate_goes_o
   jq '.state = "closed"' "$FAKE_GH_DIR/issue-$OD.json" >"$TEST_TMPDIR/i" && mv "$TEST_TMPDIR/i" "$FAKE_GH_DIR/issue-$OD.json"
   assert_settled_and_the_pr_opens discard
 }
+
+# ------------------------------------------------------------ retiring designs (#335)
+
+# A design ticket (number 10, slug "quick-pay") in the tracker and a real
+# feature branch with a screenshot; the project's design.sh runs against it.
+design_ticket() { # number slug [state]
+  jq -n --argjson n "$1" --arg slug "$2" --arg st "${3:-open}" \
+    '{number: $n, title: "Design: \($slug)", state: $st, labels: [{name: "design"}],
+      body: "- **Feature branch:** `feature/\($slug)`\n- **Prototype branch:** `prototype/\($slug)`\n"}' \
+    >"$FAKE_GH_DIR/issue-$1.json"
+  git_quiet -C "$PROJECT" branch "feature/$2" main
+  git_quiet -C "$PROJECT" branch "prototype/$2" main
+  git_quiet -C "$PROJECT" worktree add "$TEST_TMPDIR/f-$2" "feature/$2"
+  mkdir -p "$TEST_TMPDIR/f-$2/journeys/screenshots"
+  echo j >"$TEST_TMPDIR/f-$2/journeys/pay.md"
+  echo s >"$TEST_TMPDIR/f-$2/journeys/screenshots/pay.png"
+  git_quiet -C "$TEST_TMPDIR/f-$2" add -A
+  git_quiet -C "$TEST_TMPDIR/f-$2" commit -m "journey"
+  git_quiet -C "$PROJECT" worktree remove --force "$TEST_TMPDIR/f-$2"
+}
+
+names_design() { # ticket number: the ticket's body now says it builds that design
+  jq --arg b $'Builds it.\nDesign: #'"$2" '.body = $b' "$FAKE_GH_DIR/issue-$1.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-$1.json"
+}
+
+finish_run() {
+  product_boundary plan
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  "$E" finish "$RUN_DIR"
+}
+
+test_the_end_gate_retires_the_design_a_shipped_ticket_names_and_no_other() {
+  setup_end
+  design_ticket 10 quick-pay
+  design_ticket 11 other-design
+  names_design 2 10
+  finish_run >/dev/null
+  # The named design is retired: prototype gone, screenshot gone, journey kept, ticket closed with its PR.
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null && fail "prototype/quick-pay is still there"
+  assert_eq "journeys/pay.md" "$(git -C "$PROJECT" ls-tree -r --name-only feature/quick-pay | grep '^journeys/')"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[-1].url')"
+  # The design no shipped ticket names is untouched.
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/other-design >/dev/null || fail "an unnamed design was retired"
+  assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-11.json")"
+  assert_eq "journeys/pay.md
+journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^journeys/')"
+}
+
+test_the_end_gate_names_the_pr_that_carries_the_designs_ticket() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  finish_run >/dev/null
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[0].url')"
+}
+
+test_a_run_that_ships_no_design_retires_none() {
+  setup_end
+  design_ticket 10 quick-pay
+  finish_run >/dev/null
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "a design was retired"
+  assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+}
+
+test_a_design_already_closed_is_not_retired_again() {
+  setup_end
+  design_ticket 10 quick-pay closed
+  names_design 2 10
+  finish_run >/dev/null
+  git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null || fail "a closed design was retired again"
+}
+
+test_a_design_line_with_windows_line_endings_still_names_its_design() {
+  setup_end
+  design_ticket 10 quick-pay
+  jq --arg b $'Builds it.\r\nDesign: #10\r\n' '.body = $b' "$FAKE_GH_DIR/issue-2.json" >"$FAKE_GH_DIR/x" && mv "$FAKE_GH_DIR/x" "$FAKE_GH_DIR/issue-2.json"
+  finish_run >/dev/null
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+}
