@@ -6,7 +6,7 @@ Result, 2026-11-11, Claude Code 2.1.322, `claude-sonnet-5-5`, 0 failed:
 
 | Proof (ticket) | Seen |
 |---|---|
-| Typed `/mattpocock-skills:implement` blocked, 0 turns, $0 (#50) | `Blocked by the artisan-agent replaced-skill guard: /mattpocock-skills:implement is replaced in this pipeline. Use /artisan-agent:implement instead.` |
+| (Superseded by #374: the hook redirects instead of blocking, so this proof no longer holds.) Typed `/mattpocock-skills:implement` blocked, 0 turns, $0 (#50) | `Blocked by the artisan-agent replaced-skill guard: /mattpocock-skills:implement is replaced in this pipeline. Use /artisan-agent:implement instead.` |
 | Bare `/retro` (an upstream-only name) blocked (#50) | same guard, naming `/mattpocock-skills:retro`. A bare `/implement` or `/triage` resolves to this plugin's own skill, so it is no block case |
 | Edit of `doc.md` in the main checkout refused (#56) | the model reported the main-checkout guard's block; `doc.md` unchanged, tree clean |
 | Second `implement-plan` while a run holds the lock refused and queued (#56) | `Blocked by the artisan-agent run lock: run live1 (pid …) holds the lock`; a `Plan: …` issue was created on the fake tracker |
