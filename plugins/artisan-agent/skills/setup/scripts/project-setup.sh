@@ -201,15 +201,15 @@ cmd_scan() {
 # design_docs main: existing design docs (#322), "design-doc<TAB>path", offered as
 # pointers for DESIGN_STANDARDS.md. Nothing is written until the Artisan accepts one.
 design_docs() {
-  local m=$1 p=
-  for p in $(cd "$m" && git ls-files -co --exclude-standard 2>/dev/null \
-      | grep -iE '(^|/)(art[-_ ]?bible|style[-_ ]?guide|design[-_ ]?system|design[-_ ]?guidelines?|brand[-_ ]?guide)[^/]*\.(md|mdx|pdf)$' | grep -v '^DESIGN_STANDARDS.md$' | sort); do
-    printf 'design-doc\t%s\n' "$p"
-  done
-  for p in $(cd "$m" && git ls-files -co --exclude-standard 2>/dev/null \
-      | grep -iE '(^|/)(components|design-system|design-tokens|storybook)/' | sed -E 's#(^|.*/)(components|design-system|design-tokens|storybook)/.*#\1\2#I' | sort -u); do
-    printf 'design-doc\t%s\n' "$p"
-  done
+  local files=
+  files=$(git -C "$1" ls-files)
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(art[-_ ]?bible|style[-_ ]?guide|design[-_ ]?system|design[-_ ]?guidelines?|brand[-_ ]?guide)[^/]*\.(md|mdx|pdf)$' \
+    | sort | sed 's/^/design-doc\t/' || true
+  printf '%s\n' "$files" \
+    | grep -iE '(^|/)(components|design-system|design-tokens|storybook)/' \
+    | sed -E 's#^(.*/)?(components|design-system|design-tokens|storybook)/.*#\1\2#; s#^(.*/)?([Cc][Oo][Mm][Pp][Oo][Nn][Ee][Nn][Tt][Ss])/.*#\1\2#' \
+    | sort -u | sed 's/^/design-doc\t/' || true
 }
 
 # node_setup_default main: a worktree_setup default (#173) for a Node project,

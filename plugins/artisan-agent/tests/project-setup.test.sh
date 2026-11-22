@@ -647,6 +647,7 @@ seed_design_docs() {
   printf '# Art bible\n' >"$P/docs/ART_BIBLE.md"
   printf '# Style guide\n' >"$P/docs/design/style-guide.md"
   printf 'x\n' >"$P/src/components/Button.tsx"
+  printf '# Art bible 2\n' >"$P/docs/Style Guide.md"
   git -C "$P" add -A && git -C "$P" commit -q -m "design docs" && git -C "$P" push -q origin main
 }
 
@@ -657,6 +658,8 @@ test_scan_offers_the_design_docs_it_finds_and_setup_writes_only_the_accepted_one
   assert_contains "$scan" "design-doc	docs/ART_BIBLE.md"
   assert_contains "$scan" "design-doc	docs/design/style-guide.md"
   assert_contains "$scan" "design-doc	src/components"
+  assert_contains "$scan" "design-doc	docs/Style Guide.md"
+  assert_eq 4 "$(printf '%s\n' "$scan" | grep -c '^design-doc')" "one line per doc, a path with spaces kept whole"
   answers '{"pr_boundary":"slice","pr_level":"product","design_pointers":["docs/ART_BIBLE.md"],"checks":[]}'
   run_setup >/dev/null
   local d=; d=$(branch_file DESIGN_STANDARDS.md)
@@ -686,7 +689,6 @@ test_a_rerun_keeps_an_edited_design_file_and_journey_line() {
   printf -- '- Own persona: Ada.\n' >>"$P/DESIGN_STANDARDS.md"
   sed 's/^- A change to a user journey.*/- Any change to how a person gets through the app (user journey)/' "$P/PRODUCT_STANDARDS.md" >"$TEST_TMPDIR/ps.md"
   cp "$TEST_TMPDIR/ps.md" "$P/PRODUCT_STANDARDS.md"
-  rm -f "$P/CLAUDE.md.tmp"
   git -C "$P" commit -q -am "own edits" && git -C "$P" push -q origin main
   local out=; out=$(run_setup)
   assert_contains "$out" "unchanged: the project is already set up"
