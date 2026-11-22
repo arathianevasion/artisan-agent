@@ -389,7 +389,7 @@ test_finish_still_refuses_when_the_integration_tip_is_not_on_main_and_names_the_
   local err=
   err=$("$E" finish "$RUN_DIR" 2>&1) && fail "finished with nothing on main"
   assert_status 6 "$E" finish "$RUN_DIR"
-  assert_contains "$err" "0 of 3 PRs cut"
+  assert_contains "$err" "0 of 2 PRs cut"
   assert_contains "$err" "not on main"
   assert_contains "$err" "#1 (${M1:0:7})"
   assert_contains "$err" "#3 (${M3:0:7})"
