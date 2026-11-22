@@ -69,6 +69,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       runner: ${{ steps.pick.outputs.runner }}
+      pc: ${{ steps.pick.outputs.pc }}
     steps:
       - id: pick
         env:
@@ -89,13 +90,61 @@ jobs:
               if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
           esac
           echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          if [ "$runner" = "$pc" ]; then echo "pc=true" >> "$GITHUB_OUTPUT"; else echo "pc=false" >> "$GITHUB_OUTPUT"; fi
           echo "Linux runner: $runner (choice $CHOICE, trusted $TRUSTED)" >> "$GITHUB_STEP_SUMMARY"
+
+  # The PC can drop off after the pick, and a job queued for a runner that isn't there
+  # waits for hours (#399). So when the PC was picked, a probe job queues for it first
+  # and pick-final watches the probe: if the probe hasn't started within the wait
+  # (5 minutes), the Linux tests go to ubuntu-latest instead. The probe does nothing
+  # but start. Same trust rule as above: the PC is only ever picked for a run that
+  # pick-runner trusted, so a fork PR never gets a probe or the tests on the PC.
+  pc-probe:
+    name: Probe the PC runner
+    needs: pick-runner
+    if: needs.pick-runner.outputs.pc == 'true'
+    runs-on: ["self-hosted", "home-wsl"]
+    timeout-minutes: 2
+    steps:
+      - run: echo "the PC runner picked this up"
+
+  pick-final:
+    name: Confirm the Linux runner
+    needs: pick-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      actions: read
+    outputs:
+      runner: ${{ steps.final.outputs.runner }}
+    steps:
+      - id: final
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PICKED: ${{ needs.pick-runner.outputs.runner }}
+          PC: ${{ needs.pick-runner.outputs.pc }}
+          WAIT_MINUTES: 5
+        run: |
+          runner=$PICKED
+          if [ "$PC" = true ]; then
+            started=false
+            end=$(( $(date +%s) + WAIT_MINUTES * 60 ))
+            while :; do
+              status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '[.jobs[] | select(.name == "Probe the PC runner")][0].status' 2>/dev/null || true)
+              case "$status" in in_progress | completed) started=true; break ;; esac
+              [ "$(date +%s)" -ge "$end" ] && break
+              sleep 10
+            done
+            if [ "$started" != true ]; then runner='"ubuntu-latest"'; fi
+          fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "Linux runner after the PC probe: $runner (picked $PICKED)" >> "$GITHUB_STEP_SUMMARY"
 
   script-tests:
     name: Script tests (Linux)
-    # Runs where pick-runner says, in a throwaway container either way.
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
+    # Runs where pick-final says, in a throwaway container either way.
+    needs: pick-final
+    runs-on: ${{ fromJSON(needs.pick-final.outputs.runner) }}
     timeout-minutes: 45
     container:
       image: ubuntu:24.04
