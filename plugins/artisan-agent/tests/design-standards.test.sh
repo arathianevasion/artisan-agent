@@ -19,7 +19,8 @@ test_the_design_skill_names_the_design_standards_when_it_exists() {
 }
 
 test_the_worker_brief_reads_design_standards_only_for_a_journey_step_ticket() {
-  assert_contains "$(file_text skills/implement/SKILL.md)" "journey"
+  assert_contains "$(file_text skills/implement/SKILL.md)" "changes a step of a user journey, also read the design standards"
+  assert_contains "$(file_text skills/implement/SKILL.md)" "a ticket that touches no journey step reads none"
 }
 
 test_no_front_door_file_imports_the_design_standards() {
