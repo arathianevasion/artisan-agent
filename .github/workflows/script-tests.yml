@@ -37,10 +37,10 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: Linux runner (macOS always runs on macos-latest)
+        description: Linux runner (auto = the home-wsl PC when it has a free runner, else github; macOS always runs on macos-latest)
         type: choice
-        options: [github, ubicloud]
-        default: github
+        options: [auto, home-wsl, github, ubicloud]
+        default: auto
       macos:
         description: Run the macOS job (false leaves it out; a worker's branch run)
         type: boolean
@@ -55,13 +55,47 @@ permissions:
   contents: read
 
 jobs:
+  # Picks the Linux runner. The owner's home-wsl PC (self-hosted, label home-wsl, 20
+  # cores) comes first when one of its runners for this repo is online and idle;
+  # otherwise GitHub-hosted ubuntu-latest (free for this public repo), or Ubicloud
+  # when dispatched with runner=ubicloud. A pull request from a fork never gets the PC:
+  # this repo is public, and a fork's PR must not run code on a self-hosted machine.
+  # Fork PRs get no secrets either, so the check below can't see the PC for them.
+  # RUNNER_STATUS_TOKEN is a fine-grained token with read-only Administration access,
+  # the only way to read a repo's runner status; without it the PC is never picked.
+  pick-runner:
+    name: Pick the Linux runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          CHOICE: ${{ inputs.runner || 'auto' }}
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          pc='["self-hosted","home-wsl"]'
+          case "$CHOICE" in
+            github) runner='"ubuntu-latest"' ;;
+            ubicloud) runner='"ubicloud-standard-4"' ;;
+            home-wsl) runner=$pc ;;
+            *)
+              free=0
+              if [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ]; then
+                free=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '[.runners[] | select(.status == "online" and (.busy | not) and any(.labels[]; .name == "home-wsl"))] | length' 2>/dev/null || echo 0)
+              fi
+              if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
+          esac
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "Linux runner: $runner (choice $CHOICE, trusted $TRUSTED)" >> "$GITHUB_STEP_SUMMARY"
+
   script-tests:
     name: Script tests (Linux)
-    # GitHub-hosted by default (free for this public repo: 4 vCPU, 16 GB). Ubicloud
-    # only when someone with write access dispatches it; a pull request (fork or not)
-    # always gets ubuntu-latest. The job runs in a throwaway container. Never point a
-    # public repo's jobs at a self-hosted runner: a fork's PR could run code on it.
-    runs-on: ${{ inputs.runner == 'ubicloud' && 'ubicloud-standard-4' || 'ubuntu-latest' }}
+    # Runs where pick-runner says, in a throwaway container either way.
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
     timeout-minutes: 45
     container:
       image: ubuntu:24.04
