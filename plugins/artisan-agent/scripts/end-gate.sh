@@ -689,9 +689,11 @@ retire_designs() {
       [ -z "$pr" ] || [ -n "$last" -a "$pr" -le "${last:-0}" ] || last=$pr
     done
     [ -z "$last" ] || { pr=$last; url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty'); }
-    if [ -z "$url" ] && [ "$(get '.end_gate.merged_outside != null')" = true ]; then
+    if [ -z "$url" ] && { [ "${outside:-0}" -eq 1 ] || [ "$(get '.end_gate.merged_outside != null')" = true ]; }; then
       # The whole branch merged as one PR outside end-gate.sh cut (#364): that PR carries every ticket.
+      # finish found it before recording it; a rerun reads the record.
       url=$(get -r '.end_gate.merged_outside.url // empty')
+      [ -n "$url" ] || url=${OUT_URL:-}
       [ -n "$url" ] || { echo "end-gate.sh: design #$d is not retired: the PR that merged the run was not found; retire it with design.sh retire" >&2; continue; }
       (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
         || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }

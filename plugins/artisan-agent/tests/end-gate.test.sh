@@ -742,6 +742,18 @@ test_the_end_gate_retires_the_design_a_shipped_ticket_names_and_no_other() {
 docs/journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^docs/journeys/')"
 }
 
+test_finish_retires_a_design_through_the_pr_that_merged_the_whole_branch() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  approved_end
+  merge_integration_into_main 7
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in https://github.com/local/sample/pull/7"
+}
+
 test_the_end_gate_names_the_pr_that_carries_the_designs_ticket() {
   setup_end
   design_ticket 10 quick-pay
