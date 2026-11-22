@@ -101,7 +101,7 @@ cmd_start() {
 
   body=$(printf 'A design in progress, started with /artisan-agent:design.\n\n- **Feature branch:** `%s`\n- **Prototype branch:** `%s`\n- **Tool link:** none yet\n- **Designer:** %s\n- **Journey steps:** %s\n- **Before screenshots:** `%s`\n' \
     "$feature" "$proto" "$designer" "$(IFS=,; printf '%s' "${steps[*]}" | sed 's/,/, /g')" "$before")
-  url=$("$GH" issue create --title "Design: $name" --body "$body" --label "$LABEL") || {
+  url=$(printf '%s' "$body" | "$GH" issue create --title "Design: $name" --body-file - --label "$LABEL") || {
     git branch -D -q "$feature" "$proto" || true
     if [ -n "$made_before" ]; then rm -rf "$before"; rmdir "$(dirname "$before")" 2>/dev/null || true; fi
     die "gh issue create failed; the branches and screenshots are removed, start again"
