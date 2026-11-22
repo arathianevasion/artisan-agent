@@ -381,7 +381,7 @@ pwd -P >"$FAKE_PROTO/pwd"
 git rev-parse --abbrev-ref HEAD >"$FAKE_PROTO/branch"
 printf '%s\n' "$ARTISAN_ROLE" >"$FAKE_PROTO/role"
 while [ $# -gt 0 ]; do [ "$1" = -p ] && printf '%s' "$2" >"$FAKE_PROTO/prompt"; shift; done
-printf 'prototype\n' >proto.txt && git add proto.txt && git commit -q -m prototype
+printf 'prototype\n' >>proto.txt && git add proto.txt && git commit -q -m prototype
 touch "$FAKE_PROTO/done"
 SH
   chmod +x "$TEST_TMPDIR/fake-claude"
@@ -415,4 +415,58 @@ test_prototype_worker_runs_in_its_own_worktree_on_the_prototype_branch_only() {
   assert_eq "$feature" "$(git rev-parse feature/faster-checkout)" "the feature branch moved"
   assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "the checkout moved"
   assert_eq prototype "$(cat "$FAKE_PROTO/role")"
+}
+
+test_the_prototype_brief_names_the_real_components_from_the_design_system_pointer() {
+  seed; seed_design_system; fake_prototype_claude
+  start_checkout >/dev/null
+  local out= brief=
+  out=$(prototype)
+  wait_prototype
+  brief="$P/.artisan-agent/designs/faster-checkout/prototype-brief.md"
+  assert_contains "$out" "brief: $brief"
+  assert_contains "$(cat "$brief")" "real components"
+  assert_contains "$(cat "$brief")" "- src/components/"
+  assert_contains "$(cat "$brief")" "- https://storybook.example/ui"
+  assert_not_contains "$(cat "$brief")" "No modals" "the brief copied another section"
+  assert_contains "$(cat "$brief")" "Pay in one tap from the cart"
+  assert_eq "$(cat "$brief")" "$(cat "$FAKE_PROTO/prompt")" "the worker was not given the brief"
+}
+
+test_with_no_design_system_pointer_the_prototype_warns_and_still_dispatches() {
+  seed; fake_prototype_claude
+  export ARTISAN_HOME="$TEST_TMPDIR/home"
+  start_checkout >/dev/null
+  local err=
+  err=$(prototype 2>&1 >/dev/null)
+  wait_prototype
+  assert_contains "$err" "no design system pointer"
+  assert_contains "$(cat "$FAKE_PROTO/prompt")" "use the components already in the code"
+}
+
+test_a_prototype_for_a_design_that_was_not_started_is_refused() {
+  seed; fake_prototype_claude
+  local st=0
+  prototype >/dev/null 2>&1 || st=$?
+  assert_eq 1 "$st"
+  assert_eq "" "$(ls "$FAKE_PROTO")" "a worker ran"
+}
+
+test_a_prototype_worktree_on_another_branch_is_refused() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  git worktree add -q "$P-wt/prototype-faster-checkout" feature/faster-checkout
+  local st=0
+  prototype >/dev/null 2>&1 || st=$?
+  assert_eq 1 "$st"
+  assert_eq "" "$(ls "$FAKE_PROTO")" "a worker ran on the wrong branch"
+}
+
+test_a_second_dispatch_reuses_the_prototype_worktree() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  prototype >/dev/null 2>&1; wait_prototype; rm -f "$FAKE_PROTO/done"
+  prototype >/dev/null 2>&1; wait_prototype
+  assert_eq prototype/faster-checkout "$(cat "$FAKE_PROTO/branch")"
+  assert_eq 2 "$(git rev-list --count main..prototype/faster-checkout)"
 }
