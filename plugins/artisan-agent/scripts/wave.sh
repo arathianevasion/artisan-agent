@@ -551,10 +551,15 @@ cmd_wait() {
 
 # ------------------------------------------------------------------- start
 
-# The branch a run cuts from when start is given no REF: the main checkout's
-# current branch (or ARTISAN_MAIN_BRANCH); empty on a detached HEAD.
+# The branch a run cuts from when start is given no REF: ARTISAN_MAIN_BRANCH,
+# else (with an origin) origin/HEAD's name, i.e. the default branch (#377),
+# else the main checkout's current branch; empty on a detached HEAD.
 main_branch_name() {
+  local h=
   [ -z "${ARTISAN_MAIN_BRANCH:-}" ] || { printf '%s\n' "$ARTISAN_MAIN_BRANCH"; return; }
+  if h=$(git -C "$MAIN" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); then
+    printf '%s\n' "${h#origin/}"; return
+  fi
   git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || true
 }
 

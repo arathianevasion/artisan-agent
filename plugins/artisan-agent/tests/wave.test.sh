@@ -594,6 +594,19 @@ test_start_with_an_origin_cuts_from_the_fetched_default_branch() {
   assert_eq "$local_main" "$(git -C "$PROJECT" rev-parse HEAD)" "start moved the main checkout"
 }
 
+test_start_cuts_from_the_origins_default_branch_not_the_checked_out_one() {
+  seed_origin_ahead
+  local def=
+  def=$(git -C "$PROJECT" rev-parse --abbrev-ref HEAD)
+  git_quiet -C "$PROJECT" remote set-head origin "$def"
+  git_quiet -C "$PROJECT" checkout -q -b feature-x
+  echo wip >"$PROJECT/wip.txt"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m wip
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  assert_eq "$ORIGIN_TIP" "$(git -C "$PROJECT" rev-parse run/r1)"
+}
+
 test_start_without_an_origin_cuts_from_the_local_branch() {
   setup_wave
   "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
@@ -602,8 +615,10 @@ test_start_without_an_origin_cuts_from_the_local_branch() {
 
 test_start_with_an_explicit_base_ignores_the_origin() {
   seed_origin_ahead
-  "$SCRIPTS/wave.sh" start "$RUN_DIR" --base "$MAIN_HEAD" >/dev/null
-  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)"
+  local explicit=
+  explicit=$(git -C "$PROJECT" rev-parse HEAD~1)
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" --base "$explicit" >/dev/null
+  assert_eq "$explicit" "$(git -C "$PROJECT" rev-parse run/r1)"
 }
 
 test_start_refuses_when_the_fetch_fails_naming_the_remote() {
