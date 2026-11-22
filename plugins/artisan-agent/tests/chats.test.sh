@@ -243,6 +243,83 @@ test_an_orchestrators_unclean_exit_notifies_at_once_naming_its_cause() {
   case "$(sweep --idle)" in *"notify:"*) fail "notified twice for the same exit" ;; esac
 }
 
+triage_ticket() { # number title body [label...]
+  local n=$1 title=$2 body=$3 labels='[{"name":"needs-triage"}]' l=
+  shift 3
+  for l in "$@"; do labels=$(jq -c --arg l "$l" '. + [{name: $l}]' <<<"$labels"); done
+  jq -n --argjson n "$n" --arg t "$title" --arg b "$body" --argjson l "$labels" '{number: $n, title: $t, state: "open", labels: $l, body: $b}' >"$FAKE_GH_DIR/issue-$n.json"
+}
+
+test_a_new_needs_triage_ticket_is_in_the_decision_sweep_once() {
+  setup_chats
+  triage_ticket 50 "Add a thing" "body"
+  local out=""
+  out=$(sweep --chat decision)
+  assert_contains "$out" "## Incoming for triage"
+  assert_contains "$out" "- #50 Add a thing (filed by a person)"
+  assert_contains "$out" "ACTION triage #50"
+  case "$(sweep --chat decision)" in *"Incoming for triage"*) fail "announced #50 twice" ;; esac
+}
+
+test_open_decisions_and_worker_questions_come_before_other_incoming_tickets() {
+  setup_chats
+  triage_ticket 50 "Add a thing" "body"
+  triage_ticket 51 "Open decision in #7: the export is incomplete" "> *Filed by the worker of #7: an open decision, not yet triaged.*
+
+Raised at: worker, by the worker of #7 (run r9)."
+  triage_ticket 52 "Question from #8: which format?" "> *Filed by a worker during a run: an agent-filed question, not yet triaged.*"
+  local out="" l50="" l51="" l52=""
+  out=$(sweep --chat decision)
+  l50=$(printf '%s\n' "$out" | grep -n "^- #50 " | cut -d: -f1)
+  l51=$(printf '%s\n' "$out" | grep -n "^- #51 " | cut -d: -f1)
+  l52=$(printf '%s\n' "$out" | grep -n "^- #52 " | cut -d: -f1)
+  [ "$l51" -lt "$l52" ] && [ "$l52" -lt "$l50" ] || fail "order was: 50 at $l50, 51 at $l51, 52 at $l52"
+  assert_contains "$out" "(filed by the worker of #7, run r9)"
+}
+
+test_idle_notifies_once_per_open_decision_and_never_for_a_plain_ticket() {
+  setup_chats
+  triage_ticket 50 "Add a thing" "body"
+  case "$(sweep --chat decision --idle)" in *"notify:"*) fail "notified for a plain ticket" ;; esac
+  triage_ticket 51 "Open decision in #7: incomplete" "> *Filed by the worker of #7: an open decision, not yet triaged.*"
+  assert_contains "$(sweep --chat decision --idle)" "notify: Artisan Agent: 1 open decision(s) or worker question(s) waiting for triage"
+  case "$(sweep --chat decision --idle)" in *"notify:"*) fail "notified twice for #51" ;; esac
+}
+
+test_a_non_idle_sweep_does_not_use_up_the_open_decisions_notification() {
+  setup_chats
+  triage_ticket 51 "Open decision in #7: incomplete" "> *Filed by the worker of #7: an open decision, not yet triaged.*"
+  case "$(sweep --chat decision)" in *"notify:"*) fail "notified at the terminal" ;; esac
+  assert_contains "$(sweep --chat decision --idle)" "notify: Artisan Agent: 1 open decision(s)"
+}
+
+test_a_ticket_that_leaves_needs_triage_is_dropped_from_the_sweep_record() {
+  setup_chats
+  triage_ticket 50 "Add a thing" "body"
+  triage_ticket 51 "Other" "body"
+  sweep --chat decision >/dev/null
+  assert_eq "[50,51]" "$(jq -c '.triage_announced' "$PROJECT/.artisan-agent/runs/.chat/decision.json")"
+  triage_ticket 50 "Add a thing" "body" ready-for-agent
+  jq 'del(.labels[] | select(.name == "needs-triage"))' "$FAKE_GH_DIR/issue-50.json" >"$TEST_TMPDIR/i.json" && mv "$TEST_TMPDIR/i.json" "$FAKE_GH_DIR/issue-50.json"
+  sweep --chat decision >/dev/null
+  assert_eq "[51]" "$(jq -c '.triage_announced' "$PROJECT/.artisan-agent/runs/.chat/decision.json")"
+}
+
+test_the_run_chat_sweep_has_no_incoming_section_and_keeps_no_triage_record() {
+  setup_chats
+  triage_ticket 51 "Open decision in #7: incomplete" "> *Filed by the worker of #7: an open decision, not yet triaged.*"
+  local out=""
+  out=$(sweep --idle)
+  case "$out" in *"Incoming for triage"*|*"notify:"*|*"ACTION triage"*) fail "the Run chat swept triage" ;; esac
+  assert_eq "null" "$(jq -c '.triage_announced' "$PROJECT/.artisan-agent/runs/.chat/run.json")"
+}
+
+test_two_chats_reference_lists_the_incoming_for_triage_section() {
+  assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" "| Incoming for triage | Decision chat only |"
+  assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" '`triage <issues>`'
+  assert_contains "$(cat "$SCRIPTS/../references/two-chats.md")" "Waiting on you: triage the incoming queue"
+}
+
 test_due_follows_the_sweep_interval() {
   setup_chats
   ARTISAN_NOW=1000 "$C" due
