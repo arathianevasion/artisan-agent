@@ -1257,7 +1257,7 @@ test_a_kept_product_design_lesson_lands_in_the_retro_prs_design_file_and_never_f
   "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr >/dev/null || fail "deliver refused a design lesson"
   assert_eq 2 "$(git -C "$TEST_TMPDIR/origin.git" rev-list --count main..retro/r1)" "one commit per lesson"
   assert_eq "DESIGN_STANDARDS.md" "$(git -C "$wt" diff --name-only main..HEAD)" "the PR changes only the design file"
-  local ux; ux=$(awk '/^## UX conventions/ {f = 1; next} /^## / {f = 0} f' "$wt/DESIGN_STANDARDS.md")
+  local ux=; ux=$(awk '/^## UX conventions/ {f = 1; next} /^## / {f = 0} f' "$wt/DESIGN_STANDARDS.md")
   assert_contains "$ux" "- A destructive action always asks first"
   assert_contains "$ux" "- word word word"
   assert_contains "$(git -C "$wt" log --format=%B main..HEAD)" "Origin: run r1 of owner/repo"
