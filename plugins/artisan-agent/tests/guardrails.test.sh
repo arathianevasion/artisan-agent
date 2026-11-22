@@ -368,3 +368,32 @@ test_a_voice_correction_by_an_agent_is_refused() {
   voice_files
   assert_status 2 "$G" voice --level individual --who agent --reason r --text "x"
 }
+
+# ---- design standards resolve product, then team, then individual (#330)
+
+test_design_standards_resolve_product_then_team_then_individual() {
+  setup_levels
+  printf '# product design\n' >"$PROJECT/DESIGN_STANDARDS.md"; commit_all "$PROJECT" product-design
+  printf '# team design\n' >"$TEAM_SRC/DESIGN_STANDARDS.md"; commit_all "$TEAM_SRC" team-design
+  printf '# individual design\n' >"$ARTISAN_HOME/DESIGN_STANDARDS.md"; commit_all "$ARTISAN_HOME" individual-design
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  out=$("$G" design --run-dir "$RUN_DIR")
+  assert_eq "product team individual" "$(jq -r '[.files[].level] | join(" ")' <<<"$out")"
+  local l= dir= commit= path=
+  for l in product team individual; do
+    dir=$(jq -r --arg l "$l" '.files[] | select(.level == $l) | .dir' <<<"$out")
+    commit=$(jq -r --arg l "$l" '.files[] | select(.level == $l) | .commit' <<<"$out")
+    path=$(jq -r --arg l "$l" '.files[] | select(.level == $l) | .path' <<<"$out")
+    assert_eq "# $l design" "$(git -C "$dir" show "$commit:$path")"
+  done
+}
+
+test_design_standards_skip_a_level_without_a_file_and_read_the_recorded_commit() {
+  setup_levels
+  printf '# team design\n' >"$TEAM_SRC/DESIGN_STANDARDS.md"; commit_all "$TEAM_SRC" team-design
+  "$G" wave-start "$RUN_DIR" 1 >/dev/null
+  # an edit made after the wave started applies from the next wave
+  printf '# late individual\n' >"$ARTISAN_HOME/DESIGN_STANDARDS.md"; commit_all "$ARTISAN_HOME" late
+  out=$("$G" design --run-dir "$RUN_DIR")
+  assert_eq "team" "$(jq -r '[.files[].level] | join(" ")' <<<"$out")"
+}
