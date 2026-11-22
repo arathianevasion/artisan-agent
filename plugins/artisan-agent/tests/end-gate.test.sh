@@ -605,9 +605,9 @@ design_ticket() { # number slug [state]
   git_quiet -C "$PROJECT" branch "feature/$2" main
   git_quiet -C "$PROJECT" branch "prototype/$2" main
   git_quiet -C "$PROJECT" worktree add "$TEST_TMPDIR/f-$2" "feature/$2"
-  mkdir -p "$TEST_TMPDIR/f-$2/journeys/screenshots"
-  echo j >"$TEST_TMPDIR/f-$2/journeys/pay.md"
-  echo s >"$TEST_TMPDIR/f-$2/journeys/screenshots/pay.png"
+  mkdir -p "$TEST_TMPDIR/f-$2/docs/journeys/screenshots"
+  echo j >"$TEST_TMPDIR/f-$2/docs/journeys/pay.md"
+  echo s >"$TEST_TMPDIR/f-$2/docs/journeys/screenshots/pay.png"
   git_quiet -C "$TEST_TMPDIR/f-$2" add -A
   git_quiet -C "$TEST_TMPDIR/f-$2" commit -m "journey"
   git_quiet -C "$PROJECT" worktree remove --force "$TEST_TMPDIR/f-$2"
@@ -633,14 +633,14 @@ test_the_end_gate_retires_the_design_a_shipped_ticket_names_and_no_other() {
   finish_run >/dev/null
   # The named design is retired: prototype gone, screenshot gone, journey kept, ticket closed with its PR.
   git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/quick-pay >/dev/null && fail "prototype/quick-pay is still there"
-  assert_eq "journeys/pay.md" "$(git -C "$PROJECT" ls-tree -r --name-only feature/quick-pay | grep '^journeys/')"
+  assert_eq "docs/journeys/pay.md" "$(git -C "$PROJECT" ls-tree -r --name-only feature/quick-pay | grep '^docs/journeys/')"
   assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
   assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in $(state_get '.end_gate.prs[-1].url')"
   # The design no shipped ticket names is untouched.
   git -C "$PROJECT" rev-parse --verify -q refs/heads/prototype/other-design >/dev/null || fail "an unnamed design was retired"
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-11.json")"
-  assert_eq "journeys/pay.md
-journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^journeys/')"
+  assert_eq "docs/journeys/pay.md
+docs/journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^docs/journeys/')"
 }
 
 test_the_end_gate_names_the_pr_that_carries_the_designs_ticket() {
