@@ -721,3 +721,63 @@ test_an_agents_md_only_repo_does_not_import_the_design_standards_either() {
   case "$(branch_file AGENTS.md)" in *DESIGN_STANDARDS*) fail "AGENTS.md mentions the design standards" ;; esac
   true
 }
+
+# The capture command (#323): proposed from the project type, proven by running
+# it once, recorded only when it captured something, kept on a rerun.
+test_setup_proposes_a_capture_command_from_the_project_type() {
+  seed
+  assert_not_contains "$("$PS" scan "$P")" "capture-command	proposed"
+  printf 'export default {}\n' >"$P/playwright.config.ts"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	web	npx playwright test --grep "$ARTISAN_CAPTURE_STEP"'
+  rm "$P/playwright.config.ts"
+  printf '{"name":"mycli","bin":{"mycli":"bin/mycli.js"}}\n' >"$P/package.json"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	cli	node bin/mycli.js "$ARTISAN_CAPTURE_STEP" --help'
+  rm "$P/package.json"
+  printf '[package]\nname = "tool"\n' >"$P/Cargo.toml"
+  assert_contains "$("$PS" scan "$P")" 'capture-command	proposed	cli	cargo run -q -- "$ARTISAN_CAPTURE_STEP" --help'
+}
+
+test_prove_capture_runs_the_command_once_and_shows_the_captured_file() {
+  seed
+  local out= path=
+  out=$(cd "$P" && "$PS" prove-capture 'printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"')
+  assert_contains "$out" "proven	"
+  path=${out#proven	}
+  assert_eq PNG "$(cat "$path")"
+  assert_eq "" "$(git -C "$P" status --porcelain)" "the proof writes nothing into the repo"
+  local st=0
+  out=$(cd "$P" && "$PS" prove-capture 'echo "no browser" >&2; exit 4') || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$out" "failed	"
+  assert_contains "$out" "no browser"
+}
+
+test_setup_records_a_proven_capture_command_and_a_rerun_keeps_it() {
+  seed
+  local wt= stub='printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"'
+  wt=$("$PS" begin "$P")
+  answers "$(jq -n --arg c "$stub" '{capture_command: $c}')"
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "changed: capture_command is $stub (proven: captured "
+  assert_eq "$stub" "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq -r .capture_command)"
+  answers '{}'
+  assert_not_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "capture_command"
+  answers '{"capture_command":"echo other"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "kept: .artisan-agent/config.yml has capture_command: $stub"
+  assert_eq "$stub" "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq -r .capture_command)"
+  "$PS" finish "$wt" >/dev/null
+  merge_setup_pr
+  assert_contains "$("$PS" scan "$P")" "capture-command	recorded	$stub"
+}
+
+test_a_capture_command_that_fails_at_setup_is_not_recorded_and_setup_says_why() {
+  seed
+  local wt= out=
+  wt=$("$PS" begin "$P")
+  answers '{"capture_command":"echo \"chromium missing\" >&2; exit 2"}'
+  out=$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")
+  assert_contains "$out" "not recorded: capture_command failed:"
+  assert_contains "$out" "chromium missing"
+  assert_eq null "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml" | jq .capture_command)"
+  answers '{"capture_command":"true"}'
+  assert_contains "$("$PS" apply "$wt" "$TEST_TMPDIR/answers.json")" "captured nothing"
+}
