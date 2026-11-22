@@ -23,10 +23,12 @@ The arithmetic is `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh` (usage in its heade
 Decide the set: the open tickets of the spec or effort the Artisan names (or "the ready backlog"). Then read it from the tracker:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh graph --repo <owner/name> <ticket>... > <folder>/graph.json
+${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh graph --repo <owner/name> [--spec <spec issue>] <ticket>... > <folder>/graph.json
 ```
 
 It records each ticket's title, acceptance criteria and blockers within the set. A blocker outside the set that is still open becomes an `external_blockers` entry and is flagged in every view. Read the ticket bodies too: you need them for the next step.
+
+When the tickets come from a spec, pass it with `--spec`: the graph then holds the changed journey steps of the spec's Experience section (`experience_steps`) and each ticket's `Steps:` line (`steps`). A spec with no Experience section adds nothing.
 
 ### 2. Name the slices and estimate
 
@@ -69,6 +71,8 @@ Under the tables, say in a few lines why you cut where you did and the strongest
 | "keep it, because …" | `${CLAUDE_PLUGIN_ROOT}/scripts/to-plan.sh check <plans.json> --graph <graph.json> --override-human-check <ticket> "<criterion>" --why "<their reason>"` |
 
 **PR and CI criteria.** A criterion about the PR or CI ("the PR shows …", CI green on the PR) is one no run can check: workers never open PRs and the merge gate already runs on every merge. When you see one in a ticket you show, recommend rewording it to what the work leaves behind ("review notes committed at docs/review/<n>/"), or dropping a "CI is green" line; if it stays, the merge gate checks it (`${CLAUDE_PLUGIN_ROOT}/references/evidence-contract.md`, "Checked by the merge gate"). One worded so the verifier would judge it ("CI green on this ticket's branch", "The full suite passes") is flagged under "Needs your attention" and `check` refuses approval while it stands (`${CLAUDE_PLUGIN_ROOT}/references/human-checks.md`, "Merge-gate flags"): recommend dropping it, offer rewording it to "CI is green", and for "keep it, because …" run `check` with `--override-merge-gate <ticket> "<criterion>" --why "<their reason>"`.
+
+**Changed journey steps no ticket cites.** A changed step in the spec's Experience section that no ticket in the plan cites is flagged by name under "Needs your attention", and `check` refuses approval while it stands: no ticket would build the designed step. Recommend adding it to the `Steps:` line of the ticket that builds it and running `graph` again, or a ticket for it if none does. With every step cited, or no Experience section, nothing is flagged.
 
 **Tickets with no criteria.** An agent ticket whose acceptance criteria the verifier can't read (none in its body, and no triage Agent Brief comment with a checkbox list) is flagged under "Needs your attention", and `check` refuses approval while it stands: the verifier would refuse it after its worker ran. Recommend adding a `## Acceptance criteria` checklist to the ticket, then run `graph` again.
 

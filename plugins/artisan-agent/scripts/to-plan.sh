@@ -5,7 +5,7 @@
 # the tracker before then except reading it.
 #
 # Usage:
-#   to-plan.sh graph --repo owner/name <ticket>...     print the ticket graph (JSON): title,
+#   to-plan.sh graph --repo owner/name [--spec <n>] <ticket>...     print the ticket graph (JSON): title,
 #                                  acceptance criteria (criteria.py ticket: the body's, else the
 #                                  newest triage comment's) with acceptance_source ("body" or
 #                                  the comment), and blocked_by within the set for each
@@ -14,6 +14,9 @@
 #                                  chat then adds each ticket's `slice` (a name for the
 #                                  reviewable thing it contributes to) and its estimate
 #                                  (`estimate_usd`, or `model` + `expected` tokens).
+#                                  Each ticket's `Steps:` line is its `steps`; --spec <n> adds the spec's
+#                                  Experience-section changed steps as `experience_steps` (#332): `check`
+#                                  flags, by name, each that no ticket cites, and refuses approval.
 #   to-plan.sh propose --graph FILE --budget USD      print the proposed plans (JSON)
 #   to-plan.sh split   <plans.json> --graph FILE <plan> <ticket,ticket,...>
 #                                  move those tickets into a new plan after <plan>
@@ -77,7 +80,7 @@ need jq; need python3
 py() { python3 -I "$PY" "$@"; }
 
 # Common options, parsed from anywhere after the subcommand.
-GRAPH= REPO= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= CONFIG= OVERRIDES='[]'
+GRAPH= REPO= SPEC= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= CONFIG= OVERRIDES='[]'
 parse() {
   POS=()
   while [ $# -gt 0 ]; do
@@ -94,6 +97,7 @@ parse() {
       --plans) [ $# -ge 2 ] || usage; PLANS=$2; shift 2 ;;
       --config) [ $# -ge 2 ] || usage; CONFIG=$2; shift 2 ;;
       --graph) [ $# -ge 2 ] || usage; GRAPH=$2; shift 2 ;;
+      --spec) [ $# -ge 2 ] || usage; SPEC=${2#\#}; shift 2 ;;
       --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
       --budget) [ $# -ge 2 ] || usage; BUDGET=$2; shift 2 ;;
       --approved) APPROVED=1; shift ;;
@@ -138,8 +142,15 @@ case "$cmd" in
     [ "${#POS[@]}" -gt 0 ] || usage
     numbers=$(printf '%s\n' "${POS[@]}" | sed 's/^#//')
     out='{"tickets":{}}'
+    if [ -n "$SPEC" ]; then
+      printf '%s' "$SPEC" | grep -Eq '^[0-9]+$' || die "--spec must be an issue number, got \"$SPEC\""
+      spec_steps=$(gh issue view "$SPEC" -R "$REPO" --json body -q '.body // ""' | py spec-steps) || die "cannot read the spec #$SPEC"
+      # null: no Experience section, nothing to cover (#332).
+      if [ "$spec_steps" != null ]; then out=$(jq -c --argjson s "$spec_steps" '.experience_steps = $s' <<<"$out"); fi
+    fi
     for n in $numbers; do
       issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state,comments) || die "cannot read #$n"
+      steps=$(printf '%s' "$issue" | jq -r '.body // ""' | py ticket-steps) || die "cannot read the steps of #$n"
       deps=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by") || die "cannot read the blockers of #$n (a missing edge could put a blocker after its dependent)"
       # criteria.py's rule, the one the verifier reads a ticket by (#202, #215).
       crit=$(printf '%s\n' "$issue" | python3 -I "$CRITERIA_PY" ticket) \
@@ -147,7 +158,7 @@ case "$cmd" in
       # The graph so far, the issue and its blockers carry whole bodies: they
       # reach jq on stdin, never as an argument (#208).
       out=$(printf '%s\n%s\n%s\n' "$out" "$issue" "$deps" | jq -n --arg n "$n" --argjson crit "$crit" \
-            --arg set "$numbers" '
+            --arg set "$numbers" --argjson steps "$steps" '
         input as $acc | input as $issue | input as $deps
         | ($set | split("\n") | map(select(. != ""))) as $in
         | $acc
@@ -159,6 +170,7 @@ case "$cmd" in
             external_blockers: [$deps[] | select(.state == "open") | .number | tostring | select(. as $b | ($in | index($b)) | not)]
           }
         | if .tickets[$n].external_blockers == [] then del(.tickets[$n].external_blockers) else . end
+        | if $steps != [] then .tickets[$n].steps = $steps else . end
         | ([$issue.body // "" | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null) as $hc
         | if $hc then .tickets[$n].human_check_for = $hc else . end')
     done
