@@ -146,7 +146,7 @@ case "$cmd" in
       printf '%s' "$SPEC" | grep -Eq '^[0-9]+$' || die "--spec must be an issue number, got \"$SPEC\""
       spec_steps=$(gh issue view "$SPEC" -R "$REPO" --json body -q '.body // ""' | py spec-steps) || die "cannot read the spec #$SPEC"
       # null: no Experience section, nothing to cover (#332).
-      if [ "$spec_steps" != null ]; then out=$(jq -c --argjson s "$spec_steps" '.experience_steps = $s' <<<"$out"); fi
+      if [ "$spec_steps" != null ]; then out=$(printf '%s\n%s\n' "$out" "$spec_steps" | jq -c -n 'input as $acc | input as $s | $acc | .experience_steps = $s'); fi
     fi
     for n in $numbers; do
       issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state,comments) || die "cannot read #$n"
