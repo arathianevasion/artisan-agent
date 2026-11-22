@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: Linux runner (auto = the home-wsl PC when it has a free runner, else github; macOS always runs on macos-latest)
+        description: Linux runner (auto = the home-wsl PC when it has a free runner and takes the job within 10 minutes, else github; macOS always runs on macos-latest)
         type: choice
         options: [auto, home-wsl, github, ubicloud]
         default: auto
@@ -90,13 +90,14 @@ jobs:
               if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
           esac
           echo "runner=$runner" >> "$GITHUB_OUTPUT"
-          if [ "$runner" = "$pc" ]; then echo "pc=true" >> "$GITHUB_OUTPUT"; else echo "pc=false" >> "$GITHUB_OUTPUT"; fi
+          # Only an auto pick is probed and may fall back; an explicit home-wsl keeps waiting.
+          if [ "$runner" = "$pc" ] && [ "$CHOICE" != home-wsl ]; then echo "pc=true" >> "$GITHUB_OUTPUT"; else echo "pc=false" >> "$GITHUB_OUTPUT"; fi
           echo "Linux runner: $runner (choice $CHOICE, trusted $TRUSTED)" >> "$GITHUB_STEP_SUMMARY"
 
   # The PC can drop off after the pick, and a job queued for a runner that isn't there
   # waits for hours (#399). So when the PC was picked, a probe job queues for it first
   # and pick-final watches the probe: if the probe hasn't started within the wait
-  # (5 minutes), the Linux tests go to ubuntu-latest instead. The probe does nothing
+  # (10 minutes), the Linux tests go to ubuntu-latest instead. The probe does nothing
   # but start. Same trust rule as above: the PC is only ever picked for a run that
   # pick-runner trusted, so a fork PR never gets a probe or the tests on the PC.
   pc-probe:
@@ -112,7 +113,7 @@ jobs:
     name: Confirm the Linux runner
     needs: pick-runner
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 13
     permissions:
       actions: read
     outputs:
@@ -123,7 +124,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PICKED: ${{ needs.pick-runner.outputs.runner }}
           PC: ${{ needs.pick-runner.outputs.pc }}
-          WAIT_MINUTES: 5
+          WAIT_MINUTES: 10
         run: |
           runner=$PICKED
           if [ "$PC" = true ]; then
@@ -137,8 +138,9 @@ jobs:
             done
             if [ "$started" != true ]; then runner='"ubuntu-latest"'; fi
           fi
+          if [ "$runner" != "$PICKED" ]; then fired="the PC runner did not start within $WAIT_MINUTES minutes, so the Linux tests fell back to $runner"; else fired="no fallback fired"; fi
           echo "runner=$runner" >> "$GITHUB_OUTPUT"
-          echo "Linux runner after the PC probe: $runner (picked $PICKED)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Linux tests run on: $runner (picked $PICKED); $fired" >> "$GITHUB_STEP_SUMMARY"
 
   script-tests:
     name: Script tests (Linux)

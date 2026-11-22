@@ -162,10 +162,13 @@ test_a_pc_pick_is_probed_and_falls_back_when_the_probe_never_starts() {
   [ -n "$probe" ] || fail "no pc-probe job"
   assert_contains "$probe" "needs.pick-runner.outputs.pc == 'true'" "the probe runs only for a PC pick"
   assert_contains "$probe" '["self-hosted", "home-wsl"]' "the probe queues for the PC"
-  assert_contains "$final" 'WAIT_MINUTES: 5' "the wait before falling back"
+  assert_contains "$final" 'WAIT_MINUTES: 10' "the wait before falling back"
   assert_contains "$final" 'actions/runs/$GITHUB_RUN_ID/jobs' "pick-final reads the probe's status"
   assert_contains "$final" 'runner='"'"'"ubuntu-latest"'"'"'' "pick-final falls back to GitHub-hosted"
   assert_contains "$final" 'in_progress | completed' "a started probe keeps the PC"
+  assert_contains "$final" 'no fallback fired' "the step summary says the fallback did not fire"
+  assert_contains "$final" 'fell back to $runner' "the step summary says the fallback fired"
+  assert_contains "$(wf_job pick-runner)" '"$CHOICE" != home-wsl' "an explicit home-wsl is not probed and keeps waiting"
 }
 
 test_an_online_pc_is_still_picked_and_forks_never_get_it() {
