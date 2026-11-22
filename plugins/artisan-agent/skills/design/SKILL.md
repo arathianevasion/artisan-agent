@@ -1,6 +1,6 @@
 ---
 name: design
-description: Design-stage skill in the Decision chat. Designs a change to the experience before it is specified - reads the design standards, starts a design (design ticket, feature branch, prototype branch, "before" screenshots of the journey steps captured from main), and resumes one that takes days. Writes no product code. Use when the Artisan says "design this", "start a design", "where was that design", "resume design #<n>", runs /artisan-agent:design, or when a Feature or Effort route reaches the design stage.
+description: Design-stage skill in the Decision chat. Designs a change to the experience before it is specified - reads the design standards, starts a design (design ticket, feature branch, prototype branch, "before" screenshots of the journey steps captured from origin's main), and resumes one that takes days. Writes no product code. Use when the Artisan says "design this", "start a design", "where was that design", "resume design #<n>", runs /artisan-agent:design, or when a Feature or Effort route reaches the design stage.
 ---
 
 # Design
@@ -15,7 +15,7 @@ Before anything else, read the design standards in force: run `${CLAUDE_PLUGIN_R
 
 ## 2. Start or resume
 
-- **Start**: settle with the Artisan the design's name and the journey steps it touches, then run `design.sh start --name "<name>" --step <step> [--step <step>]... [--designer <who>]`. It captures a "before" screenshot of each step from main with the recorded capture command, cuts `feature/<slug>` and `prototype/<slug>` from main, and opens the design ticket (label `design`) recording both branches, the tool link, the designer and the steps. With no capture command recorded it stops: project setup records one.
+- **Start**: settle with the Artisan the design's name and the journey steps it touches, then run `design.sh start --name "<name>" --step <step> [--step <step>]... [--designer <who>] [--no-fetch]`. A design starts from prod: with an origin it fetches origin first and works from `origin/<default branch>`; with none, from the local default branch. It captures a "before" screenshot of each step from that base with the recorded capture command, cuts `feature/<slug>` and `prototype/<slug>` from it, and opens the design ticket (label `design`) recording both branches, the tool link, the designer, the steps and the base it was cut from. It never touches the main checkout. If the fetch fails it stops and says why: retry, or, with the Artisan's say-so, pass `--no-fetch` to start from origin as last fetched (the ticket records that). With no capture command recorded it stops: project setup records one.
 - **What is in progress**: `design.sh status` lists the open design tickets.
 - **Resume**: `design.sh resume <n>` prints a design ticket's branches, links, designer, steps and screenshots' folder. Pick up from there.
 
