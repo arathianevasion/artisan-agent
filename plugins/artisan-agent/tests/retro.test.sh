@@ -958,7 +958,72 @@ test_deliver_counts_every_kept_voice_lesson_toward_the_cap() {
   echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
   local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "two kept lessons went past the cap"
   assert_contains "$err" "cap"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+}
+
+# --- the kept voice lessons are checked together before any write (#302) ------
+
+test_deliver_refuses_two_kept_lessons_past_the_cap_before_any_commit() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the cap"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "a commit was made before the refusal"
+  assert_eq 0 "$(grep -c 'Great question' "$ARTISAN_HOME/VOICE_STANDARDS.md" || true)" "the first lesson was written"
+  # Dropping one lets the other deliver.
+  echo '{"V1":"yes","V2":"no"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "the fitting set was refused"
   assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+}
+
+test_deliver_refuses_two_kept_replaces_of_one_rule_before_any_commit() {
+  voice_run
+  voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md" "- Rule 0"; gq -C "$ARTISAN_HOME" commit -am own
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "First take", role: "both", scope: "this-project", why: "a",
+     change: {mode: "replace", rule: "- Rule 0"}},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "Second take", role: "both", scope: "this-project", why: "b",
+     change: {mode: "replace", rule: "- Rule 0"}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "a rule was replaced twice"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "a commit was made before the refusal"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "- Rule 0"
+}
+
+test_deliver_refuses_a_lesson_moved_to_a_fuller_level_before_any_commit() {
+  voice_run
+  full_voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" commit -am full; gq -C "$PROJECT" push origin main
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project", why: "a"},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "No closing offers to help further, none at all", role: "both", scope: "this-project", why: "b"}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"product"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the product cap"
+  assert_contains "$err" "V2"
+  assert_contains "$err" "cap"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the individual lesson was committed before the refusal"
+}
+
+test_deliver_delivers_a_kept_voice_set_that_fits_as_before() {
+  voice_run
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "a fitting set was refused"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+  assert_eq '- No closing offers to help further' "$(tail -1 "$ARTISAN_HOME/VOICE_STANDARDS.md")" "the second rule"
 }
 
 test_the_round_says_a_voice_lesson_can_be_kept_at_another_level() {
