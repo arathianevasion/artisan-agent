@@ -54,6 +54,7 @@
 #                                           and the run concludes failure, though every job that ran passed
 #                           ci-no-runner-attempts  how many attempts the shortage lasts (default: all)
 #                           ci-no-runner-runs      how many dispatched runs it hits, from the first (default: all)
+#                           ci-no-runner-from-run  the first dispatched run it hits, 1 = the first (default 1): 2 spares a gate's merge run and hits its base run (#261)
 #                         Each job has a databaseId (its check run's id): the run's id x 100 + its place.
 #                         Each -f input is kept on the run as inputs {key: value} (the fake's own
 #                         field; real gh shows inputs only in the run's web page).
@@ -148,8 +149,10 @@ outcome_for() {
 # ci-no-runner-attempts and ci-no-runner-runs last), as a JSON list; [] when
 # runners are there.
 no_runner_jobs() { # id attempt
-  local n="" r=""
+  local n="" r="" f=""
   [ -s "$FAKE_GH_DIR/ci-no-runner" ] || { echo '[]'; return 0; }
+  [ ! -s "$FAKE_GH_DIR/ci-no-runner-from-run" ] || f=$(cat "$FAKE_GH_DIR/ci-no-runner-from-run")
+  if [ -n "$f" ] && [ "$1" -lt $((9000 + f)) ]; then echo '[]'; return 0; fi
   [ ! -s "$FAKE_GH_DIR/ci-no-runner-attempts" ] || n=$(cat "$FAKE_GH_DIR/ci-no-runner-attempts")
   [ ! -s "$FAKE_GH_DIR/ci-no-runner-runs" ] || r=$(cat "$FAKE_GH_DIR/ci-no-runner-runs")
   if [ -n "$n" ] && [ "$2" -gt "$n" ]; then echo '[]'; return 0; fi
