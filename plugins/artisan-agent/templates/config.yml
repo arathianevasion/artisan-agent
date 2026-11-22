@@ -178,11 +178,22 @@ merge_gate:
 # fresh timeout_minutes; with them used up the run parks (reason ci). Source:
 # GitHub's hosted macOS arm64 runners went missing for minutes to an hour on
 # 2026-11-17 and 11-18, stalling four gates; the owner's ruling on #258.
+# local_fallback (#386) is the merge gate's third tier: when no runner took
+# the gate run (the push or dispatch failed, or no runner started it within
+# start_wait_minutes), the gate runs the plan's suite itself, on
+# fallback_host when it answers ssh (home-wsl, the Artisan's PC for heavy
+# compute; empty for none), else on the session's machine. A run that
+# started and failed never falls back. Set local_fallback: false for a
+# project whose full gate can't run outside CI (claudia-kerman, without KSP);
+# then such a gate parks with no verdict. Source: CI policy of 2026-11-22.
 ci_gate:
   workflow:
   timeout_minutes: 30
   worker_inputs: {}
   runner_wait_minutes: [15, 30]
+  local_fallback: true
+  fallback_host: home-wsl
+  start_wait_minutes: 10
 
 # The merge gate's time limit, in minutes (#200): how long one merge gate
 # may take. The plan step says so in one line when the expected CI minutes

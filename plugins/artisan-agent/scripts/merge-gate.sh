@@ -48,7 +48,8 @@
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
 #                    [--skip-path PATTERN]... [--base SHA] [--reuse-run ID --reuse-sha W]
-#                    [--runner-waits "M..."]
+#                    [--runner-waits "M..."] [--start-minutes S]
+#                    [--fallback-command CMD --fallback-log FILE [--fallback-host H]]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -96,6 +97,16 @@
 #       (green, red or 19) gains runner_reruns: [{attempt, waited_minutes,
 #       jobs, conclusion}]. A cancel without the annotation, or beside a real
 #       failure, is judged as before.
+#       Every record has tier: "ci", unless the local fallback (#386) gave
+#       the verdict. With --fallback-command, a gate CI gave no verdict
+#       because no runner took the run (the push or dispatch failed, or the
+#       run was still queued after S minutes, default 10, or at the deadline;
+#       a queued run is cancelled) runs CMD itself: on host H when it answers
+#       ssh within 10 seconds, in a fresh clone of SHA sent there as a git
+#       bundle, else (or when that clone fails) in D on this machine. The
+#       record is then tier "local:<machine>", conclusion success or failure,
+#       fallback {why (CI's), host, command, log, passed}, output in FILE;
+#       exit 0 or 7. A run a runner started is never judged this way.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
 #       --base (#195) is the integration tip before the merge (a merge
@@ -263,7 +274,7 @@ CI_REPO= CI_WF= CI_BRANCH= CI_SHA= CI_DIR= CI_REMOTE=origin CI_RUNNER_WAITS="15 
 record() { # run-json why
   jq -nc --argjson r "$1" --arg why "$2" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" \
     --argjson rr "$RUNNER_RERUNS" '
-    {mode: "ci", workflow: $wf, branch: $b, sha: $sha,
+    {mode: "ci", tier: "ci", workflow: $wf, branch: $b, sha: $sha,
      run_id: ($r.databaseId // null), url: ($r.url // null), conclusion: ($r.conclusion // null),
      jobs: [($r.jobs // [])[] | {name, conclusion}]}
     + (if $rr == [] then {} else {runner_reruns: $rr} end)
@@ -405,7 +416,7 @@ try_skip() {
     n=$((n + 1))
   done <<<"$changed"
   jq -nc --argjson g "$green" --argjson n "$n" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" '
-    {mode: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: $g.databaseId, url: $g.url,
+    {mode: "ci", tier: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: $g.databaseId, url: $g.url,
      conclusion: "success", jobs: [], skipped: true,
      relied_on: {run_id: $g.databaseId, url: $g.url, sha: $g.headSha},
      why: "CI not dispatched: only release paths changed (\($n) file\(if $n == 1 then "" else "s" end)) since \($g.headSha[0:12]), which run \($g.databaseId) passed"}'
@@ -474,11 +485,85 @@ runner_retry() {
   return 19
 }
 
+# ------------------------------------------------ the local fallback (#386)
+
+# run_started run-json: a runner has taken the run (it is past queued,
+# waiting, requested or pending). An empty run (none listed) has not.
+run_started() {
+  [ -n "$1" ] || return 1
+  case "$(jq -r '.status // ""' <<<"$1")" in '' | queued | waiting | requested | pending) return 1 ;; esac
+}
+
+# When no runner took the gate run (the push or dispatch failed, or the run
+# never started), the gate runs the suite itself: on FB_HOST when it answers
+# ssh, else on this machine. Off when FB_CMD is empty.
+FB_CMD= FB_LOG= FB_HOST=
+fb_on() { [ -n "$FB_CMD" ]; }
+
+# fb_host_up: FB_HOST answers ssh within a short timeout.
+fb_host_up() {
+  [ -n "$FB_HOST" ] || return 1
+  ssh -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" true >/dev/null 2>&1
+}
+
+# fb_remote: the suite on FB_HOST, in a clone of the gate's commit made from a
+# bundle sent over ssh, removed after. Output to FB_LOG; its exit status, or
+# FB_NO_CHECKOUT when the clone could not be made there (so it runs here).
+FB_NO_CHECKOUT=86
+fb_remote() {
+  local ref="refs/artisan-gate/$CI_SHA" bundle="" rc=0 q=""
+  bundle=$(mktemp "${TMPDIR:-/tmp}/artisan-gate.XXXXXX")
+  git -C "$CI_DIR" update-ref "$ref" "$CI_SHA"
+  git -C "$CI_DIR" bundle create -q "$bundle" "$ref" >/dev/null 2>&1 || rc=1
+  git -C "$CI_DIR" update-ref -d "$ref"
+  if [ "$rc" -ne 0 ]; then rm -f "$bundle"; return 1; fi
+  q=$(printf '%s' "$FB_CMD" | sed "s/'/'\\\\''/g")
+  ssh -o BatchMode=yes "$FB_HOST" "d=\$(mktemp -d) && cat >\"\$d/gate.bundle\" && git init -q \"\$d/w\" && cd \"\$d/w\" \
+    && git fetch -q \"\$d/gate.bundle\" $ref && git checkout -q --detach $CI_SHA || { rm -rf \"\$d\"; exit $FB_NO_CHECKOUT; }
+    sh -c '$q'; rc=\$?; cd /; rm -rf \"\$d\"; exit \$rc" \
+    <"$bundle" >"$FB_LOG" 2>&1 || rc=$?
+  rm -f "$bundle"
+  return "$rc"
+}
+
+# fallback why: the gate's verdict from a local run, CI having given none
+# (why). Prints the record (tier local:<machine>, conclusion success or
+# failure, fallback {why, host, command, log, passed}); 0 green, 7 red.
+fallback() {
+  local why="$1" machine="" rc=0 passed=true
+  mkdir -p "$(dirname "$FB_LOG")"
+  if fb_host_up; then
+    machine=$FB_HOST
+    fb_remote || rc=$?
+  fi
+  if [ -z "$machine" ] || [ "$rc" -eq "$FB_NO_CHECKOUT" ]; then
+    [ -z "$machine" ] || echo "merge-gate.sh: could not check out $CI_SHA on $machine; running the suite here" >&2
+    rc=0
+    machine=$(hostname -s 2>/dev/null || hostname)
+    priority_init || exit 1
+    (cd "$CI_DIR" && priority_run sh -c "$FB_CMD") >"$FB_LOG" 2>&1 || rc=$?
+  fi
+  [ "$rc" -eq 0 ] || passed=false
+  echo "merge-gate.sh: CI gave no verdict ($why); ran the suite on $machine: $([ "$passed" = true ] && echo passed || echo failed)" >&2
+  record '{}' "" | jq -c --arg m "local:$machine" --arg why "$why" --arg c "$FB_CMD" --arg l "$FB_LOG" --argjson p "$passed" \
+    '.tier = $m | .conclusion = (if $p then "success" else "failure" end)
+     | .fallback = {why: $why, host: ($m | ltrimstr("local:")), command: $c, log: $l, passed: $p}'
+  [ "$passed" = true ] || return 7
+}
+
+# no_runner why: CI gave no verdict because no runner took the run: the
+# fallback's verdict when it is on, else the no-verdict record and 19.
+no_runner() {
+  if fb_on; then fallback "$1"; return $?; fi
+  record '{}' "$1"
+  return 19
+}
+
 CI_BASE=
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
   local reuse_run="" reuse_sha=""
-  local window=0 red="" attempt="" w=""
+  local window=0 red="" attempt="" w="" start_minutes=10 start_by=0
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -496,6 +581,10 @@ cmd_ci() {
       --reuse-run) [ $# -ge 2 ] || usage; reuse_run=$2; shift 2 ;;
       --reuse-sha) [ $# -ge 2 ] || usage; reuse_sha=$2; shift 2 ;;
       --runner-waits) [ $# -ge 2 ] || usage; CI_RUNNER_WAITS=$2; shift 2 ;;
+      --fallback-command) [ $# -ge 2 ] || usage; FB_CMD=$2; shift 2 ;;
+      --fallback-log) [ $# -ge 2 ] || usage; FB_LOG=$2; shift 2 ;;
+      --fallback-host) [ $# -ge 2 ] || usage; FB_HOST=$2; shift 2 ;;
+      --start-minutes) [ $# -ge 2 ] || usage; start_minutes=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -503,6 +592,8 @@ cmd_ci() {
   case "$CI_BRANCH" in ci/*) ;; *) die "the gate branch must be under ci/, not $CI_BRANCH" ;; esac
   case "$timeout" in '' | *[!0-9]*) die "--timeout-minutes must be a whole number" ;; esac
   case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
+  case "$start_minutes" in '' | *[!0-9]*) die "--start-minutes must be a whole number" ;; esac
+  [ -z "$FB_CMD" ] || [ -n "$FB_LOG" ] || die "--fallback-command needs --fallback-log"
   for w in $CI_RUNNER_WAITS; do
     case "$w" in *[!0-9]*) die "--runner-waits must be whole numbers of minutes, not \"$CI_RUNNER_WAITS\"" ;; esac
   done
@@ -511,13 +602,13 @@ cmd_ci() {
     if try_reuse "$reuse_run" "$reuse_sha"; then return 0; fi
     if try_skip ${skip[@]+"${skip[@]}"}; then return 0; fi
     if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
-      record '{}' "could not push $CI_BRANCH to $CI_REMOTE"
-      return 19
+      no_runner "could not push $CI_BRANCH to $CI_REMOTE"
+      return $?
     fi
     if ! gh workflow run "$CI_WF" -R "$CI_REPO" --ref "$CI_BRANCH" >/dev/null 2>&1; then
       delete_branch
-      record '{}' "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
-      return 19
+      no_runner "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
+      return $?
     fi
   fi
   allowed="$timeout minutes"
@@ -525,12 +616,25 @@ cmd_ci() {
   # The base check's own span: as long as the gate itself was given.
   window=$((deadline - $(date +%s)))
   [ "$window" -ge 60 ] || window=60
+  # A run no runner has started by then never will (#386): with the fallback
+  # on, the gate stops waiting for it.
+  start_by=$(($(date +%s) + start_minutes * 60))
   while :; do
     run=$(find_run)
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
+    if fb_on && [ "$(date +%s)" -ge "$start_by" ] && ! run_started "$run"; then
+      [ -z "$run" ] || gh run cancel "$(jq -r .databaseId <<<"$run")" -R "$CI_REPO" >/dev/null 2>&1 || true
+      delete_branch
+      fallback "no runner started $CI_WF for $CI_SHA within $start_minutes minutes"
+      return $?
+    fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       delete_branch
       [ -n "$run" ] || run='{}'
+      if fb_on && ! run_started "$run"; then
+        fallback "no runner started $CI_WF for $CI_SHA within $allowed"
+        return $?
+      fi
       record "$run" "no conclusion from $CI_WF for $CI_SHA within $allowed"
       return 19
     fi

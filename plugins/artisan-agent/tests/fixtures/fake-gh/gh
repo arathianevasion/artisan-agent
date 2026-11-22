@@ -43,7 +43,7 @@
 #                         starts a workflow_dispatch run (run-<id>.json, ids from 9001) on the
 #                         branch's tip in the git repo FAKE_GH_REMOTE (a path; the branch must exist
 #                         there). How it goes, from files the test writes in $FAKE_GH_DIR:
-#                           ci-outcome      success (default) | any other conclusion (failure, cancelled, ...) | never (stays in_progress)
+#                           ci-outcome      success (default) | any other conclusion (failure, cancelled, ...) | never (stays in_progress) | queued (no runner ever takes it: stays queued)
 #                           ci-red-if-file  a path: a commit whose tree has it concludes failure (wins over ci-outcome)
 #                           ci-red-outcome  the conclusion ci-red-if-file gives instead of failure (timed_out, ...)
 #                           ci-sha          a head SHA to report instead of the branch's tip
@@ -428,7 +428,7 @@ case "${1:-} ${2:-}" in
     jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
       --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" --arg title "$title" \
       --argjson nr "$(no_runner_jobs "$id" 1)" '
-      (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
+      (if $o == "never" then {status: "in_progress", conclusion: null} elif $o == "queued" then {status: "queued", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
       | [$jobs | to_entries[] | {databaseId: ($id * 100 + .key + 1), name: .value}
           + (if (.value | IN($nr[])) then {status: "completed", conclusion: "cancelled", no_runner: true}
              else {status: $s.status, conclusion: $s.conclusion} end)] as $j
@@ -495,7 +495,7 @@ case "${1:-} ${2:-}" in
     [ ! -s "$FAKE_GH_DIR/ci-rerun-outcome" ] || outcome=$(cat "$FAKE_GH_DIR/ci-rerun-outcome")
     jq --arg o "$outcome" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson failed "$failed" \
       --argjson nr "$(no_runner_jobs "$id" "$(( $(jq -r '.attempt // 1' "$f") + 1 ))")" '
-      (if $o == "never" then {status: "in_progress", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
+      (if $o == "never" then {status: "in_progress", conclusion: null} elif $o == "queued" then {status: "queued", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
       | .attempt = ((.attempt // 1) + 1) | .updatedAt = $now | . + $s
       | .jobs = [.jobs[] | if $failed and .conclusion == "success" then .
           elif (.name | IN($nr[])) then . + {status: "completed", conclusion: "cancelled", no_runner: true}
