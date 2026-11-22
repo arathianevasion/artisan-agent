@@ -7,10 +7,10 @@ Done by a person, in a **throwaway directory**, not a real project. Needs a logg
 1. `mkdir /tmp/guard-check && cd /tmp/guard-check && claude`, accept the trust prompt.
 2. Type `/hooks`; confirm a `UserPromptExpansion` entry from `artisan-agent` is listed.
 3. **Namespaced name, interactive.** Type `/mattpocock-skills:implement hello`. Expect no block: Claude invokes `artisan-agent:implement` through the Skill tool with `hello`, and does not follow the upstream skill's instructions. Note whether the upstream skill's text still shows in the transcript.
-4. Repeat for each other name: `implement-spec` (runs `artisan-agent:implement`), `to-spec`, `retro`, `triage`, and `grill-with-docs` (must run `artisan-agent:grill`).
+4. Repeat for each other name: `implement-spec` (runs `artisan-agent:implement-plan`), `to-spec`, `retro`, `triage`, and `grill-with-docs` (must run `artisan-agent:grill`).
 5. **Bare name.** Type `/implement hello`, `/triage hello` and `/grill-with-docs hello`. Record whether each is blocked, resolves to a different skill, or is unknown, and which `command_name` the event reports (to see it, temporarily point the hook at a script that logs stdin). The matcher only has the `mattpocock-skills:` prefix; if the bare name reaches the upstream skill, widen the matcher in `guard.sh` and add a test.
 6. **Control.** Type `/mattpocock-skills:tdd hello`; it must expand normally (Esc to stop it).
-7. **Headless.** `claude -p '/mattpocock-skills:implement hello' --max-turns 2 --max-budget-usd 0.50 --output-format json </dev/null`; expect exit 0, `num_turns` 0, and the marker text in `result`. Repeat with the bare name.
+7. **Headless.** `claude -p '/mattpocock-skills:implement hello' --max-turns 2 --max-budget-usd 0.50 --output-format json </dev/null`; expect exit 0 and the transcript to show a call to the `artisan-agent:implement` skill, not the upstream skill's steps. Repeat with the bare name.
 8. **Fallback.** Run `guard/guard.sh settings-json --hook-command <absolute path to guard/block-replaced.sh>` into `.claude/settings.json` of a directory, disable the plugin there (`claude plugin disable artisan-agent`, or `enabledPlugins` false) but keep `mattpocock-skills` enabled, and repeat step 3; it must block the same way. Re-enable afterwards.
 
 ## Prerequisite 3: a deny rule stops Claude calling a replaced skill

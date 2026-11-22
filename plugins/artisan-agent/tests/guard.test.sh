@@ -56,7 +56,6 @@ test_hook_redirects_to_the_replacement_with_the_typed_arguments() {
 test_hook_output_has_no_suppress_original_prompt() {
   local out=
   out=$(printf '{"command_name":"mattpocock-skills:retro"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
-  assert_eq null "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.suppressOriginalPrompt // "null"')"
   case "$out" in *suppressOriginalPrompt*) fail "suppressOriginalPrompt in $out" ;; esac
 }
 
