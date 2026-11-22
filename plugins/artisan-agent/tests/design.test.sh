@@ -598,7 +598,6 @@ test_retire_deletes_the_prototype_branch_and_its_worktree() {
   shipped_design
   retire >/dev/null
   git rev-parse --verify -q refs/heads/prototype/faster-checkout >/dev/null && fail "the prototype branch is still there"
-  [ ! -e "$TEST_TMPDIR/pt" ] || true
   assert_eq "" "$(git worktree list | grep prototype || true)"
 }
 
