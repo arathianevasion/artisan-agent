@@ -296,14 +296,14 @@ standards_new() { # file title what
   echo "changed: created ${1##*/}"
 }
 
-hook_script() { # a self-contained copy of block-replaced.sh with the reasons baked in
+hook_script() { # a self-contained copy of block-replaced.sh with the replacements baked in
   printf '#!/bin/bash\n# artisan-agent-block-replaced: written by artisan-agent setup because plugin hooks did not fire here.\n'
   printf 'set -euo pipefail\n'
   printf '# Generated from the plugin'"'"'s guard/replaced-skills.list; rerun setup to refresh it.\n'
-  printf 'reasons=$(cat <<'"'"'EOT'"'"'\n'
-  "$GUARD/guard.sh" reasons
+  printf 'replacements=$(cat <<'"'"'EOT'"'"'\n'
+  "$GUARD/guard.sh" replacements
   printf 'EOT\n)\n'
-  sed -e '1,/^input=/{/^input=/!d;}' -e 's|^reason=.*guard.sh" reasons|reason=$(printf "%s\\n" "$reasons"|' "$GUARD/block-replaced.sh"
+  sed -e '1,/^input=/{/^input=/!d;}' -e 's|^repl=.*guard.sh" replacements|repl=$(printf "%s\\n" "$replacements"|' "$GUARD/block-replaced.sh"
 }
 
 cmd_apply() {

@@ -23,7 +23,7 @@ test_every_replaced_name_is_in_matcher_deny_rules_and_flag_watch() {
 }
 
 test_grill_with_docs_points_at_grill() {
-  assert_contains "$("$GUARD" reasons)" "Use /artisan-agent:grill instead."
+  assert_contains "$("$GUARD" replacements)" "grill-with-docs	/artisan-agent:grill"
 }
 
 test_adding_a_name_reaches_all_three_outputs() {
@@ -42,19 +42,44 @@ test_comments_and_blank_lines_are_ignored() {
   assert_eq '^mattpocock-skills:(alpha)$' "$("$GUARD" matcher --list "$TEST_TMPDIR/l.list")"
 }
 
-test_hook_blocks_with_replacement_and_suppresses_original_prompt() {
+test_hook_redirects_to_the_replacement_with_the_typed_arguments() {
   local out=
-  out=$(printf '{"command_name":"mattpocock-skills:implement","prompt":"/x"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
-  assert_contains "$out" '"decision":"block"'
-  assert_contains "$out" 'Blocked by the artisan-agent replaced-skill guard:'
-  assert_contains "$out" 'Use /artisan-agent:implement instead.'
-  assert_contains "$out" '"suppressOriginalPrompt":true'
+  out=$(printf '{"command_name":"mattpocock-skills:implement","command_args":"#12 now"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
+  assert_eq UserPromptExpansion "$(printf '%s' "$out" | jq -r .hookSpecificOutput.hookEventName)"
+  local ctx=; ctx=$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)
+  assert_contains "$ctx" 'artisan-agent:implement'
+  assert_contains "$ctx" 'Skill tool'
+  assert_contains "$ctx" '#12 now'
+  assert_eq null "$(printf '%s' "$out" | jq -r '.decision // "null"')"
+}
+
+test_hook_output_has_no_suppress_original_prompt() {
+  local out=
+  out=$(printf '{"command_name":"mattpocock-skills:retro"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
+  assert_eq null "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.suppressOriginalPrompt // "null"')"
+  case "$out" in *suppressOriginalPrompt*) fail "suppressOriginalPrompt in $out" ;; esac
 }
 
 test_hook_names_grill_for_grill_with_docs() {
   local out=
   out=$(printf '{"command_name":"mattpocock-skills:grill-with-docs"}' | "$PLUGIN_ROOT/guard/block-replaced.sh")
-  assert_contains "$out" 'Use /artisan-agent:grill instead.'
+  assert_contains "$out" 'artisan-agent:grill'
+}
+
+test_triage_can_be_started_by_claude() {
+  if awk 'NR==1{next} /^---$/{exit} {print}' "$PLUGIN_ROOT/skills/triage/SKILL.md" | grep -q '^disable-model-invocation'; then
+    fail "artisan-agent:triage still sets disable-model-invocation"
+  fi
+}
+
+test_every_replacement_in_the_list_exists_as_a_plugin_skill() {
+  local name= repl= skill=
+  while read -r name repl; do
+    skill=${repl#/artisan-agent:}
+    [ -f "$PLUGIN_ROOT/skills/$skill/SKILL.md" ] || fail "$name maps to $repl, which is not a skill in the plugin"
+  done <<EOT
+$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/replaced-skills.list")
+EOT
 }
 
 test_no_skill_is_both_replaced_and_a_dependency() {
@@ -64,12 +89,14 @@ test_no_skill_is_both_replaced_and_a_dependency() {
   done
 }
 
-test_hook_blocks_every_replaced_name_with_its_own_replacement() {
+test_hook_redirects_every_replaced_name_to_its_own_replacement() {
   local name= repl= out=
   while read -r name repl; do
-    out=$(printf '{"command_name":"mattpocock-skills:%s"}' "$name" | "$PLUGIN_ROOT/guard/block-replaced.sh")
-    assert_contains "$out" "/mattpocock-skills:$name is replaced"
-    assert_contains "$out" "Use $repl instead."
+    out=$(printf '{"command_name":"mattpocock-skills:%s","command_args":"ARGS-%s"}' "$name" "$name" | "$PLUGIN_ROOT/guard/block-replaced.sh")
+    assert_contains "$out" "${repl#/}"
+    assert_contains "$out" "/mattpocock-skills:$name"
+    assert_contains "$out" "ARGS-$name"
+    case "$out" in *'"decision"'*) fail "$name still carries a decision: $out" ;; esac
   done <<EOT
 $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PLUGIN_ROOT/guard/replaced-skills.list")
 EOT

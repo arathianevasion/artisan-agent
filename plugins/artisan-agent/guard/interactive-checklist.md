@@ -2,12 +2,12 @@
 
 Done by a person, in a **throwaway directory**, not a real project. Needs a logged-in Claude Code and the plugin installed (`claude plugin install artisan-agent@artisan-agent --scope user`). Write down exactly what you see; the answers feed the guard README. Tracked in #78.
 
-## Prerequisite 2: the hook blocks typed replaced skills
+## Prerequisite 2: the hook redirects typed replaced skills
 
 1. `mkdir /tmp/guard-check && cd /tmp/guard-check && claude`, accept the trust prompt.
 2. Type `/hooks`; confirm a `UserPromptExpansion` entry from `artisan-agent` is listed.
-3. **Namespaced name, interactive.** Type `/mattpocock-skills:implement hello`. Expect a warning line `UserPromptExpansion operation blocked by hook:` then `Blocked by the artisan-agent replaced-skill guard: ... Use /artisan-agent:implement instead.`, no model reply, and no `Original prompt:` line. Note where the line appears, whether your text stays in the input box, and whether Up-arrow recalls it.
-4. Repeat for each other name: `implement-spec`, `to-spec`, `retro`, `triage`, and `grill-with-docs` (must say `/artisan-agent:grill`).
+3. **Namespaced name, interactive.** Type `/mattpocock-skills:implement hello`. Expect no block: Claude invokes `artisan-agent:implement` through the Skill tool with `hello`, and does not follow the upstream skill's instructions. Note whether the upstream skill's text still shows in the transcript.
+4. Repeat for each other name: `implement-spec` (runs `artisan-agent:implement`), `to-spec`, `retro`, `triage`, and `grill-with-docs` (must run `artisan-agent:grill`).
 5. **Bare name.** Type `/implement hello`, `/triage hello` and `/grill-with-docs hello`. Record whether each is blocked, resolves to a different skill, or is unknown, and which `command_name` the event reports (to see it, temporarily point the hook at a script that logs stdin). The matcher only has the `mattpocock-skills:` prefix; if the bare name reaches the upstream skill, widen the matcher in `guard.sh` and add a test.
 6. **Control.** Type `/mattpocock-skills:tdd hello`; it must expand normally (Esc to stop it).
 7. **Headless.** `claude -p '/mattpocock-skills:implement hello' --max-turns 2 --max-budget-usd 0.50 --output-format json </dev/null`; expect exit 0, `num_turns` 0, and the marker text in `result`. Repeat with the bare name.
