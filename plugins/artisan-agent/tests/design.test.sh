@@ -207,3 +207,64 @@ test_resume_takes_a_bare_number() {
   start_checkout >/dev/null
   assert_contains "$("$DESIGN" resume 1)" "feature branch: feature/faster-checkout"
 }
+
+# Rework #369: with an origin, start fetches it and cuts and captures from
+# origin/<default branch>, never local main (which may lag); with none, from
+# local main. A failed fetch refuses, naming the cause and --no-fetch.
+# seed_origin: an origin whose main is a commit ahead of the local main.
+seed_origin() {
+  seed
+  O="$TEST_TMPDIR/origin"
+  git clone -q "$P" "$O"
+  git -C "$O" config user.name t && git -C "$O" config user.email t@t
+  git -C "$O" checkout -q main
+  git remote add origin "$O"
+  git fetch -q origin
+  printf 'prod build\n' >"$O/build.txt"
+  git -C "$O" commit -q -am prod
+}
+
+test_with_an_origin_start_fetches_and_cuts_and_captures_from_origin_main() {
+  seed_origin
+  local local_main= prod=
+  local_main=$(git rev-parse main)
+  prod=$(git -C "$O" rev-parse main)
+  start_checkout >/dev/null
+  assert_eq "$prod" "$(git rev-parse feature/faster-checkout)"
+  assert_eq "$prod" "$(git rev-parse prototype/faster-checkout)"
+  assert_eq "prod build" "$(cat "$P/.artisan-agent/designs/faster-checkout/before/cart.png")"
+  assert_eq "$local_main" "$(git rev-parse main)" "start moved local main"
+  assert_eq work "$(git rev-parse --abbrev-ref HEAD)" "start moved the checkout"
+  assert_eq "" "$(git config --get branch.feature/faster-checkout.merge || true)" "the feature branch tracks origin's main"
+  assert_contains "$(issue 1 | jq -r .body)" "- **Cut from:** \`origin/main\` at $prod"
+}
+
+test_a_failed_fetch_refuses_naming_the_cause_and_no_fetch() {
+  seed_origin
+  git remote set-url origin "$TEST_TMPDIR/gone"
+  local err= st=0
+  err=$(start_checkout 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "fetch"
+  assert_contains "$err" "gone"
+  assert_contains "$err" "--no-fetch"
+  nothing_created
+}
+
+test_no_fetch_cuts_from_origin_main_as_last_fetched_and_records_it() {
+  seed_origin
+  local fetched=
+  fetched=$(git rev-parse origin/main)
+  git remote set-url origin "$TEST_TMPDIR/gone"
+  "$DESIGN" start --name "Faster checkout" --step cart --designer ana --no-fetch >/dev/null
+  assert_eq "$fetched" "$(git rev-parse feature/faster-checkout)"
+  assert_eq "main build" "$(cat "$P/.artisan-agent/designs/faster-checkout/before/cart.png")"
+  assert_contains "$(issue 1 | jq -r .body)" "- **Cut from:** \`origin/main\` at $fetched, as last fetched (--no-fetch)"
+}
+
+test_with_no_origin_the_ticket_records_local_main() {
+  seed
+  start_checkout >/dev/null
+  assert_contains "$(issue 1 | jq -r .body)" "- **Cut from:** \`main\` at $(git rev-parse main)"
+  assert_contains "$("$DESIGN" resume 1)" "cut from: main at $(git rev-parse main)"
+}

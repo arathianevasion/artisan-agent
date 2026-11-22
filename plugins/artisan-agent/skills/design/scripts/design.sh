@@ -3,17 +3,23 @@
 # progress, and read one back to resume it. /artisan-agent:design runs it.
 #
 # Usage:
-#   design.sh start --name NAME --step STEP [--step STEP]... [--designer WHO]
+#   design.sh start --name NAME --step STEP [--step STEP]... [--designer WHO] [--no-fetch]
 #   design.sh status
 #   design.sh resume [#]N
 #
-# start: captures a "before" screenshot of each named journey step from a
-#   checkout of main, with the recorded capture command (scripts/capture.sh),
-#   into <main checkout>/.artisan-agent/designs/<slug>/before; cuts the feature
-#   branch feature/<slug> and the prototype branch prototype/<slug> from main;
-#   then opens the design ticket, labelled design, recording both branches,
-#   the tool link (none yet), the designer (WHO, or the gh login), the journey
-#   steps and the screenshots' folder. <slug> is NAME in lower case, with each
+# start: picks the base: with an origin remote, fetches it and uses
+#   origin/<default branch> (with --no-fetch, origin/<default branch> as last
+#   fetched); with none, the local <default branch>. The default branch is
+#   origin/HEAD's name, else main. A failed fetch refuses, naming its cause and
+#   --no-fetch. Captures a "before" screenshot of each named journey step from
+#   a checkout of the base, with the recorded capture command
+#   (scripts/capture.sh), into <main checkout>/.artisan-agent/designs/<slug>/before;
+#   cuts the feature branch feature/<slug> and the prototype branch
+#   prototype/<slug> from the base, tracking nothing; then opens the design
+#   ticket, labelled design, recording both branches, the tool link (none yet),
+#   the designer (WHO, or the gh login), the journey steps, the screenshots'
+#   folder and the base it was cut from (its ref and commit). It never moves
+#   the main checkout or any local branch but the two it cuts. <slug> is NAME in lower case, with each
 #   run of other characters a "-". A capture that fails, or a branch that
 #   already exists, stops it before anything is created; so does a gh failure,
 #   which deletes the branches it cut and the screenshots' folder if it made it. Prints the ticket, the
@@ -53,12 +59,13 @@ main_root() {
 has_branch() { git rev-parse --verify -q "refs/heads/$1" >/dev/null; }
 
 cmd_start() {
-  local name= designer= steps=() slug= main= feature= proto= root= before= made_before= st=0 s= body= url=
+  local name= designer= no_fetch= base= sha= cut= err= steps=() slug= main= feature= proto= root= before= made_before= st=0 s= body= url=
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) [ $# -ge 2 ] || usage; name=$2; shift 2 ;;
       --step) [ $# -ge 2 ] || usage; steps+=("$2"); shift 2 ;;
       --designer) [ $# -ge 2 ] || usage; designer=$2; shift 2 ;;
+      --no-fetch) no_fetch=1; shift ;;
       *) usage ;;
     esac
   done
@@ -72,7 +79,19 @@ cmd_start() {
   done
   feature="feature/$slug" proto="prototype/$slug"
   main=$(main_branch)
-  has_branch "$main" || die "no $main branch to cut the design from"
+  if git remote get-url origin >/dev/null 2>&1; then
+    # A design starts from prod: origin, fetched now, not a local main that may lag.
+    base="origin/$main"
+    if [ -z "$no_fetch" ]; then
+      err=$(git fetch -q origin 2>&1) || die "fetching origin failed, so $base may be stale: $(printf '%s' "$err" | tr '\n' ' ')
+Retry when origin is reachable, or pass --no-fetch to start from $base as last fetched."
+    fi
+  else
+    base=$main
+  fi
+  sha=$(git rev-parse --verify -q "$base^{commit}") || die "no $base to cut the design from"
+  cut="\`$base\` at $sha"
+  [ -z "$no_fetch" ] || [ "$base" = "$main" ] || cut="$cut, as last fetched (--no-fetch)"
   for s in "$feature" "$proto"; do
     has_branch "$s" && die "branch $s already exists: resume that design, or pick another name"
   done
@@ -83,12 +102,12 @@ cmd_start() {
   before="$root/.artisan-agent/designs/$slug/before"
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/artisan-design.XXXXXX")
   trap 'git worktree remove --force "$tmp/main" >/dev/null 2>&1 || true; rm -rf "$tmp"; git worktree prune >/dev/null 2>&1 || true' EXIT
-  git worktree add -q --detach "$tmp/main" "$main" || die "could not check out $main to capture from"
+  git worktree add -q --detach "$tmp/main" "$sha" || die "could not check out $base to capture from"
   # Into a scratch folder first, so a failed step leaves no half-filled one.
   for s in "${steps[@]}"; do
     (cd "$tmp/main" && "$PLUGIN_ROOT/scripts/capture.sh" "$s" "$tmp/before" >/dev/null) || {
       st=$?
-      printf 'design.sh: capturing step %s from %s failed (capture.sh exit %s)\n' "$s" "$main" "$st" >&2
+      printf 'design.sh: capturing step %s from %s failed (capture.sh exit %s)\n' "$s" "$base" "$st" >&2
       exit "$st"
     }
   done
@@ -96,11 +115,11 @@ cmd_start() {
   mkdir -p "$before"
   cp -R "$tmp/before/." "$before/"
 
-  git branch "$feature" "$main"
-  git branch "$proto" "$main"
+  git branch --no-track "$feature" "$sha"
+  git branch --no-track "$proto" "$sha"
 
-  body=$(printf 'A design in progress, started with /artisan-agent:design.\n\n- **Feature branch:** `%s`\n- **Prototype branch:** `%s`\n- **Tool link:** none yet\n- **Designer:** %s\n- **Journey steps:** %s\n- **Before screenshots:** `%s`\n' \
-    "$feature" "$proto" "$designer" "$(IFS=,; printf '%s' "${steps[*]}" | sed 's/,/, /g')" "$before")
+  body=$(printf 'A design in progress, started with /artisan-agent:design.\n\n- **Feature branch:** `%s`\n- **Prototype branch:** `%s`\n- **Tool link:** none yet\n- **Designer:** %s\n- **Journey steps:** %s\n- **Before screenshots:** `%s`\n- **Cut from:** %s\n' \
+    "$feature" "$proto" "$designer" "$(IFS=,; printf '%s' "${steps[*]}" | sed 's/,/, /g')" "$before" "$cut")
   url=$(printf '%s' "$body" | "$GH" issue create --title "Design: $name" --body-file - --label "$LABEL") || {
     git branch -D -q "$feature" "$proto" || true
     if [ -n "$made_before" ]; then rm -rf "$before"; rmdir "$(dirname "$before")" 2>/dev/null || true; fi
