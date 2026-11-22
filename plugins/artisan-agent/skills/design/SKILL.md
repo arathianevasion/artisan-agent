@@ -35,7 +35,7 @@ Journeys live in the product's `journeys/` folder, one Markdown file per journey
 
 Write each journey with `design.sh journey --design <design slug> --name "<journey>" --persona "<persona>" --goal <g> --action <a> --next <n> [--goal ...]...`. A `--goal` starts a step; the `--action` and `--next` after it belong to it. It writes the file on the feature branch only, in its own checkout, and commits it there; the main checkout and main are untouched.
 
-A product with no journeys yet gets only the steps the change touches, written from main first: the feature branch is cut from main, so those steps are the journey's first version, and journeys grow one feature at a time. For a product that has journeys, give the journey again with the steps as the design changes them; the file written replaces the old one. The feature branch's difference from main is the journey diff. It merges when the feature ships, so the journeys on main always describe prod. A change to a user journey always comes back to the Artisan.
+A product with no journeys yet gets only the steps the change touches, written from main first: the feature branch is cut from main, so those steps are the journey's first version, and journeys grow one feature at a time. For a product that has journeys, read the journey's file first, then give every step of it with the design's changes made: the file written replaces the old one, so a step you leave out is deleted. The feature branch's difference from main is the journey diff. It merges when the feature ships, so the journeys on main always describe prod. A change to a user journey always comes back to the Artisan.
 
 ## 4. Prototype
 

@@ -349,10 +349,11 @@ test_the_skill_names_the_journey_format_and_the_write_from_main_step() {
   text=$(sed -n '/^## 3\. /,/^## 4\. /p' "$SKILL")
   assert_contains "$text" "design.sh journey"
   assert_contains "$text" "journeys/"
-  assert_contains "$text" "persona"
-  assert_contains "$text" "goal"
-  assert_contains "$text" "action"
-  assert_contains "$text" "next"
+  assert_contains "$text" "**Persona:**"
+  assert_contains "$text" "- **Goal:**"
+  assert_contains "$text" "- **Action:**"
+  assert_contains "$text" "- **Next:**"
+  assert_contains "$text" "written from main first"
   assert_contains "$text" "from main"
   assert_contains "$text" "feature branch"
 }
