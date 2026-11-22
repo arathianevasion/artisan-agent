@@ -6,7 +6,7 @@
 #   project-setup.sh begin [REPO]          make or reuse the setup worktree; prints its path
 #   project-setup.sh apply WT ANSWERS      add every missing item in the setup worktree WT and
 #                                          commit; ANSWERS is a JSON file (see PROJECT.md)
-#   project-setup.sh labels WT             create the ten labels missing from the GitHub tracker
+#   project-setup.sh labels WT             create the eleven labels missing from the GitHub tracker
 #   project-setup.sh pre-commit [REPO]     install guard/pre-commit.sh (main-checkout fallback)
 #   project-setup.sh hook-probe [REPO]     prints "fires" or "silent": does the plugin's
 #                                          replaced-skill hook fire here? (headless claude, $0 if it fires)
@@ -501,7 +501,7 @@ $(jq -r '.checks // [] | .[] | [.command, (.break_cmd // ""), (.break // .break_
 EOT
   if [ $# -gt 0 ]; then edit section "$wt/CODING_STANDARDS.md" "Checks" "$@"; fi
 
-  # The ten labels, recorded in the triage-labels doc.
+  # The eleven labels, recorded in the triage-labels doc.
   edit labels-doc "$wt/docs/agents/triage-labels.md" | sed '/^labels:$/,$d'
 
   # Who the Artisan is, and agent-filed tickets carry needs-triage (read by triage).
@@ -582,12 +582,12 @@ EOH
     then continue; fi
     case "$name" in
       review-gate) color=5319e7 ;; plan) color=0e8a16 ;; in-run) color=fbca04 ;;
-      urgent) color=b60205 ;; deferred) color=c5def5 ;; *) color=ededed ;;
+      urgent) color=b60205 ;; deferred) color=c5def5 ;; design) color=d4c5f9 ;; *) color=ededed ;;
     esac
     (cd "$wt" && "$GH" label create "$name" --color "$color" --description "$desc" >/dev/null) || die "gh label create $name failed"
     echo "changed: created label $name"
   done
-  echo "labels: the ten labels exist on the tracker"
+  echo "labels: the eleven labels exist on the tracker"
 }
 
 cmd_pre_commit() {
@@ -709,7 +709,7 @@ cmd_finish() {
   url=$(open_pr "$wt")
   if [ -z "$url" ]; then
     url=$(cd "$wt" && "$GH" pr create --head "$BRANCH" --base "${base#origin/}" --title "Set up Artisan Agent" \
-      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the ten labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
+      --body "Project setup by /artisan-agent:setup: settings (plugins enabled, marketplace, replaced-skill deny rules), config with every default, standards with \"Always ask\", the eleven labels in the triage-labels doc, who the Artisan is, the front-door pointer, and the product voice standards (VOICE_STANDARDS.md) imported beside it. Nothing existing was overwritten.") \
       || die "gh pr create failed; the branch is pushed and the worktree kept at $wt"
     echo "pr: $url"
   else
