@@ -20,7 +20,8 @@
 #       verifier's pid; only after an error (judge's 14) does it start the
 #       next, or after the Artisan changed the criteria (gate-action.sh rewrite,
 #       split, drop-criterion mark the judged verifier superseded, #400): then
-#       the next judges the same commit against the new criteria. The verifier is told the recorded checks (checks.sh, read from
+#       the next judges the same commit against the new criteria.
+#       The verifier is told the recorded checks (checks.sh, read from
 #       the integration worktree's CODING_STANDARDS.md, not the worker's
 #       branch) and the one command that runs them and writes their results
 #       to verify/checks/<t>.<v>.json; with none recorded, to run what it

@@ -421,9 +421,9 @@ test_u_a_crashed_calls_split_ticket_past_the_first_30_needs_triage_issues_is_reu
 
 # #400: after a rewrite, split or drop on an unmeetable-criterion gate, the
 # verifier already judged this attempt's commit under criteria that no longer
-# stand: verify.sh start launches a fresh one, whatever its verdict was.
-# $1 names the action, $2 the verdict the fresh verifier gives; the judged verifier's verdict is then made "pass", the
-# verdict start treats as final for an attempt.
+# stand: verify.sh start launches a fresh one on the same commit, and its
+# pass merges the ticket. $1 names the action, $2 is what judge prints for the
+# fresh verifier.
 supersede_case() {
   open_unmeetable_gate
   case "$1" in
@@ -439,6 +439,10 @@ supersede_case() {
   assert_eq "$(state_get '.tickets["1"].verifications[0].commit')" "$(state_get '.tickets["1"].verifications[1].commit')" "same commit"
   judge_verifier 2
   assert_eq "$2" "$JUDGE_OUT" "the fresh verifier judged the changed criteria"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1
+  assert_eq 2 "$(state_get '.tickets["1"].verifications | length')" "a judged fresh verifier is final again"
+  merge_and_close
+  assert_eq 1 "$(state_get '.tickets["1"].attempts')" "no worker attempt used"
 }
 
 test_u_start_launches_a_fresh_verifier_after_a_rewrite() {
