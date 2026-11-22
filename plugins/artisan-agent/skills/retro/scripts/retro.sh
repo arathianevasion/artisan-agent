@@ -13,6 +13,8 @@
 #                                   retro/checked.json (homes, questions); exit 1 lists problems
 #   retro.sh render <run-dir>       the chat round as Markdown: lessons, questions,
 #                                   signals, the motivation and the satisfaction questions
+#   (a design lesson is kept at "individual" | "product" | "team" the same way, default product,
+#   with no size cap; a team one is drafted in retro/team-design.md)
 #   retro.sh voice-moves <run-dir>  a newer default voice version, one move per voice file whose
 #                                   default block is older than the template's, with the block's
 #                                   diff; nothing when every file is current (render adds it too)
@@ -438,7 +440,7 @@ cmd_deliver() {
     if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
     kind=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .kind' "$CHECKED")
     case "$kind:$dec" in
-      voice:individual|voice:product|voice:team) voice_level "$id" "$dec"; dec=yes ;;
+      voice:individual|voice:product|voice:team|design:individual|design:product|design:team) voice_level "$id" "$dec"; dec=yes ;;
     esac
     case "$dec" in yes|this-project) ;; *) continue ;; esac
     lf="$RD/retro/.lesson-$id.json"
@@ -486,6 +488,24 @@ cmd_deliver() {
               local line=; line=$(py voice-line "$lf")
               printf '%s\n  %s\n' "$line" "$(origin_line "$lf")" >>"$RD/retro/team-voice.md"
               mark "$id" team "$RD/retro/team-voice.md"; printf 'team\t%s\t%s\n' "$id" "$line"
+            fi ;;
+          *) ids_project="$ids_project $id" ;;
+        esac ;;
+      design)
+        case "$(jq -r .delivery "$lf")" in
+          individual)
+            need_home
+            if ! delivered "$id" design; then
+              py apply "$HOME_DIR" "$lf" >/dev/null || die "could not write design lesson $id to $HOME_DIR"
+              commit_in "$HOME_DIR" "$(printf 'Design lesson %s (run %s): %s\n\n%s' "$id" "$RUN" "$(jq -r .lesson "$lf")" "$(origin_line "$lf")")" DESIGN_STANDARDS.md
+              mark "$id" design "$HOME_DIR/DESIGN_STANDARDS.md"; printf 'design\t%s\t%s\n' "$id" "$HOME_DIR/DESIGN_STANDARDS.md"
+            fi ;;
+          team)
+            # A drafted line only, as for a team voice lesson: no other repo is edited.
+            if ! delivered "$id" team; then
+              local line=; line=$(py design-line "$lf")
+              printf '%s\n  %s\n' "$line" "$(origin_line "$lf")" >>"$RD/retro/team-design.md"
+              mark "$id" team "$RD/retro/team-design.md"; printf 'team\t%s\t%s\n' "$id" "$line"
             fi ;;
           *) ids_project="$ids_project $id" ;;
         esac ;;

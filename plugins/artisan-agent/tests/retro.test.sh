@@ -1205,3 +1205,102 @@ test_deliver_lets_an_edit_follow_a_replace_of_the_same_file_in_one_kept_set() {
   "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "an edit after a replace was refused"
   assert_contains "$(cat "$TEST_TMPDIR/project-wt/retro-r1/docs/new.md")" "- a line"
 }
+
+# --- design lessons (#331) ----------------------------------------------------
+
+# design_run: the sample run with a DESIGN_STANDARDS.md in the project (on main)
+# and none in the individual home yet.
+design_run() {
+  sample_run
+  cp "$PLUGIN_ROOT/templates/DESIGN_STANDARDS.md" "$PROJECT/DESIGN_STANDARDS.md"
+  gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m design; gq -C "$PROJECT" push origin main
+  mkdir -p "$RUN_DIR/retro"
+}
+
+# design_lessons: one design lesson at each level; D1 is far past a voice file's cap.
+design_lessons() {
+  local long=; long=$(printf 'word %.0s' $(seq 1 3000))
+  jq -n --arg long "$long" '{lessons: [
+    {id: "D1", kind: "design", lesson: "A destructive action always asks first", role: "product", scope: "this-project",
+     why: "The delete in #10 went through without a confirm"},
+    {id: "D2", kind: "design", level: "individual", lesson: "Empty states say what to do next", role: "product",
+     scope: "this-project", why: "Asked for at the gate"},
+    {id: "D3", kind: "design", level: "team", lesson: "Toasts never cover the primary action", role: "both",
+     scope: "this-project", why: "Seen on two screens"},
+    {id: "D4", kind: "design", lesson: "Long design note", role: "product", scope: "this-project", why: "Big lesson",
+     change: {text: ("- " + $long)}}]}' >"$RUN_DIR/retro/lessons.json"
+}
+
+test_a_design_lesson_defaults_to_the_product_design_file() {
+  design_run; design_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused a design lesson"
+  local c="$RUN_DIR/retro/checked.json"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "D1") | .home' "$c")" "DESIGN_STANDARDS.md"
+  assert_eq product "$(jq -r '.lessons[] | select(.id == "D1") | .level' "$c")"
+  assert_eq individual "$(jq -r '.lessons[] | select(.id == "D2") | .level' "$c")"
+}
+
+test_check_refuses_a_design_lesson_with_an_unknown_level() {
+  design_run
+  jq -n '{lessons: [{id: "D1", kind: "design", level: "company", lesson: "a", role: "both", scope: "this-project", why: "b"}]}' \
+    >"$RUN_DIR/retro/lessons.json"
+  local out=; out=$("$RETRO" check "$RUN_DIR" 2>&1) && fail "an unknown level passed"
+  assert_contains "$out" "level must be individual, product or team"
+}
+
+test_a_kept_product_design_lesson_lands_in_the_retro_prs_design_file_and_never_for_size() {
+  design_run; design_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"D1":"yes","D4":"yes"}' >"$TEST_TMPDIR/d.json"
+  local wt="$TEST_TMPDIR/project-wt/retro-r1" home0=
+  home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr >/dev/null || fail "deliver refused a design lesson"
+  assert_eq 2 "$(git -C "$TEST_TMPDIR/origin.git" rev-list --count main..retro/r1)" "one commit per lesson"
+  assert_eq "DESIGN_STANDARDS.md" "$(git -C "$wt" diff --name-only main..HEAD)" "the PR changes only the design file"
+  local ux; ux=$(awk '/^## UX conventions/ {f = 1; next} /^## / {f = 0} f' "$wt/DESIGN_STANDARDS.md")
+  assert_contains "$ux" "- A destructive action always asks first"
+  assert_contains "$ux" "- word word word"
+  assert_contains "$(git -C "$wt" log --format=%B main..HEAD)" "Origin: run r1 of owner/repo"
+  assert_contains "$(cat "$FAKE_GH_DIR/calls")" "| D1 | A destructive action always asks first |"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
+}
+
+test_a_kept_individual_design_lesson_is_a_home_commit_with_origin() {
+  design_run; design_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"D2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local f="$ARTISAN_HOME/DESIGN_STANDARDS.md" home0= out=
+  home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json")
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "one home commit"
+  assert_contains "$(git -C "$ARTISAN_HOME" log -1 --format=%B)" "Origin: run r1 of owner/repo"
+  assert_eq "" "$(git -C "$ARTISAN_HOME" status --porcelain)" "home left clean"
+  assert_contains "$(cat "$f")" "- Empty states say what to do next"
+  assert_contains "$out" "design	D2	$f"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "an individual lesson made a project branch"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_eq $((home0 + 1)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "second delivery committed"
+}
+
+test_a_team_design_lesson_is_only_a_line_to_land_by_pr() {
+  design_run; design_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"D3":"yes"}' >"$TEST_TMPDIR/d.json"
+  local home0= out=; home0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  out=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" --pr)
+  assert_contains "$out" "team	D3	- Toasts never cover the primary action"
+  assert_contains "$(cat "$RUN_DIR/retro/team-design.md")" "- Toasts never cover the primary action"
+  assert_contains "$(cat "$RUN_DIR/retro/team-design.md")" "Origin: run r1 of owner/repo"
+  assert_eq "$home0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the home changed"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "a team lesson made a project branch"
+  assert_eq 0 "$(cat "$FAKE_GH_DIR/calls" 2>/dev/null | grep -c '^issue create' || true)" "a ticket was filed"
+}
+
+test_the_artisan_can_keep_a_design_lesson_at_another_level() {
+  design_run; design_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"D1":"individual"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null
+  assert_contains "$(cat "$ARTISAN_HOME/DESIGN_STANDARDS.md")" "- A destructive action always asks first"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "landed at product instead"
+}
