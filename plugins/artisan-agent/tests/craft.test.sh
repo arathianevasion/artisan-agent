@@ -56,6 +56,7 @@ test_craft_feature_and_effort_name_the_design_stage_before_to_spec() {
     n=$(printf '%s\n' "$sec" | grep -n '/artisan-agent:design' | head -1 | cut -d: -f1 || true)
     [ -n "$n" ] || fail "$r route does not name /artisan-agent:design"
     local s; s=$(printf '%s\n' "$sec" | grep -n '/artisan-agent:to-spec' | head -1 | cut -d: -f1 || true)
+    [ -n "$s" ] || fail "$r route does not name /artisan-agent:to-spec"
     [ "$n" -lt "$s" ] || fail "$r route names design after to-spec"
   done
 }
