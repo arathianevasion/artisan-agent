@@ -62,13 +62,15 @@ mkdir -p "$dir"
 dir=$(cd "$dir" && pwd)
 root=$(git rev-parse --show-toplevel 2>/dev/null) || root=$(pwd)
 
-# What the folder holds now, by checksum, so a recapture that overwrites the
-# same file still counts.
+# What the folder holds now, by checksum; with the marker's time, a file
+# written during the run counts whether it is new, changed or rewritten with
+# the same bytes (a recapture of an unchanged screen).
 snapshot() { (cd "$dir" && find . -type f -print0 | xargs -0 cksum 2>/dev/null | sort) || true; }
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/artisan-capture.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 snapshot >"$tmp/before"
+touch "$tmp/marker"
 st=0
 (cd "$root" && ARTISAN_CAPTURE_STEP=$step ARTISAN_CAPTURE_DIR=$dir bash -c "$cmd") >"$tmp/out" 2>&1 </dev/null || st=$?
 if [ "$st" != 0 ]; then
@@ -78,9 +80,12 @@ fi
 snapshot >"$tmp/after"
 
 # Lines of "after" not in "before" are the files written: "<sum> <size> ./<path>".
-captured=$(comm -13 "$tmp/before" "$tmp/after" | sed -E 's#^[0-9]+ [0-9]+ \./##')
+captured=$({
+  comm -13 "$tmp/before" "$tmp/after" | sed -E 's#^[0-9]+ [0-9]+ \./##'
+  (cd "$dir" && find . -type f -newer "$tmp/marker") | sed 's#^\./##'
+} | sort -u)
 if [ -n "$captured" ]; then
-  printf '%s\n' "$captured" | sed "s#^#$dir/#"
+  while IFS= read -r path; do printf '%s/%s\n' "$dir" "$path"; done <<<"$captured"
   exit 0
 fi
 if [ -s "$tmp/out" ]; then

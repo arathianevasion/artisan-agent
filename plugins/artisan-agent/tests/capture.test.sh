@@ -75,3 +75,15 @@ test_a_step_name_that_is_not_a_file_name_is_refused() {
 test_capture_command_defaults_to_empty() {
   assert_eq null "$("$PLUGIN_ROOT/scripts/config.sh" show --file "$TEST_TMPDIR/none.yml" | jq .capture_command)"
 }
+
+test_recapturing_a_step_with_identical_bytes_still_counts() {
+  config_with 'printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"'
+  "$CAPTURE" home "$TEST_TMPDIR/shots" --file "$TEST_TMPDIR/config.yml" >/dev/null
+  sleep 1
+  assert_eq "$TEST_TMPDIR/shots/home.png" "$("$CAPTURE" home "$TEST_TMPDIR/shots" --file "$TEST_TMPDIR/config.yml")"
+}
+
+test_a_folder_whose_name_has_sed_characters_is_printed_as_it_is() {
+  config_with 'printf PNG >"$ARTISAN_CAPTURE_DIR/$ARTISAN_CAPTURE_STEP.png"'
+  assert_eq "$TEST_TMPDIR/a&b#c/home.png" "$("$CAPTURE" home "$TEST_TMPDIR/a&b#c" --file "$TEST_TMPDIR/config.yml")"
+}
