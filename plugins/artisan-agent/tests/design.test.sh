@@ -509,3 +509,73 @@ test_a_dispatch_while_the_prototype_worker_still_runs_is_refused() {
   while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
   assert_eq 1 "$(git rev-list --count main..prototype/faster-checkout)" "a second worker ran"
 }
+
+# design.sh approve (#327): the design package is recorded on the design
+# ticket; screenshots are read from the feature branch, beside the journeys.
+# add_screenshots: commits a screenshot per step on the feature branch, in a throwaway checkout.
+add_screenshots() {
+  local wt="$TEST_TMPDIR/shots" s=
+  git worktree add -q "$wt" feature/faster-checkout
+  mkdir -p "$wt/journeys/screenshots"
+  for s in "$@"; do printf 'after %s\n' "$s" >"$wt/journeys/screenshots/$s.png"; done
+  git -C "$wt" add -A && git -C "$wt" commit -q -m screenshots
+  git worktree remove --force "$wt"
+}
+approve() { "$DESIGN" approve --design faster-checkout --ticket 1 "$@"; }
+comments() { cat "$FAKE_GH_DIR/comments-1.md"; }
+
+test_approve_records_journey_diff_screenshots_prototype_and_tool_link() {
+  seed; start_checkout >/dev/null
+  journey >/dev/null
+  add_screenshots cart pay
+  git worktree add -q "$TEST_TMPDIR/pt" prototype/faster-checkout
+  printf 'proto\n' >"$TEST_TMPDIR/pt/proto.txt"
+  git -C "$TEST_TMPDIR/pt" add -A && git -C "$TEST_TMPDIR/pt" commit -q -m proto
+  git worktree remove --force "$TEST_TMPDIR/pt"
+  approve --tool-link https://figma.example/f/1 >/dev/null
+  local c=
+  c=$(comments)
+  assert_contains "$c" "Design package: approved"
+  assert_contains "$c" "journeys/buy-a-ticket.md"
+  assert_contains "$c" "\`cart\`: \`journeys/screenshots/cart.png\` on \`feature/faster-checkout\`"
+  assert_contains "$c" "\`pay\`: \`journeys/screenshots/pay.png\`"
+  assert_contains "$c" "- **Prototype:** \`prototype/faster-checkout\`"
+  assert_contains "$c" "- **Tool link:** https://figma.example/f/1"
+}
+
+test_approve_refuses_while_the_prototype_branch_is_behind_main_naming_the_rebase() {
+  seed; start_checkout >/dev/null
+  add_screenshots cart pay
+  git worktree add -q "$TEST_TMPDIR/pt" prototype/faster-checkout
+  printf 'proto\n' >"$TEST_TMPDIR/pt/proto.txt"
+  git -C "$TEST_TMPDIR/pt" add -A && git -C "$TEST_TMPDIR/pt" commit -q -m proto
+  git worktree remove --force "$TEST_TMPDIR/pt"
+  git checkout -q main && printf 'newer\n' >news.txt && git add news.txt && git commit -q -m news && git checkout -q work
+  local st=0 err=
+  err=$(approve 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "prototype/faster-checkout is behind main"
+  assert_contains "$err" "rebase"
+  [ ! -e "$FAKE_GH_DIR/comments-1.md" ] || fail "a package was recorded"
+}
+
+test_the_packages_screenshots_are_read_from_the_feature_branch_and_a_missing_one_refuses() {
+  seed; start_checkout >/dev/null
+  add_screenshots cart
+  local st=0 err=
+  err=$(approve 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "no screenshot on feature/faster-checkout for step(s): pay"
+  assert_eq "" "$(git status --porcelain --untracked-files=no)" "approve touched the checkout"
+  assert_eq journeys/screenshots/cart.png "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+}
+
+test_a_design_with_no_prototype_and_no_tool_link_approves_on_screenshots_alone() {
+  seed; start_checkout >/dev/null
+  add_screenshots cart pay
+  git checkout -q main && printf 'newer\n' >news.txt && git add news.txt && git commit -q -m news && git checkout -q work
+  approve >/dev/null
+  assert_contains "$(comments)" "- **Prototype:** none"
+  assert_contains "$(comments)" "- **Tool link:** none"
+  assert_contains "$(comments)" "pay"
+}
