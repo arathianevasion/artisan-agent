@@ -268,3 +268,92 @@ test_with_no_origin_the_ticket_records_local_main() {
   assert_contains "$(issue 1 | jq -r .body)" "- **Cut from:** \`main\` at $(git rev-parse main)"
   assert_contains "$("$DESIGN" resume 1)" "cut from: main at $(git rev-parse main)"
 }
+
+# #325: user journeys, one file per journey, written on the feature branch only.
+journey() {
+  "$DESIGN" journey --design faster-checkout --name "Buy a ticket" --persona "First-time buyer" \
+    --goal "Pick a seat" --action "Taps a seat on the map and sees its price" --next "Pay" \
+    --goal "Pay" --action "Enters card details and sees a receipt" --next "Confirmation" "$@"
+}
+
+test_a_journey_file_names_its_persona_and_lists_ordered_steps() {
+  seed
+  start_checkout >/dev/null
+  journey >/dev/null
+  local f=
+  f=$(git show feature/faster-checkout:journeys/buy-a-ticket.md)
+  assert_contains "$f" "# Journey: Buy a ticket"
+  assert_contains "$f" "**Persona:** First-time buyer"
+  assert_eq "### 1. Pick a seat
+### 2. Pay" "$(printf '%s\n' "$f" | grep '^### ')"
+  assert_eq "- **Goal:** Pick a seat
+- **Action:** Taps a seat on the map and sees its price
+- **Next:** Pay
+- **Goal:** Pay
+- **Action:** Enters card details and sees a receipt
+- **Next:** Confirmation" "$(printf '%s\n' "$f" | grep '^- ')"
+}
+
+test_with_no_journeys_only_the_touched_steps_are_written_on_the_feature_branch() {
+  seed
+  start_checkout >/dev/null
+  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/' || true)" "journeys before"
+  "$DESIGN" journey --design faster-checkout --name "Buy a ticket" --persona "First-time buyer" \
+    --goal "Pay" --action "Enters card details" --next "Confirmation" >/dev/null
+  assert_eq "journeys/buy-a-ticket.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+  assert_eq 1 "$(git show feature/faster-checkout:journeys/buy-a-ticket.md | grep -c '^### ')"
+}
+
+test_the_journey_changes_stay_off_main_and_the_checkout() {
+  seed
+  start_checkout >/dev/null
+  local main=
+  main=$(git rev-parse main)
+  journey >/dev/null
+  assert_eq "$main" "$(git rev-parse main)" "main moved"
+  assert_eq "" "$(git ls-tree -r --name-only main | grep '^journeys/' || true)" "main has journeys"
+  [ ! -e "$P/journeys" ] || fail "the checkout got the journeys folder"
+  assert_eq work "$(git rev-parse --abbrev-ref HEAD)"
+  assert_eq "" "$(git status --porcelain -- journeys)" "the checkout is dirty"
+  assert_eq "" "$(git worktree list | grep -v "^$P " || true)" "a worktree was left behind"
+}
+
+test_a_second_journey_is_its_own_file_and_a_rewrite_replaces_steps() {
+  seed
+  start_checkout >/dev/null
+  journey >/dev/null
+  "$DESIGN" journey --design faster-checkout --name "Refund" --persona "Buyer" \
+    --goal "Ask" --action "Opens help" --next "End" >/dev/null
+  assert_contains "$(journey)" "unchanged"
+  assert_eq "journeys/buy-a-ticket.md
+journeys/refund.md" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/')"
+  assert_eq 2 "$(git show feature/faster-checkout:journeys/buy-a-ticket.md | grep -c '^### ')"
+}
+
+test_a_journey_step_without_goal_action_and_next_is_refused() {
+  seed
+  start_checkout >/dev/null
+  assert_status 2 "$DESIGN" journey --design faster-checkout --name J --persona p --goal g --action a
+  assert_status 2 "$DESIGN" journey --design faster-checkout --name J --persona p --action a --next n
+  assert_status 2 "$DESIGN" journey --design faster-checkout --name J --goal g --action a --next n
+  assert_eq "" "$(git ls-tree -r --name-only feature/faster-checkout | grep '^journeys/' || true)"
+}
+
+test_a_journey_for_a_design_that_was_not_started_is_refused() {
+  seed
+  assert_status 1 "$DESIGN" journey --design nope --name J --persona p --goal g --action a --next n
+}
+
+test_the_skill_names_the_journey_format_and_the_write_from_main_step() {
+  local text=
+  text=$(sed -n '/^## 3\. /,/^## 4\. /p' "$SKILL")
+  assert_contains "$text" "design.sh journey"
+  assert_contains "$text" "journeys/"
+  assert_contains "$text" "**Persona:**"
+  assert_contains "$text" "- **Goal:**"
+  assert_contains "$text" "- **Action:**"
+  assert_contains "$text" "- **Next:**"
+  assert_contains "$text" "written from main first"
+  assert_contains "$text" "from main"
+  assert_contains "$text" "feature branch"
+}
