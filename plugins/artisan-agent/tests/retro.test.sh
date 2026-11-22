@@ -18,6 +18,8 @@ sample_run() {
   printf '.artisan-agent/runs/\n' >"$PROJECT/.gitignore"
   cp "$PLUGIN_ROOT/templates/config.yml" "$PROJECT/.artisan-agent/config.yml"
   printf '# Coding standards\n\n## Always ask\n\n- new dependencies\n' >"$PROJECT/CODING_STANDARDS.md"
+  printf '# Product standards\n\n## Always ask\n' >"$PROJECT/PRODUCT_STANDARDS.md"
+  printf '# Glossary\n\n## Language\n' >"$PROJECT/GLOSSARY.md"
   gq -C "$PROJECT" add -A
   gq -C "$PROJECT" commit -m init
   gq -C "$PROJECT" remote add origin "$TEST_TMPDIR/origin.git"
@@ -958,7 +960,72 @@ test_deliver_counts_every_kept_voice_lesson_toward_the_cap() {
   echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
   local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "two kept lessons went past the cap"
   assert_contains "$err" "cap"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+}
+
+# --- the kept voice lessons are checked together before any write (#302) ------
+
+test_deliver_refuses_two_kept_lessons_past_the_cap_before_any_commit() {
+  voice_run
+  roomy_voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md"; gq -C "$ARTISAN_HOME" commit -am roomy
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the cap"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "a commit was made before the refusal"
+  assert_eq 0 "$(grep -c 'Great question' "$ARTISAN_HOME/VOICE_STANDARDS.md" || true)" "the first lesson was written"
+  # Dropping one lets the other deliver.
+  echo '{"V1":"yes","V2":"no"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "the fitting set was refused"
   assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+}
+
+test_deliver_refuses_two_kept_replaces_of_one_rule_before_any_commit() {
+  voice_run
+  voice_file "$ARTISAN_HOME/VOICE_STANDARDS.md" "- Rule 0"; gq -C "$ARTISAN_HOME" commit -am own
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "First take", role: "both", scope: "this-project", why: "a",
+     change: {mode: "replace", rule: "- Rule 0"}},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "Second take", role: "both", scope: "this-project", why: "b",
+     change: {mode: "replace", rule: "- Rule 0"}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "a rule was replaced twice"
+  assert_contains "$err" "V1"
+  assert_contains "$err" "V2"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "a commit was made before the refusal"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "- Rule 0"
+}
+
+test_deliver_refuses_a_lesson_moved_to_a_fuller_level_before_any_commit() {
+  voice_run
+  full_voice_file "$PROJECT/VOICE_STANDARDS.md"
+  gq -C "$PROJECT" commit -am full; gq -C "$PROJECT" push origin main
+  jq -n '{lessons: [
+    {id: "V1", kind: "voice", reader: "chat", lesson: "No \"Great question\" openers", role: "both", scope: "this-project", why: "a"},
+    {id: "V2", kind: "voice", reader: "chat", lesson: "No closing offers to help further, none at all", role: "both", scope: "this-project", why: "b"}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"product"}' >"$TEST_TMPDIR/d.json"
+  local c0=; c0=$(git -C "$ARTISAN_HOME" rev-list --count HEAD)
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered past the product cap"
+  assert_contains "$err" "V2"
+  assert_contains "$err" "cap"
+  assert_eq "$c0" "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "the individual lesson was committed before the refusal"
+}
+
+test_deliver_delivers_a_kept_voice_set_that_fits_as_before() {
+  voice_run
+  two_voice_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null || fail "check refused"
+  echo '{"V1":"yes","V2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "a fitting set was refused"
+  assert_contains "$(cat "$ARTISAN_HOME/VOICE_STANDARDS.md")" "Great question"
+  assert_eq '- No closing offers to help further' "$(tail -1 "$ARTISAN_HOME/VOICE_STANDARDS.md")" "the second rule"
 }
 
 test_the_round_says_a_voice_lesson_can_be_kept_at_another_level() {
@@ -1079,4 +1146,62 @@ test_a_move_keeps_a_voice_file_with_crlf_line_endings_byte_for_byte_outside_the_
   gq -C "$ARTISAN_HOME" add -A; gq -C "$ARTISAN_HOME" commit -m crlf
   python3 -I "$PLUGIN_ROOT/skills/retro/scripts/retro.py" voice-upgrade "$ARTISAN_VOICE_TEMPLATE" "$f" >/dev/null 2>&1 || true
   assert_eq "- Own rule.$(printf '\r')" "$(tail -1 "$f")" "the own section lost its line endings"
+}
+
+test_deliver_refuses_a_lesson_that_edits_a_file_missing_from_its_base_naming_the_pr_that_holds_it() {
+  sample_run
+  # The file exists on the run's first PR branch, not on main.
+  gq -C "$PROJECT" checkout -b pr/r1/1
+  mkdir -p "$PROJECT/docs/adr"; printf '# ADR 3\n' >"$PROJECT/docs/adr/0003-x.md"
+  gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m adr
+  gq -C "$PROJECT" checkout -b pr/r1/2
+  printf 'more\n' >"$PROJECT/more.txt"; gq -C "$PROJECT" add -A; gq -C "$PROJECT" commit -m more
+  gq -C "$PROJECT" checkout main
+  jq '.end_gate = {prs: [{n: 1, branch: "pr/r1/1", base: "main", url: "https://github.com/owner/repo/pull/304"}, {n: 2, branch: "pr/r1/2", base: "pr/r1/1", url: "https://github.com/owner/repo/pull/305"}]}' "$RUN_DIR/state.json" >"$RUN_DIR/s.tmp" && mv "$RUN_DIR/s.tmp" "$RUN_DIR/state.json"
+  mkdir -p "$RUN_DIR/retro"
+  jq -n '{summary: "s", lessons: [
+    {id: "L1", kind: "domain", lesson: "ADR 3 names the reader", role: "product", scope: "this-project", why: "w",
+     change: {path: "docs/adr/0003-x.md", section: "## Consequences", text: "- the reader decides"}},
+    {id: "L2", kind: "domain", lesson: "Export means a file", role: "product", scope: "this-project", why: "w",
+     change: {path: "GLOSSARY.md", section: "## Language", text: "**Export**: a file."}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"L1":"yes","L2":"yes"}' >"$TEST_TMPDIR/d.json"
+  local err=; err=$("$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" 2>&1 >/dev/null) && fail "delivered an edit to a missing file"
+  assert_contains "$err" "lesson L1"
+  assert_contains "$err" "docs/adr/0003-x.md"
+  assert_contains "$err" "pull/304"  # the first PR holding it, not the stacked one after
+  case "$err" in *pull/305*) fail "named the stacked PR, not the one that added the file" ;; esac
+  assert_contains "$err" "nothing was written"
+  [ ! -d "$TEST_TMPDIR/project-wt/retro-r1" ] || fail "a worktree was made before the refusal"
+  git -C "$PROJECT" rev-parse -q --verify refs/heads/retro/r1 >/dev/null && fail "a branch was cut"
+  # Dropping that lesson lets the one on an existing file through.
+  echo '{"L2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "the existing target was refused"
+  assert_contains "$(cat "$TEST_TMPDIR/project-wt/retro-r1/GLOSSARY.md")" "**Export**: a file."
+}
+
+test_deliver_lets_a_whole_file_replace_create_its_file_on_purpose() {
+  sample_run
+  mkdir -p "$RUN_DIR/retro"
+  jq -n '{summary: "s", lessons: [
+    {id: "L1", kind: "domain", lesson: "A new note", role: "product", scope: "this-project", why: "w",
+     change: {path: "docs/new.md", text: "# New\n", replace: true}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"L1":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "a deliberate new file was refused"
+  [ -f "$TEST_TMPDIR/project-wt/retro-r1/docs/new.md" ] || fail "the new file was not written"
+}
+
+test_deliver_lets_an_edit_follow_a_replace_of_the_same_file_in_one_kept_set() {
+  sample_run
+  mkdir -p "$RUN_DIR/retro"
+  jq -n '{summary: "s", lessons: [
+    {id: "L1", kind: "domain", lesson: "A new note", role: "product", scope: "this-project", why: "w",
+     change: {path: "docs/new.md", text: "# New\n\n## Notes\n", replace: true}},
+    {id: "L2", kind: "domain", lesson: "A line in it", role: "product", scope: "this-project", why: "w",
+     change: {path: "docs/new.md", section: "## Notes", text: "- a line"}}]}' >"$RUN_DIR/retro/lessons.json"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  echo '{"L1":"yes","L2":"yes"}' >"$TEST_TMPDIR/d.json"
+  "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/d.json" >/dev/null || fail "an edit after a replace was refused"
+  assert_contains "$(cat "$TEST_TMPDIR/project-wt/retro-r1/docs/new.md")" "- a line"
 }

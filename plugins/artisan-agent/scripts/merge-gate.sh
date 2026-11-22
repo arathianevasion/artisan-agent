@@ -135,7 +135,8 @@
 #       line each. A checkout without the remote has nothing to sweep.
 #   merge-gate.sh minutes --repo O/N --workflow FILE [--limit N]
 #       expected CI minutes per merge, from the workflow's last N (default 10)
-#       completed runs: {runs, minutes} (minutes null with no runs). For the
+#       completed runs: {runs, minutes (the mean), slowest} (both null with no
+#       runs; wave.sh launch sizes a deadline from slowest, #312). For the
 #       plan step on a CI machine.
 #   merge-gate.sh workflow-check FILE
 #       exit 0 when the workflow file has a workflow_dispatch trigger; 1 and a
@@ -879,7 +880,8 @@ cmd_minutes() {
     [.[] | select(.status == "completed" and .createdAt and .updatedAt)
          | (.updatedAt | secs) - (.createdAt | secs)] as $d
     | {runs: ($d | length),
-       minutes: (if ($d | length) == 0 then null else (($d | add) / ($d | length) / 60 * 10 | ceil) / 10 end)}' <<<"$runs"
+       minutes: (if ($d | length) == 0 then null else (($d | add) / ($d | length) / 60 * 10 | ceil) / 10 end),
+       slowest: (if ($d | length) == 0 then null else (($d | max) / 60 * 10 | ceil) / 10 end)}' <<<"$runs"
 }
 
 # ----------------------------------------------------------- workflow-check

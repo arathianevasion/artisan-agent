@@ -356,6 +356,73 @@ voice_level() { # id level: the Artisan kept a voice lesson at LEVEL, not its de
   mv "$CHECKED.new" "$CHECKED"; rm -f "$CHECKED.tmp"
 }
 
+# The kept voice lessons, checked together per voice file before anything is
+# written: the check measures each alone, and a lesson moved to another level
+# is not checked against it at all (#302). Writes nothing on failure.
+voice_preflight() { # decisions
+  local id= dec= ids="" wt= pv= files=() err=
+  for id in $(jq -r '.lessons[] | select(.kind == "voice") | .id' "$CHECKED"); do
+    dec=$(jq -r --arg id "$id" '.[$id] // ""' "$1")
+    if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
+    case "$dec" in individual|product|team) voice_level "$id" "$dec"; dec=yes ;; esac
+    case "$dec" in yes|this-project) ;; *) continue ;; esac
+    case "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .delivery' "$CHECKED")" in
+      individual) delivered "$id" voice && continue ;;
+      project) delivered "$id" project && continue ;;
+      *) continue ;;
+    esac
+    ids="$ids${ids:+,}$id"
+  done
+  [ -n "$ids" ] || return 0
+  [ -f "$HOME_DIR/VOICE_STANDARDS.md" ] && files+=("individual=$HOME_DIR/VOICE_STANDARDS.md")
+  wt="$(dirname "$MAIN")/$(basename "$MAIN")-wt/retro-$RUN"
+  pv="$RD/retro/.product-voice.md"
+  if [ -f "$wt/VOICE_STANDARDS.md" ]; then cp "$wt/VOICE_STANDARDS.md" "$pv"
+  else git -C "$MAIN" show "$(base_ref):VOICE_STANDARDS.md" >"$pv" 2>/dev/null || rm -f "$pv"; fi
+  [ ! -f "$pv" ] || files+=("product=$pv")
+  if ! err=$(py voice-preflight "$CHECKED" "$ids" ${files[@]+"${files[@]}"} 2>&1 >/dev/null); then
+    rm -f "$pv"; echo "$err" >&2; die "the kept voice lessons do not fit together; nothing was written: drop or change one and deliver again"
+  fi
+  rm -f "$pv"
+}
+
+# A kept lesson that edits a file must find it on the delivery base (#315): the
+# branch is cut from main, and a file the run added in an earlier PR is not
+# there yet. Writing the lesson's text to the missing path would add a broken
+# new file, so refuse before anything is written. A lesson that replaces the
+# whole file creates it on purpose, and so does an earlier one in the same set.
+edit_preflight() { # decisions
+  local id= dec= kind= path= base= wt= made="" pr= br= held= bad=""
+  base=$(base_ref); wt="$(dirname "$MAIN")/$(basename "$MAIN")-wt/retro-$RUN"
+  for id in $(jq -r '.lessons[] | select(.kind != "voice" and .kind != "calibration" and .change.path != null) | .id' "$CHECKED"); do
+    dec=$(jq -r --arg id "$id" '.[$id] // ""' "$1")
+    if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi
+    case "$dec" in yes|this-project) ;; *) continue ;; esac
+    [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .delivery' "$CHECKED")" = project ] || continue
+    delivered "$id" project && continue
+    path=$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .change.path' "$CHECKED")
+    if [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .change.replace // false' "$CHECKED")" = true ]; then
+      made="$made $path"; continue
+    fi
+    case " $made " in *" $path "*) continue ;; esac
+    git -C "$MAIN" cat-file -e "$base:$path" 2>/dev/null && continue
+    [ -f "$wt/$path" ] && continue
+    held=""
+    for br in $(jq -r '[.end_gate.prs[]? | "\(.branch)\t\(.url // .n)"] | .[]' "$RD/state.json" | cut -f1); do
+      if git -C "$MAIN" cat-file -e "$br:$path" 2>/dev/null || git -C "$MAIN" cat-file -e "origin/$br:$path" 2>/dev/null; then
+        pr=$(jq -r --arg b "$br" '.end_gate.prs[] | select(.branch == $b) | (.url // "PR \(.n)")' "$RD/state.json" | head -1)
+        held="$pr ($br)"; break
+      fi
+    done
+    if [ -z "$held" ]; then
+      br=$(jq -r '.integration.branch // empty' "$RD/state.json")
+      [ -z "$br" ] || ! git -C "$MAIN" cat-file -e "$br:$path" 2>/dev/null || held="the run's integration branch $br"
+    fi
+    bad="$bad${bad:+; }lesson $id edits $path, which is not on $base${held:+ but is in $held}"
+  done
+  [ -z "$bad" ] || die "$bad; nothing was written: deliver once that PR is merged, or keep the lesson as a whole-file replace"
+}
+
 cmd_deliver() {
   local pr=0 decisions= ids_project="" id= kind= dec= lf= f=
   RD=$(run_dir "$1"); decisions=$2; shift 2
@@ -364,6 +431,8 @@ cmd_deliver() {
   CHECKED="$RD/retro/checked.json"; [ -f "$CHECKED" ] || die "no retro/checked.json: run check first"
   MAIN=$(main_of "$RD"); RUN=$(run_id "$RD"); PROJECT=$(jq -r '.repo // "unknown"' "$RD/state.json")
   local failed=0
+  voice_preflight "$decisions"
+  edit_preflight "$decisions"
   for id in $(jq -r '.lessons[].id' "$CHECKED"); do
     dec=$(jq -r --arg id "$id" '.[$id] // ""' "$decisions")
     if [ -z "$dec" ] && [ "$(jq -r --arg id "$id" '.lessons[] | select(.id == $id) | .source // ""' "$CHECKED")" = artisan ]; then dec=yes; fi

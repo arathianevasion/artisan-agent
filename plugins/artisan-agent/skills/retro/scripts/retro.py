@@ -36,6 +36,9 @@ Usage (python3 -I retro.py <command> ...):
   voice-levels <checked.json>
       the checked lessons with each voice lesson's home and delivery set
       again from its level (after the Artisan picks another level)
+  voice-preflight <checked.json> <id,id,...> [<level>=<voice file>]...
+      the kept voice lessons checked together per file: cap, no rule
+      replaced twice, chosen level; exit 1 naming the lessons, writing nothing
   voice-moves <template> [<level>=<voice file>]...
       the move for each voice file whose default block is older than the
       template's, as JSON: its diff and the default rules it keeps as edited
@@ -1058,6 +1061,44 @@ def voice_upgrade(template_path, path):
     return 0
 
 
+def voice_preflight(checked_path, ids, files):
+    """Checks the kept voice lessons IDS together, per voice file, in the order
+    deliver applies them: the combined result fits the cap, no rule is replaced
+    or merged twice, and each lesson's chosen level fits that level's file.
+    Prints what conflicts to stderr and returns 1, writing nothing."""
+    by_id = {l["id"]: l for l in load(checked_path).get("lessons") or []}
+    problems = []
+    for level, path in files.items():
+        if not os.path.isfile(path):
+            continue
+        with open(path) as fh:
+            text = fh.read()
+        kept, taken = [], {}
+        for lid in ids:
+            l = by_id.get(lid)
+            if not l or l.get("kind") != "voice" or l.get("level") != level:
+                continue
+            ch = l.get("change") or {}
+            rule = (ch.get("rule") or "").strip()
+            if ch.get("mode", "append") != "append" and rule in taken:
+                problems.append("lessons %s and %s both take the place of the rule %r in the %s voice file: keep one"
+                                % (taken[rule], lid, rule, level))
+                continue
+            new, problem = voice_edit(text, l)
+            if problem:
+                with_ = ("; kept together with " + ", ".join(kept)) if kept else ""
+                problems.append("lesson %s at the %s level: %s%s" % (lid, level, problem, with_))
+                continue
+            text = new
+            kept.append(lid)
+            if rule and ch.get("mode", "append") != "append":
+                taken[rule] = lid
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+    return 0
+
+
 def apply(worktree, lesson_path):
     l = load(lesson_path)
     ch = l.get("change") or {}
@@ -1189,6 +1230,8 @@ def main(argv):
                 return 1
         print(json.dumps(doc, indent=2))
         return 0
+    if cmd == "voice-preflight" and len(args) >= 2:
+        return voice_preflight(args[0], [i for i in args[1].split(",") if i], dict(a.split("=", 1) for a in args[2:]))
     if cmd == "voice-moves" and args:
         return voice_moves(args[0], args[1:])
     if cmd == "voice-upgrade" and len(args) == 2:
