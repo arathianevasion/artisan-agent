@@ -566,6 +566,58 @@ test_a_repo_that_is_not_owner_and_name_is_refused_at_start() {
   assert_contains "$(cat "$TEST_TMPDIR/err")" "must be owner/name"
 }
 
+# #377: with an origin, start fetches the default branch and cuts the
+# integration branch from origin/<it>, never a lagging local branch.
+# seed_origin_ahead: a bare origin whose main is a commit ahead of local main.
+seed_origin_ahead() {
+  setup_wave
+  O="$TEST_TMPDIR/origin.git"
+  git_quiet clone -q --bare "$PROJECT" "$O"
+  git -C "$PROJECT" remote add origin "$O"
+  git_quiet -C "$PROJECT" fetch -q origin
+  local c="$TEST_TMPDIR/pusher"
+  git_quiet clone -q "$O" "$c"
+  echo prod >"$c/prod.txt"
+  git_quiet -C "$c" add -A
+  git_quiet -C "$c" -c user.name=t -c user.email=t@t commit -m prod
+  git_quiet -C "$c" push -q origin HEAD
+  ORIGIN_TIP=$(git -C "$c" rev-parse HEAD)
+}
+
+test_start_with_an_origin_cuts_from_the_fetched_default_branch() {
+  seed_origin_ahead
+  local local_main=
+  local_main=$(git -C "$PROJECT" rev-parse HEAD)
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  assert_eq "$ORIGIN_TIP" "$(git -C "$PROJECT" rev-parse run/r1)"
+  assert_eq "$ORIGIN_TIP" "$(state_get '.integration.base')"
+  assert_eq "$local_main" "$(git -C "$PROJECT" rev-parse HEAD)" "start moved the main checkout"
+}
+
+test_start_without_an_origin_cuts_from_the_local_branch() {
+  setup_wave
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)"
+}
+
+test_start_with_an_explicit_base_ignores_the_origin() {
+  seed_origin_ahead
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" --base "$MAIN_HEAD" >/dev/null
+  assert_eq "$MAIN_HEAD" "$(git -C "$PROJECT" rev-parse run/r1)"
+}
+
+test_start_refuses_when_the_fetch_fails_naming_the_remote() {
+  seed_origin_ahead
+  git -C "$PROJECT" remote set-url origin "$TEST_TMPDIR/gone.git"
+  local status=0
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null 2>"$TEST_TMPDIR/err" || status=$?
+  assert_eq 1 "$status"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "could not fetch origin"
+  assert_contains "$(cat "$TEST_TMPDIR/err")" "gone.git"
+  git -C "$PROJECT" rev-parse -q --verify refs/heads/run/r1 >/dev/null && fail "a branch was made"
+  return 0
+}
+
 test_blocking_a_returned_ticket_queues_a_decision_and_logs_it() {
   setup_wave
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].status = "returned"'

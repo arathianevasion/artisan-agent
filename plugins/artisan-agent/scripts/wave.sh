@@ -6,8 +6,9 @@
 #
 # Usage, from the Run chat:
 #   wave.sh start <run-dir> [--base REF]
-#       create the integration branch (from REF, default the main checkout's
-#       branch) and the run's integration worktree beside the repo, at
+#       create the integration branch (from REF; by default, with an origin,
+#       from origin/<the main checkout's branch> after fetching it, else from
+#       that branch as it is; a failed fetch exits 1, #377) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
 #       A new worktree runs the run's worktree_setup first (#252); a failing
 #       one exits 6 with the setup failure, records an
@@ -550,6 +551,13 @@ cmd_wait() {
 
 # ------------------------------------------------------------------- start
 
+# The branch a run cuts from when start is given no REF: the main checkout's
+# current branch (or ARTISAN_MAIN_BRANCH); empty on a detached HEAD.
+main_branch_name() {
+  [ -z "${ARTISAN_MAIN_BRANCH:-}" ] || { printf '%s\n' "$ARTISAN_MAIN_BRANCH"; return; }
+  git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || true
+}
+
 cmd_start() {
   open_run "${1:-}"
   shift
@@ -563,10 +571,21 @@ cmd_start() {
   ib=$(integration_branch)
   run_repo | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
     || die "the plan's repo must be owner/name on the tracker (as docs/agents/issue-tracker.md names it), not $(run_repo)"
-  if [ -z "$base" ]; then
-    base=$(git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || git -C "$MAIN" rev-parse HEAD)
-  fi
   if ! git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib" >/dev/null; then
+    if [ -z "$base" ]; then
+      # No REF given (#377): with an origin, fetch the default branch and cut
+      # from origin/<it>, as design.sh start does (#369), so the main
+      # checkout's local branch can lag without the run starting stale.
+      # Without an origin, or on a detached HEAD, cut from HEAD as before.
+      base=$(main_branch_name)
+      if [ -z "$base" ]; then
+        base=$(git -C "$MAIN" rev-parse HEAD)
+      elif git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+        git -C "$MAIN" fetch -q origin "$base" >&2 \
+          || die "could not fetch origin $base (remote $(git -C "$MAIN" remote get-url origin)); a run cut from a stale base would miss merged work"
+        base="origin/$base"
+      fi
+    fi
     git -C "$MAIN" branch "$ib" "$base" >/dev/null || die "could not create $ib from $base"
     made_branch=1
   fi
