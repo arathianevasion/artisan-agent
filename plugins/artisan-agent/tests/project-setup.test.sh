@@ -264,6 +264,14 @@ STUB
   assert_eq silent "$("$PS" hook-probe "$P")"
 }
 
+test_no_test_stubs_the_old_block_marker_as_the_guards_output() {
+  local marker="Blocked by the artisan-agent replaced-""skill guard:" hits=
+  hits=$(grep -rlF "$marker" "$PLUGIN_ROOT/tests" --include='*.test.sh' || true)
+  [ -z "$hits" ] || fail "a test still mocks the guard's old block text: $hits"
+  grep -qF "$marker" "$PLUGIN_ROOT/skills/setup/scripts/project-setup.sh" && fail "hook-probe still looks for the old block text"
+  return 0
+}
+
 test_motivation_goes_to_the_individual_home_never_the_pr_and_is_asked_once() {
   seed
   assert_contains "$("$PS" scan "$P")" "motivation	none"
