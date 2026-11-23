@@ -863,8 +863,10 @@ mark_ticket() {
 # changes are written onto the ticket's criteria (mark_ticket) and kept on
 # it (criteria_changes, read by verify.sh), and it goes back to returned, so
 # a fresh verifier judges the same commit against the changed criteria: no
-# worker attempt is used. The ticket and the gate say so, and the gate
-# closes. Each change logs criterion-changed.
+# worker attempt is used. The judged verifier is marked superseded
+# (verifications[-1].superseded, #400), so verify.sh start launches the next
+# even though its verdict stands for this attempt. The ticket and the gate
+# say so, and the gate closes. Each change logs criterion-changed.
 criteria_answer() {
   local issue="$1" choice="$2" changes="$3" extra="$4" t="" say=""
   shift 4
@@ -880,6 +882,9 @@ A fresh verifier judges the same commit against the changed criteria; no worker 
   record_answer decided "$choice" outcome '
     .tickets[$t] |= (.status = "returned" | .pid = null | del(.blocked_reason)
       | (if .unmeetable then .unmeetable.status = "answered" else . end)
+      | (if ((.verifications // []) | length) > 0 and (.verifications[-1].verdict != null)
+         then .verifications[-1].superseded = true | (if .evidence.verdict == "pass" then .evidence = null else . end)
+         else . end)
       | .criteria_changes = ((.criteria_changes // []) + $ch))
     | reduce $ch[] as $c (.; event({event: "criterion-changed", ticket: $t, gate: $gid} + $c; $now))
     | '"$extra" \

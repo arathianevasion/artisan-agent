@@ -18,7 +18,10 @@
 #       attempt has a verifier running, ended but not judged, or passed (or
 #       another call is starting one), it launches nothing and prints that
 #       verifier's pid; only after an error (judge's 14) does it start the
-#       next. The verifier is told the recorded checks (checks.sh, read from
+#       next, or after the Artisan changed the criteria (gate-action.sh rewrite,
+#       split, drop-criterion mark the judged verifier superseded, #400): then
+#       the next judges the same commit against the new criteria.
+#       The verifier is told the recorded checks (checks.sh, read from
 #       the integration worktree's CODING_STANDARDS.md, not the worker's
 #       branch) and the one command that runs them and writes their results
 #       to verify/checks/<t>.<v>.json; with none recorded, to run what it
@@ -229,12 +232,16 @@ cmd_start() {
   # prints that verifier's runner pid. Only an error (14) starts the next.
   local last= v=
   last=$(get --arg t "$t" '(.tickets[$t].verifications // []) | last // empty
-    | "\(.attempt) \(.worker_attempt) \(.verdict // "-")"')
+    | "\(.attempt) \(.worker_attempt) \(.verdict // "-") \(.superseded // false)"')
   v=1
   if [ -n "$last" ]; then
     set -- $last
-    case "$3" in
-      -|pass)
+    # A verifier superseded by the Artisan's change of the criteria (#400:
+    # gate-action.sh rewrite, split, drop-criterion) judged criteria that no
+    # longer stand: the next one starts, whatever its verdict.
+    case "$4:$3" in
+      true:*) ;;
+      *:-|*:pass)
         if [ "$2" = "$n" ]; then
           echo "verify.sh: #$t attempt $n already has verifier $1 (verdict $3); not starting another" >&2
           started_pid "$t" "$1"
