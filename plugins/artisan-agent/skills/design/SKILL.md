@@ -55,7 +55,7 @@ The designer may design in a tool. Record its file link on the design ticket. Sk
 With the server connected, the adapter does three things, each only when the Artisan or designer asks for it:
 
 - **Read a design**: for a Figma link on the design ticket, `get_design_context` reads the frames and `get_screenshot` renders one, so the journey diff and the prototype brief can follow the design.
-- **Capture main into Figma**: `generate_figma_design` captures the running product's journey steps into a Figma file as the designer's starting point. Capture from main as the "before" screenshots were, never from a checkout with other work in it.
+- **Capture main into Figma**: `generate_figma_design` captures the running product's journey steps into a Figma file as the designer's starting point. It needs the remote Figma MCP server and a client that supports it (Figma lists it for select clients only); with the local server or an unsupported client, skip the capture and the designer starts from the "before" screenshots. Capture from main as the "before" screenshots were, never from a checkout with other work in it.
 - **Write a design**: `use_figma` writes and edits frames on the canvas. Writing is remote-server only.
 
 With or without the server, the Figma file's link is the tool link: comment it on the design ticket (`gh issue comment <n> --body "**Tool link:** <figma link>"`) and pass `--tool-link <figma link>` at approval. Figma's tool names change: when one named here is missing, check Figma's current MCP docs and use its replacement.
