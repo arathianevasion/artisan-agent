@@ -93,6 +93,7 @@ test_the_implement_skill_has_workers_run_the_guard_and_ticket_tests() {
   assert_contains "$s" '`tests.not_run`' "SKILL.md does not say where a test it couldn't run goes"
 }
 
-test_the_implement_skill_says_not_to_run_the_full_suite() {
-  assert_contains "$(cat "$PLUGIN_ROOT/skills/implement/SKILL.md")" "Don't run the full suite"
+test_the_implement_skill_says_not_to_run_the_full_suite_locally() {
+  # #376: a full local suite is the slow case; #406 sends it to the home PC.
+  assert_contains "$(cat "$PLUGIN_ROOT/skills/implement/SKILL.md")" "Never start the full suite on this machine yourself"
 }

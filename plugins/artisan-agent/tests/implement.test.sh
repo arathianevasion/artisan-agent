@@ -69,27 +69,52 @@ test_the_checker_rejects_a_malformed_record_and_names_each_problem() {
   assert_contains "$out" "review.remarks[0]: not_acted needs why"
 }
 
-test_the_record_names_the_test_files_run_and_leaves_the_full_suite_to_the_merge_gate() {
-  local out= status=0
+test_the_record_says_where_the_full_suite_ran_and_its_counts() {
+  local out= status=0 f=
   example_record | jq -e '.tests.files | type == "array" and length > 0' >/dev/null || fail "the example names no test files"
-  example_record | jq -r '.tests.full_suite' | grep "merge gate" >/dev/null || fail "the example does not leave the full suite to the merge gate"
+  example_record | jq -e '.tests.full_suite | .where == "home-wsl" and .ran and .passed and (.counts.passed | type) == "number"' >/dev/null \
+    || fail "the example's full_suite is not a worker-suite.sh record of a run on the PC"
   example_record | jq 'del(.tests.files)' > nofiles.json
   out=$("$CHECK" nofiles.json) || status=$?
   assert_eq 1 "$status" "checker exit status"
   assert_contains "$out" "tests: files must name the test files run"
-  example_record | jq '.tests.full_suite = "ran it"' > badsuite.json
-  out=$("$CHECK" badsuite.json) || status=$?
-  assert_contains "$out" "tests: full_suite must say the full suite is left to the merge gate"
+  example_record | jq '.tests.full_suite = "left to the merge gate"' > badsuite.json
+  status=0; out=$("$CHECK" badsuite.json) || status=$?
+  assert_eq 1 "$status" "a full_suite left to the merge gate is refused"
+  assert_contains "$out" "tests: full_suite must be the worker-suite.sh record"
+  # The fallback: not run on the PC, the guard and covering tests ran here.
+  example_record | jq '.tests.full_suite = {where: "local", ran: false, commit: "abc", why: "home-wsl did not answer ssh within 10 seconds", instead: "the guard tests and the covering tests, here"}' > local.json
+  "$CHECK" local.json || fail "a record whose full suite fell back to local tests is valid"
+  jq 'del(.tests.full_suite.why)' local.json > nowhy.json
+  status=0; out=$("$CHECK" nowhy.json) || status=$?
+  assert_eq 1 "$status" "a fallback without why is refused"
+  assert_contains "$out" "tests: full_suite did not run, but"
+  for f in "$SKILL" "$EVIDENCE" "$PLUGIN_ROOT/references/evidence-contract.md"; do
+    case $(cat "$f") in *"left to the merge gate"*) fail "$(basename "$f") still leaves the full suite to the merge gate" ;; esac
+    assert_contains "$(cat "$f")" "worker-suite.sh"
+  done
   assert_contains "$(cat "$EVIDENCE")" '`tests.files`'
 }
 
-test_the_skill_runs_covering_tests_not_the_full_suite_and_never_ends_a_turn_to_wait() {
+test_a_record_whose_full_suite_failed_is_not_complete() {
+  local out= status=0
+  example_record | jq '.tests.full_suite.passed = false | .tests.full_suite.counts = {passed: 9, failed: 1}' > red.json
+  out=$("$CHECK" red.json) || status=$?
+  assert_eq 1 "$status" "a complete record with a red full suite is refused"
+  assert_contains "$out" "tests: the full suite failed"
+  jq '.status = "failed"' red.json > red-failed.json
+  "$CHECK" red-failed.json || fail "a failed record may carry a red full suite"
+}
+
+test_the_skill_runs_the_full_suite_on_the_pc_and_never_ends_a_turn_to_wait() {
   local body=
   body=$(cat "$SKILL")
-  case "$body" in *"the full suite once the ticket is built"*|*"Run the full suite again"*|*"1. Run the full suite, then"*)
-    fail "SKILL.md still tells a worker to run the full suite" ;;
+  case "$body" in *"Don't run the full suite."*)
+    fail "SKILL.md still tells a worker never to run the full suite" ;;
   esac
-  assert_contains "$body" "merge gate"
+  assert_contains "$body" 'scripts/worker-suite.sh run'
+  assert_contains "$body" "Exit 17"
+  assert_contains "$body" "tests/run.sh --guard"
   assert_contains "$body" "ends the session"
   assert_contains "$body" "Never end a turn"
 }
