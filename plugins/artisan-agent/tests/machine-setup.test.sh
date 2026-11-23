@@ -235,9 +235,12 @@ test_remove_restores_the_key_in_settings_local_for_local_scope() {
   assert_contains "$out" "kept: enabledPlugins.artisan-agent@artisan-agent in $TEST_TMPDIR/proj/.claude/settings.local.json"
 }
 
-# A directory holding only the named tools (as stubs), to stand in for PATH.
+# A directory holding only the named tools (as stubs), to stand in for PATH,
+# plus the real dirname: the script finds its own directory with it, and
+# bash 5.3 (Ubuntu 26.04) refuses the `cd ""` a missing dirname leaves (#406).
 path_with() { # dir tool...
   local d=$1 t=; shift; mkdir -p "$d"
+  ln -s "$(command -v dirname)" "$d/dirname"
   for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$d/$t"; chmod +x "$d/$t"; done
 }
 
@@ -257,7 +260,7 @@ test_check_reports_each_missing_tool_clearly() {
   rc=0; out=$(PATH="$TEST_TMPDIR/noperl" /bin/bash "$SCRIPT" check) || rc=$?
   assert_eq 1 "$rc"
   assert_contains "$out" "missing: perl"
-  mkdir -p "$TEST_TMPDIR/empty"
+  path_with "$TEST_TMPDIR/empty"
   out=$(PATH="$TEST_TMPDIR/empty" /bin/bash "$SCRIPT" check) || true
   assert_contains "$out" "missing: jq"
   assert_contains "$out" "missing: perl"
@@ -266,7 +269,7 @@ test_check_reports_each_missing_tool_clearly() {
 test_init_still_sets_up_but_exits_non_zero_when_a_tool_is_missing() {
   seed_machine
   path_with "$TEST_TMPDIR/nojq" perl git python3
-  for t in mkdir dirname cat tr sort grep date mv basename; do ln -s "$(command -v $t)" "$TEST_TMPDIR/nojq/$t"; done
+  for t in mkdir cat tr sort grep date mv basename; do ln -s "$(command -v $t)" "$TEST_TMPDIR/nojq/$t"; done
   rc=0; out=$(PATH="$TEST_TMPDIR/nojq" /bin/bash "$SCRIPT" init 2>&1) || rc=$?
   assert_contains "$out" "missing: jq"
   [ "$rc" != 0 ] || fail "init must exit non-zero when jq is missing"
