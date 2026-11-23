@@ -26,7 +26,7 @@
 #       pr-boundaries guardrail (product, then team, then individual), the
 #       approved one once recorded, or {value: null, proposed: "slice",
 #       source: "none"}.
-#   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket] [--by NAME]
+#   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket|run] [--by NAME]
 #                       [--why W] [--changed]
 #       the Artisan approves the end gate: refused (6) while a deferred gate
 #       is still open or an open decision raised at a gate (gate-action.sh
@@ -43,6 +43,9 @@
 #       before the end gate is due.
 #   end-gate.sh prs <run-dir> [--json]
 #       the PRs to cut, stacked in merge order: number, branch, base, tickets.
+#       One PR per run is the integration branch into the default branch. A
+#       group whose tickets are all on the default branch, and no cut PR
+#       carries, is left out; the table names it with the reason (#363).
 #   end-gate.sh cut <run-dir> <n> --body-file F [--title T]
 #       builds branch pr/<run-id>/<n> (the integration branch's merge commit
 #       where the group's tickets end, or the group cherry-picked onto the
