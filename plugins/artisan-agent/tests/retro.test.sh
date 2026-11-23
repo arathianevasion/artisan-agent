@@ -460,6 +460,22 @@ test_a_gate_decided_against_is_not_a_rubber_stamp() {
   assert_eq '3 2 67' "$(jq -r '.rubber_stamp | "\(.gates) \(.unchanged) \(.rate)"' <<<"$("$RETRO" facts "$RUN_DIR")")"
 }
 
+test_a_gate_with_a_card_changed_at_it_counts_as_changed_not_unchanged() {
+  sample_run
+  # One gate approved after the Artisan changed a card (gate.sh change), five
+  # approved unchanged: 1 of 6 gate decisions changed, and leverage says so.
+  jq '.decisions = [range(6) | {id: "g\(.)", kind: "review-gate", gate: "G\(.)", status: "decided", choice: "approve", by: "Andrew", job: 13, changed: (. == 5)}]
+      | .review_gates = [range(6) | {id: "G\(.)", decisions: [], reworks: (if . == 5 then [{card: "5", ticket: "9"}] else [] end)}]' \
+    "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '6 5' "$(jq -r '.rubber_stamp | "\(.gates) \(.unchanged)"' <<<"$f")" "one changed of six"
+  assert_eq '1' "$(jq -r '.leverage.gates_changed' <<<"$f")" "leverage gates changed"
+  assert_eq '1' "$(jq -r '.leverage.changed' <<<"$f")" "leverage changed"
+  # All kept: nothing changed.
+  jq '.decisions |= map(.changed = false) | .review_gates |= map(.reworks = [])' "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  assert_eq '0' "$(jq -r '.leverage.gates_changed' <<<"$("$RETRO" facts "$RUN_DIR")")" "all kept"
+}
+
 test_a_generalising_check_is_promoted_as_a_check_and_domain_stays_with_the_project() {
   sample_run; mkdir -p "$RUN_DIR/retro"
   jq -n '{lessons: [
