@@ -34,9 +34,10 @@
 #          (<reason>): found `a`, `b`", results: [...]}
 #       --worker is for the implementing worker: a recorded check that is the
 #       run's suite command (the command `checks.sh suite` prints, or --suite
-#       CMD when the plan's suite_command differs) is not run: it stays for the
-#       merge gate and is listed in not_run, "<command>: left to the merge
-#       gate (it is the run's suite command)". A check ci-only lists is not
+#       CMD when the plan's suite_command differs) is not run: it is the
+#       worker's full suite (worker-suite.sh, #406) and is listed in not_run,
+#       "<command>: not run here (it is the run's suite command: the merge
+#       gate runs it, and a worker runs it through worker-suite.sh)". A check ci-only lists is not
 #       run either: it is listed in not_run, "<command>: runs on CI on the
 #       branch (runs_locally: <value>)", and in ci_only (present only when
 #       there is one), for the worker's CI run on its branch (worker-ci.sh).
@@ -164,7 +165,7 @@ EOF
   tmp=$(mktemp "${TMPDIR:-/tmp}/checks.XXXXXX")
   for cmd in ${run[@]+"${run[@]}"}; do
     if [ -n "$suite" ] && [ "$cmd" = "$suite" ]; then
-      skipped=$(printf '%s' "$skipped" | jq -c --arg c "$cmd" '. + [$c + ": left to the merge gate (it is the run'"'"'s suite command)"]')
+      skipped=$(printf '%s' "$skipped" | jq -c --arg c "$cmd" '. + [$c + ": not run here (it is the run'"'"'s suite command: the merge gate runs it, and a worker runs it through worker-suite.sh)"]')
       continue
     fi
     local where=""

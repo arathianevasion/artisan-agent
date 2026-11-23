@@ -30,10 +30,23 @@ test_each_macos_shard_has_its_own_job_name() {
     || fail "macOS job name must include the shard"
 }
 
-test_linux_stays_a_single_unsharded_job() {
-  awk '/^  script-tests:/ {on=1; next} on && /^  [^ ]/ {on=0} on' "$WORKFLOW" | grep -q -e '--shard' \
-    && fail "the Linux job should not be sharded"
-  return 0
+test_linux_job_is_a_matrix_over_three_shards() {
+  local job=
+  job=$(linux_job)
+  printf '%s\n' "$job" | grep -q 'shard: \[1, 2, 3\]' || fail "Linux job has no shard: [1, 2, 3] matrix"
+  printf '%s\n' "$job" | grep -q 'fail-fast: false' || fail "Linux matrix must set fail-fast: false"
+  printf '%s\n' "$job" | grep -q 'name: Script tests (Linux, \${{ matrix.shard }}/3)' || fail "Linux job name must include the shard"
+}
+
+test_each_linux_shard_runs_its_own_slice_and_the_slices_are_the_whole_suite() {
+  local job= n=
+  job=$(linux_job)
+  printf '%s\n' "$job" | grep -q 'tests/run.sh .*--shard \${{ matrix.shard }}/3' \
+    || fail "Linux job must run run.sh --shard \${{ matrix.shard }}/3"
+  # Every shard divides by the same n as the matrix is wide, so together they
+  # cover each test once (run.sh's own shard tests prove the split).
+  n=$(printf '%s\n' "$job" | grep -o 'shard: \[[0-9, ]*\]' | tr -cd ',' | wc -c | tr -d ' ')
+  assert_eq 2 "$n" "commas in the shard list (3 shards)"
 }
 
 test_workflow_comment_describes_the_shards() {
@@ -138,4 +151,44 @@ test_this_repo_runs_worker_branch_runs_on_linux_only() {
   local got=""
   got=$(cd "$PLUGIN_ROOT/../.." && "$PLUGIN_ROOT/scripts/config.sh" show --file .artisan-agent/config.yml | jq -c '.ci_gate.worker_inputs')
   assert_eq '{"macos":false}' "$got" "ci_gate.worker_inputs in this repo's config"
+}
+
+# --- the PC can go offline after the pick (#399) ---
+
+# A named job's block: from its key to the next top-level job or end of file.
+wf_job() {
+  awk -v k="  $1:" '$0 == k {on=1; print; next} on && /^  [^ ]/ {on=0} on {print}' "$WORKFLOW"
+}
+
+test_the_linux_job_runs_where_pick_final_says() {
+  local job=""
+  job=$(linux_job)
+  assert_contains "$job" "needs: pick-final" "the Linux job waits for the confirmed runner"
+  assert_contains "$job" 'fromJSON(needs.pick-final.outputs.runner)' "the Linux job's runner"
+  assert_not_contains "$job" 'needs.pick-runner.outputs.runner' "the Linux job must not use the unconfirmed pick"
+}
+
+test_a_pc_pick_is_probed_and_falls_back_when_the_probe_never_starts() {
+  local probe="" final=""
+  probe=$(wf_job pc-probe)
+  final=$(wf_job pick-final)
+  [ -n "$probe" ] || fail "no pc-probe job"
+  assert_contains "$probe" "needs.pick-runner.outputs.pc == 'true'" "the probe runs only for a PC pick"
+  assert_contains "$probe" '["self-hosted", "home-wsl"]' "the probe queues for the PC"
+  assert_contains "$final" 'WAIT_MINUTES: 10' "the wait before falling back"
+  assert_contains "$final" 'actions/runs/$GITHUB_RUN_ID/jobs' "pick-final reads the probe's status"
+  assert_contains "$final" 'runner='"'"'"ubuntu-latest"'"'"'' "pick-final falls back to GitHub-hosted"
+  assert_contains "$final" 'in_progress | completed' "a started probe keeps the PC"
+  assert_contains "$final" 'no fallback fired' "the step summary says the fallback did not fire"
+  assert_contains "$final" 'fell back to $runner' "the step summary says the fallback fired"
+  assert_contains "$(wf_job pick-runner)" '"$CHOICE" != home-wsl' "an explicit home-wsl is not probed and keeps waiting"
+}
+
+test_an_online_pc_is_still_picked_and_forks_never_get_it() {
+  local pick=""
+  pick=$(wf_job pick-runner)
+  assert_contains "$pick" 'if [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ]' "the PC needs a trusted run"
+  assert_contains "$pick" 'if [ "${free:-0}" -gt 0 ]; then runner=$pc' "an online idle PC runner is still picked"
+  assert_contains "$pick" 'head.repo.full_name == github.repository' "a fork PR is untrusted"
+  assert_not_contains "$(wf_job pick-final)" 'self-hosted' "pick-final never picks the PC itself"
 }

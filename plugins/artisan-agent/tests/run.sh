@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Script test harness for the pipeline's scripts.
 #
-# Usage: tests/run.sh [-j N] [--shard i/n] [--rerun-failed] [dir]
+# Usage: tests/run.sh [-j N] [--shard i/n] [--rerun-failed] [--guard] [dir]
 #        tests/run.sh --check-quarantine [dir]
 #
 #   -j N         run up to N tests at once, one test per job (default 1).
@@ -20,6 +20,13 @@
 #                without the flag. Rerun results print after the others, and the
 #                summary line adds ", N flaky". Combines with -j and --shard.
 #                Without it, output and exit status are as they always were.
+#   --guard      run only the guard tests: the whole-tree scanners (tracker guard,
+#                bare-local, jq arguments, ...) that dir/guard.txt lists as
+#                "guard <file>" ("exclude <file> <why>" lines name scanners left
+#                out on purpose; blank lines and # comments are skipped). A
+#                worker runs these plus its ticket's tests, never the full
+#                suite. A listed file that doesn't exist, or no guard.txt, exits
+#                2. Combines with -j, --shard and --rerun-failed.
 #   --check-quarantine
 #                run no test: check that every entry in dir/quarantine.txt
 #                names an open issue (gh issue view; set GH_REPO outside a
@@ -68,7 +75,9 @@
 # TESTS_TIMES=1 prints, after the summary, the seconds each test took, slowest
 # first, one "<seconds> <file>: <test>" line per test, to find what to speed
 # up. The clock is bash's EPOCHREALTIME (bash 5) or whole seconds (bash 3.2).
-# Tests never see TESTS_TIMES.
+# TESTS_TIMES=files prints the same per file instead: one "<seconds> <file>"
+# line per test file (its tests' seconds added up, so under -j it is work, not
+# wall-clock), slowest first. Tests never see TESTS_TIMES.
 #
 # Exit status: 0 when every test passes (flaky and quarantined ones aside),
 # 1 when any fails, 2 when no tests
@@ -149,13 +158,14 @@ if [ "${1:-}" = "--run-one" ]; then
 fi
 
 usage() {
-  echo "usage: run.sh [-j N] [--shard i/n] [--rerun-failed] [dir]" >&2
+  echo "usage: run.sh [-j N] [--shard i/n] [--rerun-failed] [--guard] [dir]" >&2
   echo "       run.sh --check-quarantine [dir]" >&2
   exit 2
 }
 
 jobs=1
 rerun_failed=
+guard_only=
 check_quarantine=
 shard_i=1
 shard_n=1
@@ -167,6 +177,7 @@ while [ $# -gt 0 ]; do
     --shard) [ $# -ge 2 ] || usage; shard=$2; shift 2 ;;
     --shard=*) shard=${1#--shard=}; shift ;;
     --rerun-failed) rerun_failed=1; shift ;;
+    --guard) guard_only=1; shift ;;
     --check-quarantine) check_quarantine=1; shift ;;
     -*) echo "run.sh: unknown option: $1" >&2; usage ;;
     *) [ -z "$suite_dir" ] || usage; suite_dir=$1; shift ;;
@@ -259,6 +270,19 @@ if [ -n "$check_quarantine" ]; then
   exit "$qstatus"
 fi
 
+# --guard: the guard tests only, named in dir/guard.txt.
+guard_files=
+if [ -n "$guard_only" ]; then
+  if [ ! -f "$suite_dir/guard.txt" ]; then
+    echo "run.sh: --guard needs $suite_dir/guard.txt" >&2
+    exit 2
+  fi
+  guard_files=$(awk '$1 == "guard" { print $2 }' "$suite_dir/guard.txt")
+  for g in $guard_files; do
+    [ -f "$suite_dir/$g.test.sh" ] || { echo "run.sh: guard.txt lists $g, which has no $g.test.sh" >&2; exit 2; }
+  done
+fi
+
 # The full ordered list: entry k is the k-th test (or the k-th file with no
 # test), across files in name order. The shard picks from this list.
 k=0          # position in the full list
@@ -266,6 +290,9 @@ n_run=0      # entries this shard runs; their ids are 1..n_run
 : >"$resdir/jobs"
 for file in "$suite_dir"/*.test.sh; do
   [ -f "$file" ] || continue
+  if [ -n "$guard_only" ]; then
+    printf '%s\n' "$guard_files" | grep -qxF -- "$(basename "$file" .test.sh)" || continue
+  fi
   names=$("$BASH" -c 'source "$1" >/dev/null 2>&1; declare -F' _ "$file" | awk '$3 ~ /^test_/ {print $3}')
   [ -n "$names" ] || names=-
   for name in $names; do
@@ -395,7 +422,16 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { [ -s "$resdir/flaky" ] || [ -s "$resdi
     fi
   } >>"$GITHUB_STEP_SUMMARY"
 fi
-if [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
+if [ "${TESTS_TIMES:-}" = files ]; then
+  echo "Seconds per test file, slowest first:"
+  i=0
+  while [ "$i" -lt "$n_run" ]; do
+    i=$((i + 1))
+    [ -e "$resdir/$i.label" ] && [ -e "$resdir/$i.secs" ] || continue
+    printf '%s %s\n' "$(cat "$resdir/$i.secs")" "$(cat "$resdir/$i.label")"
+  done | awk '{ f = $2; sub(/:$/, "", f); t[f] += $1 } END { for (f in t) printf "%.2f %s\n", t[f], f }' \
+    | sort -k1,1nr -s | awk '{ s = $1; $1 = ""; printf "%8s%s\n", s, $0 }'
+elif [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
   echo "Seconds per test, slowest first:"
   i=0
   while [ "$i" -lt "$n_run" ]; do

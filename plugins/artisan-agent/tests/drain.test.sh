@@ -370,6 +370,26 @@ test_the_digest_names_the_wait_step_while_no_waiter_runs() {
   assert_not_contains "$("$DIGEST" --repo "$PROJECT" --line)" "no waiter"
 }
 
+# #390: a ticket that left the run (a deferred Human check, or one dropped or
+# bypassed) is not work the run still has; only queued or running work holds it open.
+test_tickets_that_left_the_run_do_not_hold_it_open() {
+  setup_run
+  local st=
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets |= map_values(.status = "merged")'
+  for st in deferred dropped bypassed resliced sent_back; do
+    "$SCRIPTS/state.sh" update "$RUN_DIR" ".tickets[\"11\"].status = \"$st\""
+    assert_eq "" "$("$DIGEST" --repo "$PROJECT" --peek)" "a $st ticket held the run open"
+  done
+  # Queued, running or blocked agent work still prints the digest.
+  for st in queued in_flight blocked; do
+    "$SCRIPTS/state.sh" update "$RUN_DIR" ".tickets[\"11\"].status = \"$st\""
+    assert_contains "$("$DIGEST" --repo "$PROJECT" --peek)" "is open"
+  done
+  # An ended run is closed whatever its tickets say, a deferred Human check included.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["11"].status = "deferred" | .end_gate.status = "ended"'
+  assert_eq "" "$("$DIGEST" --repo "$PROJECT" --peek)"
+}
+
 test_the_digest_line_and_no_open_run() {
   setup_run
   assert_contains "$("$DIGEST" --repo "$PROJECT" --line)" "run r1 is open: wave 1 running (orchestrator attempt 1); 0 of 3 merged, \$0 of \$20 budget; nothing waiting for you"

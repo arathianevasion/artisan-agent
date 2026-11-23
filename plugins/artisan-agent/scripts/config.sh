@@ -79,7 +79,7 @@ case "$cmd" in
     [ -n "$key" ] || usage
     [ -n "$file" ] || { resolve_project_path; file=$PROJECT_PATH; }
     effective_json "$file" \
-      | jq -e --arg k "$key" '($k | split(".")) as $p | if [paths] | index([$p]) then getpath($p) else error("no setting \($k)") end' 2>/dev/null \
+      | jq --arg k "$key" '($k | split(".")) as $p | if [paths] | index([$p]) then getpath($p) | select(. != null) else error("no setting \($k)") end' 2>/dev/null \
       || die "no setting $key"
     ;;
   defaults)

@@ -6,8 +6,9 @@
 #
 # Usage, from the Run chat:
 #   wave.sh start <run-dir> [--base REF]
-#       create the integration branch (from REF, default the main checkout's
-#       branch) and the run's integration worktree beside the repo, at
+#       create the integration branch (from REF; by default, with an origin,
+#       from origin/<the main checkout's branch> after fetching it, else from
+#       that branch as it is; a failed fetch exits 1, #377) and the run's integration worktree beside the repo, at
 #       <repo>-wt/run-<run-id>; record both. Prints the worktree. Idempotent.
 #       A new worktree runs the run's worktree_setup first (#252); a failing
 #       one exits 6 with the setup failure, records an
@@ -550,6 +551,18 @@ cmd_wait() {
 
 # ------------------------------------------------------------------- start
 
+# The branch a run cuts from when start is given no REF: ARTISAN_MAIN_BRANCH,
+# else (with an origin) origin/HEAD's name, i.e. the default branch (#377),
+# else the main checkout's current branch; empty on a detached HEAD.
+main_branch_name() {
+  local h=
+  [ -z "${ARTISAN_MAIN_BRANCH:-}" ] || { printf '%s\n' "$ARTISAN_MAIN_BRANCH"; return; }
+  if h=$(git -C "$MAIN" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); then
+    printf '%s\n' "${h#origin/}"; return
+  fi
+  git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || true
+}
+
 cmd_start() {
   open_run "${1:-}"
   shift
@@ -563,10 +576,21 @@ cmd_start() {
   ib=$(integration_branch)
   run_repo | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
     || die "the plan's repo must be owner/name on the tracker (as docs/agents/issue-tracker.md names it), not $(run_repo)"
-  if [ -z "$base" ]; then
-    base=$(git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || git -C "$MAIN" rev-parse HEAD)
-  fi
   if ! git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib" >/dev/null; then
+    if [ -z "$base" ]; then
+      # No REF given (#377): with an origin, fetch the default branch and cut
+      # from origin/<it>, as design.sh start does (#369), so the main
+      # checkout's local branch can lag without the run starting stale.
+      # Without an origin, or on a detached HEAD, cut from HEAD as before.
+      base=$(main_branch_name)
+      if [ -z "$base" ]; then
+        base=$(git -C "$MAIN" rev-parse HEAD)
+      elif git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+        git -C "$MAIN" fetch -q origin "$base" >&2 \
+          || die "could not fetch origin $base (remote $(git -C "$MAIN" remote get-url origin)); a run cut from a stale base would miss merged work"
+        base="origin/$base"
+      fi
+    fi
     git -C "$MAIN" branch "$ib" "$base" >/dev/null || die "could not create $ib from $base"
     made_branch=1
   fi
@@ -1614,6 +1638,14 @@ launch_gate() {
       args+=(--reuse-run "$reuse_run" --reuse-sha "$reuse_sha")
     fi
     [ "${1:-}" != --resume ] || args+=(--resume)
+    # The third tier (#386): no runner took the run, so the suite runs on the
+    # fallback host or here, unless the project turned it off.
+    local fb=
+    fb=$(ci_fallback)
+    if [ "$(jq -r .on <<<"$fb")" = true ]; then
+      args+=(--fallback-command "$suite" --fallback-log "$RUN_DIR/$suite_log"
+             --fallback-host "$(jq -r .host <<<"$fb")" --start-minutes "$(jq -r .start_minutes <<<"$fb")")
+    fi
   else
     args=(local --dir "$(integration_worktree)" --command "$suite"
           --log "$RUN_DIR/$suite_log")
@@ -1759,10 +1791,15 @@ finish_gate() {
       if [ "$rc" -eq 7 ]; then
         apply '.tickets[$t].suite = ({command: $c, passed: false}
             + ($g | {mode, workflow, branch, sha, run_id, url, conclusion, jobs})
+            + {tier: ($g.tier // "ci")} + (if $g.fallback then {fallback: $g.fallback} else {} end)
             + (if $g.runner_reruns then {runner_reruns: $g.runner_reruns} else {} end)
             + (if $g.base_check then {base_check: $g.base_check} else {} end))' \
           --arg t "$t" --arg c "$suite" --argjson g "$GATE_JSON"
         why="CI went red after merging ($(jq -r '.conclusion' <<<"$GATE_JSON") on $url); the merge was undone"
+        if [ "$(jq -r '.fallback != null' <<<"$GATE_JSON")" = true ]; then
+          url=$(jq -r '"the local fallback on \(.fallback.host), \(.fallback.log)"' <<<"$GATE_JSON")
+          why="the suite failed after merging, run on $(jq -r '.fallback.host' <<<"$GATE_JSON") because CI gave no verdict ($(jq -r '.fallback.why' <<<"$GATE_JSON"); $(jq -r '.fallback.log' <<<"$GATE_JSON")); the merge was undone"
+        fi
         if is_urgent_sync "$t"; then
           gate_failed "$t" "$why"
           state_die 7 "wave.sh: #$t not merged: CI concluded $(jq -r '.conclusion' <<<"$GATE_JSON") for the merge ($url)"
@@ -1787,6 +1824,7 @@ finish_gate() {
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .reused then {reused, relied_on, why} else {} end)
       + (if .runner_reruns then {runner_reruns} else {} end)
+      + {tier: (.tier // "ci")} + (if .fallback then {fallback} else {} end)
       + (if .base_check then {base_check, failing_tests} else {} end)' <<<"$GATE_JSON")
   fi
   if is_urgent_sync "$t"; then
@@ -2003,6 +2041,7 @@ batch_outcome() {
       + (if .skipped then {skipped, relied_on, why} else {} end)
       + (if .failing_tests then {failing_tests} else {} end)
       + (if .runner_reruns then {runner_reruns} else {} end)
+      + {tier: (.tier // "ci")} + (if .fallback then {fallback} else {} end)
       + (if .base_check then {base_check} else {} end)' <<<"$GATE_JSON")
     note_ci_wait "$rc" "$(get -c '{batch: .merge_batch.id, tickets: .merge_gate.tickets}')"
   fi
@@ -2211,10 +2250,10 @@ note_ci_wait() {
   fin=$(jq -r '.finished_at // ""' "$(gate_result)" 2>/dev/null) || fin=
   apply '.merge_gate as $g
     | ((if $fin == "" then $now else ($fin | fromdateiso8601) end) - ($g.at // $now)) as $s
-    | event({event: "ci-wait", gate: $g.gate, sha: $g.sha,
+    | event({event: "ci-wait", gate: $g.gate, sha: $g.sha, tier: ($r.tier // "ci"),
              minutes: (if $s < 0 then 0 else ($s / 6 | round) / 10 end),
              outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" else "no-verdict" end)} + $who; $now)' \
-    --arg fin "$fin" --argjson rc "$1" --argjson who "$2"
+    --arg fin "$fin" --argjson rc "$1" --argjson who "$2" --argjson r "$(jq -c 'if type == "object" then . else {} end' <<<"${GATE_JSON:-null}")"
 }
 
 # skip_paths: the release allowlist (merge_gate_skip_paths), one pattern per
@@ -2266,6 +2305,21 @@ ci_setting() { # key
   v=$(get --arg k "$1" '.plan.config.ci_gate[$k] // empty')
   [ -n "$v" ] || v=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) | jq -r --arg k "$1" '.ci_gate[$k] // empty')
   printf '%s\n' "$v"
+}
+
+# The local fallback (#386), as {on, host, start_minutes}: ci_gate's
+# local_fallback (default true), fallback_host (default home-wsl; empty for
+# this machine only) and start_wait_minutes (default 10), each the plan's,
+# else the project's.
+ci_fallback() {
+  local p= c=
+  p=$(get -c '.plan.config.ci_gate // {}')
+  c=$( (cd "$MAIN" && "$SCRIPT_DIR/config.sh" show) 2>/dev/null | jq -c '.ci_gate // {}') || c='{}'
+  [ -n "$c" ] || c='{}'
+  jq -nc --argjson p "$p" --argjson c "$c" '
+    def pick($k; $d): if ($p | has($k)) and $p[$k] != null then $p[$k] elif ($c | has($k)) and $c[$k] != null then $c[$k] else $d end;
+    {on: (pick("local_fallback"; true) != false), host: (pick("fallback_host"; "home-wsl") | tostring),
+     start_minutes: pick("start_wait_minutes"; 10)}'
 }
 
 # The merge gate's waits before rerunning jobs no runner picked up (#258):

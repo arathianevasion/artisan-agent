@@ -4,9 +4,9 @@ name: Script tests
 # the Mac gates locally until it opens a PR; a session on the VM dispatches this
 # workflow against a throwaway branch to gate a merge.
 #
-# Linux is one job. macOS is three: a matrix over shard 1, 2 and 3 of 3, each running
-# tests/run.sh --shard <i>/3 on its own macos-latest runner, so together they run every
-# test exactly once and the macOS job no longer sets the wait. fail-fast is off so every
+# Linux and macOS are each three jobs: a matrix over shard 1, 2 and 3 of 3, each running
+# tests/run.sh --shard <i>/3 on its own runner, so together they run every test exactly
+# once and neither OS sets the wait alone (#380: the single Linux job did). fail-fast is off so every
 # failing shard reports. A run's overall conclusion is red if any shard is red, and that
 # is all scripts/merge-gate.sh reads.
 #
@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: Linux runner (auto = the home-wsl PC when it has a free runner, else github; macOS always runs on macos-latest)
+        description: Linux runner (auto = the home-wsl PC when it has a free runner and takes the job within 10 minutes, else github; macOS always runs on macos-latest)
         type: choice
         options: [auto, home-wsl, github, ubicloud]
         default: auto
@@ -69,6 +69,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       runner: ${{ steps.pick.outputs.runner }}
+      pc: ${{ steps.pick.outputs.pc }}
     steps:
       - id: pick
         env:
@@ -89,14 +90,68 @@ jobs:
               if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
           esac
           echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          # Only an auto pick is probed and may fall back; an explicit home-wsl keeps waiting.
+          if [ "$runner" = "$pc" ] && [ "$CHOICE" != home-wsl ]; then echo "pc=true" >> "$GITHUB_OUTPUT"; else echo "pc=false" >> "$GITHUB_OUTPUT"; fi
           echo "Linux runner: $runner (choice $CHOICE, trusted $TRUSTED)" >> "$GITHUB_STEP_SUMMARY"
 
-  script-tests:
-    name: Script tests (Linux)
-    # Runs where pick-runner says, in a throwaway container either way.
+  # The PC can drop off after the pick, and a job queued for a runner that isn't there
+  # waits for hours (#399). So when the PC was picked, a probe job queues for it first
+  # and pick-final watches the probe: if the probe hasn't started within the wait
+  # (10 minutes), the Linux tests go to ubuntu-latest instead. The probe does nothing
+  # but start. Same trust rule as above: the PC is only ever picked for a run that
+  # pick-runner trusted, so a fork PR never gets a probe or the tests on the PC.
+  pc-probe:
+    name: Probe the PC runner
     needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
+    if: needs.pick-runner.outputs.pc == 'true'
+    runs-on: ["self-hosted", "home-wsl"]
+    timeout-minutes: 2
+    steps:
+      - run: echo "the PC runner picked this up"
+
+  pick-final:
+    name: Confirm the Linux runner
+    needs: pick-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    permissions:
+      actions: read
+    outputs:
+      runner: ${{ steps.final.outputs.runner }}
+    steps:
+      - id: final
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PICKED: ${{ needs.pick-runner.outputs.runner }}
+          PC: ${{ needs.pick-runner.outputs.pc }}
+          WAIT_MINUTES: 10
+        run: |
+          runner=$PICKED
+          if [ "$PC" = true ]; then
+            started=false
+            end=$(( $(date +%s) + WAIT_MINUTES * 60 ))
+            while :; do
+              status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '[.jobs[] | select(.name == "Probe the PC runner")][0].status' 2>/dev/null || true)
+              case "$status" in in_progress | completed) started=true; break ;; esac
+              [ "$(date +%s)" -ge "$end" ] && break
+              sleep 10
+            done
+            if [ "$started" != true ]; then runner='"ubuntu-latest"'; fi
+          fi
+          if [ "$runner" != "$PICKED" ]; then fired="the PC runner did not start within $WAIT_MINUTES minutes, so the Linux tests fell back to $runner"; else fired="no fallback fired"; fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "Linux tests run on: $runner (picked $PICKED); $fired" >> "$GITHUB_STEP_SUMMARY"
+
+  script-tests:
+    name: Script tests (Linux, ${{ matrix.shard }}/3)
+    # Runs where pick-final says, in a throwaway container either way.
+    needs: pick-final
+    runs-on: ${{ fromJSON(needs.pick-final.outputs.runner) }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     container:
       image: ubuntu:24.04
       # An init process reaps killed children, so the process-stop tests see them gone.
@@ -115,7 +170,7 @@ jobs:
           chown -R tester "$GITHUB_WORKSPACE"
           # The tester user can't write the runner's step summary file, so run.sh
           # writes one it can and the next step appends it.
-          sudo -u tester -H env GITHUB_STEP_SUMMARY=/tmp/run-sh-summary.md bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --rerun-failed'
+          sudo -u tester -H env GITHUB_STEP_SUMMARY=/tmp/run-sh-summary.md bash -c 'git config --global user.name CI && git config --global user.email ci@example.invalid && git config --global init.defaultBranch main && git config --global --add safe.directory "*" && plugins/artisan-agent/tests/run.sh -j "$(getconf _NPROCESSORS_ONLN)" --rerun-failed --shard ${{ matrix.shard }}/3'
       - name: List flaky and quarantined tests in the step summary
         if: always()
         run: |

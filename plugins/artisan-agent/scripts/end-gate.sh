@@ -26,7 +26,7 @@
 #       pr-boundaries guardrail (product, then team, then individual), the
 #       approved one once recorded, or {value: null, proposed: "slice",
 #       source: "none"}.
-#   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket] [--by NAME]
+#   end-gate.sh approve <run-dir> [--boundary slice|plan|ticket|run] [--by NAME]
 #                       [--why W] [--changed]
 #       the Artisan approves the end gate: refused (6) while a deferred gate
 #       is still open or an open decision raised at a gate (gate-action.sh
@@ -43,6 +43,9 @@
 #       before the end gate is due.
 #   end-gate.sh prs <run-dir> [--json]
 #       the PRs to cut, stacked in merge order: number, branch, base, tickets.
+#       One PR per run is the integration branch into the default branch. A
+#       group whose tickets are all on the default branch, and no cut PR
+#       carries, is left out; the table names it with the reason (#363).
 #   end-gate.sh cut <run-dir> <n> --body-file F [--title T]
 #       builds branch pr/<run-id>/<n> (the integration branch's merge commit
 #       where the group's tickets end, or the group cherry-picked onto the
@@ -56,7 +59,10 @@
 #       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
 #       the setup).
 #   end-gate.sh finish <run-dir>
-#       once every PR is cut: retires each design whose feature the run ships
+#       once every PR is cut, or once the integration branch's tip is already
+#       on the default branch because the Artisan merged it as one PR (#364:
+#       records that PR, found with gh pr list, as end_gate.merged_outside;
+#       with the tip off main it refuses and names the merges main lacks): retires each design whose feature the run ships
 #       and whose PR has merged into main, with every PR under it in the stack
 #       (a design whose PR is cut but not merged is listed as waiting; run
 #       finish again after the merge, even once the run has ended)
@@ -145,7 +151,7 @@ cmd_status() { [ $# -eq 1 ] || usage; open_run "$1"; status_word; }
 # ---------------------------------------------------------------- boundary
 
 # A pr-boundaries line as setup records it: - `pr-boundaries`: one PR per <x>
-boundary_in() { grep -E '^- `pr-boundaries`: one PR per (slice|plan|ticket)' | head -1 | sed -E 's/.*one PR per (slice|plan|ticket).*/\1/' || true; }
+boundary_in() { grep -E '^- `pr-boundaries`: one PR per (slice|plan|ticket|run)' | head -1 | sed -E 's/.*one PR per (slice|plan|ticket|run).*/\1/' || true; }
 
 team_repo() {
   local f="$MAIN/.artisan-agent/config.yml"
@@ -186,18 +192,55 @@ main_branch() {
   git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || echo main
 }
 
+# main_ref: the ref the default branch is read from: origin's, fetched now,
+# when the repo has an origin and the fetch works, else the local branch.
+main_ref() {
+  local b=
+  b=$(main_branch)
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
+    && git -C "$MAIN" fetch -q origin "$b" >/dev/null 2>&1; then
+    b="origin/$b"
+  fi
+  printf '%s\n' "$b"
+}
+
+# on_main: the merged tickets whose merge commit is already on the default
+# branch, as a JSON array of strings. Once a PR is cut the tickets left out
+# then are recorded (end_gate.left_out) and read instead, so the PRs keep
+# their numbers whatever reaches main afterwards.
+on_main() {
+  local ref= t= c= out=
+  if [ "$(get '.end_gate.left_out != null')" = true ]; then get -c '.end_gate.left_out'; return; fi
+  ref=$(main_ref)
+  while read -r t c; do
+    [ -n "$c" ] || continue
+    git -C "$MAIN" merge-base --is-ancestor "$c" "$ref" 2>/dev/null && out="$out${out:+,}\"$t\""
+  done <<EOF2
+$(get -r '. as $s | [((.integration.merges // [])[] | [(.ticket | tostring), .commit]),
+    (.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null) | [., $s.tickets[.].merge_commit])]
+  | .[] | join(" ")')
+EOF2
+  printf '[%s]\n' "$out"
+}
+
 # The PRs for a boundary, stacked in merge order: each group of merged tickets
-# (by ticket, slice or plan; a rework ticket goes with what it reworks) ends
-# at its last merge; groups are ordered by that merge.
-pr_plan() { # boundary-value
-  get -c --arg b "$1" --arg run "$RUN_ID" --arg main "$(main_branch)" '
+# (by ticket, slice, plan or the whole run; a rework ticket goes with what it
+# reworks) ends at its last merge; groups are ordered by that merge. A group
+# whose every ticket is already on the default branch, and no cut PR carries,
+# is left out (#363): {prs, left_out}. One PR per run is the integration
+# branch itself, into the default branch.
+pr_groups() { # boundary-value
+  get -c --arg b "$1" --arg run "$RUN_ID" --arg main "$(main_branch)" --arg ib "$(integration_branch)" \
+    --argjson onmain "$(on_main)" '
     . as $s
     | ((.integration.merges // []) | map(.ticket | tostring)) as $m0
     | (if $m0 == [] then [.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null and ($s.tickets[.].urgent // false | not))] else $m0 end) as $m1
     | [$m1 | to_entries[] | .value as $v | select(.key as $k | $m1[$k + 1:] | index($v) | not) | $v
        | select($s.tickets[.].status? == "merged")] as $order
+    | ([(.end_gate.prs // [])[].tickets[]] | map(tostring)) as $cut
     | def key($t): ($s.plan.tickets[$t] // {}) as $p | ($s.plan.tickets[$p.rework_of // ""] // {}) as $o
         | if $b == "ticket" then $t
+          elif $b == "run" then "run"
           elif $b == "slice" then ($p.slice // $o.slice // "#\($t)") | tostring
           else ($p.plan // $o.plan // "run") | tostring end;
     def commit($t): ([($s.integration.merges // [])[] | select((.ticket | tostring) == $t) | .commit] | last)
@@ -207,11 +250,16 @@ pr_plan() { # boundary-value
         last: ([$keys | to_entries[] | select(.value == $k) | .key] | max)}]
     | sort_by(.last)
     | ([.[].tickets[]] == $order) as $consecutive
-    | to_entries | map(.key as $i | .value
+    | map(. + {left_out: (all(.tickets[]; . as $t | ($onmain | index($t)) != null and ($cut | index($t)) == null))}) as $all
+    | {left_out: [$all[] | select(.left_out) | {key, tickets, why: "already on \($main)"}],
+       prs: ([$all[] | select(.left_out | not)] | to_entries | map(.key as $i | .value
         | {n: ($i + 1), key, tickets, consecutive: $consecutive,
-           branch: "pr/\($run)/\($i + 1)", base: (if $i == 0 then $main else "pr/\($run)/\($i)" end),
-           commits: [.tickets[] | commit(.)]})'
+           branch: (if $b == "run" then $ib else "pr/\($run)/\($i + 1)" end),
+           base: (if $i == 0 then $main else "pr/\($run)/\($i)" end),
+           commits: [.tickets[] | commit(.)]}))}'
 }
+
+pr_plan() { pr_groups "$1" | jq -c .prs; } # boundary-value
 
 need_prs_allowed() {
   need_ruled "No PR to main is cut"
@@ -222,17 +270,40 @@ need_prs_allowed() {
   esac
 }
 
+# stack_steps: how to merge stacked PRs (#271). Printed with two or more PRs in
+# the plan, nothing for one. A PR deleted with its branch closes the PR stacked
+# on it instead of retargeting it, so no merge command carries --delete-branch:
+# retarget the next PR to main after each merge, delete branches at the end.
+stack_steps() { # plan-json
+  local plan="$1"
+  [ "$(jq length <<<"$plan")" -gt 1 ] || return 0
+  echo
+  echo "Merge the stack in this order. Never use \`--delete-branch\`: deleting a PR's branch closes the PR stacked on it instead of retargeting it."
+  echo
+  jq -r --slurpfile s "$FILE" '. as $plan | length as $len | to_entries[] | .key as $i | .value as $p
+    | (($s[0].end_gate.prs // []) | map(select(.n == $p.n)) | first | .url // "<PR \($p.n)>") as $url
+    | "\($i + 1). `gh pr merge \($url) --merge`"
+      + (if $i + 1 < $len
+         then "\n   then `gh pr edit \(($s[0].end_gate.prs // []) | map(select(.n == $plan[$i + 1].n)) | first | .url // "<PR \($plan[$i + 1].n)>") --base main`"
+         else "" end)' <<<"$plan"
+  echo
+  echo "Delete the merged branches (\`$(jq -r 'map(.branch) | join("`, `")' <<<"$plan")\`) only after the whole stack has merged."
+}
+
 cmd_prs() {
   [ $# -ge 1 ] || usage
   open_run "$1"
   need_prs_allowed
-  local plan=
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  local plan= groups=
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   if [ "${2:-}" = --json ]; then printf '%s\n' "$plan"; return; fi
   echo "| PR | Branch | Into | Tickets | Cut |"
   echo "|---|---|---|---|---|"
   jq -r --slurpfile s "$FILE" '.[] | . as $p
     | "| \(.n) | `\(.branch)` | `\(.base)` | \(.tickets | map("#" + . + (($s[0].plan.tickets[.].title // null) | if . then " (\(.))" else "" end)) | join(", ")) | \(($s[0].end_gate.prs // []) | map(select(.n == $p.n)) | first | .url // "not yet") |"' <<<"$plan"
+  jq -r '.left_out[] | "\nLeft out: \(.tickets | map("#" + .) | join(", ")) (\(.key)): \(.why); no PR is cut for it."' <<<"$groups"
+  stack_steps "$plan"
 }
 
 git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email; } >/dev/null 2>&1 \
@@ -300,7 +371,7 @@ build_branch() { # pr-json [bypass-setup]: points pr/<run>/<n> at the group's wo
 cmd_cut() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local n="$2" body= title= plan= pr= url= branch= base= repo= d=""
+  local n="$2" body= title= plan= groups= pr= url= branch= base= repo= d=""
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -314,7 +385,8 @@ cmd_cut() {
   url=$(get -r --argjson n "$n" '(.end_gate.prs // [])[] | select(.n == $n) | .url')
   if [ -n "$url" ]; then echo "$url"; return 0; fi
   [ -f "$body" ] || die "no body file at $body"
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   pr=$(jq -c --argjson n "$n" '.[] | select(.n == $n)' <<<"$plan")
   [ -n "$pr" ] || refuse "there is no PR $n (end-gate.sh prs)"
   if [ "$n" -gt 1 ]; then
@@ -325,7 +397,8 @@ cmd_cut() {
   d=$(setup_decision "$n" waiting)
   [ -z "$d" ] || refuse "PR $n's worktree_setup failed and decision $d waits: state.sh decide $RUN_DIR $d retry|bypass, then end-gate.sh cut again"
   branch=$(jq -r .branch <<<"$pr"); base=$(jq -r .base <<<"$pr"); repo=$(get -r .repo)
-  build_branch "$pr" "$(setup_decision "$n" decided bypass)"
+  # One PR per run is the integration branch itself: nothing to build.
+  [ "$(get -r '.end_gate.boundary.value')" = run ] || build_branch "$pr" "$(setup_decision "$n" decided bypass)"
   if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
     git -C "$MAIN" push -q origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
   fi
@@ -334,9 +407,11 @@ cmd_cut() {
     || die "could not open the PR for $branch (the branch is kept)"
   url=$(printf '%s\n' "$url" | tail -1)
   apply '.end_gate.prs = ((.end_gate.prs // []) + [$pr + {url: $url, at: $now}])
+    | .end_gate.left_out //= $lo
     | .decisions |= map(if .kind == "end-gate-setup" and .pr == $pr.n and .status == "decided" then .applied = true else . end)
     | event({event: "pr-cut", n: $pr.n, branch: $pr.branch, base: $pr.base, tickets: $pr.tickets, url: $url}; $now)' \
-    --argjson pr "$(jq -c '{n, branch, base, tickets}' <<<"$pr")" --arg url "$url"
+    --argjson pr "$(jq -c '{n, branch, base, tickets}' <<<"$pr")" --arg url "$url" \
+    --argjson lo "$(jq -c '[.left_out[].tickets[]]' <<<"$groups")"
   echo "$url"
 }
 
@@ -427,7 +502,7 @@ packet() {
   case "$(jq -r .source <<<"$b")" in
     guardrail) echo "One PR per **$(jq -r .value <<<"$b")**, from the $(jq -r .level <<<"$b") \`pr-boundaries\` guardrail. Each PR's body is written with upstream \`pr\`." ;;
     approved) echo "One PR per **$(jq -r .value <<<"$b")**, approved by $(jq -r .by <<<"$b")." ;;
-    *) echo "No PR boundary is recorded: proposed **one PR per slice** (each PR reviewable end to end). Approve it, or name per plan or per ticket; until a \`pr-boundaries\` guardrail covers it, the boundary is yours to approve (job 17)." ;;
+    *) echo "No PR boundary is recorded: proposed **one PR per slice** (each PR reviewable end to end). Approve it, or name per plan, per ticket or one per run; until a \`pr-boundaries\` guardrail covers it, the boundary is yours to approve (job 17)." ;;
   esac
   echo
   echo "## Overall action"
@@ -594,7 +669,7 @@ cmd_approve() {
       *) usage ;;
     esac
   done
-  case "$set" in ""|slice|plan|ticket) ;; *) usage ;; esac
+  case "$set" in ""|slice|plan|ticket|run) ;; *) usage ;; esac
   st=$(status_word)
   [ "$st" = not-due ] || [ -z "$(open_deferred)" ] \
     || refuse "deferred gates are still waiting here; answer each first: $(open_deferred)"
@@ -617,7 +692,7 @@ cmd_approve() {
   elif [ -n "$b" ]; then
     src=guardrail
   else
-    refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket)"
+    refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket|run)"
   fi
   issue=$(get -r '.end_gate.issue // empty')
   apply '
@@ -663,10 +738,11 @@ pr_unmerged_through() {
 # alone and named in $waiting. Safe to run again: a design already retired has
 # a closed ticket and is skipped.
 retire_designs() {
-  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last=
+  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last= groups= mine= out=
   waiting=
   repo=$(get -r .repo)
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   for t in $(get -r '.plan.scope[]'); do
     body=$(gh issue view "$t" -R "$repo" --json body --jq .body 2>/dev/null) || { echo "end-gate.sh: could not read #$t to look for its design" >&2; rc=1; continue; }
     for d in $(printf '%s\n' "$body" | sed -nE 's/^[Dd]esign: #([0-9]+).*$/\1/p'); do
@@ -686,6 +762,27 @@ retire_designs() {
       [ -z "$pr" ] || [ -n "$last" -a "$pr" -le "${last:-0}" ] || last=$pr
     done
     [ -z "$last" ] || { pr=$last; url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty'); }
+    if [ -z "$url" ] && { [ "${outside:-0}" -eq 1 ] || [ "$(get '.end_gate.merged_outside != null')" = true ]; }; then
+      # The whole branch merged as one PR outside end-gate.sh cut (#364): that PR carries every ticket.
+      # finish found it before recording it; a rerun reads the record.
+      url=$(get -r '.end_gate.merged_outside.url // empty')
+      [ -n "$url" ] || url=${OUT_URL:-}
+      [ -n "$url" ] || { echo "end-gate.sh: design #$d is not retired: the PR that merged the run was not found; retire it with design.sh retire" >&2; continue; }
+      (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
+        || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }
+      continue
+    fi
+    if [ -z "$url" ] && [ -z "$last" ]; then
+      # Every ticket of the design was left out as already on main (#363): no
+      # PR of this run carries it, and the one that merged it isn't known.
+      mine=$(printf '%s\n' $pairs | sed -n "s/^$d://p" | jq -Rsc 'split("\n") | map(select(. != ""))')
+      out=$(jq -r --argjson m "$mine" '[.left_out[].tickets[]] as $lo
+        | if all($m[]; . as $t | $lo | index($t) != null) then $m | map("#" + .) | join(", ") else "" end' <<<"$groups")
+      if [ -n "$out" ]; then
+        echo "end-gate.sh: design #$d is not retired: its tickets ($out) reached main outside this run's PRs; retire it with design.sh retire --merge <the PR that merged them>" >&2
+        continue
+      fi
+    fi
     [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
     # Cutting a PR isn't shipping it: retire once the PR, and every PR under it
     # in the stack, has merged (#396). Until then the design is waiting.
@@ -701,10 +798,39 @@ retire_designs() {
   return "$rc"
 }
 
+# outside_merge: the integration branch's tip is already on the default branch
+# (the Artisan merged the whole branch as one PR, #364). Sets $OUT_TIP and
+# $OUT_REF; on success $OUT_URL (the merging PR's URL, empty when none is
+# found); on failure $OUT_MISSING, the merges the default branch lacks.
+outside_merge() {
+  local ib= base= ref= t= c= merges=
+  OUT_URL= OUT_MISSING=
+  ib=$(integration_branch); base=$(main_branch); ref=$base
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+    git -C "$MAIN" fetch -q origin "$base" >&2 || die "could not fetch origin $base"
+    ref="origin/$base"
+  fi
+  OUT_REF=$ref
+  OUT_TIP=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib^{commit}" 2>/dev/null) || OUT_TIP=
+  if [ -n "$OUT_TIP" ] && git -C "$MAIN" merge-base --is-ancestor "$OUT_TIP" "$ref" 2>/dev/null; then
+    OUT_URL=$(gh pr list -R "$(get -r .repo)" --state merged --search "$OUT_TIP" --json number,url -q '.[0].url // ""' 2>/dev/null || true)
+    return 0
+  fi
+  merges=$(get -r '(.integration.merges // [])[] | "\(.ticket) \(.commit)"')
+  while read -r t c; do
+    [ -n "$t" ] || continue
+    git -C "$MAIN" merge-base --is-ancestor "$c" "$ref" 2>/dev/null || OUT_MISSING="$OUT_MISSING${OUT_MISSING:+, }#$t (${c:0:7})"
+  done <<EOF2
+$merges
+EOF2
+  [ -n "$OUT_MISSING" ] || OUT_MISSING="the integration branch's tip ${OUT_TIP:0:7}"
+  return 1
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local want= have= repo= t= bad=0 done_list=
+  local want= have= repo= t= bad=0 done_list= outside=0 via=
   # A rerun after the run ended retires the designs whose PRs have merged since (#396).
   if [ "$(status_word)" = ended ]; then
     waiting=
@@ -716,7 +842,13 @@ cmd_finish() {
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
   want=$(pr_plan "$(get -r '.end_gate.boundary.value')" | jq length)
   have=$(get '(.end_gate.prs // []) | length')
-  [ "$have" -ge "$want" ] || refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs)"
+  # No PR cut at all: the branch may have reached main as one PR (#364), even
+  # when that leaves no PR to cut (#363).
+  if [ "$have" -lt "$want" ] || [ "$have" -eq 0 ]; then
+    if outside_merge; then outside=1
+    elif [ "$have" -lt "$want" ]; then refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
+    fi
+  fi
   repo=$(get -r .repo)
   waiting=
   retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
@@ -725,10 +857,20 @@ cmd_finish() {
     else echo "end-gate.sh: could not remove in-run from #$t" >&2; bad=1; fi
   done
   [ "$bad" -eq 0 ] || die "some in-run labels are still on; run end-gate.sh finish again"
-  apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
-    | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
-  echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  if [ "$outside" -eq 1 ]; then
+    apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
+      | .end_gate.merged_outside = {url: (if $url == "" then null else $url end), tip: $tip, into: $ref}
+      | event({event: "run-ended", prs: (((.end_gate.prs // []) | map(.url)) + (if $url == "" then [] else [$url] end))}; $now)' \
+      --arg url "$OUT_URL" --arg tip "$OUT_TIP" --arg ref "$OUT_REF"
+    via=${OUT_URL:-a PR that could not be found}
+    echo "Run $RUN_ID ended: its integration branch was already on $(main_branch), through $via; in-run removed from$done_list."
+  else
+    apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
+      | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
+    echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
+  [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
   # For the run summary: what the merge gates cost (#199).
   echo
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \

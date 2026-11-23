@@ -165,6 +165,21 @@ test_the_end_gate_lists_and_waits_on_a_deferred_overrun_gate() {
   assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "| #50 | overrun | Artisan |"
 }
 
+test_the_end_gate_approves_once_gate_action_has_resolved_the_deferred_overrun_gate() {
+  setup_end
+  jq -n '{number: 50, title: "overrun", state: "open", labels: [], body: "x"}' >"$FAKE_GH_DIR/issue-50.json"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '
+    .overrun_gates = [{id: "overrun-1", kind: "exception", title: "Exception gate: overrun (run r1)", issue: 50,
+       status: "deferred", gate_actions: ["defer"], deferred_at: 5,
+       decision: {card: 1, option: "raise", choice: "raise", why: "demo", by: "Artisan", job: 10, at: 5}}]'
+  product_boundary slice
+  "$E" open "$RUN_DIR" >/dev/null
+  assert_status 6 "$E" approve "$RUN_DIR"
+  "$SCRIPTS/gate-action.sh" approve "$RUN_DIR" 50 --by Andrew >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+}
+
 test_a_run_with_no_overrun_gates_lists_no_deferred_gate() {
   setup_end
   assert_contains "$("$SCRIPTS/gate-action.sh" deferred "$RUN_DIR")" "No gate is deferred."
@@ -254,6 +269,79 @@ pr/r1/3 pr/r1/2" "$(prs)"
   assert_eq "$M2" "$(git -C "$PROJECT" rev-parse pr/r1/2)"
 }
 
+test_per_run_from_the_product_guardrail_cuts_one_pr_from_the_integration_branch_to_main() {
+  setup_end
+  product_boundary run
+  assert_eq '{"value":"run","level":"product","source":"guardrail"}' "$("$E" boundary "$RUN_DIR")"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[{"n":1,"branch":"run/r1","base":"main","tickets":["1","2","3"]}]' \
+    "$("$E" prs "$RUN_DIR" --json | jq -c 'map({n, branch, base, tickets})')"
+  assert_contains "$("$E" prs "$RUN_DIR")" '| 1 | `run/r1` | `main` |'
+  cut_all
+  assert_eq "run/r1 main" "$(prs)"
+  assert_eq "$M3" "$(git -C "$PROJECT" rev-parse run/r1)" "the integration branch is the PR's head, untouched"
+  assert_contains "$(jq -r .title "$FAKE_GH_DIR/pr-1.json")" "#1, #2, #3"
+  assert_contains "$("$E" finish "$RUN_DIR")" "1 PR(s) to main"
+}
+
+test_the_artisan_can_approve_one_pr_for_the_whole_run() {
+  setup_end
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" --boundary run >/dev/null
+  assert_eq "run 17 true" "$(state_get '.decisions[] | select(.kind == "pr-boundary") | "\(.choice) \(.job) \(.changed)"')"
+  assert_eq "run/r1 main" "$("$E" prs "$RUN_DIR" --json | jq -r '.[] | "\(.branch) \(.base)"')"
+}
+
+test_a_group_already_on_main_is_left_out_with_a_reason_and_the_stack_starts_after_it() {
+  setup_end
+  product_boundary slice
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 (#346)" "$M2"   # the export slice reached main another way
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[{"n":1,"base":"main","tickets":["3"]}]' "$("$E" prs "$RUN_DIR" --json | jq -c 'map({n, base, tickets})')"
+  assert_contains "$("$E" prs "$RUN_DIR")" "Left out: #1, #2 (export): already on main"
+  cut_all
+  assert_eq "pr/r1/1 main" "$(prs)"
+}
+
+test_the_prs_keep_their_numbers_once_cutting_has_begun() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  echo body >"$TEST_TMPDIR/b.md"
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md" >/dev/null
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 by hand" "$M2"   # #2 reaches main after PR 1 is cut
+  assert_eq '[["1"],["2"],["3"]]' "$("$E" prs "$RUN_DIR" --json | jq -c 'map(.tickets)')"
+}
+
+test_finish_does_not_fail_on_a_design_whose_tickets_were_left_out_as_already_on_main() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  product_boundary slice
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 (#346)" "$M2"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  merge_all_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) || fail "finish failed: $out"
+  assert_contains "$out" "design #10 is not retired: its tickets (#1) reached main outside this run's PRs"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_a_run_already_on_main_has_no_pr_to_cut() {
+  setup_end
+  product_boundary run
+  merge_integration_into_main
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[]' "$("$E" prs "$RUN_DIR" --json)"
+  assert_contains "$("$E" prs "$RUN_DIR")" "Left out: #1, #2, #3 (run): already on main"
+}
+
 test_the_product_guardrail_beats_team_and_individual() {
   setup_end
   individual_boundary ticket
@@ -302,6 +390,36 @@ test_a_removed_end_gate_still_needs_the_boundary_before_prs() {
   assert_eq 2 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
 }
 
+# Stacked PRs (#271): merging with --delete-branch closes the next PR, so the
+# end gate says how to merge the stack.
+test_two_or_more_prs_print_the_stack_steps_in_merge_order() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  local out= u1= u2=
+  out=$("$E" prs "$RUN_DIR")
+  u1=$(state_get '.end_gate.prs[0].url'); u2=$(state_get '.end_gate.prs[1].url')
+  assert_contains "$out" "Merge the stack in this order"
+  assert_contains "$out" "gh pr merge $u1 --merge"
+  assert_contains "$out" "gh pr edit $u2 --base main"
+  assert_contains "$out" "gh pr merge $u2 --merge"
+  assert_contains "$out" "only after the whole stack has merged"
+  assert_eq 0 "$(printf '%s\n' "$out" | grep -c 'gh pr merge.*--delete-branch' || true)"
+  assert_contains "$("$E" finish "$RUN_DIR")" "gh pr edit $u2 --base main"
+}
+
+test_one_pr_prints_no_stack_steps() {
+  setup_end
+  product_boundary run
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_not_contains "$("$E" prs "$RUN_DIR")" "gh pr merge"
+  assert_not_contains "$("$E" finish "$RUN_DIR")" "gh pr merge"
+}
+
 # ------------------------------------------------------------ ending the run
 
 test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
@@ -323,6 +441,82 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
   assert_contains "$out" "min over 1 decision (longest"
   assert_eq ended "$("$E" status "$RUN_DIR")"
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
+}
+
+# A run whose integration branch the Artisan merged into main as one PR (#364).
+merge_integration_into_main() { # [pr-number]: --no-ff into main, and a merged PR in the fake tracker
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge run/r1 (#${1:-7})" run/r1
+  if [ -n "${1:-}" ]; then
+    jq -n --argjson n "$1" --arg tip "$(git -C "$PROJECT" rev-parse run/r1)" --arg oid "$(git -C "$PROJECT" rev-parse HEAD)" \
+      '{number: $n, base: "main", head: "run/r1", title: "Run r1", state: "MERGED", merge_oid: $oid, commits: [$tip]}' >"$FAKE_GH_DIR/pr-$1.json"
+  fi
+}
+
+approved_end() {
+  product_boundary plan
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+}
+
+test_finish_ends_a_run_whose_integration_branch_was_merged_as_one_pr_and_records_that_pr() {
+  setup_end
+  approved_end
+  merge_integration_into_main 7
+  local out= n=
+  out=$("$E" finish "$RUN_DIR")
+  assert_contains "$out" "https://github.com/local/sample/pull/7"
+  assert_contains "$out" "/artisan-agent:retro"
+  assert_contains "$out" "| Merge gates | This run |"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq "https://github.com/local/sample/pull/7" "$(state_get '.end_gate.merged_outside.url')"
+  assert_eq "https://github.com/local/sample/pull/7" "$(state_get '.events[-1].prs[0]')"
+  assert_eq "run-ended" "$(state_get '.events[-1].event')"
+  for n in 1 2 3; do
+    assert_eq "ready-for-agent" "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$n.json")"
+  done
+}
+
+test_finish_ends_that_run_even_when_the_merging_pr_cannot_be_found() {
+  setup_end
+  approved_end
+  merge_integration_into_main
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq "null" "$(state_get '.end_gate.merged_outside.url')"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(state_get '.end_gate.merged_outside.tip')"
+}
+
+test_finish_still_refuses_when_the_integration_tip_is_not_on_main_and_names_the_missing_merges() {
+  setup_end
+  approved_end
+  local err=
+  err=$("$E" finish "$RUN_DIR" 2>&1) && fail "finished with nothing on main"
+  assert_status 6 "$E" finish "$RUN_DIR"
+  assert_contains "$err" "0 of 2 PRs cut"
+  assert_contains "$err" "not on main"
+  assert_contains "$err" "#1 (${M1:0:7})"
+  assert_contains "$err" "#3 (${M3:0:7})"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+}
+
+test_finish_names_only_the_merges_main_lacks_when_main_has_some_of_them() {
+  setup_end
+  approved_end
+  git_quiet -C "$PROJECT" merge --no-ff -m "partial" "$M2"
+  local err=
+  err=$("$E" finish "$RUN_DIR" 2>&1) && fail "finished with the tip off main"
+  assert_contains "$err" "#3 (${M3:0:7})"
+  case "$err" in *"#1 ("*|*"#2 ("*) fail "named a merge that is on main: $err" ;; esac
+}
+
+test_run_digest_does_not_report_a_run_that_finish_has_ended() {
+  setup_end
+  approved_end
+  merge_integration_into_main 7
+  "$E" finish "$RUN_DIR" >/dev/null
+  # Even with a ticket left unmerged in the record, an ended run is not open.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["3"].status = "blocked"'
+  assert_eq "" "$("$SCRIPTS/run-digest.sh" --run-dir "$RUN_DIR" --peek)"
 }
 
 test_the_end_gate_is_not_due_while_tickets_remain() {
@@ -649,6 +843,18 @@ test_the_end_gate_retires_the_design_a_shipped_ticket_names_and_no_other() {
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-11.json")"
   assert_eq "docs/journeys/pay.md
 docs/journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^docs/journeys/')"
+}
+
+test_finish_retires_a_design_through_the_pr_that_merged_the_whole_branch() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  approved_end
+  merge_integration_into_main 7
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in https://github.com/local/sample/pull/7"
 }
 
 test_the_end_gate_names_the_pr_that_carries_the_designs_ticket() {

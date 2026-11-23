@@ -54,6 +54,9 @@
 # prototype: dispatches a headless prototype worker (claude -p, detached, in
 #   its own session, ARTISAN_ROLE=prototype) to build WHAT on the prototype
 #   branch prototype/<SLUG>, in its own worktree, <main checkout>-wt/prototype-<SLUG>
+#   (a new worktree first runs the project's worktree_setup, #371; a failure
+#   launches no worker, removes the worktree and exits 1 with its stderr tail;
+#   a reused worktree is not set up again)
 #   (made if missing, reused if it is already on that branch). The worker never
 #   runs on the feature branch or main, and the prototype branch is never
 #   merged. Its brief, written to
@@ -106,6 +109,12 @@ PROTOTYPE_TOOLS="Read,Edit,Write,Glob,Grep,Bash"
 . "$PLUGIN_ROOT/scripts/lib/detach-lib.sh"
 # shellcheck source=../../../scripts/lib/headless-lib.sh
 . "$PLUGIN_ROOT/scripts/lib/headless-lib.sh"
+# shellcheck source=../../../scripts/lib/state-lib.sh
+. "$PLUGIN_ROOT/scripts/lib/state-lib.sh"
+# shellcheck source=../../../scripts/lib/wave-lib.sh
+. "$PLUGIN_ROOT/scripts/lib/wave-lib.sh"
+# worktree_setup (wave-lib) finds config.sh and detach-lib under SCRIPT_DIR.
+SCRIPT_DIR="$PLUGIN_ROOT/scripts"
 LABEL=design
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -276,6 +285,15 @@ cmd_prototype() {
   else
     mkdir -p "$(dirname "$wt")"
     git worktree add -q "$wt" "$branch" || die "could not check out $branch into $wt (is it checked out elsewhere?)"
+    # The project's worktree_setup (#371), once, in the new worktree and before
+    # the worker starts; no run state, so the project's config alone. A failure
+    # removes the worktree, so the next dispatch sets up again.
+    MAIN=$root FILE=
+    if ! worktree_setup "$wt"; then
+      git worktree remove --force "$wt" >/dev/null 2>&1 || true
+      git worktree prune >/dev/null 2>&1 || true
+      die "the prototype worktree for $slug: $SETUP_ERR"
+    fi
   fi
   [ "$(git -C "$wt" symbolic-ref -q --short HEAD)" = "$branch" ] || die "$wt is not on $branch; refusing to dispatch"
 

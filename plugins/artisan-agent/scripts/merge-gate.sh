@@ -48,7 +48,8 @@
 #   merge-gate.sh ci --repo O/N --workflow FILE --branch B --sha SHA --dir D
 #                    [--timeout-minutes M | --deadline EPOCH] [--resume] [--remote R]
 #                    [--skip-path PATTERN]... [--base SHA] [--reuse-run ID --reuse-sha W]
-#                    [--runner-waits "M..."]
+#                    [--runner-waits "M..."] [--start-minutes S]
+#                    [--fallback-command CMD --fallback-log FILE [--fallback-host H]]
 #       push SHA (a commit in the git checkout D) to branch B on remote R
 #       (default origin), dispatch FILE there (gh workflow run), wait for the
 #       workflow_dispatch run on B whose head SHA is SHA, and delete B, pass
@@ -96,6 +97,16 @@
 #       (green, red or 19) gains runner_reruns: [{attempt, waited_minutes,
 #       jobs, conclusion}]. A cancel without the annotation, or beside a real
 #       failure, is judged as before.
+#       Every record has tier: "ci", unless the local fallback (#386) gave
+#       the verdict. With --fallback-command, a gate CI gave no verdict
+#       because no runner took the run (the push or dispatch failed, or the
+#       run was still queued after S minutes, default 10, or at the deadline;
+#       a queued run is cancelled) runs CMD itself: on host H when it answers
+#       ssh within 10 seconds, in a fresh clone of SHA sent there as a git
+#       bundle, else (or when that clone fails) in D on this machine. The
+#       record is then tier "local:<machine>", conclusion success or failure,
+#       fallback {why (CI's), host, command, log, passed}, output in FILE;
+#       exit 0 or 7. A run a runner started is never judged this way.
 #       A red record (exit 7) also holds failing_tests: what failed-tests
 #       read from the run's failed jobs (#176).
 #       --base (#195) is the integration tip before the merge (a merge
@@ -112,6 +123,11 @@
 #         new        some failures are new against the base: exit 7, with
 #                    failing_tests only the new ones when the base was red
 #         unchecked  neither gave a verdict in time: exit 7, as before
+#       A base run whose only jobs that did not pass were never acquired by a
+#       runner (#261, the same test as above) is rerun once on those jobs; a
+#       rerun that passes or fails for real is judged as any base run, and
+#       one still short of runners (or silent in time) leaves the base
+#       unjudged: the verdict is never base-red, and base gains unjudged: why.
 #       Both branches are deleted after (a base run still going when the
 #       rerun passed is left to finish). With --resume, a run already at a
 #       later attempt was cut off mid check: that attempt is the rerun, so
@@ -160,6 +176,8 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/detach-lib.sh"
 # shellcheck source=lib/priority-lib.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/priority-lib.sh"
+# shellcheck source=lib/remote-suite-lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/remote-suite-lib.sh"
 
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOST_FILE=${ARTISAN_HOME:-$CFG/artisan-agent}/host.json
@@ -258,7 +276,7 @@ CI_REPO= CI_WF= CI_BRANCH= CI_SHA= CI_DIR= CI_REMOTE=origin CI_RUNNER_WAITS="15 
 record() { # run-json why
   jq -nc --argjson r "$1" --arg why "$2" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" \
     --argjson rr "$RUNNER_RERUNS" '
-    {mode: "ci", workflow: $wf, branch: $b, sha: $sha,
+    {mode: "ci", tier: "ci", workflow: $wf, branch: $b, sha: $sha,
      run_id: ($r.databaseId // null), url: ($r.url // null), conclusion: ($r.conclusion // null),
      jobs: [($r.jobs // [])[] | {name, conclusion}]}
     + (if $rr == [] then {} else {runner_reruns: $rr} end)
@@ -400,7 +418,7 @@ try_skip() {
     n=$((n + 1))
   done <<<"$changed"
   jq -nc --argjson g "$green" --argjson n "$n" --arg wf "$CI_WF" --arg b "$CI_BRANCH" --arg sha "$CI_SHA" '
-    {mode: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: $g.databaseId, url: $g.url,
+    {mode: "ci", tier: "ci", workflow: $wf, branch: $b, sha: $sha, run_id: $g.databaseId, url: $g.url,
      conclusion: "success", jobs: [], skipped: true,
      relied_on: {run_id: $g.databaseId, url: $g.url, sha: $g.headSha},
      why: "CI not dispatched: only release paths changed (\($n) file\(if $n == 1 then "" else "s" end)) since \($g.headSha[0:12]), which run \($g.databaseId) passed"}'
@@ -469,11 +487,72 @@ runner_retry() {
   return 19
 }
 
+# ------------------------------------------------ the local fallback (#386)
+
+# run_started run-json: a runner has taken the run (it is past queued,
+# waiting, requested or pending). An empty run (none listed) has not.
+run_started() {
+  [ -n "$1" ] || return 1
+  case "$(jq -r '.status // ""' <<<"$1")" in '' | queued | waiting | requested | pending) return 1 ;; esac
+}
+
+# When no runner took the gate run (the push or dispatch failed, or the run
+# never started), the gate runs the suite itself: on FB_HOST when it answers
+# ssh, else on this machine. Off when FB_CMD is empty.
+FB_CMD= FB_LOG= FB_HOST=
+fb_on() { [ -n "$FB_CMD" ]; }
+
+# cancel_queued run-json: cancel a run no runner took, so none starts it
+# after the gate has judged the commit itself.
+cancel_queued() {
+  [ "$1" = '{}' ] || [ -z "$1" ] || gh run cancel "$(jq -r .databaseId <<<"$1")" -R "$CI_REPO" >/dev/null 2>&1 || true
+}
+
+# fb_host_up / fb_remote: the suite on FB_HOST (lib/remote-suite-lib.sh):
+# its exit status, FB_NO_CHECKOUT when the clone could not be made there, or
+# ssh's 255 when the link failed: then it runs here.
+FB_NO_CHECKOUT=$REMOTE_NO_CHECKOUT
+fb_host_up() { remote_host_up "$FB_HOST"; }
+fb_remote() { remote_suite "$FB_HOST" "$CI_DIR" "$CI_SHA" "$FB_CMD" "$FB_LOG"; }
+
+# fallback why: the gate's verdict from a local run, CI having given none
+# (why). Prints the record (tier local:<machine>, conclusion success or
+# failure, fallback {why, host, command, log, passed}); 0 green, 7 red.
+fallback() {
+  local why="$1" machine="" rc=0 passed=true
+  mkdir -p "$(dirname "$FB_LOG")"
+  if fb_host_up; then
+    machine=$FB_HOST
+    fb_remote || rc=$?
+  fi
+  if [ -z "$machine" ] || [ "$rc" -eq "$FB_NO_CHECKOUT" ] || [ "$rc" -eq 255 ]; then
+    [ -z "$machine" ] || echo "merge-gate.sh: no verdict from $machine (could not check out $CI_SHA there, or ssh failed: $rc); running the suite here" >&2
+    rc=0
+    machine=$(hostname -s 2>/dev/null || hostname)
+    priority_init || exit 1
+    (cd "$CI_DIR" && priority_run sh -c "$FB_CMD") >"$FB_LOG" 2>&1 || rc=$?
+  fi
+  [ "$rc" -eq 0 ] || passed=false
+  echo "merge-gate.sh: CI gave no verdict ($why); ran the suite on $machine: $([ "$passed" = true ] && echo passed || echo failed)" >&2
+  record '{}' "" | jq -c --arg m "local:$machine" --arg why "$why" --arg c "$FB_CMD" --arg l "$FB_LOG" --argjson p "$passed" \
+    '.tier = $m | .conclusion = (if $p then "success" else "failure" end)
+     | .fallback = {why: $why, host: ($m | ltrimstr("local:")), command: $c, log: $l, passed: $p}'
+  [ "$passed" = true ] || return 7
+}
+
+# no_runner why: CI gave no verdict because no runner took the run: the
+# fallback's verdict when it is on, else the no-verdict record and 19.
+no_runner() {
+  if fb_on; then fallback "$1"; return $?; fi
+  record '{}' "$1"
+  return 19
+}
+
 CI_BASE=
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
   local reuse_run="" reuse_sha=""
-  local window=0 red="" attempt="" w=""
+  local window=0 red="" attempt="" w="" start_minutes=10 start_by=0
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -491,6 +570,10 @@ cmd_ci() {
       --reuse-run) [ $# -ge 2 ] || usage; reuse_run=$2; shift 2 ;;
       --reuse-sha) [ $# -ge 2 ] || usage; reuse_sha=$2; shift 2 ;;
       --runner-waits) [ $# -ge 2 ] || usage; CI_RUNNER_WAITS=$2; shift 2 ;;
+      --fallback-command) [ $# -ge 2 ] || usage; FB_CMD=$2; shift 2 ;;
+      --fallback-log) [ $# -ge 2 ] || usage; FB_LOG=$2; shift 2 ;;
+      --fallback-host) [ $# -ge 2 ] || usage; FB_HOST=$2; shift 2 ;;
+      --start-minutes) [ $# -ge 2 ] || usage; start_minutes=$2; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -498,6 +581,8 @@ cmd_ci() {
   case "$CI_BRANCH" in ci/*) ;; *) die "the gate branch must be under ci/, not $CI_BRANCH" ;; esac
   case "$timeout" in '' | *[!0-9]*) die "--timeout-minutes must be a whole number" ;; esac
   case "$deadline" in '' | *[!0-9]*) die "--deadline must be an epoch second" ;; esac
+  case "$start_minutes" in '' | *[!0-9]*) die "--start-minutes must be a whole number" ;; esac
+  [ -z "$FB_CMD" ] || [ -n "$FB_LOG" ] || die "--fallback-command needs --fallback-log"
   for w in $CI_RUNNER_WAITS; do
     case "$w" in *[!0-9]*) die "--runner-waits must be whole numbers of minutes, not \"$CI_RUNNER_WAITS\"" ;; esac
   done
@@ -506,13 +591,13 @@ cmd_ci() {
     if try_reuse "$reuse_run" "$reuse_sha"; then return 0; fi
     if try_skip ${skip[@]+"${skip[@]}"}; then return 0; fi
     if ! git -C "$CI_DIR" push -q "$CI_REMOTE" "$CI_SHA:refs/heads/$CI_BRANCH" >/dev/null 2>&1; then
-      record '{}' "could not push $CI_BRANCH to $CI_REMOTE"
-      return 19
+      no_runner "could not push $CI_BRANCH to $CI_REMOTE"
+      return $?
     fi
     if ! gh workflow run "$CI_WF" -R "$CI_REPO" --ref "$CI_BRANCH" >/dev/null 2>&1; then
       delete_branch
-      record '{}' "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
-      return 19
+      no_runner "could not dispatch $CI_WF on $CI_BRANCH (gh workflow run failed)"
+      return $?
     fi
   fi
   allowed="$timeout minutes"
@@ -520,12 +605,26 @@ cmd_ci() {
   # The base check's own span: as long as the gate itself was given.
   window=$((deadline - $(date +%s)))
   [ "$window" -ge 60 ] || window=60
+  # A run no runner has started by then never will (#386): with the fallback
+  # on, the gate stops waiting for it.
+  start_by=$(($(date +%s) + start_minutes * 60))
   while :; do
     run=$(find_run)
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then break; fi
+    if fb_on && [ "$(date +%s)" -ge "$start_by" ] && ! run_started "$run"; then
+      cancel_queued "$run"
+      delete_branch
+      fallback "no runner started $CI_WF for $CI_SHA within $start_minutes minutes"
+      return $?
+    fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       delete_branch
       [ -n "$run" ] || run='{}'
+      if fb_on && ! run_started "$run"; then
+        cancel_queued "$run"
+        fallback "no runner started $CI_WF for $CI_SHA within $allowed"
+        return $?
+      fi
       record "$run" "no conclusion from $CI_WF for $CI_SHA within $allowed"
       return 19
     fi
@@ -573,6 +672,38 @@ cmd_ci() {
   esac
 }
 
+# base_runner_retry base-run window: a base run that concluded with only
+# runner-less jobs (#261, no_runner_jobs) is rerun once, its cancelled jobs
+# only, after the first of CI_RUNNER_WAITS minutes, and waited on up to
+# `window` seconds. Sets BASE_RUNNER: "" the run is judged as it stands (no
+# runner shortage); rerun, with BASE_RUNNER_VIEW the rerun's run, to judge
+# it; unjudged, runners were still missing (or the rerun gave nothing in
+# time), so the base is no verdict.
+BASE_RUNNER= BASE_RUNNER_VIEW=
+base_runner_retry() {
+  local brun="$1" window="$2" bid="" view="" rr="" att=1 end=0 wait="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  BASE_RUNNER= BASE_RUNNER_VIEW=
+  bid=$(jq -r '.databaseId // empty' <<<"$brun")
+  [ -n "$bid" ] || return 0
+  view=$(gh run view "$bid" -R "$CI_REPO" --json databaseId,attempt,status,conclusion,url,jobs 2>/dev/null) || return 0
+  jq -e '(.conclusion // "") | IN("failure", "timed_out", "cancelled")' <<<"$view" >/dev/null 2>&1 || return 0
+  no_runner_jobs "$view" >/dev/null || return 0
+  BASE_RUNNER=unjudged
+  for wait in $CI_RUNNER_WAITS; do sleep $((wait * 60)); break; done
+  att=$(jq -r '.attempt // 1' <<<"$view")
+  case "$att" in '' | *[!0-9]*) att=1 ;; esac
+  gh run rerun "$bid" -R "$CI_REPO" --failed >/dev/null 2>&1 || return 0
+  end=$(($(date +%s) + window))
+  while :; do
+    rr=$(gh run view "$bid" -R "$CI_REPO" --json databaseId,attempt,status,conclusion,url,jobs 2>/dev/null) || rr=""
+    if [ -n "$rr" ] && jq -e --argjson a "$att" '(.attempt // 0) > $a and .status == "completed"' <<<"$rr" >/dev/null 2>&1; then break; fi
+    if [ "$(date +%s)" -ge "$end" ]; then return 0; fi
+    sleep "$poll"
+  done
+  no_runner_jobs "$rr" >/dev/null && return 0
+  BASE_RUNNER=rerun BASE_RUNNER_VIEW=$(jq -c . <<<"$rr")
+}
+
 # base_check run-id red-record window [rerun-attempt rerun-conclusion]: a
 # red run, checked before it counts (#195). At once: its failed jobs rerun
 # on the merge commit, and the gate workflow on the base. Waits up to
@@ -583,7 +714,7 @@ cmd_ci() {
 # passed.
 base_check() {
   local id="$1" red="$2" window="$3" att0="" end=0 rr="" brun="" btests='null' bbranch="$CI_BRANCH-base"
-  local rdone=0 bdone=0 rconc="" bconc="" verdict="" out="" poll=${ARTISAN_CI_POLL_SECONDS:-20}
+  local rdone=0 bdone=0 rconc="" bconc="" verdict="" out="" poll=${ARTISAN_CI_POLL_SECONDS:-20} bunjudged=false
   # done: 0 waiting, 1 nothing to wait on (it never started), 2 concluded.
   if [ -n "${4:-}" ]; then
     att0=$(($4 - 1)) rdone=2 rconc=$5
@@ -616,6 +747,17 @@ base_check() {
     [ "$(date +%s)" -lt "$end" ] || break
     sleep "$poll"
   done
+  # A base run that lost jobs to a runner shortage (#261) is no verdict on
+  # the base: rerun those jobs once, and if runners are still missing it is
+  # unjudged, never red.
+  # (Not when the merge commit's rerun passed: flaky no matter the base.)
+  if [ "$bdone" -eq 2 ] && [ "$rconc" != success ]; then
+    base_runner_retry "$brun" "$window"
+    case "$BASE_RUNNER" in
+      rerun) brun=$BASE_RUNNER_VIEW bconc=$(jq -r '.conclusion // ""' <<<"$brun") ;;
+      unjudged) bconc="" bunjudged=true ;;
+    esac
+  fi
   delete_branch
   delete_branch "$bbranch"
   [ -n "$brun" ] || brun='{}'
@@ -624,7 +766,7 @@ base_check() {
   esac
   # The same test: the same job and name (its line may move with the change).
   out=$(jq -c --arg rc "$rconc" --arg bc "$bconc" --argjson ra "$((att0 + 1))" --argjson rr "${rr:-null}" \
-      --argjson b "$brun" --argjson bt "$btests" --arg bsha "$CI_BASE" --arg bb "$bbranch" '
+      --argjson b "$brun" --argjson bt "$btests" --argjson bu "$bunjudged" --arg bsha "$CI_BASE" --arg bb "$bbranch" '
     (.failing_tests.tests // []) as $mine | ($bt.tests // []) as $theirs
     | ($bc == "failure" or $bc == "timed_out") as $bred
     | [$mine[] | . as $x | select(any($theirs[]; .job == $x.job and .name == $x.name) | not)] as $new
@@ -634,8 +776,9 @@ base_check() {
        else "unchecked" end) as $v
     | . + {base_check: {verdict: $v,
             rerun: {attempt: (if $rc == "" then null else $ra end), conclusion: (if $rc == "" then null else $rc end)},
-            base: {sha: $bsha, branch: $bb, run_id: ($b.databaseId // null), url: ($b.url // null),
-                   conclusion: (if $bc == "" then null else $bc end), failing_tests: $bt}}}
+            base: ({sha: $bsha, branch: $bb, run_id: ($b.databaseId // null), url: ($b.url // null),
+                   conclusion: (if $bc == "" then null else $bc end), failing_tests: $bt}
+                   + (if $bu then {unjudged: "no runner: its jobs were not acquired by Runner, even on a rerun"} else {} end))}}
     | if $v == "flaky" then .conclusion = "success" | .jobs = (if $rr == null then .jobs else [($rr.jobs // [])[] | {name, conclusion}] end)
       elif $v == "new" and $bred and $theirs != [] then
         .failing_tests = {tests: $new, total: ($new | length), truncated: false, also_on_base: (($mine | length) - ($new | length))}

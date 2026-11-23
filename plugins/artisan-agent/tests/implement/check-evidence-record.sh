@@ -25,7 +25,7 @@ problems=$(jq -r '
     if type != "object" or (.recorded | type) != "boolean" then "checks: must be checks.sh run output, with recorded true or false"
     elif (.results | type) != "array" then "checks: results must be an array"
     elif .recorded == false and ((.fallback // "") | startswith("no recorded checks") | not) then "checks: no recorded checks, but no fallback saying so"
-    elif .recorded and (.results | length) == 0 then "checks: recorded checks, but none ran"
+    elif .recorded and (.results | length) == 0 and ([(.not_run // [])[] | tostring | select(contains("left to the merge gate"))] | length) == 0 then "checks: recorded checks, but none ran"
     else (.results | to_entries[] | .key as $i | .value
           | need(.; ["command","passed","result"]; "checks.results[\($i)]")) end),
   (select(has("status")) | oneof(.status; ["complete","blocked","failed"]; "status")),
@@ -39,7 +39,14 @@ problems=$(jq -r '
   (select(has("tests")) | .tests |
     (if (.suite_passed | type) != "boolean" then "tests: suite_passed must be true or false" else empty end),
     (if (.files | type) != "array" or (.files | length) == 0 or ([.files[] | type != "string"] | any) then "tests: files must name the test files run" else empty end),
-    (if ((.full_suite // "") | type) != "string" or ((.full_suite // "") | test("merge gate") | not) then "tests: full_suite must say the full suite is left to the merge gate" else empty end)),
+    (if (.full_suite | type) != "object" or (.full_suite.where | type) != "string" or (.full_suite.ran | type) != "boolean"
+     then "tests: full_suite must be the worker-suite.sh record ({where, ran, ...}): where the full suite ran before hand-in, or why it did not"
+     elif .full_suite.ran and (.full_suite.passed | type) != "boolean" then "tests: full_suite ran but says no passed"
+     elif (.full_suite.ran | not) and ([.full_suite.commit, .full_suite.why, .full_suite.instead] | map(type == "string") | all | not)
+     then "tests: full_suite did not run, but does not give its commit, why and what ran instead"
+     else empty end)),
+  (select(.status == "complete" and (.tests.full_suite | type) == "object" and .tests.full_suite.ran == true and .tests.full_suite.passed == false)
+   | "tests: the full suite failed (\(.tests.full_suite.summary // "no summary")): fix it before handing in as complete"),
   (["unsure","findings","decisions"][] as $k | select(has($k) and (.[$k] | type) != "array") | "\($k): must be an array"),
   (select((.decisions | type) == "array") | .decisions | to_entries[] | .key as $i | .value |
     (need(.; ["job","choice","by","question","alternative","kind","criterion"]; "decisions[\($i)]")),

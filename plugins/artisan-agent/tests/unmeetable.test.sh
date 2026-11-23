@@ -418,3 +418,62 @@ test_u_a_crashed_calls_split_ticket_past_the_first_30_needs_triage_issues_is_reu
   assert_eq "$count" "$(ls "$FAKE_GH_DIR"/issue-*.json | wc -l | tr -d ' ')" "nothing opened"
   assert_eq "split $n" "$(state_get '.tickets["1"].criteria_changes[0] | "\(.action) \(.to)"')"
 }
+
+# #400: after a rewrite, split or drop on an unmeetable-criterion gate, the
+# verifier already judged this attempt's commit under criteria that no longer
+# stand: verify.sh start launches a fresh one on the same commit, and its
+# pass merges the ticket. $1 names the action, $2 is what judge prints for the
+# fresh verifier.
+supersede_case() {
+  open_unmeetable_gate
+  case "$1" in
+    rewrite) "$A" rewrite "$RUN_DIR" "$GATE_ISSUE" --as "hello.txt greets with hi" >/dev/null ;;
+    drop) "$A" drop-criterion "$RUN_DIR" "$GATE_ISSUE" --why "Fixtures come in #9" >/dev/null ;;
+    split) "$A" split "$RUN_DIR" "$GATE_ISSUE" --ticket >/dev/null ;;
+  esac
+  assert_eq "true" "$(state_get '.tickets["1"].verifications[-1].superseded')" "the judged verifier is superseded"
+  assert_eq returned "$(state_get '.tickets["1"].status')"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null
+  assert_eq 2 "$(state_get '.tickets["1"].verifications | length')" "a fresh verifier started"
+  assert_eq "1 2" "$(state_get '"\(.tickets["1"].verifications[-1].worker_attempt) \(.tickets["1"].verifications[-1].attempt)"')" "same worker attempt"
+  assert_eq "$(state_get '.tickets["1"].verifications[0].commit')" "$(state_get '.tickets["1"].verifications[1].commit')" "same commit"
+  judge_verifier 2
+  assert_eq "$2" "$JUDGE_OUT" "the fresh verifier judged the changed criteria"
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1
+  assert_eq 2 "$(state_get '.tickets["1"].verifications | length')" "a judged fresh verifier is final again"
+  merge_and_close
+  assert_eq 1 "$(state_get '.tickets["1"].attempts')" "no worker attempt used"
+}
+
+test_u_start_launches_a_fresh_verifier_after_a_rewrite() {
+  supersede_case rewrite "pass 2/2"
+}
+
+test_u_start_launches_a_fresh_verifier_after_a_drop() {
+  supersede_case drop "pass 1/1"
+}
+
+test_u_start_launches_a_fresh_verifier_after_a_split() {
+  supersede_case split "pass 1/1"
+}
+
+test_u_a_passed_verdict_is_final_for_its_attempt_until_the_criteria_change() {
+  open_unmeetable_gate
+  # No criteria change: a judged attempt launches nothing, from any verdict.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].verifications[-1].verdict = "pass"'
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].status = "returned"'
+  "$SCRIPTS/verify.sh" start "$RUN_DIR" 1 >/dev/null 2>&1 || true
+  assert_eq 1 "$(state_get '.tickets["1"].verifications | length')" "nothing launched without a criteria change"
+}
+
+test_u_a_judged_pass_before_a_rewrite_cannot_merge_the_ticket_and_the_fresh_verifier_can() {
+  open_unmeetable_gate
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["1"].verifications[-1].verdict = "pass"
+    | .tickets["1"].evidence.verdict = "pass" | .tickets["1"].evidence.attempt = .tickets["1"].attempts'
+  "$A" rewrite "$RUN_DIR" "$GATE_ISSUE" --as "hello.txt greets with hi" >/dev/null
+  assert_eq null "$(state_get '.tickets["1"].evidence')" "the old pass no longer stands"
+  ! "$SCRIPTS/wave.sh" merge "$RUN_DIR" 1 >/dev/null 2>&1 || fail "merged on a verdict from the old criteria"
+  reverify
+  assert_eq "pass 2/2" "$JUDGE_OUT"
+  merge_and_close
+}

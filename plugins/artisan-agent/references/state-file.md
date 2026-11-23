@@ -53,7 +53,7 @@ Each event is one `state.sh` call (the file is rewritten once per event):
 | wave starts | `wave-start <run-dir> <wave> <plugin-version> <team> <product> <individual>` (called by `scripts/guardrails.sh wave-start`, which fetches the sources) | records the wave's plugin version and guardrail source commits (`-` for a level with no source) |
 | dispatch | `dispatch <run-dir> <ticket> <worker-pid> [deadline-epoch]` | `in_flight`, attempts + 1, pid, deadline (default: now + the ticket's `caps.deadline_seconds`; a dispatch with neither is refused). Attempt n's files are named `<ticket>.<n>.*`, with n the ticket's `attempts` after dispatch, so a retry never reads an earlier attempt's files |
 | result | `sweep.sh <run-dir>` | reads result files, exit records, deadlines and pids; logs findings |
-| verifier started | `verify.sh start <run-dir> <ticket>` | appends to `verifications`; event `verify` (`ticket`, `attempt`, `verifier`); once per verifier: while the attempt's verifier is running, is waiting to be judged, or has passed, starting again writes nothing |
+| verifier started | `verify.sh start <run-dir> <ticket>` | appends to `verifications`; event `verify` (`ticket`, `attempt`, `verifier`); once per verifier: while the attempt's verifier is running, is waiting to be judged, or has passed, starting again writes nothing, unless the Artisan changed the ticket's criteria since (`gate-action.sh` rewrite, split or drop-criterion mark the judged verifier `superseded: true`, #400): then the next starts on the same commit |
 | verified | `verify.sh judge <run-dir> <ticket>` | stores the evidence contract in `evidence` (`references/evidence-contract.md`), logs both sessions' cost; event `verified` (`ticket`, `attempt`, `verifier`, `verdict`, and `met`, `total` or `reason`; `gate`: the criteria checked by the merge gate, when there are any, #174; `after_merge`: the criteria measured after merge, moved to the Human check, when there are any, #244) |
 | evidence stored directly | `evidence <run-dir> <ticket> <evidence.json>` | stores the ticket's evidence |
 | merge | `merge <run-dir> <ticket> <merge-commit>` | `merged`, merge commit recorded |
@@ -261,7 +261,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 
 ## The end gate
 
-Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], ended_at}`.
+Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], left_out?, ended_at}` (`left_out`: the tickets left out as already on `main` when the first PR was cut, so the PRs keep their numbers; #363).
 
 ## Where a run lives
 

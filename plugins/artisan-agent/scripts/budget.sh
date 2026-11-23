@@ -384,7 +384,7 @@ packet() { # gate-json
     + "\n| orchestrators | | | \($p.orchestrators | usd) | | |\n"
     + "| **run** | | \($p.estimate // 0 | usd) | \($p.spent | usd) | \($p.to_come | usd) | projected \($p.projected | usd) of \($p.budget // 0 | usd) |\n\n"
     + "## Overall action\n\n"
-    + "**Defer** is the only action at this gate: it can'"'"'t be approved, bypassed or redirected. Answer with one card; the run carries on under it and this issue stays open until the end gate, where the overrun is reviewed with the run.\n"' "$FILE"
+    + "**Defer** is the only action at this gate: it can'"'"'t be redirected, and it is approved or bypassed only at the end gate. Answer with one card; the run carries on under it and this issue stays open until the end gate, where the overrun is reviewed with the run (`gate-action.sh approve` or `bypass` resolves it there).\n"' "$FILE"
 }
 
 # open_overrun projection-json: record the gate once and open its issue.

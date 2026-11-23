@@ -477,6 +477,48 @@ test_a_second_dispatch_reuses_the_prototype_worktree() {
   assert_eq 2 "$(git rev-list --count main..prototype/faster-checkout)"
 }
 
+# worktree_setup in the prototype worktree (#371).
+set_setup() {
+  printf '%s\n' "worktree_setup: '$1'" >>"$P/.artisan-agent/config.yml"
+  git -C "$P" commit -q -am "setup config"
+}
+
+test_a_new_prototype_worktree_runs_worktree_setup_before_the_worker() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  set_setup 'pwd -P >"$ARTISAN_MAIN/setup-ran"; ls "$FAKE_PROTO/pwd" 2>/dev/null >"$ARTISAN_MAIN/setup-saw-worker" || true'
+  prototype >/dev/null
+  wait_prototype
+  assert_eq "$(cd "$P-wt/prototype-faster-checkout" && pwd -P)" "$(cat "$P/setup-ran")"
+  assert_eq "" "$(cat "$P/setup-saw-worker")" "the worker had already run"
+}
+
+test_a_failing_setup_launches_no_worker_and_exits_non_zero_with_its_stderr_tail() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  set_setup 'echo npm exploded >&2; exit 3'
+  local st=0 err=
+  err=$(prototype 2>&1 >/dev/null) || st=$?
+  assert_eq 1 "$st"
+  assert_contains "$err" "exited 3"
+  assert_contains "$err" "npm exploded"
+  assert_eq "" "$(ls "$FAKE_PROTO")" "a worker ran"
+  assert_eq "" "$(git worktree list | grep prototype-faster-checkout || true)" "the worktree was left"
+}
+
+test_a_reused_prototype_worktree_does_not_run_setup_again() {
+  seed; fake_prototype_claude
+  start_checkout >/dev/null
+  set_setup 'echo x >>"$ARTISAN_MAIN/setup-count"'
+  prototype >/dev/null 2>&1; wait_prototype; rm -f "$FAKE_PROTO/done"
+  prototype >/dev/null 2>&1; wait_prototype
+  assert_eq 1 "$(wc -l <"$P/setup-count" | tr -d ' ')"
+}
+
+test_the_scripts_readme_lists_the_prototype_worktree_under_worktree_setup() {
+  assert_contains "$(grep '^| worktree setup command' "$PLUGIN_ROOT/scripts/README.md")" "design.sh prototype"
+}
+
 test_the_skill_dispatches_the_prototype_worker_with_design_sh() {
   local text=
   text=$(sed -n '/^## 4\. /,/^## 5\. /p' "$SKILL")
@@ -600,6 +642,15 @@ test_the_packages_screenshots_are_read_from_the_feature_branch_and_a_missing_one
   assert_contains "$err" "no screenshot on feature/faster-checkout for step(s): pay"
   assert_eq "" "$(git status --porcelain --untracked-files=no)" "approve touched the checkout"
   assert_eq docs/journeys/screenshots/cart.png "$(git ls-tree -r --name-only feature/faster-checkout | grep '^docs/journeys/')"
+}
+
+# #384: capturing main is remote-server only and needs a supporting client; without it, the "before" screenshots stand.
+test_capture_main_into_figma_needs_the_remote_server_and_falls_back_to_the_before_screenshots() {
+  local line=
+  line=$(sed -n '/^## 5\. /,/^## 6\. /p' "$SKILL" | grep -F '**Capture main into Figma**')
+  assert_contains "$line" "remote Figma MCP server"
+  assert_contains "$line" "a client that supports it"
+  assert_contains "$line" "skip the capture and the designer starts from the \"before\" screenshots"
 }
 
 # #337: a Figma design is not a substitute for the screenshots; the package
