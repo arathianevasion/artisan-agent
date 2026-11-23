@@ -174,6 +174,22 @@ test_the_checker_wants_the_checks_and_a_said_fallback() {
   "$CHECK" c.json || fail "a said fallback was refused"
 }
 
+test_the_checker_accepts_a_record_whose_only_check_is_the_suite() {
+  local out=
+  example_record | jq '.checks = {recorded: true, results: [], not_run: ["bash tests/run.sh -j 8: left to the merge gate (it is the run'"'"'s suite command)"]}' > only-the-suite.json
+  "$CHECK" only-the-suite.json || fail "a record whose only recorded check was left to the merge gate was refused"
+  jq 'del(.tests.full_suite)' only-the-suite.json > suite-only-no-result.json
+  out=$("$CHECK" suite-only-no-result.json || true)
+  assert_contains "$out" "tests: full_suite must be the worker-suite.sh record"
+  assert_eq 1 "$("$CHECK" suite-only-no-result.json >/dev/null 2>&1; echo $?)" "a record naming the suite in not_run but with no tests.full_suite is refused"
+  example_record | jq '.checks = {recorded: true, results: [], not_run: []}' > nothing-ran.json
+  out=$("$CHECK" nothing-ran.json || true)
+  assert_contains "$out" "checks: recorded checks, but none ran"
+  example_record | jq '.checks = {recorded: true, results: [], not_run: ["make lint: no tool here"]}' > other-not-run.json
+  out=$("$CHECK" other-not-run.json || true)
+  assert_contains "$out" "checks: recorded checks, but none ran"
+}
+
 test_the_skill_runs_the_recorded_checks_through_the_one_reader() {
   local body=
   body=$(tr '\n' ' ' < "$SKILL")
