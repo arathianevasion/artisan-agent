@@ -192,24 +192,25 @@ main_branch() {
   git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || echo main
 }
 
-# main_ref: the ref the default branch is read from, origin's (fetched once
-# per call) when the repo has an origin, else the local branch.
-MAIN_REF=
+# main_ref: the ref the default branch is read from: origin's, fetched now,
+# when the repo has an origin and the fetch works, else the local branch.
 main_ref() {
-  if [ -z "$MAIN_REF" ]; then
-    MAIN_REF=$(main_branch)
-    if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
-      && git -C "$MAIN" fetch -q origin "$MAIN_REF" >/dev/null 2>&1; then
-      MAIN_REF="origin/$MAIN_REF"
-    fi
+  local b=
+  b=$(main_branch)
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
+    && git -C "$MAIN" fetch -q origin "$b" >/dev/null 2>&1; then
+    b="origin/$b"
   fi
-  printf '%s\n' "$MAIN_REF"
+  printf '%s\n' "$b"
 }
 
 # on_main: the merged tickets whose merge commit is already on the default
-# branch, as a JSON array of strings.
+# branch, as a JSON array of strings. Once a PR is cut the tickets left out
+# then are recorded (end_gate.left_out) and read instead, so the PRs keep
+# their numbers whatever reaches main afterwards.
 on_main() {
   local ref= t= c= out=
+  if [ "$(get '.end_gate.left_out != null')" = true ]; then get -c '.end_gate.left_out'; return; fi
   ref=$(main_ref)
   while read -r t c; do
     [ -n "$c" ] || continue
@@ -349,7 +350,7 @@ build_branch() { # pr-json [bypass-setup]: points pr/<run>/<n> at the group's wo
 cmd_cut() {
   [ $# -ge 2 ] || usage
   open_run "$1"
-  local n="$2" body= title= plan= pr= url= branch= base= repo= d=""
+  local n="$2" body= title= plan= groups= pr= url= branch= base= repo= d=""
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -363,7 +364,8 @@ cmd_cut() {
   url=$(get -r --argjson n "$n" '(.end_gate.prs // [])[] | select(.n == $n) | .url')
   if [ -n "$url" ]; then echo "$url"; return 0; fi
   [ -f "$body" ] || die "no body file at $body"
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   pr=$(jq -c --argjson n "$n" '.[] | select(.n == $n)' <<<"$plan")
   [ -n "$pr" ] || refuse "there is no PR $n (end-gate.sh prs)"
   if [ "$n" -gt 1 ]; then
@@ -384,9 +386,11 @@ cmd_cut() {
     || die "could not open the PR for $branch (the branch is kept)"
   url=$(printf '%s\n' "$url" | tail -1)
   apply '.end_gate.prs = ((.end_gate.prs // []) + [$pr + {url: $url, at: $now}])
+    | .end_gate.left_out //= $lo
     | .decisions |= map(if .kind == "end-gate-setup" and .pr == $pr.n and .status == "decided" then .applied = true else . end)
     | event({event: "pr-cut", n: $pr.n, branch: $pr.branch, base: $pr.base, tickets: $pr.tickets, url: $url}; $now)' \
-    --argjson pr "$(jq -c '{n, branch, base, tickets}' <<<"$pr")" --arg url "$url"
+    --argjson pr "$(jq -c '{n, branch, base, tickets}' <<<"$pr")" --arg url "$url" \
+    --argjson lo "$(jq -c '[.left_out[].tickets[]]' <<<"$groups")"
   echo "$url"
 }
 
@@ -713,10 +717,11 @@ pr_unmerged_through() {
 # alone and named in $waiting. Safe to run again: a design already retired has
 # a closed ticket and is skipped.
 retire_designs() {
-  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last=
+  local repo= t= body= d= dj= slug= plan= pr= url= pairs= seen=" " rc=0 unmerged= last= groups= mine= out=
   waiting=
   repo=$(get -r .repo)
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   for t in $(get -r '.plan.scope[]'); do
     body=$(gh issue view "$t" -R "$repo" --json body --jq .body 2>/dev/null) || { echo "end-gate.sh: could not read #$t to look for its design" >&2; rc=1; continue; }
     for d in $(printf '%s\n' "$body" | sed -nE 's/^[Dd]esign: #([0-9]+).*$/\1/p'); do
@@ -745,6 +750,17 @@ retire_designs() {
       (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
         || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }
       continue
+    fi
+    if [ -z "$url" ] && [ -z "$last" ]; then
+      # Every ticket of the design was left out as already on main (#363): no
+      # PR of this run carries it, and the one that merged it isn't known.
+      mine=$(printf '%s\n' $pairs | sed -n "s/^$d://p" | jq -Rsc 'split("\n") | map(select(. != ""))')
+      out=$(jq -r --argjson m "$mine" '[.left_out[].tickets[]] as $lo
+        | if all($m[]; . as $t | $lo | index($t) != null) then $m | map("#" + .) | join(", ") else "" end' <<<"$groups")
+      if [ -n "$out" ]; then
+        echo "end-gate.sh: design #$d is not retired: its tickets ($out) reached main outside this run's PRs; retire it with design.sh retire --merge <the PR that merged them>" >&2
+        continue
+      fi
     fi
     [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
     # Cutting a PR isn't shipping it: retire once the PR, and every PR under it

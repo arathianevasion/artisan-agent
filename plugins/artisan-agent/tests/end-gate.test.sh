@@ -305,6 +305,33 @@ test_a_group_already_on_main_is_left_out_with_a_reason_and_the_stack_starts_afte
   assert_eq "pr/r1/1 main" "$(prs)"
 }
 
+test_the_prs_keep_their_numbers_once_cutting_has_begun() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  echo body >"$TEST_TMPDIR/b.md"
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md" >/dev/null
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 by hand" "$M2"   # #2 reaches main after PR 1 is cut
+  assert_eq '[["1"],["2"],["3"]]' "$("$E" prs "$RUN_DIR" --json | jq -c 'map(.tickets)')"
+}
+
+test_finish_does_not_fail_on_a_design_whose_tickets_were_left_out_as_already_on_main() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  product_boundary slice
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 (#346)" "$M2"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  merge_all_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) || fail "finish failed: $out"
+  assert_contains "$out" "design #10 is not retired: its tickets (#1) reached main outside this run's PRs"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
 test_a_run_already_on_main_has_no_pr_to_cut() {
   setup_end
   product_boundary run
