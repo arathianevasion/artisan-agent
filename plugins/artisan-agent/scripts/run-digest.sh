@@ -8,7 +8,9 @@
 #
 # Finds the repo's open run (DIR, default the current directory, any
 # worktree of it): a run folder under the main checkout's .artisan-agent/runs/
-# whose state file has a ticket in scope not yet merged or closed; the newest
+# whose state file has a ticket in scope not yet merged, closed or out of the
+# run (dropped, resliced, bypassed, deferred, sent back: a deferred Human check
+# is one, #390), and whose end gate has not ended it; the newest
 # if there are several. Prints nothing, exit 0, when there is none.
 #
 # Otherwise prints the digest, Markdown:
@@ -53,7 +55,8 @@ is_open() { # state.json
   state_valid_file "$1" 2>/dev/null || return 1
   jq -e '(.end_gate.status? // "") != "ended" and
           ([.plan.scope[] as $t | .tickets[$t].status // "queued"
-          | select(. != "merged" and . != "closed")] | length > 0)' "$1" >/dev/null 2>&1
+          | select(IN("merged", "closed", "dropped", "resliced", "bypassed", "deferred", "sent_back") | not)]
+          | length > 0)' "$1" >/dev/null 2>&1
 }
 
 if [ -z "$run_dir" ]; then
