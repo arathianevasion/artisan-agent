@@ -486,7 +486,7 @@ set_setup() {
 test_a_new_prototype_worktree_runs_worktree_setup_before_the_worker() {
   seed; fake_prototype_claude
   start_checkout >/dev/null
-  set_setup 'pwd -P >"$ARTISAN_MAIN/setup-ran"; ls "$FAKE_PROTO/done" 2>/dev/null >"$ARTISAN_MAIN/setup-saw-worker" || true'
+  set_setup 'pwd -P >"$ARTISAN_MAIN/setup-ran"; ls "$FAKE_PROTO/pwd" 2>/dev/null >"$ARTISAN_MAIN/setup-saw-worker" || true'
   prototype >/dev/null
   wait_prototype
   assert_eq "$(cd "$P-wt/prototype-faster-checkout" && pwd -P)" "$(cat "$P/setup-ran")"
