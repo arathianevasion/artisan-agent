@@ -362,7 +362,7 @@ test_a_run_with_the_emitted_events_shows_fired_bypassed_and_never_fired() {
 test_every_report_reads_a_run_state_over_1_mib() {
   setup "$(g bill kb 1 '{"area":"billing"}')"
   closing_run
-  jq '.events += [range(12000) | {event: "padding", n: ., note: ("x" * 100)}]' "$(R r1)/state.json" >"$TEST_TMPDIR/big.json"
+  jq '.events += [range(300) | {event: "padding", n: ., note: ("x" * 4000)}]' "$(R r1)/state.json" >"$TEST_TMPDIR/big.json"
   mv "$TEST_TMPDIR/big.json" "$(R r1)/state.json"
   [ "$(wc -c <"$(R r1)/state.json" | tr -d ' ')" -gt 1048576 ] || fail "the state should be over 1 MiB"
   echo '[]' >"$TEST_TMPDIR/prs.json"; echo '[]' >"$TEST_TMPDIR/closed.json"

@@ -75,7 +75,9 @@
 # TESTS_TIMES=1 prints, after the summary, the seconds each test took, slowest
 # first, one "<seconds> <file>: <test>" line per test, to find what to speed
 # up. The clock is bash's EPOCHREALTIME (bash 5) or whole seconds (bash 3.2).
-# Tests never see TESTS_TIMES.
+# TESTS_TIMES=files prints the same per file instead: one "<seconds> <file>"
+# line per test file (its tests' seconds added up, so under -j it is work, not
+# wall-clock), slowest first. Tests never see TESTS_TIMES.
 #
 # Exit status: 0 when every test passes (flaky and quarantined ones aside),
 # 1 when any fails, 2 when no tests
@@ -420,7 +422,16 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { [ -s "$resdir/flaky" ] || [ -s "$resdi
     fi
   } >>"$GITHUB_STEP_SUMMARY"
 fi
-if [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
+if [ "${TESTS_TIMES:-}" = files ]; then
+  echo "Seconds per test file, slowest first:"
+  i=0
+  while [ "$i" -lt "$n_run" ]; do
+    i=$((i + 1))
+    [ -e "$resdir/$i.label" ] && [ -e "$resdir/$i.secs" ] || continue
+    printf '%s %s\n' "$(cat "$resdir/$i.secs")" "$(cat "$resdir/$i.label")"
+  done | awk '{ f = $2; sub(/:$/, "", f); t[f] += $1 } END { for (f in t) printf "%.2f %s\n", t[f], f }' \
+    | sort -k1,1nr -s | awk '{ s = $1; $1 = ""; printf "%8s%s\n", s, $0 }'
+elif [ -n "${TESTS_TIMES:-}" ] && [ "$TESTS_TIMES" != 0 ]; then
   echo "Seconds per test, slowest first:"
   i=0
   while [ "$i" -lt "$n_run" ]; do

@@ -613,10 +613,11 @@ test_a_gate_closed_by_hand_after_a_change_keeps_the_changes_event_and_logs_one_k
 # #203: the gate's view holds the whole state. Linux refuses one argument over
 # 128 KiB and macOS all of them together over 1 MiB, so a view passed to jq
 # as an argument never reached it: the gate opened on the tracker but was
-# never recorded. A long event log takes the state past both.
+# never recorded. A long event log takes the state past both; its size is
+# what matters, so a few long notes do it with far less jq work than many short ones.
 big_state() {
   "$SCRIPTS/state.sh" update "$RUN_DIR" \
-    '.events += [range(12000) | {event: "padding", n: ., note: ("x" * 100)}]'
+    '.events += [range(300) | {event: "padding", n: ., note: ("x" * 4000)}]'
   [ "$(wc -c <"$RUN_DIR/state.json" | tr -d ' ')" -gt 1048576 ] || fail "the state should be over 1 MiB"
 }
 

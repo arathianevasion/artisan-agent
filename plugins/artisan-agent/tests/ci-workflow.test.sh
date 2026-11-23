@@ -30,10 +30,23 @@ test_each_macos_shard_has_its_own_job_name() {
     || fail "macOS job name must include the shard"
 }
 
-test_linux_stays_a_single_unsharded_job() {
-  awk '/^  script-tests:/ {on=1; next} on && /^  [^ ]/ {on=0} on' "$WORKFLOW" | grep -q -e '--shard' \
-    && fail "the Linux job should not be sharded"
-  return 0
+test_linux_job_is_a_matrix_over_three_shards() {
+  local job=
+  job=$(linux_job)
+  printf '%s\n' "$job" | grep -q 'shard: \[1, 2, 3\]' || fail "Linux job has no shard: [1, 2, 3] matrix"
+  printf '%s\n' "$job" | grep -q 'fail-fast: false' || fail "Linux matrix must set fail-fast: false"
+  printf '%s\n' "$job" | grep -q 'name: Script tests (Linux, \${{ matrix.shard }}/3)' || fail "Linux job name must include the shard"
+}
+
+test_each_linux_shard_runs_its_own_slice_and_the_slices_are_the_whole_suite() {
+  local job= n=
+  job=$(linux_job)
+  printf '%s\n' "$job" | grep -q 'tests/run.sh .*--shard \${{ matrix.shard }}/3' \
+    || fail "Linux job must run run.sh --shard \${{ matrix.shard }}/3"
+  # Every shard divides by the same n as the matrix is wide, so together they
+  # cover each test once (run.sh's own shard tests prove the split).
+  n=$(printf '%s\n' "$job" | grep -o 'shard: \[[0-9, ]*\]' | tr -cd ',' | wc -c | tr -d ' ')
+  assert_eq 2 "$n" "commas in the shard list (3 shards)"
 }
 
 test_workflow_comment_describes_the_shards() {

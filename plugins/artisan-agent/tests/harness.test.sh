@@ -249,6 +249,28 @@ test_without_tests_times_no_durations_are_printed_and_tests_never_see_it() {
   assert_eq 0 "$status" "$out"
 }
 
+test_tests_times_files_prints_each_files_seconds_slowest_first() {
+  local out= times=
+  out=$(TESTS_TIMES=files "$TESTS_DIR/run.sh" "$FIXTURES/slow-first" 2>&1) || true
+  times=$(printf '%s\n' "$out" | sed -n '/^2 passed, 1 failed$/,$p' | sed 1d)
+  assert_eq "Seconds per test file, slowest first:" "$(printf '%s\n' "$times" | sed -n 1p)"
+  printf '%s\n' "$times" | sed -n 2p | grep -Eq '^ *[0-9]+(\.[0-9]+)? +sample$' \
+    || fail "the file is not listed once, as its name: $times"
+  assert_eq 2 "$(printf '%s\n' "$times" | grep -c .)" "one line per file: $times"
+}
+
+test_tests_times_files_sums_a_files_tests_and_orders_files_slowest_first() {
+  mkdir "$TEST_TMPDIR/two"
+  printf 'test_a() { sleep 0.3; }\ntest_b() { sleep 0.3; }\n' >"$TEST_TMPDIR/two/a.test.sh"
+  printf 'test_c() { sleep 0.1; }\n' >"$TEST_TMPDIR/two/b.test.sh"
+  local out=
+  out=$(TESTS_TIMES=files "$TESTS_DIR/run.sh" -j 2 "$TEST_TMPDIR/two" 2>&1)
+  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 2p | grep -Eq ' a$' \
+    || fail "the two-test file is not listed first: $out"
+  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 3p | grep -Eq ' b$' \
+    || fail "the one-test file is not listed second: $out"
+}
+
 # --- --rerun-failed and the quarantine (#198) ---
 
 test_rerun_failed_reports_a_test_that_passes_on_its_rerun_as_flaky() {
