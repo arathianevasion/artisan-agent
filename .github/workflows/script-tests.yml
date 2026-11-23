@@ -56,7 +56,7 @@ permissions:
 
 jobs:
   # Picks the Linux runner. The owner's home-wsl PC (self-hosted, label home-wsl, 20
-  # cores) comes first when one of its runners for this repo is online and idle;
+  # cores) comes first when one of its runners for this repo is online (busy ones queue the job);
   # otherwise GitHub-hosted ubuntu-latest (free for this public repo), or Ubicloud
   # when dispatched with runner=ubicloud. A pull request from a fork never gets the PC:
   # this repo is public, and a fork's PR must not run code on a self-hosted machine.
@@ -85,7 +85,7 @@ jobs:
             *)
               free=0
               if [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ]; then
-                free=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '[.runners[] | select(.status == "online" and (.busy | not) and any(.labels[]; .name == "home-wsl"))] | length' 2>/dev/null || echo 0)
+                free=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '[.runners[] | select(.status == "online" and any(.labels[]; .name == "home-wsl"))] | length' 2>/dev/null || echo 0)
               fi
               if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
           esac
