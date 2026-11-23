@@ -243,12 +243,33 @@ test_hook_fallback_writes_a_working_project_hook_only_when_asked() {
 
 test_hook_probe_reports_whether_plugin_hooks_fire() {
   seed
-  printf '#!/bin/sh\necho "$*" >>"%s/claude-calls"\necho "{\\"result\\":\\"UserPromptExpansion operation blocked by hook: Blocked by the artisan-agent replaced-skill guard: x\\"}"\n' "$TEST_TMPDIR" >"$ARTISAN_CLAUDE_BIN"
+  # Stub claude: the guard's current redirect as stream-json hook events, built from the real hook's output.
+  local ctx=; ctx=$(printf '{"command_name":"mattpocock-skills:triage","command_args":"probe"}' | bash "$PLUGIN_ROOT/guard/block-replaced.sh")
+  printf '%s\n' "$ctx" >"$TEST_TMPDIR/hook-out.json"
+  cat >"$ARTISAN_CLAUDE_BIN" <<STUB
+#!/bin/sh
+echo "\$*" >>"$TEST_TMPDIR/claude-calls"
+echo '{"type":"system","subtype":"hook_started","hook_event":"UserPromptExpansion"}'
+jq -cn --rawfile o "$TEST_TMPDIR/hook-out.json" '{type:"system",subtype:"hook_response",hook_event:"UserPromptExpansion",output:\$o,stdout:\$o,exit_code:0,outcome:"success"}'
+echo '{"type":"result","result":"ok"}'
+STUB
   chmod +x "$ARTISAN_CLAUDE_BIN"
   assert_eq fires "$("$PS" hook-probe "$P")"
   assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "--max-budget-usd"
-  printf '#!/bin/sh\necho "{\\"result\\":\\"ok\\"}"\n' >"$ARTISAN_CLAUDE_BIN"
+  assert_contains "$(cat "$TEST_TMPDIR/claude-calls")" "--include-hook-events"
+  # No guard event (other hooks only, or none): silent.
+  printf '#!/bin/sh\necho '"'"'{"type":"system","subtype":"hook_response","hook_event":"SessionStart","stdout":""}'"'"'\necho '"'"'{"type":"result","result":"ok"}'"'"'\n' >"$ARTISAN_CLAUDE_BIN"
   assert_eq silent "$("$PS" hook-probe "$P")"
+  printf '#!/bin/sh\necho '"'"'{"type":"result","result":"ok"}'"'"'\n' >"$ARTISAN_CLAUDE_BIN"
+  assert_eq silent "$("$PS" hook-probe "$P")"
+}
+
+test_no_test_stubs_the_old_block_marker_as_the_guards_output() {
+  local marker="Blocked by the artisan-agent replaced-""skill guard:" hits=
+  hits=$(grep -rlF "$marker" "$PLUGIN_ROOT/tests" --include='*.test.sh' || true)
+  [ -z "$hits" ] || fail "a test still mocks the guard's old block text: $hits"
+  grep -qF "$marker" "$PLUGIN_ROOT/skills/setup/scripts/project-setup.sh" && fail "hook-probe still looks for the old block text"
+  return 0
 }
 
 test_motivation_goes_to_the_individual_home_never_the_pr_and_is_asked_once() {

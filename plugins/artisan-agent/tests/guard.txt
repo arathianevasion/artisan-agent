@@ -14,3 +14,4 @@ guard skill-names
 guard script-lookup
 guard design
 guard merge-gate-criteria
+exclude project-setup one static grep for the old block text; the file's tests are otherwise single-seam setup tests

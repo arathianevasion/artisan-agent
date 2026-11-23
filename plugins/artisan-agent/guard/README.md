@@ -16,7 +16,7 @@ To replace another skill: add a line to `replaced-skills.list`, run `guard.sh ho
 
 Matcher `^mattpocock-skills:(<names>)$`; `block-replaced.sh` blocks nothing. It answers `hookSpecificOutput.additionalContext` telling Claude that the Artisan means the replacement from `replaced-skills.list`, to ignore the upstream skill's instructions and to invoke the replacement through the Skill tool with the typed `command_args`. It never sets `suppressOriginalPrompt`, which Claude Code documents only for `UserPromptSubmit`. It fires only on what a person types; it does not fire when Claude calls the Skill tool. Research: `research/hook-block-typed-skill` and `research/deny-plugin-skill` on `origin`.
 
-The hook no longer blocks, so a typed replaced skill in a headless run costs a model turn and the hook leaves no marker text in the result. Setup's hook probe (`project-setup.sh hook-probe`) still looks for the old block marker and needs a new signal (filed as a finding on #374).
+The hook no longer blocks, so a typed replaced skill in a headless run costs a model turn and the hook leaves no marker text in the result. Setup's hook probe (`project-setup.sh hook-probe`) therefore reads the stream-json hook events (`--include-hook-events`): `fires` when a `UserPromptExpansion` `hook_response` carries `additionalContext`, `silent` otherwise (#383).
 
 Earlier proof (2026-11-10, Claude Code 2.1.322), from when the hook blocked: the block happened before any model call. The hook now redirects instead (#374), so the typed command costs a model turn; the redirect itself has a hand check in `interactive-checklist.md`, not yet run.
 
