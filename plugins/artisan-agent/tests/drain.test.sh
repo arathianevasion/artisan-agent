@@ -380,11 +380,14 @@ test_tickets_that_left_the_run_do_not_hold_it_open() {
     "$SCRIPTS/state.sh" update "$RUN_DIR" ".tickets[\"11\"].status = \"$st\""
     assert_eq "" "$("$DIGEST" --repo "$PROJECT" --peek)" "a $st ticket held the run open"
   done
-  # Queued or running agent work still prints the digest.
+  # Queued, running or blocked agent work still prints the digest.
   for st in queued in_flight blocked; do
     "$SCRIPTS/state.sh" update "$RUN_DIR" ".tickets[\"11\"].status = \"$st\""
     assert_contains "$("$DIGEST" --repo "$PROJECT" --peek)" "is open"
   done
+  # An ended run is closed whatever its tickets say, a deferred Human check included.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["11"].status = "deferred" | .end_gate.status = "ended"'
+  assert_eq "" "$("$DIGEST" --repo "$PROJECT" --peek)"
 }
 
 test_the_digest_line_and_no_open_run() {
