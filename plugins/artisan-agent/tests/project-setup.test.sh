@@ -130,6 +130,7 @@ test_a_fresh_repo_ignores_the_designs_folder_once() {
   run_setup >/dev/null
   assert_contains "$(branch_file .gitignore)" ".artisan-agent/designs/"
   assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/designs/')" "designs line duplicated"
+  assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/runs/')" "runs line lost or duplicated"
 }
 
 test_a_rerun_adds_the_designs_line_to_a_setup_that_predates_it() {
