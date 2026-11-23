@@ -340,6 +340,82 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
 }
 
+# A run whose integration branch the Artisan merged into main as one PR (#364).
+merge_integration_into_main() { # [pr-number]: --no-ff into main, and a merged PR in the fake tracker
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge run/r1 (#${1:-7})" run/r1
+  if [ -n "${1:-}" ]; then
+    jq -n --argjson n "$1" --arg tip "$(git -C "$PROJECT" rev-parse run/r1)" --arg oid "$(git -C "$PROJECT" rev-parse HEAD)" \
+      '{number: $n, base: "main", head: "run/r1", title: "Run r1", state: "MERGED", merge_oid: $oid, commits: [$tip]}' >"$FAKE_GH_DIR/pr-$1.json"
+  fi
+}
+
+approved_end() {
+  product_boundary plan
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+}
+
+test_finish_ends_a_run_whose_integration_branch_was_merged_as_one_pr_and_records_that_pr() {
+  setup_end
+  approved_end
+  merge_integration_into_main 7
+  local out= n=
+  out=$("$E" finish "$RUN_DIR")
+  assert_contains "$out" "https://github.com/local/sample/pull/7"
+  assert_contains "$out" "/artisan-agent:retro"
+  assert_contains "$out" "| Merge gates | This run |"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq "https://github.com/local/sample/pull/7" "$(state_get '.end_gate.merged_outside.url')"
+  assert_eq "https://github.com/local/sample/pull/7" "$(state_get '.events[-1].prs[0]')"
+  assert_eq "run-ended" "$(state_get '.events[-1].event')"
+  for n in 1 2 3; do
+    assert_eq "ready-for-agent" "$(jq -r '.labels | map(.name) | join(",")' "$FAKE_GH_DIR/issue-$n.json")"
+  done
+}
+
+test_finish_ends_that_run_even_when_the_merging_pr_cannot_be_found() {
+  setup_end
+  approved_end
+  merge_integration_into_main
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq "null" "$(state_get '.end_gate.merged_outside.url')"
+  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(state_get '.end_gate.merged_outside.tip')"
+}
+
+test_finish_still_refuses_when_the_integration_tip_is_not_on_main_and_names_the_missing_merges() {
+  setup_end
+  approved_end
+  local err=
+  err=$("$E" finish "$RUN_DIR" 2>&1) && fail "finished with nothing on main"
+  assert_status 6 "$E" finish "$RUN_DIR"
+  assert_contains "$err" "0 of 2 PRs cut"
+  assert_contains "$err" "not on main"
+  assert_contains "$err" "#1 (${M1:0:7})"
+  assert_contains "$err" "#3 (${M3:0:7})"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+}
+
+test_finish_names_only_the_merges_main_lacks_when_main_has_some_of_them() {
+  setup_end
+  approved_end
+  git_quiet -C "$PROJECT" merge --no-ff -m "partial" "$M2"
+  local err=
+  err=$("$E" finish "$RUN_DIR" 2>&1) && fail "finished with the tip off main"
+  assert_contains "$err" "#3 (${M3:0:7})"
+  case "$err" in *"#1 ("*|*"#2 ("*) fail "named a merge that is on main: $err" ;; esac
+}
+
+test_run_digest_does_not_report_a_run_that_finish_has_ended() {
+  setup_end
+  approved_end
+  merge_integration_into_main 7
+  "$E" finish "$RUN_DIR" >/dev/null
+  # Even with a ticket left unmerged in the record, an ended run is not open.
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["3"].status = "blocked"'
+  assert_eq "" "$("$SCRIPTS/run-digest.sh" --run-dir "$RUN_DIR" --peek)"
+}
+
 test_the_end_gate_is_not_due_while_tickets_remain() {
   setup_end
   "$SCRIPTS/state.sh" update "$RUN_DIR" '.tickets["3"].status = "queued"'
@@ -664,6 +740,18 @@ test_the_end_gate_retires_the_design_a_shipped_ticket_names_and_no_other() {
   assert_eq open "$(jq -r .state "$FAKE_GH_DIR/issue-11.json")"
   assert_eq "docs/journeys/pay.md
 docs/journeys/screenshots/pay.png" "$(git -C "$PROJECT" ls-tree -r --name-only feature/other-design | grep '^docs/journeys/')"
+}
+
+test_finish_retires_a_design_through_the_pr_that_merged_the_whole_branch() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 2 10
+  approved_end
+  merge_integration_into_main 7
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_eq closed "$(jq -r .state "$FAKE_GH_DIR/issue-10.json")"
+  assert_contains "$(cat "$FAKE_GH_DIR/comments-10.md")" "Shipped in https://github.com/local/sample/pull/7"
 }
 
 test_the_end_gate_names_the_pr_that_carries_the_designs_ticket() {

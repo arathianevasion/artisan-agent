@@ -56,7 +56,10 @@
 #       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
 #       the setup).
 #   end-gate.sh finish <run-dir>
-#       once every PR is cut: retires each design whose feature the run ships
+#       once every PR is cut, or once the integration branch's tip is already
+#       on the default branch because the Artisan merged it as one PR (#364:
+#       records that PR, found with gh pr list, as end_gate.merged_outside;
+#       with the tip off main it refuses and names the merges main lacks): retires each design whose feature the run ships
 #       and whose PR has merged into main, with every PR under it in the stack
 #       (a design whose PR is cut but not merged is listed as waiting; run
 #       finish again after the merge, even once the run has ended)
@@ -686,6 +689,16 @@ retire_designs() {
       [ -z "$pr" ] || [ -n "$last" -a "$pr" -le "${last:-0}" ] || last=$pr
     done
     [ -z "$last" ] || { pr=$last; url=$(get -r --argjson n "$pr" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty'); }
+    if [ -z "$url" ] && { [ "${outside:-0}" -eq 1 ] || [ "$(get '.end_gate.merged_outside != null')" = true ]; }; then
+      # The whole branch merged as one PR outside end-gate.sh cut (#364): that PR carries every ticket.
+      # finish found it before recording it; a rerun reads the record.
+      url=$(get -r '.end_gate.merged_outside.url // empty')
+      [ -n "$url" ] || url=${OUT_URL:-}
+      [ -n "$url" ] || { echo "end-gate.sh: design #$d is not retired: the PR that merged the run was not found; retire it with design.sh retire" >&2; continue; }
+      (cd "$MAIN" && "$SCRIPT_DIR/../skills/design/scripts/design.sh" retire --design "$slug" --ticket "$d" --merge "$url") >&2 \
+        || { echo "end-gate.sh: could not retire design #$d" >&2; rc=1; }
+      continue
+    fi
     [ -n "$url" ] || { echo "end-gate.sh: no cut PR carries a ticket of design #$d" >&2; rc=1; continue; }
     # Cutting a PR isn't shipping it: retire once the PR, and every PR under it
     # in the stack, has merged (#396). Until then the design is waiting.
@@ -701,10 +714,39 @@ retire_designs() {
   return "$rc"
 }
 
+# outside_merge: the integration branch's tip is already on the default branch
+# (the Artisan merged the whole branch as one PR, #364). Sets $OUT_TIP and
+# $OUT_REF; on success $OUT_URL (the merging PR's URL, empty when none is
+# found); on failure $OUT_MISSING, the merges the default branch lacks.
+outside_merge() {
+  local ib= base= ref= t= c= merges=
+  OUT_URL= OUT_MISSING=
+  ib=$(integration_branch); base=$(main_branch); ref=$base
+  if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
+    git -C "$MAIN" fetch -q origin "$base" >&2 || die "could not fetch origin $base"
+    ref="origin/$base"
+  fi
+  OUT_REF=$ref
+  OUT_TIP=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$ib^{commit}" 2>/dev/null) || OUT_TIP=
+  if [ -n "$OUT_TIP" ] && git -C "$MAIN" merge-base --is-ancestor "$OUT_TIP" "$ref" 2>/dev/null; then
+    OUT_URL=$(gh pr list -R "$(get -r .repo)" --state merged --search "$OUT_TIP" --json number,url -q '.[0].url // ""' 2>/dev/null || true)
+    return 0
+  fi
+  merges=$(get -r '(.integration.merges // [])[] | "\(.ticket) \(.commit)"')
+  while read -r t c; do
+    [ -n "$t" ] || continue
+    git -C "$MAIN" merge-base --is-ancestor "$c" "$ref" 2>/dev/null || OUT_MISSING="$OUT_MISSING${OUT_MISSING:+, }#$t (${c:0:7})"
+  done <<EOF2
+$merges
+EOF2
+  [ -n "$OUT_MISSING" ] || OUT_MISSING="the integration branch's tip ${OUT_TIP:0:7}"
+  return 1
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local want= have= repo= t= bad=0 done_list=
+  local want= have= repo= t= bad=0 done_list= outside=0 via=
   # A rerun after the run ended retires the designs whose PRs have merged since (#396).
   if [ "$(status_word)" = ended ]; then
     waiting=
@@ -716,7 +758,11 @@ cmd_finish() {
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
   want=$(pr_plan "$(get -r '.end_gate.boundary.value')" | jq length)
   have=$(get '(.end_gate.prs // []) | length')
-  [ "$have" -ge "$want" ] || refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs)"
+  if [ "$have" -lt "$want" ]; then
+    if outside_merge; then outside=1
+    else refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
+    fi
+  fi
   repo=$(get -r .repo)
   waiting=
   retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
@@ -725,9 +771,18 @@ cmd_finish() {
     else echo "end-gate.sh: could not remove in-run from #$t" >&2; bad=1; fi
   done
   [ "$bad" -eq 0 ] || die "some in-run labels are still on; run end-gate.sh finish again"
-  apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
-    | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
-  echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  if [ "$outside" -eq 1 ]; then
+    apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
+      | .end_gate.merged_outside = {url: (if $url == "" then null else $url end), tip: $tip, into: $ref}
+      | event({event: "run-ended", prs: (((.end_gate.prs // []) | map(.url)) + (if $url == "" then [] else [$url] end))}; $now)' \
+      --arg url "$OUT_URL" --arg tip "$OUT_TIP" --arg ref "$OUT_REF"
+    via=${OUT_URL:-a PR that could not be found}
+    echo "Run $RUN_ID ended: its integration branch was already on $(main_branch), through $via; in-run removed from$done_list."
+  else
+    apply '.end_gate.status = "ended" | .end_gate.ended_at = $now
+      | event({event: "run-ended", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
+    echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
+  fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
   # For the run summary: what the merge gates cost (#199).
   echo
