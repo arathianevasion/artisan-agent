@@ -600,7 +600,7 @@ cmd_pre_commit() {
 }
 
 cmd_hook_probe() {
-  local m= name= out=
+  local m= name= out= hit=
   m=$(main_of "${1:-.}")
   # Capture first, then take line one: an early-closing reader would SIGPIPE guard.sh under pipefail.
   name=$("$GUARD/guard.sh" flag-watch)
@@ -608,7 +608,9 @@ cmd_hook_probe() {
   # The guard redirects (additionalContext) and leaves no text in the result, so read the hook's own
   # event in the stream: a hook_response on UserPromptExpansion that carries additionalContext.
   out=$(cd "$m" && "$CLAUDE_BIN" -p --output-format stream-json --verbose --include-hook-events --max-turns 1 --max-budget-usd 0.05 "/$name probe" 2>&1 || true)
-  if printf '%s\n' "$out" | grep '"hook_response"' | grep '"hook_event":"UserPromptExpansion"' | grep -q 'additionalContext'; then echo fires; else echo silent; fi
+  # Capture the match rather than grep -q: an early-closing reader would SIGPIPE the pipe under pipefail.
+  hit=$(printf '%s\n' "$out" | grep '"hook_response"' | grep '"hook_event":"UserPromptExpansion"' | grep 'additionalContext' || true)
+  if [ -n "$hit" ]; then echo fires; else echo silent; fi
 }
 
 cmd_prove_check() {
