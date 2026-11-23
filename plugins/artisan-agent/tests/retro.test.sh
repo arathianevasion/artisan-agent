@@ -476,6 +476,19 @@ test_a_gate_with_a_card_changed_at_it_counts_as_changed_not_unchanged() {
   assert_eq '0' "$(jq -r '.leverage.gates_changed' <<<"$("$RETRO" facts "$RUN_DIR")")" "all kept"
 }
 
+test_a_gate_whose_record_shows_a_change_or_rework_counts_as_changed_without_the_flag() {
+  sample_run
+  # No changed flag on the decision: the gate's own record (an outcome of
+  # change on a card, or a rework) is enough.
+  jq '.decisions = [range(3) | {id: "g\(.)", kind: "review-gate", gate: "G\(.)", status: "decided", choice: "approve", by: "Andrew", job: 13}]
+      | .review_gates = [{id: "G0", decisions: [{outcome: "change"}], reworks: []},
+                         {id: "G1", decisions: [{outcome: "keep"}], reworks: [{card: "2", ticket: "9"}]},
+                         {id: "G2", decisions: [{outcome: "keep"}], reworks: []}]' \
+    "$RUN_DIR/state.json" >"$TEST_TMPDIR/s" && mv "$TEST_TMPDIR/s" "$RUN_DIR/state.json"
+  f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '3 1' "$(jq -r '.rubber_stamp | "\(.gates) \(.unchanged)"' <<<"$f")" "two changed of three"
+}
+
 test_a_generalising_check_is_promoted_as_a_check_and_domain_stays_with_the_project() {
   sample_run; mkdir -p "$RUN_DIR/retro"
   jq -n '{lessons: [
