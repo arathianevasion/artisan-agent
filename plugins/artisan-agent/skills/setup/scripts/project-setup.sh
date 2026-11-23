@@ -433,10 +433,14 @@ cmd_apply() {
       echo "changed: tracker.board is $(jq -r '"\(.owner)/\(.number), fields at filing: \(.fields_at_filing | join(", "))"' <<<"$board")"
     fi
   fi
-  if ! grep -qsx '.artisan-agent/runs/' "$wt/.gitignore"; then
-    printf '.artisan-agent/runs/\n' >>"$wt/.gitignore"
-    echo "changed: .gitignore ignores .artisan-agent/runs/"
-  fi
+  # runs/ holds run state; designs/ holds design.sh's uncommitted "before" screenshots.
+  local ignored=
+  for ignored in .artisan-agent/runs/ .artisan-agent/designs/; do
+    if ! grep -qsxF "$ignored" "$wt/.gitignore"; then
+      printf '%s\n' "$ignored" >>"$wt/.gitignore"
+      echo "changed: .gitignore ignores $ignored"
+    fi
+  done
 
   # Settings: plugins enabled (never installed here), our marketplace, the deny rules;
   # the hook only as the fallback for plugin hooks that don't fire.

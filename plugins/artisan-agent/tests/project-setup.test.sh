@@ -125,6 +125,35 @@ test_the_eleven_labels_exist_on_the_tracker_and_in_the_doc() {
   assert_eq 0 "$(grep -c '^label create needs-triage' "$TEST_TMPDIR/gh-calls" || true)" "existing label recreated"
 }
 
+test_a_fresh_repo_ignores_the_designs_folder_once() {
+  seed
+  run_setup >/dev/null
+  assert_contains "$(branch_file .gitignore)" ".artisan-agent/designs/"
+  assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/designs/')" "designs line duplicated"
+  assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/runs/')" "runs line lost or duplicated"
+}
+
+test_a_rerun_adds_the_designs_line_to_a_setup_that_predates_it() {
+  seed
+  printf '.artisan-agent/runs/\n' >"$P/.gitignore"
+  git -C "$P" add -A && git -C "$P" commit -q -m ignore && git -C "$P" push -q origin main
+  local out=
+  out=$(run_setup)
+  assert_contains "$out" "changed: .gitignore ignores .artisan-agent/designs/"
+  assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/runs/')" "runs line duplicated"
+  assert_eq 1 "$(branch_file .gitignore | grep -cx '.artisan-agent/designs/')" "designs line not added once"
+}
+
+test_a_present_designs_line_is_left_unchanged() {
+  seed
+  printf '.artisan-agent/runs/\n.artisan-agent/designs/\n' >"$P/.gitignore"
+  git -C "$P" add -A && git -C "$P" commit -q -m ignore && git -C "$P" push -q origin main
+  local out=
+  out=$(run_setup)
+  assert_not_contains "$out" "designs/"
+  assert_eq "$(cat "$P/.gitignore")" "$(branch_file .gitignore)"
+}
+
 test_rerun_after_merging_changes_nothing() {
   seed
   run_setup >/dev/null
