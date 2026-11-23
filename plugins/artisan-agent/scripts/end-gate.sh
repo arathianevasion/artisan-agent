@@ -270,6 +270,26 @@ need_prs_allowed() {
   esac
 }
 
+# stack_steps: how to merge stacked PRs (#271). Printed with two or more PRs in
+# the plan, nothing for one. A PR deleted with its branch closes the PR stacked
+# on it instead of retargeting it, so no merge command carries --delete-branch:
+# retarget the next PR to main after each merge, delete branches at the end.
+stack_steps() { # plan-json
+  local plan="$1"
+  [ "$(jq length <<<"$plan")" -gt 1 ] || return 0
+  echo
+  echo "Merge the stack in this order. Never use \`--delete-branch\`: deleting a PR's branch closes the PR stacked on it instead of retargeting it."
+  echo
+  jq -r --slurpfile s "$FILE" '. as $plan | length as $len | to_entries[] | .key as $i | .value as $p
+    | (($s[0].end_gate.prs // []) | map(select(.n == $p.n)) | first | .url // "<PR \($p.n)>") as $url
+    | "\($i + 1). `gh pr merge \($url) --merge`"
+      + (if $i + 1 < $len
+         then "\n   then `gh pr edit \(($s[0].end_gate.prs // []) | map(select(.n == $plan[$i + 1].n)) | first | .url // "<PR \($plan[$i + 1].n)>") --base main`"
+         else "" end)' <<<"$plan"
+  echo
+  echo "Delete the merged branches (\`$(jq -r 'map(.branch) | join("`, `")' <<<"$plan")\`) only after the whole stack has merged."
+}
+
 cmd_prs() {
   [ $# -ge 1 ] || usage
   open_run "$1"
@@ -283,6 +303,7 @@ cmd_prs() {
   jq -r --slurpfile s "$FILE" '.[] | . as $p
     | "| \(.n) | `\(.branch)` | `\(.base)` | \(.tickets | map("#" + . + (($s[0].plan.tickets[.].title // null) | if . then " (\(.))" else "" end)) | join(", ")) | \(($s[0].end_gate.prs // []) | map(select(.n == $p.n)) | first | .url // "not yet") |"' <<<"$plan"
   jq -r '.left_out[] | "\nLeft out: \(.tickets | map("#" + .) | join(", ")) (\(.key)): \(.why); no PR is cut for it."' <<<"$groups"
+  stack_steps "$plan"
 }
 
 git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email; } >/dev/null 2>&1 \
@@ -849,6 +870,7 @@ cmd_finish() {
     echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
   fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
+  [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
   # For the run summary: what the merge gates cost (#199).
   echo
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \

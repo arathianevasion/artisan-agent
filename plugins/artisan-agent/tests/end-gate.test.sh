@@ -390,6 +390,36 @@ test_a_removed_end_gate_still_needs_the_boundary_before_prs() {
   assert_eq 2 "$(ls "$FAKE_GH_DIR"/pr-*.json | wc -l | tr -d ' ')"
 }
 
+# Stacked PRs (#271): merging with --delete-branch closes the next PR, so the
+# end gate says how to merge the stack.
+test_two_or_more_prs_print_the_stack_steps_in_merge_order() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  local out= u1= u2=
+  out=$("$E" prs "$RUN_DIR")
+  u1=$(state_get '.end_gate.prs[0].url'); u2=$(state_get '.end_gate.prs[1].url')
+  assert_contains "$out" "Merge the stack in this order"
+  assert_contains "$out" "gh pr merge $u1 --merge"
+  assert_contains "$out" "gh pr edit $u2 --base main"
+  assert_contains "$out" "gh pr merge $u2 --merge"
+  assert_contains "$out" "only after the whole stack has merged"
+  assert_eq 0 "$(printf '%s\n' "$out" | grep -c 'gh pr merge.*--delete-branch' || true)"
+  assert_contains "$("$E" finish "$RUN_DIR")" "gh pr edit $u2 --base main"
+}
+
+test_one_pr_prints_no_stack_steps() {
+  setup_end
+  product_boundary run
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_not_contains "$("$E" prs "$RUN_DIR")" "gh pr merge"
+  assert_not_contains "$("$E" finish "$RUN_DIR")" "gh pr merge"
+}
+
 # ------------------------------------------------------------ ending the run
 
 test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
