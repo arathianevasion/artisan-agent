@@ -9,7 +9,7 @@
 #   project-setup.sh labels WT             create the eleven labels missing from the GitHub tracker
 #   project-setup.sh pre-commit [REPO]     install guard/pre-commit.sh (main-checkout fallback)
 #   project-setup.sh hook-probe [REPO]     prints "fires" or "silent": does the plugin's
-#                                          replaced-skill hook fire here? (headless claude, $0 if it fires)
+#                                          replaced-skill hook fire here? (one headless claude turn, stream-json hook events)
 #   project-setup.sh prove-check [--ref REF] [--prepare CMD] --break CMD -- CHECK...
 #                                          prove CHECK fails on a deliberate break in a throwaway worktree
 #   project-setup.sh prove-capture CMD    run capture command CMD once, here, into a throwaway folder:
@@ -41,7 +41,6 @@ VOICE_IMPORT="@$VOICE"
 DESIGN=DESIGN_STANDARDS.md
 JOURNEY_LINE="- A change to a user journey"
 HOOK_FILE=.claude/hooks/artisan-agent-block-replaced.sh
-MARKER="Blocked by the artisan-agent replaced-skill guard:"
 
 die() { printf 'project-setup.sh: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2; exit 2; }
@@ -606,8 +605,10 @@ cmd_hook_probe() {
   # Capture first, then take line one: an early-closing reader would SIGPIPE guard.sh under pipefail.
   name=$("$GUARD/guard.sh" flag-watch)
   name=${name%%$'\n'*}
-  out=$(cd "$m" && "$CLAUDE_BIN" -p --output-format json --max-turns 1 --max-budget-usd 0.05 "/$name probe" 2>&1 || true)
-  case "$out" in *"$MARKER"*) echo fires ;; *) echo silent ;; esac
+  # The guard redirects (additionalContext) and leaves no text in the result, so read the hook's own
+  # event in the stream: a hook_response on UserPromptExpansion that carries additionalContext.
+  out=$(cd "$m" && "$CLAUDE_BIN" -p --output-format stream-json --verbose --include-hook-events --max-turns 1 --max-budget-usd 0.05 "/$name probe" 2>&1 || true)
+  if printf '%s\n' "$out" | grep '"hook_response"' | grep '"hook_event":"UserPromptExpansion"' | grep -q 'additionalContext'; then echo fires; else echo silent; fi
 }
 
 cmd_prove_check() {

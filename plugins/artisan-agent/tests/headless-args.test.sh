@@ -5,8 +5,9 @@
 # Bash 3.2-safe: awk and find only.
 
 # Launches that deliberately carry no allowlist, with why:
-#   project-setup.sh hook-probe: the hook blocks the prompt before any model
-#   call, so no tool is ever requested (#214).
+#   project-setup.sh hook-probe: one turn, a bare
+#   slash command that only reads hook events; it is never given a task that
+#   needs a tool (#214, #383).
 EXEMPT="skills/setup/scripts/project-setup.sh"
 
 # Prints "file:line" for each `claude -p` launch whose command (the line and
