@@ -176,10 +176,13 @@ test_the_checker_wants_the_checks_and_a_said_fallback() {
 
 test_the_checker_accepts_a_record_whose_only_check_is_the_suite() {
   local out=
-  example_record | jq '.checks = {recorded: true, results: [], not_run: [{command: "bash tests/run.sh -j 8", why: "the suite: left to the merge gate"}]}' > d.json
-  "$CHECK" d.json || fail "a record whose only recorded check was left to the merge gate was refused"
-  example_record | jq '.checks = {recorded: true, results: [], not_run: []}' > e.json
-  out=$("$CHECK" e.json || true)
+  example_record | jq '.checks = {recorded: true, results: [], not_run: ["bash tests/run.sh -j 8: left to the merge gate (it is the run'"'"'s suite command)"]}' > only-the-suite.json
+  "$CHECK" only-the-suite.json || fail "a record whose only recorded check was left to the merge gate was refused"
+  example_record | jq '.checks = {recorded: true, results: [], not_run: []}' > nothing-ran.json
+  out=$("$CHECK" nothing-ran.json || true)
+  assert_contains "$out" "checks: recorded checks, but none ran"
+  example_record | jq '.checks = {recorded: true, results: [], not_run: ["make lint: no tool here"]}' > other-not-run.json
+  out=$("$CHECK" other-not-run.json || true)
   assert_contains "$out" "checks: recorded checks, but none ran"
 }
 
