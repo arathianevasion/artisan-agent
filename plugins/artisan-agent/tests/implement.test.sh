@@ -174,6 +174,15 @@ test_the_checker_wants_the_checks_and_a_said_fallback() {
   "$CHECK" c.json || fail "a said fallback was refused"
 }
 
+test_the_checker_accepts_a_record_whose_only_check_is_the_suite() {
+  local out=
+  example_record | jq '.checks = {recorded: true, results: [], not_run: [{command: "bash tests/run.sh -j 8", why: "the suite: left to the merge gate"}]}' > d.json
+  "$CHECK" d.json || fail "a record whose only recorded check was left to the merge gate was refused"
+  example_record | jq '.checks = {recorded: true, results: [], not_run: []}' > e.json
+  out=$("$CHECK" e.json || true)
+  assert_contains "$out" "checks: recorded checks, but none ran"
+}
+
 test_the_skill_runs_the_recorded_checks_through_the_one_reader() {
   local body=
   body=$(tr '\n' ' ' < "$SKILL")
