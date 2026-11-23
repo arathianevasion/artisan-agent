@@ -148,7 +148,7 @@ cmd_status() { [ $# -eq 1 ] || usage; open_run "$1"; status_word; }
 # ---------------------------------------------------------------- boundary
 
 # A pr-boundaries line as setup records it: - `pr-boundaries`: one PR per <x>
-boundary_in() { grep -E '^- `pr-boundaries`: one PR per (slice|plan|ticket)' | head -1 | sed -E 's/.*one PR per (slice|plan|ticket).*/\1/' || true; }
+boundary_in() { grep -E '^- `pr-boundaries`: one PR per (slice|plan|ticket|run)' | head -1 | sed -E 's/.*one PR per (slice|plan|ticket|run).*/\1/' || true; }
 
 team_repo() {
   local f="$MAIN/.artisan-agent/config.yml"
@@ -189,18 +189,54 @@ main_branch() {
   git -C "$MAIN" symbolic-ref -q --short HEAD 2>/dev/null || echo main
 }
 
+# main_ref: the ref the default branch is read from, origin's (fetched once
+# per call) when the repo has an origin, else the local branch.
+MAIN_REF=
+main_ref() {
+  if [ -z "$MAIN_REF" ]; then
+    MAIN_REF=$(main_branch)
+    if git -C "$MAIN" remote get-url origin >/dev/null 2>&1 \
+      && git -C "$MAIN" fetch -q origin "$MAIN_REF" >/dev/null 2>&1; then
+      MAIN_REF="origin/$MAIN_REF"
+    fi
+  fi
+  printf '%s\n' "$MAIN_REF"
+}
+
+# on_main: the merged tickets whose merge commit is already on the default
+# branch, as a JSON array of strings.
+on_main() {
+  local ref= t= c= out=
+  ref=$(main_ref)
+  while read -r t c; do
+    [ -n "$c" ] || continue
+    git -C "$MAIN" merge-base --is-ancestor "$c" "$ref" 2>/dev/null && out="$out${out:+,}\"$t\""
+  done <<EOF2
+$(get -r '. as $s | [((.integration.merges // [])[] | [(.ticket | tostring), .commit]),
+    (.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null) | [., $s.tickets[.].merge_commit])]
+  | .[] | join(" ")')
+EOF2
+  printf '[%s]\n' "$out"
+}
+
 # The PRs for a boundary, stacked in merge order: each group of merged tickets
-# (by ticket, slice or plan; a rework ticket goes with what it reworks) ends
-# at its last merge; groups are ordered by that merge.
-pr_plan() { # boundary-value
-  get -c --arg b "$1" --arg run "$RUN_ID" --arg main "$(main_branch)" '
+# (by ticket, slice, plan or the whole run; a rework ticket goes with what it
+# reworks) ends at its last merge; groups are ordered by that merge. A group
+# whose every ticket is already on the default branch, and no cut PR carries,
+# is left out (#363): {prs, left_out}. One PR per run is the integration
+# branch itself, into the default branch.
+pr_groups() { # boundary-value
+  get -c --arg b "$1" --arg run "$RUN_ID" --arg main "$(main_branch)" --arg ib "$(integration_branch)" \
+    --argjson onmain "$(on_main)" '
     . as $s
     | ((.integration.merges // []) | map(.ticket | tostring)) as $m0
     | (if $m0 == [] then [.plan.scope[] | tostring | select($s.tickets[.].merge_commit? != null and ($s.tickets[.].urgent // false | not))] else $m0 end) as $m1
     | [$m1 | to_entries[] | .value as $v | select(.key as $k | $m1[$k + 1:] | index($v) | not) | $v
        | select($s.tickets[.].status? == "merged")] as $order
+    | ([(.end_gate.prs // [])[].tickets[]] | map(tostring)) as $cut
     | def key($t): ($s.plan.tickets[$t] // {}) as $p | ($s.plan.tickets[$p.rework_of // ""] // {}) as $o
         | if $b == "ticket" then $t
+          elif $b == "run" then "run"
           elif $b == "slice" then ($p.slice // $o.slice // "#\($t)") | tostring
           else ($p.plan // $o.plan // "run") | tostring end;
     def commit($t): ([($s.integration.merges // [])[] | select((.ticket | tostring) == $t) | .commit] | last)
@@ -210,11 +246,16 @@ pr_plan() { # boundary-value
         last: ([$keys | to_entries[] | select(.value == $k) | .key] | max)}]
     | sort_by(.last)
     | ([.[].tickets[]] == $order) as $consecutive
-    | to_entries | map(.key as $i | .value
+    | map(. + {left_out: (all(.tickets[]; . as $t | ($onmain | index($t)) != null and ($cut | index($t)) == null))}) as $all
+    | {left_out: [$all[] | select(.left_out) | {key, tickets, why: "already on \($main)"}],
+       prs: ([$all[] | select(.left_out | not)] | to_entries | map(.key as $i | .value
         | {n: ($i + 1), key, tickets, consecutive: $consecutive,
-           branch: "pr/\($run)/\($i + 1)", base: (if $i == 0 then $main else "pr/\($run)/\($i)" end),
-           commits: [.tickets[] | commit(.)]})'
+           branch: (if $b == "run" then $ib else "pr/\($run)/\($i + 1)" end),
+           base: (if $i == 0 then $main else "pr/\($run)/\($i)" end),
+           commits: [.tickets[] | commit(.)]}))}'
 }
+
+pr_plan() { pr_groups "$1" | jq -c .prs; } # boundary-value
 
 need_prs_allowed() {
   need_ruled "No PR to main is cut"
@@ -229,13 +270,15 @@ cmd_prs() {
   [ $# -ge 1 ] || usage
   open_run "$1"
   need_prs_allowed
-  local plan=
-  plan=$(pr_plan "$(get -r '.end_gate.boundary.value')")
+  local plan= groups=
+  groups=$(pr_groups "$(get -r '.end_gate.boundary.value')")
+  plan=$(jq -c .prs <<<"$groups")
   if [ "${2:-}" = --json ]; then printf '%s\n' "$plan"; return; fi
   echo "| PR | Branch | Into | Tickets | Cut |"
   echo "|---|---|---|---|---|"
   jq -r --slurpfile s "$FILE" '.[] | . as $p
     | "| \(.n) | `\(.branch)` | `\(.base)` | \(.tickets | map("#" + . + (($s[0].plan.tickets[.].title // null) | if . then " (\(.))" else "" end)) | join(", ")) | \(($s[0].end_gate.prs // []) | map(select(.n == $p.n)) | first | .url // "not yet") |"' <<<"$plan"
+  jq -r '.left_out[] | "\nLeft out: \(.tickets | map("#" + .) | join(", ")) (\(.key)): \(.why); no PR is cut for it."' <<<"$groups"
 }
 
 git_id() { { git -C "$MAIN" config user.name && git -C "$MAIN" config user.email; } >/dev/null 2>&1 \
@@ -328,7 +371,8 @@ cmd_cut() {
   d=$(setup_decision "$n" waiting)
   [ -z "$d" ] || refuse "PR $n's worktree_setup failed and decision $d waits: state.sh decide $RUN_DIR $d retry|bypass, then end-gate.sh cut again"
   branch=$(jq -r .branch <<<"$pr"); base=$(jq -r .base <<<"$pr"); repo=$(get -r .repo)
-  build_branch "$pr" "$(setup_decision "$n" decided bypass)"
+  # One PR per run is the integration branch itself: nothing to build.
+  [ "$(get -r '.end_gate.boundary.value')" = run ] || build_branch "$pr" "$(setup_decision "$n" decided bypass)"
   if git -C "$MAIN" remote get-url origin >/dev/null 2>&1; then
     git -C "$MAIN" push -q origin "$branch:refs/heads/$branch" >&2 || die "could not push $branch"
   fi
@@ -430,7 +474,7 @@ packet() {
   case "$(jq -r .source <<<"$b")" in
     guardrail) echo "One PR per **$(jq -r .value <<<"$b")**, from the $(jq -r .level <<<"$b") \`pr-boundaries\` guardrail. Each PR's body is written with upstream \`pr\`." ;;
     approved) echo "One PR per **$(jq -r .value <<<"$b")**, approved by $(jq -r .by <<<"$b")." ;;
-    *) echo "No PR boundary is recorded: proposed **one PR per slice** (each PR reviewable end to end). Approve it, or name per plan or per ticket; until a \`pr-boundaries\` guardrail covers it, the boundary is yours to approve (job 17)." ;;
+    *) echo "No PR boundary is recorded: proposed **one PR per slice** (each PR reviewable end to end). Approve it, or name per plan, per ticket or one per run; until a \`pr-boundaries\` guardrail covers it, the boundary is yours to approve (job 17)." ;;
   esac
   echo
   echo "## Overall action"
@@ -597,7 +641,7 @@ cmd_approve() {
       *) usage ;;
     esac
   done
-  case "$set" in ""|slice|plan|ticket) ;; *) usage ;; esac
+  case "$set" in ""|slice|plan|ticket|run) ;; *) usage ;; esac
   st=$(status_word)
   [ "$st" = not-due ] || [ -z "$(open_deferred)" ] \
     || refuse "deferred gates are still waiting here; answer each first: $(open_deferred)"
@@ -620,7 +664,7 @@ cmd_approve() {
   elif [ -n "$b" ]; then
     src=guardrail
   else
-    refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket)"
+    refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket|run)"
   fi
   issue=$(get -r '.end_gate.issue // empty')
   apply '
@@ -758,9 +802,11 @@ cmd_finish() {
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
   want=$(pr_plan "$(get -r '.end_gate.boundary.value')" | jq length)
   have=$(get '(.end_gate.prs // []) | length')
-  if [ "$have" -lt "$want" ]; then
+  # No PR cut at all: the branch may have reached main as one PR (#364), even
+  # when that leaves no PR to cut (#363).
+  if [ "$have" -lt "$want" ] || [ "$have" -eq 0 ]; then
     if outside_merge; then outside=1
-    else refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
+    elif [ "$have" -lt "$want" ]; then refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
     fi
   fi
   repo=$(get -r .repo)
