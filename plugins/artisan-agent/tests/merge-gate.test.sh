@@ -398,7 +398,7 @@ test_mg_the_verifier_on_a_ci_machine_leaves_the_suite_to_the_merge_gate() {
   cmd=$(printf '%s\n' "$prompt" | sed -n 's/^    \$ //p' | head -n 1)
   out=$(cd "$PROJECT" && eval "$cmd")
   assert_eq '["true"]' "$(printf '%s' "$out" | jq -c '[.results[].command]')"
-  assert_contains "$(printf '%s' "$out" | jq -r '.not_run[]')" "sh check.sh: left to the merge gate"
+  assert_contains "$(printf '%s' "$out" | jq -r '.not_run[]')" "sh check.sh: not run here (it is the run's suite command"
   wait_for "$RUN_DIR/results/verify-1.1.exit.json" 30
 }
 

@@ -78,7 +78,7 @@ test_c_a_worker_skips_a_recorded_check_that_is_the_suite_and_says_so() {
   out=$(cd "$P" && "$CHECKS" run --worker) || rc=$?
   assert_eq 0 "$rc"
   assert_eq "[]" "$(printf '%s' "$out" | jq -c .results)"
-  assert_eq "./test.sh: left to the merge gate (it is the run's suite command)" "$(printf '%s' "$out" | jq -r '.not_run[0]')"
+  assert_eq "./test.sh: not run here (it is the run's suite command: the merge gate runs it, and a worker runs it through worker-suite.sh)" "$(printf '%s' "$out" | jq -r '.not_run[0]')"
 }
 
 test_c_the_verifier_and_the_gate_still_run_the_suite_check() {
@@ -95,7 +95,7 @@ test_c_a_worker_skips_the_check_equal_to_the_plans_suite_command_and_runs_the_re
   local out=
   out=$(cd "$P" && "$CHECKS" run --worker --suite ./test.sh)
   assert_eq "./lint.sh:true" "$(printf '%s' "$out" | jq -r '[.results[] | "\(.command):\(.passed)"] | join(" ")')"
-  assert_contains "$(printf '%s' "$out" | jq -r '.not_run[0]')" "./test.sh: left to the merge gate"
+  assert_contains "$(printf '%s' "$out" | jq -r '.not_run[0]')" "./test.sh: not run here (it is the run's suite command"
 }
 
 test_c_a_worker_still_runs_every_check_when_none_is_the_suite() {
