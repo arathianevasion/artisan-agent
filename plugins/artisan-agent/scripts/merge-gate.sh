@@ -176,6 +176,8 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/detach-lib.sh"
 # shellcheck source=lib/priority-lib.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/priority-lib.sh"
+# shellcheck source=lib/remote-suite-lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/remote-suite-lib.sh"
 
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOST_FILE=${ARTISAN_HOME:-$CFG/artisan-agent}/host.json
@@ -506,32 +508,12 @@ cancel_queued() {
   [ "$1" = '{}' ] || [ -z "$1" ] || gh run cancel "$(jq -r .databaseId <<<"$1")" -R "$CI_REPO" >/dev/null 2>&1 || true
 }
 
-# fb_host_up: FB_HOST answers ssh within a short timeout.
-fb_host_up() {
-  [ -n "$FB_HOST" ] || return 1
-  ssh -n -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" true >/dev/null 2>&1
-}
-
-# fb_remote: the suite on FB_HOST, in a clone of the gate's commit made from a
-# bundle sent over ssh, removed after. Output to FB_LOG; its exit status, or
-# FB_NO_CHECKOUT when the clone could not be made there, or ssh's 255 when the
-# link failed: then it runs here.
-FB_NO_CHECKOUT=86
-fb_remote() {
-  local ref="refs/artisan-gate/$CI_SHA" bundle="" rc=0 q=""
-  bundle=$(mktemp "${TMPDIR:-/tmp}/artisan-gate.XXXXXX")
-  git -C "$CI_DIR" update-ref "$ref" "$CI_SHA"
-  git -C "$CI_DIR" bundle create -q "$bundle" "$ref" >/dev/null 2>&1 || rc=1
-  git -C "$CI_DIR" update-ref -d "$ref"
-  if [ "$rc" -ne 0 ]; then rm -f "$bundle"; return 1; fi
-  q=$(printf '%s' "$FB_CMD" | sed "s/'/'\\\\''/g")
-  ssh -o ConnectTimeout=10 -o BatchMode=yes "$FB_HOST" "d=\$(mktemp -d) && cat >\"\$d/gate.bundle\" && git init -q \"\$d/w\" && cd \"\$d/w\" \
-    && git fetch -q \"\$d/gate.bundle\" $ref && git checkout -q --detach $CI_SHA || { rm -rf \"\$d\"; exit $FB_NO_CHECKOUT; }
-    sh -c '$q'; rc=\$?; cd /; rm -rf \"\$d\"; exit \$rc" \
-    <"$bundle" >"$FB_LOG" 2>&1 || rc=$?
-  rm -f "$bundle"
-  return "$rc"
-}
+# fb_host_up / fb_remote: the suite on FB_HOST (lib/remote-suite-lib.sh):
+# its exit status, FB_NO_CHECKOUT when the clone could not be made there, or
+# ssh's 255 when the link failed: then it runs here.
+FB_NO_CHECKOUT=$REMOTE_NO_CHECKOUT
+fb_host_up() { remote_host_up "$FB_HOST"; }
+fb_remote() { remote_suite "$FB_HOST" "$CI_DIR" "$CI_SHA" "$FB_CMD" "$FB_LOG"; }
 
 # fallback why: the gate's verdict from a local run, CI having given none
 # (why). Prints the record (tier local:<machine>, conclusion success or
