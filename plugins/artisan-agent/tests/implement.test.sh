@@ -85,6 +85,10 @@ test_the_record_says_where_the_full_suite_ran_and_its_counts() {
   # The fallback: not run on the PC, the guard and covering tests ran here.
   example_record | jq '.tests.full_suite = {where: "local", ran: false, commit: "abc", why: "home-wsl did not answer ssh within 10 seconds", instead: "the guard tests and the covering tests, here"}' > local.json
   "$CHECK" local.json || fail "a record whose full suite fell back to local tests is valid"
+  jq 'del(.tests.full_suite.why)' local.json > nowhy.json
+  status=0; out=$("$CHECK" nowhy.json) || status=$?
+  assert_eq 1 "$status" "a fallback without why is refused"
+  assert_contains "$out" "tests: full_suite did not run, but"
   for f in "$SKILL" "$EVIDENCE" "$PLUGIN_ROOT/references/evidence-contract.md"; do
     case $(cat "$f") in *"left to the merge gate"*) fail "$(basename "$f") still leaves the full suite to the merge gate" ;; esac
     assert_contains "$(cat "$f")" "worker-suite.sh"

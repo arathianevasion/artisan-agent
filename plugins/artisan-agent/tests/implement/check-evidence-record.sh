@@ -42,6 +42,8 @@ problems=$(jq -r '
     (if (.full_suite | type) != "object" or (.full_suite.where | type) != "string" or (.full_suite.ran | type) != "boolean"
      then "tests: full_suite must be the worker-suite.sh record ({where, ran, ...}): where the full suite ran before hand-in, or why it did not"
      elif .full_suite.ran and (.full_suite.passed | type) != "boolean" then "tests: full_suite ran but says no passed"
+     elif (.full_suite.ran | not) and ([.full_suite.commit, .full_suite.why, .full_suite.instead] | map(type == "string") | all | not)
+     then "tests: full_suite did not run, but does not give its commit, why and what ran instead"
      else empty end)),
   (select(.status == "complete" and (.tests.full_suite | type) == "object" and .tests.full_suite.ran == true and .tests.full_suite.passed == false)
    | "tests: the full suite failed (\(.tests.full_suite.summary // "no summary")): fix it before handing in as complete"),

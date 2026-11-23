@@ -92,7 +92,7 @@ cmd_run() {
     case "$rc" in
       255) why="the ssh link to $host failed during the run" ;;
       "$REMOTE_NO_CHECKOUT") why="could not check out $sha on $host" ;;
-      1) [ -s "$log" ] || why="could not bundle $sha here" ;;
+      "$REMOTE_NO_BUNDLE") why="could not bundle $sha here" ;;
     esac
   fi
   if [ -n "$why" ]; then

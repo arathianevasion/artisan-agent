@@ -125,3 +125,10 @@ test_ws_the_host_defaults_to_the_merge_gates_fallback_host() {
   assert_eq 0 "$RC" "$OUT"
   assert_eq home-wsl "$(jq -r .where <<<"$OUT")"
 }
+
+test_ws_a_silent_suite_that_exits_1_is_red_not_a_fallback() {
+  setup_project; fake_ssh; export FAKE_SSH_UP=1
+  ws_run --command "exit 1"
+  assert_eq 7 "$RC" "$OUT"
+  assert_eq "home-wsl true false" "$(jq -r '"\(.where) \(.ran) \(.passed)"' <<<"$OUT")"
+}
