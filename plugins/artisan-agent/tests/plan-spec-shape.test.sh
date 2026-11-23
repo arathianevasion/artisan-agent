@@ -27,7 +27,7 @@ test_a_bare_string_spec_is_refused_naming_the_shape() {
 
 test_a_spec_missing_its_title_or_number_is_refused() {
   make_project
-  local s
+  local s=
   for s in 'false' '{"number":66}' '{"title":"X"}' '{"number":"66","title":"X"}' '{"number":66,"title":7}'; do
     draft "$TEST_TMPDIR/d.json" "$s"
     local out= rc=0
