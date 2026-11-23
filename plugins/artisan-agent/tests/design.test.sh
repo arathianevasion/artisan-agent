@@ -650,7 +650,7 @@ test_capture_main_into_figma_needs_the_remote_server_and_falls_back_to_the_befor
   line=$(sed -n '/^## 5\. /,/^## 6\. /p' "$SKILL" | grep -F '**Capture main into Figma**')
   assert_contains "$line" "remote Figma MCP server"
   assert_contains "$line" "a client that supports it"
-  assert_contains "$line" "the \"before\" screenshots"
+  assert_contains "$line" "skip the capture and the designer starts from the \"before\" screenshots"
 }
 
 # #337: a Figma design is not a substitute for the screenshots; the package
