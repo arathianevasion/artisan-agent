@@ -51,8 +51,9 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 is_open() { # state.json
   state_valid_file "$1" 2>/dev/null || return 1
-  jq -e '(.end_gate.status? // "") != "ended" and [.plan.scope[] as $t | .tickets[$t].status // "queued"
-          | select(. != "merged" and . != "closed")] | length > 0' "$1" >/dev/null 2>&1
+  jq -e '(.end_gate.status? // "") != "ended" and
+          ([.plan.scope[] as $t | .tickets[$t].status // "queued"
+          | select(. != "merged" and . != "closed")] | length > 0)' "$1" >/dev/null 2>&1
 }
 
 if [ -z "$run_dir" ]; then
