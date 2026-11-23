@@ -352,6 +352,15 @@ def leverage_trend(history_path, project, run, leverage):
     return {"runs": rows, "rate": (round(100.0 * changed / decisions) if decisions else None)}
 
 
+def gate_changed(s, d):
+    """Whether the Artisan changed a card at this gate (gate.sh change): the
+    decision's own flag, or a change outcome or rework on the gate's record."""
+    if d.get("changed"):
+        return True
+    g = next((g for g in s.get("review_gates") or [] if g.get("id") == d.get("gate")), None)
+    return bool(g and (g.get("reworks") or any(x.get("outcome") == "change" for x in g.get("decisions") or [])))
+
+
 def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path=None, denied_path=None):
     s = load(state_path)
     jobs = job_focuses(jobs_md)
@@ -391,7 +400,7 @@ def facts(state_path, jobs_md, actions_path=None, misses_path=None, history_path
         if d.get("status") == "decided" and not is_agent(d.get("by")):
             actions.append({"what": d.get("kind", "decision"), "source": "decision", "kind": d.get("kind"),
                             "job": d.get("job"), "focus": d.get("focus"), "redirect": d.get("redirect"),
-                            "choice": d.get("choice")})
+                            "choice": d.get("choice"), "changed": gate_changed(s, d)})
     # Each ruling on an open decision is one, resolving an open design question.
     for r in rulings(s):
         actions.append({"what": "ruled on an open decision", "source": "ruling", "kind": "ruling",
