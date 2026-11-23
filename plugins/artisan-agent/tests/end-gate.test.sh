@@ -269,6 +269,79 @@ pr/r1/3 pr/r1/2" "$(prs)"
   assert_eq "$M2" "$(git -C "$PROJECT" rev-parse pr/r1/2)"
 }
 
+test_per_run_from_the_product_guardrail_cuts_one_pr_from_the_integration_branch_to_main() {
+  setup_end
+  product_boundary run
+  assert_eq '{"value":"run","level":"product","source":"guardrail"}' "$("$E" boundary "$RUN_DIR")"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[{"n":1,"branch":"run/r1","base":"main","tickets":["1","2","3"]}]' \
+    "$("$E" prs "$RUN_DIR" --json | jq -c 'map({n, branch, base, tickets})')"
+  assert_contains "$("$E" prs "$RUN_DIR")" '| 1 | `run/r1` | `main` |'
+  cut_all
+  assert_eq "run/r1 main" "$(prs)"
+  assert_eq "$M3" "$(git -C "$PROJECT" rev-parse run/r1)" "the integration branch is the PR's head, untouched"
+  assert_contains "$(jq -r .title "$FAKE_GH_DIR/pr-1.json")" "#1, #2, #3"
+  assert_contains "$("$E" finish "$RUN_DIR")" "1 PR(s) to main"
+}
+
+test_the_artisan_can_approve_one_pr_for_the_whole_run() {
+  setup_end
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" --boundary run >/dev/null
+  assert_eq "run 17 true" "$(state_get '.decisions[] | select(.kind == "pr-boundary") | "\(.choice) \(.job) \(.changed)"')"
+  assert_eq "run/r1 main" "$("$E" prs "$RUN_DIR" --json | jq -r '.[] | "\(.branch) \(.base)"')"
+}
+
+test_a_group_already_on_main_is_left_out_with_a_reason_and_the_stack_starts_after_it() {
+  setup_end
+  product_boundary slice
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 (#346)" "$M2"   # the export slice reached main another way
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[{"n":1,"base":"main","tickets":["3"]}]' "$("$E" prs "$RUN_DIR" --json | jq -c 'map({n, base, tickets})')"
+  assert_contains "$("$E" prs "$RUN_DIR")" "Left out: #1, #2 (export): already on main"
+  cut_all
+  assert_eq "pr/r1/1 main" "$(prs)"
+}
+
+test_the_prs_keep_their_numbers_once_cutting_has_begun() {
+  setup_end
+  product_boundary ticket
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  echo body >"$TEST_TMPDIR/b.md"
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md" >/dev/null
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 by hand" "$M2"   # #2 reaches main after PR 1 is cut
+  assert_eq '[["1"],["2"],["3"]]' "$("$E" prs "$RUN_DIR" --json | jq -c 'map(.tickets)')"
+}
+
+test_finish_does_not_fail_on_a_design_whose_tickets_were_left_out_as_already_on_main() {
+  setup_end
+  design_ticket 10 quick-pay
+  names_design 1 10
+  product_boundary slice
+  git_quiet -C "$PROJECT" merge --no-ff -m "Merge #1 and #2 (#346)" "$M2"
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  merge_all_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) || fail "finish failed: $out"
+  assert_contains "$out" "design #10 is not retired: its tickets (#1) reached main outside this run's PRs"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_a_run_already_on_main_has_no_pr_to_cut() {
+  setup_end
+  product_boundary run
+  merge_integration_into_main
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq '[]' "$("$E" prs "$RUN_DIR" --json)"
+  assert_contains "$("$E" prs "$RUN_DIR")" "Left out: #1, #2, #3 (run): already on main"
+}
+
 test_the_product_guardrail_beats_team_and_individual() {
   setup_end
   individual_boundary ticket

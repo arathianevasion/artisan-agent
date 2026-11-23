@@ -261,7 +261,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 
 ## The end gate
 
-Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], ended_at}`.
+Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], left_out?, ended_at}` (`left_out`: the tickets left out as already on `main` when the first PR was cut, so the PRs keep their numbers; #363).
 
 ## Where a run lives
 
