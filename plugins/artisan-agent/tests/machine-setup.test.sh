@@ -436,6 +436,93 @@ test_voice_import_no_fails_and_leaves_no_temp_file_when_host_json_is_invalid() {
   assert_eq 1 "$(ls "$d" | grep -c '^host.json')" "temp file left behind"
 }
 
+# ---- idle compaction offer (#260)
+
+idle_state() { "$SCRIPT" idle-compaction state | jq -r '"\(.due) \(.state)"'; }
+
+test_idle_compaction_state_is_due_when_unset_and_not_declined() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  assert_eq "true due" "$(idle_state)"
+  echo '{"theme": "dark"}' >"$CLAUDE_CONFIG_DIR/settings.json"
+  assert_eq "true due" "$(idle_state)"
+}
+
+test_idle_compaction_yes_sets_false_keeps_other_keys_and_repeats_unchanged() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local f="$CLAUDE_CONFIG_DIR/settings.json"
+  echo '{"theme": "dark", "env": {"A": "1"}}' >"$f"
+  "$SCRIPT" idle-compaction yes >/dev/null
+  assert_eq "false dark 1" "$(jq -r '"\(.idleCompaction) \(.theme) \(.env.A)"' "$f")"
+  local before; before=$(cat "$f")
+  "$SCRIPT" idle-compaction yes >/dev/null
+  assert_eq "$before" "$(cat "$f")"
+  assert_eq "false off" "$(idle_state)"
+}
+
+test_idle_compaction_yes_creates_settings_json_when_missing() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  "$SCRIPT" idle-compaction yes >/dev/null
+  assert_eq false "$(jq -r '.idleCompaction' "$CLAUDE_CONFIG_DIR/settings.json")"
+}
+
+test_idle_compaction_no_records_decline_keeps_host_json_and_leaves_settings_alone() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local h="$CLAUDE_CONFIG_DIR/artisan-agent/host.json" s="$CLAUDE_CONFIG_DIR/settings.json"
+  echo '{"merge_gate": "local", "x": 1}' >"$h"
+  echo '{"theme":"dark"}' >"$s"
+  "$SCRIPT" idle-compaction no >/dev/null
+  assert_eq "local 1 true" "$(jq -r '"\(.merge_gate) \(.x) \(.idle_compaction_declined)"' "$h")"
+  assert_eq '{"theme":"dark"}' "$(cat "$s")"
+  assert_eq "false declined" "$(idle_state)"
+}
+
+test_idle_compaction_explicit_values_are_no_offer_and_never_changed() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local s="$CLAUDE_CONFIG_DIR/settings.json"
+  echo '{"idleCompaction": true}' >"$s"
+  assert_eq "false on" "$(idle_state)"
+  "$SCRIPT" idle-compaction yes >/dev/null
+  assert_eq true "$(jq -r '.idleCompaction' "$s")"
+  echo '{"idleCompaction": false}' >"$s"
+  assert_eq "false off" "$(idle_state)"
+  "$SCRIPT" idle-compaction no >/dev/null
+  assert_eq false "$(jq -r '.idleCompaction' "$s")"
+}
+
+test_idle_compaction_rejects_an_unknown_argument() {
+  seed_machine
+  local rc=0
+  "$SCRIPT" idle-compaction maybe >/dev/null 2>&1 || rc=$?
+  assert_eq 2 "$rc"
+}
+
+test_idle_compaction_fails_without_touching_an_invalid_settings_json() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local s="$CLAUDE_CONFIG_DIR/settings.json" rc=0
+  echo 'not json' >"$s"
+  "$SCRIPT" idle-compaction yes >/dev/null 2>&1 || rc=$?
+  [ "$rc" != 0 ] || fail "reported success on invalid settings.json"
+  assert_eq "not json" "$(cat "$s")"
+}
+
+test_setup_skill_and_drain_reference_name_the_idle_compaction_offer() {
+  local s= d=
+  s=$(cat "$PLUGIN_ROOT/skills/setup/SKILL.md")
+  d=$(cat "$PLUGIN_ROOT/skills/implement-plan/references/context-drain.md")
+  assert_contains "$s" "idle-compaction state"
+  assert_contains "$s" "idleCompaction"
+  assert_contains "$s" "without the cache"
+  assert_contains "$s" "Recommend yes"
+  assert_contains "$s" "idle-compaction no"
+  assert_contains "$d" "idleCompaction"
+}
+
 # ---- design standards at the individual and team levels (#330)
 
 test_init_seeds_an_empty_individual_design_file_and_commits_it() {
