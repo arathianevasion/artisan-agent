@@ -186,7 +186,7 @@ cmd_preflight() {
     *)
       jq -nc --arg h "$host" --arg s "$sha" --arg c "$cmd" --argjson n "$secs" --arg l "$log" \
         --arg w "the suite failed within $secs seconds on $host (exit $rc): its build or setup is broken there" \
-        --arg t "$(tail -10 "$log")" \
+        --rawfile t <(tail -10 "$log") \
         '{where: $h, ok: false, commit: $s, command: $c, seconds: $n, why: $w, tail: $t, log: $l}'
       return 7 ;;
   esac
