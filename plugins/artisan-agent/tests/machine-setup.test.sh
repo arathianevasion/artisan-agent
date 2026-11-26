@@ -455,7 +455,7 @@ test_idle_compaction_yes_sets_false_keeps_other_keys_and_repeats_unchanged() {
   echo '{"theme": "dark", "env": {"A": "1"}}' >"$f"
   "$SCRIPT" idle-compaction yes >/dev/null
   assert_eq "false dark 1" "$(jq -r '"\(.idleCompaction) \(.theme) \(.env.A)"' "$f")"
-  local before; before=$(cat "$f")
+  local before=; before=$(cat "$f")
   "$SCRIPT" idle-compaction yes >/dev/null
   assert_eq "$before" "$(cat "$f")"
   assert_eq "false off" "$(idle_state)"
