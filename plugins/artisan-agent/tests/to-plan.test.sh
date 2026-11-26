@@ -1126,3 +1126,9 @@ test_graph_reads_rulings_from_the_map_and_keeps_each_tickets_text() {
   assert_contains "$(jq -r '.tickets["1"].body' <<<"$g")" "first 1"
   assert_eq "null" "$(jq -c '.rulings' <<<"$("$TP" graph --repo local/sample 1)")"
 }
+
+test_a_decisions_heading_is_read_as_rulings_too() {
+  use_fake_gh
+  jq -n '{number: 47, id: 1047, title: "Spec", state: "open", labels: [], body: "## Decisions\n\n- Result file: `r.json`\n"}' >"$FAKE_GH_DIR/issue-47.json"
+  assert_eq "Result file" "$("$TP" graph --repo local/sample --rulings 47 1 | jq -r '.rulings[0].concept')"
+}

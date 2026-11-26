@@ -700,11 +700,11 @@ def step_warnings(tickets, graph):
 
 
 def spec_rulings(body):
-    """The concrete rulings under a map's or spec's "Rulings" heading (#378):
+    """The concrete rulings under a map's or spec's "Rulings" (or "Decisions") heading (#378):
     each bullet `concept: value`, the concept with bold and links dropped, the
     value the `code` spans after the colon (the whole rest when it has none).
     A bullet with no colon or no value is no ruling. [] with no such heading."""
-    m = re.search(r"^(#{2,})\s+Rulings\s*$", body or "", re.M | re.I)
+    m = re.search(r"^(#{2,})\s+(?:Rulings|Decisions)\s*$", body or "", re.M | re.I)
     if not m:
         return []
     rest = body[m.end():]
