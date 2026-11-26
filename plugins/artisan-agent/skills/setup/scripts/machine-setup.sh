@@ -212,9 +212,9 @@ cmd_voice_import() {
 
 # Claude Code's idle compaction (#260) is a user-level setting, so the offer reaches every session on
 # the machine. An explicit value, true or false, means no offer and is never changed.
-idle_value() { # prints true, false or nothing (unset)
+idle_value() { # prints true or false when set to one; anything else counts as unset
   [ -f "$CFG/settings.json" ] || return 0
-  jq -r 'if has("idleCompaction") then (.idleCompaction | tostring) else empty end' "$CFG/settings.json"
+  jq -r 'if .idleCompaction == true or .idleCompaction == false then (.idleCompaction | tostring) else empty end' "$CFG/settings.json"
 }
 idle_declined() {
   [ -f "$HOME_DIR/host.json" ] && [ "$(jq -r '.idle_compaction_declined // false' "$HOME_DIR/host.json")" = true ]

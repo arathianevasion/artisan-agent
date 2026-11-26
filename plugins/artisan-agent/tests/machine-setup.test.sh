@@ -494,6 +494,16 @@ test_idle_compaction_explicit_values_are_no_offer_and_never_changed() {
   assert_eq false "$(jq -r '.idleCompaction' "$s")"
 }
 
+test_idle_compaction_a_non_boolean_value_is_unset_and_yes_replaces_it() {
+  seed_machine
+  "$SCRIPT" init >/dev/null
+  local s="$CLAUDE_CONFIG_DIR/settings.json"
+  echo '{"idleCompaction": null, "k": 1}' >"$s"
+  assert_eq "true due" "$(idle_state)"
+  "$SCRIPT" idle-compaction yes >/dev/null
+  assert_eq "false 1" "$(jq -r '"\(.idleCompaction) \(.k)"' "$s")"
+}
+
 test_idle_compaction_rejects_an_unknown_argument() {
   seed_machine
   local rc=0
@@ -518,6 +528,8 @@ test_setup_skill_and_drain_reference_name_the_idle_compaction_offer() {
   assert_contains "$s" "idle-compaction state"
   assert_contains "$s" "idleCompaction"
   assert_contains "$s" "without the cache"
+  assert_contains "$s" "while its workers are still running"
+  assert_contains "$s" "the idle compaction offer"
   assert_contains "$s" "Recommend yes"
   assert_contains "$s" "idle-compaction no"
   assert_contains "$d" "idleCompaction"
