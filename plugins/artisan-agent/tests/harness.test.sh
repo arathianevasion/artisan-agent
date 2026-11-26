@@ -261,14 +261,26 @@ test_tests_times_files_prints_each_files_seconds_slowest_first() {
 
 test_tests_times_files_sums_a_files_tests_and_orders_files_slowest_first() {
   mkdir "$TEST_TMPDIR/two"
-  printf 'test_a() { sleep 0.3; }\ntest_b() { sleep 0.3; }\n' >"$TEST_TMPDIR/two/a.test.sh"
-  printf 'test_c() { sleep 0.1; }\n' >"$TEST_TMPDIR/two/b.test.sh"
+  printf 'test_a() { :; }\ntest_b() { :; }\n' >"$TEST_TMPDIR/two/a.test.sh"
+  printf 'test_c() { :; }\n' >"$TEST_TMPDIR/two/b.test.sh"
+  # Injected seconds: a's two tests add to 0.60, b's one is 0.40 (each alone is
+  # slower than the other file's tests only when summed, so the sum is tested).
+  printf 'a: test_a 0.30\na: test_b 0.30\nb: test_c 0.40\n' >"$TEST_TMPDIR/secs"
   local out=
-  out=$(TESTS_TIMES=files "$TESTS_DIR/run.sh" -j 2 "$TEST_TMPDIR/two" 2>&1)
-  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 2p | grep -Eq ' a$' \
-    || fail "the two-test file is not listed first: $out"
-  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 3p | grep -Eq ' b$' \
-    || fail "the one-test file is not listed second: $out"
+  out=$(TESTS_FAKE_SECS="$TEST_TMPDIR/secs" TESTS_TIMES=files "$TESTS_DIR/run.sh" -j 2 "$TEST_TMPDIR/two" 2>&1)
+  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 2p | grep -Eq '^ *0\.60 a$' \
+    || fail "the two-test file is not listed first, as 0.60: $out"
+  printf '%s\n' "$out" | grep -A2 '^Seconds per test file' | sed -n 3p | grep -Eq '^ *0\.40 b$' \
+    || fail "the one-test file is not listed second, as 0.40: $out"
+}
+
+test_a_test_never_sees_tests_fake_secs() {
+  mkdir "$TEST_TMPDIR/probe2"
+  printf 'test_p() { [ -z "${TESTS_FAKE_SECS:-}" ] || fail "TESTS_FAKE_SECS reached the test"; }\n' \
+    >"$TEST_TMPDIR/probe2/p.test.sh"
+  : >"$TEST_TMPDIR/empty"
+  TESTS_FAKE_SECS="$TEST_TMPDIR/empty" "$TESTS_DIR/run.sh" "$TEST_TMPDIR/probe2" >/dev/null 2>&1 \
+    || fail "TESTS_FAKE_SECS reached the test"
 }
 
 # --- --rerun-failed and the quarantine (#198) ---
