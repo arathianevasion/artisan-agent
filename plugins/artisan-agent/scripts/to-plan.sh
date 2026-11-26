@@ -17,6 +17,10 @@
 #                                  Each ticket's `Steps:` line is its `steps`; --spec <n> adds the spec's
 #                                  Experience-section changed steps as `experience_steps` (#332): `check`
 #                                  flags, by name, each that no ticket cites, and refuses approval.
+#                                  --rulings <n> (repeatable; the map or spec) adds its `## Rulings` bullets
+#                                  (`- concept: `value``) as `rulings` and keeps each ticket's body (#378):
+#                                  `check` flags a ticket that names a ruled concept and holds none of
+#                                  its ruled values, and refuses approval.
 #   to-plan.sh propose --graph FILE --budget USD      print the proposed plans (JSON)
 #   to-plan.sh split   <plans.json> --graph FILE <plan> <ticket,ticket,...>
 #                                  move those tickets into a new plan after <plan>
@@ -80,7 +84,7 @@ need jq; need python3
 py() { python3 -I "$PY" "$@"; }
 
 # Common options, parsed from anywhere after the subcommand.
-GRAPH= REPO= SPEC= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= CONFIG= OVERRIDES='[]'
+RULINGS=() GRAPH= REPO= SPEC= BUDGET= APPROVED= REPLACE_PARENT= POS= PLANS= CONFIG= OVERRIDES='[]'
 parse() {
   POS=()
   while [ $# -gt 0 ]; do
@@ -97,6 +101,7 @@ parse() {
       --plans) [ $# -ge 2 ] || usage; PLANS=$2; shift 2 ;;
       --config) [ $# -ge 2 ] || usage; CONFIG=$2; shift 2 ;;
       --graph) [ $# -ge 2 ] || usage; GRAPH=$2; shift 2 ;;
+      --rulings) [ $# -ge 2 ] || usage; RULINGS+=("${2#\#}"); shift 2 ;;
       --spec) [ $# -ge 2 ] || usage; SPEC=${2#\#}; shift 2 ;;
       --repo) [ $# -ge 2 ] || usage; REPO=$2; shift 2 ;;
       --budget) [ $# -ge 2 ] || usage; BUDGET=$2; shift 2 ;;
@@ -148,6 +153,15 @@ case "$cmd" in
       # null: no Experience section, nothing to cover (#332).
       if [ "$spec_steps" != null ]; then out=$(printf '%s\n%s\n' "$out" "$spec_steps" | jq -c -n 'input as $acc | input as $s | $acc | .experience_steps = $s'); fi
     fi
+    if [ "${#RULINGS[@]}" -gt 0 ]; then
+      rl='[]'
+      for r in "${RULINGS[@]}"; do
+        printf '%s' "$r" | grep -Eq '^[0-9]+$' || die "--rulings must be an issue number, got \"$r\""
+        one=$(gh issue view "$r" -R "$REPO" --json body -q '.body // ""' | py spec-rulings) || die "cannot read the rulings of #$r"
+        rl=$(printf '%s\n%s\n' "$rl" "$one" | jq -c -n 'input + input')
+      done
+      out=$(printf '%s\n%s\n' "$out" "$rl" | jq -c -n 'input as $acc | input as $r | $acc | .rulings = $r')
+    fi
     for n in $numbers; do
       issue=$(gh issue view "$n" -R "$REPO" --json number,title,body,state,comments) || die "cannot read #$n"
       steps=$(printf '%s' "$issue" | jq -r '.body // ""' | py ticket-steps) || die "cannot read the steps of #$n"
@@ -158,7 +172,7 @@ case "$cmd" in
       # The graph so far, the issue and its blockers carry whole bodies: they
       # reach jq on stdin, never as an argument (#208).
       out=$(printf '%s\n%s\n%s\n' "$out" "$issue" "$deps" | jq -n --arg n "$n" --argjson crit "$crit" \
-            --arg set "$numbers" --argjson steps "$steps" '
+            --arg set "$numbers" --argjson steps "$steps" --argjson rul "$([ "${#RULINGS[@]}" -gt 0 ] && echo true || echo false)" '
         input as $acc | input as $issue | input as $deps
         | ($set | split("\n") | map(select(. != ""))) as $in
         | $acc
@@ -166,10 +180,12 @@ case "$cmd" in
             title: $issue.title,
             acceptance: $crit.criteria,
             acceptance_source: $crit.source,
+            body: (if $rul then ($issue.body // "") else null end),
             blocked_by: [$deps[] | .number | tostring | select(. as $b | $in | index($b))],
             external_blockers: [$deps[] | select(.state == "open") | .number | tostring | select(. as $b | ($in | index($b)) | not)]
           }
         | if .tickets[$n].external_blockers == [] then del(.tickets[$n].external_blockers) else . end
+        | if $rul then . else del(.tickets[$n].body) end
         | if $steps != [] then .tickets[$n].steps = $steps else . end
         | ([$issue.body // "" | capture("<!-- artisan-agent:human-check-for #(?<a>[0-9]+) -->")?] | .[0].a // null) as $hc
         | if $hc then .tickets[$n].human_check_for = $hc else . end')
