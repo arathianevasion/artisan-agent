@@ -132,3 +132,48 @@ test_ws_a_silent_suite_that_exits_1_is_red_not_a_fallback() {
   assert_eq 7 "$RC" "$OUT"
   assert_eq "home-wsl true false" "$(jq -r '"\(.where) \(.ran) \(.passed)"' <<<"$OUT")"
 }
+
+# #423: the preflight wave.sh launch runs before it dispatches anyone. The
+# recorded suite starts on the host and is given a few seconds: failing in
+# them is a host whose build is broken (dotnet not on PATH in a
+# non-interactive shell), which would fail every worker the same way.
+ws_preflight() { RC=0; OUT=$(cd "$P" && "$WS" preflight --host home-wsl --log "$TEST_TMPDIR/pre.log" "$@" 2>"$TEST_TMPDIR/ws.err") || RC=$?; }
+
+test_ws_preflight_a_suite_that_fails_within_seconds_is_a_broken_host() {
+  setup_project; fake_ssh; export FAKE_SSH_UP=1
+  ws_preflight --command "echo 'dotnet: command not found' >&2; exit 127"
+  assert_eq 7 "$RC" "$OUT"
+  assert_eq "home-wsl false" "$(jq -r '"\(.where) \(.ok)"' <<<"$OUT")"
+  assert_contains "$(jq -r .why <<<"$OUT")" "failed within"
+  assert_contains "$(jq -r .tail <<<"$OUT")" "dotnet: command not found"
+  assert_eq "$(git -C "$P" rev-parse HEAD)" "$(jq -r .commit <<<"$OUT")"
+}
+
+test_ws_preflight_a_suite_still_running_after_its_seconds_is_a_working_host() {
+  setup_project; fake_ssh; export FAKE_SSH_UP=1
+  ws_preflight --seconds 1 --command "sleep 5; exit 1"
+  assert_eq 0 "$RC" "$OUT $(cat "$TEST_TMPDIR/ws.err")"
+  assert_eq "home-wsl true" "$(jq -r '"\(.where) \(.ok)"' <<<"$OUT")"
+}
+
+test_ws_preflight_runs_the_recorded_suite_on_the_checkouts_commit() {
+  setup_project; fake_ssh; export FAKE_SSH_UP=1
+  ws_preflight
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(git -C "$P" rev-parse HEAD)" "$(cat "$TEST_TMPDIR/ran")"
+}
+
+test_ws_preflight_an_unreachable_host_is_no_refusal() {
+  setup_project; fake_ssh; unset FAKE_SSH_UP
+  ws_preflight
+  assert_eq 17 "$RC" "$OUT"
+  assert_contains "$(jq -r .why <<<"$OUT")" "did not answer ssh"
+}
+
+test_ws_preflight_with_no_recorded_checks_is_16_and_calls_no_host() {
+  setup_project; fake_ssh; export FAKE_SSH_UP=1
+  git -C "$P" rm -q CODING_STANDARDS.md; git -C "$P" commit -q -m "no checks"
+  ws_preflight
+  assert_eq 16 "$RC" "$OUT"
+  [ ! -s "$FAKE_SSH_LOG" ] || fail "ssh was called with nothing to run"
+}
