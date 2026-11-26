@@ -38,6 +38,8 @@
 #       assembly missing), which would fail every worker's suite the same
 #       way; still running after them, or done green, is a working host and
 #       is stopped there. A host without `timeout` is taken as working.
+#       A suite red at once on HEAD itself (a failing first test) fails it
+#       too: every worker would hand in red there as well.
 #       Uncommitted work in D is not refused: HEAD is what is checked.
 #       Prints {where: H, ok, commit, command, seconds, why?, tail?, log}
 #       (tail: the log's last 10 lines, on a failure). Exit 0 working, 7
@@ -185,7 +187,7 @@ cmd_preflight() {
         '{where: $h, ok: true, commit: $s, command: $c, seconds: $n, log: $l}' ;;
     *)
       jq -nc --arg h "$host" --arg s "$sha" --arg c "$cmd" --argjson n "$secs" --arg l "$log" \
-        --arg w "the suite failed within $secs seconds on $host (exit $rc): its build or setup is broken there" \
+        --arg w "the suite failed within $secs seconds on $host (exit $rc): its build or setup is broken there, or the checkout is red at once" \
         --rawfile t <(tail -10 "$log") \
         '{where: $h, ok: false, commit: $s, command: $c, seconds: $n, why: $w, tail: $t, log: $l}'
       return 7 ;;
