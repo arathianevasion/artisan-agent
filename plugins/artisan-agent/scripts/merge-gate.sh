@@ -702,12 +702,14 @@ cmd_ci() {
 # error its check run's annotations give (the first failure-level one, else
 # the first). infrastructure is true when there is a failed job and each
 # failed step is one no test runs in: GitHub's own set up and complete
-# steps, checkout, cache, setup-* actions, artifact upload and download. A
+# steps, checkout, cache, setup-* actions, artifact upload and download (by
+# the step's first word, so a test step that only mentions one is a test). A
 # job that failed with no failed step but a step cancelled or never finished
-# (the runner was lost) is infrastructure too; one with no step to show is
-# not, so a run read without its steps is judged as before. Never fails the
+# is infrastructure only when its annotation names the runner (lost,
+# shutdown); one with no step to show is not, so a run read without its steps
+# is judged as before. Never fails the
 # gate: annotations it cannot read leave the error null.
-INFRA_STEP='^(set up job|complete job|post )|^(run )?actions/(checkout|cache|upload-artifact|download-artifact|setup-[a-z0-9-]+)|^set ?up |upload|download|artifact|checkout|cache'
+INFRA_STEP='^(set up job|complete job|post )|^(run )?actions/(checkout|cache|upload-artifact|download-artifact|setup-[a-z0-9-]+)|^(set ?up|upload|download|checkout|restore|save|cache)\b'
 infra_failure() {
   local view="$1" jid="" ann="" line="" lines=""
   for jid in $(jq -r '.jobs[]? | select(.conclusion == "failure") | .databaseId // "none"' <<<"$view"); do
@@ -723,7 +725,7 @@ infra_failure() {
       | ([($j.steps // [])[] | select(.conclusion == "failure")]) as $f
       | (if $f == [] then [{name: (([($j.steps // [])[] | select(.conclusion != "success" and .conclusion != "skipped")] | first | .name) // null), none: true}] else $f end)[]
       | {job: $j.name, step: .name, error: ($e[($j.databaseId | tostring)] // null),
-         infra: (if .none then (.name != null) else ((.name // "") | test($re; "i")) end)}] as $s
+         infra: (if .none then (($e[($j.databaseId | tostring)] // "") | test("runner"; "i")) else ((.name // "") | test($re; "i")) end)}] as $s
     | {infrastructure: ($s != [] and all($s[]; .infra)), failed_steps: [$s[] | {job, step, error}]}'
 }
 

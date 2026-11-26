@@ -168,6 +168,21 @@ test_mg_infra_failure_is_false_when_a_test_step_failed_beside_an_upload_step() {
   assert_eq '["Run tests","Upload test results"]' "$(jq -c '[.failed_steps[].step]' <<<"$out")" "all the failed steps are still named"
 }
 
+test_mg_infra_failure_is_false_for_a_test_step_whose_name_only_mentions_upload_cache_or_checkout() {
+  setup_ci
+  jq -c '.jobs[0].steps |= map(if .name == "Run e2e tests" then .name = "Run checkout and cache tests" | .conclusion = "failure" else . end)
+      | .jobs[0].steps |= map(select(.name != "Upload test results")) | .jobs |= [.[0]]' \
+    "$TESTS_DIR/fixtures/ci-jobs/artifact-quota.json" >"$FAKE_GH_DIR/run-9001.json"
+  assert_eq false "$("$MG" infra-failure --repo local/sample --run-id 9001 | jq -r .infrastructure)"
+}
+
+test_mg_infra_failure_is_false_for_a_cancelled_step_whose_job_names_no_lost_runner() {
+  setup_ci
+  jq -c '.jobs[0].annotations = [{annotation_level: "failure", message: "The job exceeded the maximum execution time of 10 minutes."}]' \
+    "$TESTS_DIR/fixtures/ci-jobs/runner-lost.json" | jq -c '.jobs[0] as $j | .jobs[0] = ($j | del(.annotations))' >"$FAKE_GH_DIR/run-9001.json"
+  assert_eq false "$("$MG" infra-failure --repo local/sample --run-id 9001 | jq -r .infrastructure)"
+}
+
 test_mg_an_infrastructure_failure_parks_on_ci_naming_the_step_and_error_and_uses_no_attempt() {
   setup_ci
   verified_ticket
