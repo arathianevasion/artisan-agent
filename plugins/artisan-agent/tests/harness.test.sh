@@ -263,8 +263,8 @@ test_tests_times_files_sums_a_files_tests_and_orders_files_slowest_first() {
   mkdir "$TEST_TMPDIR/two"
   printf 'test_a() { :; }\ntest_b() { :; }\n' >"$TEST_TMPDIR/two/a.test.sh"
   printf 'test_c() { :; }\n' >"$TEST_TMPDIR/two/b.test.sh"
-  # Injected seconds: a's two tests add to 0.60, b's one is 0.40 (each alone is
-  # slower than the other file's tests only when summed, so the sum is tested).
+  # Injected seconds: each of a's tests (0.30) is faster than b's one (0.40),
+  # but a's sum (0.60) is not, so a lists first only if the seconds are added up.
   printf 'a: test_a 0.30\na: test_b 0.30\nb: test_c 0.40\n' >"$TEST_TMPDIR/secs"
   local out=
   out=$(TESTS_FAKE_SECS="$TEST_TMPDIR/secs" TESTS_TIMES=files "$TESTS_DIR/run.sh" -j 2 "$TEST_TMPDIR/two" 2>&1)
@@ -274,7 +274,7 @@ test_tests_times_files_sums_a_files_tests_and_orders_files_slowest_first() {
     || fail "the one-test file is not listed second, as 0.40: $out"
 }
 
-test_a_test_never_sees_tests_fake_secs() {
+test_tests_fake_secs_is_unset_inside_a_test() {
   mkdir "$TEST_TMPDIR/probe2"
   printf 'test_p() { [ -z "${TESTS_FAKE_SECS:-}" ] || fail "TESTS_FAKE_SECS reached the test"; }\n' \
     >"$TEST_TMPDIR/probe2/p.test.sh"

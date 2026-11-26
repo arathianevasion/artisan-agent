@@ -80,7 +80,8 @@
 # wall-clock), slowest first. Tests never see TESTS_TIMES.
 # TESTS_FAKE_SECS=<file> (for run.sh's own tests) replaces measured seconds:
 # each "<file>: <test> <seconds>" line gives that test's seconds, so a test of
-# the ordering needs no sleeps and no sub-second clock (#418). Tests never see it.
+# the ordering needs no sleeps and no sub-second clock (#418). Only for run.sh's
+# own tests. Tests never see it.
 #
 # Exit status: 0 when every test passes (flaky and quarantined ones aside),
 # 1 when any fails, 2 when no tests
