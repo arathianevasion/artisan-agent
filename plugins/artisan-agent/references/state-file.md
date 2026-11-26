@@ -346,7 +346,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - and `ci-gate-abandoned` (`ticket`, `branch`)
 - and for the base check on a red gate (#195) `parked` (`reason: "base"`, `ticket`, `attempt`, `detail`, and `tickets`, `batch` for a merge batch)
 - `unparked` (`reason: "base"`, `ticket`, `how: "merge"`, `by`) and
-- for every CI merge gate `ci-wait` (`ticket`, or `batch` and `tickets`; `gate`, `sha`, `minutes` from the gate's start to its outcome, `outcome`: `success`, `red` or `no-verdict`)
+- for every CI merge gate `ci-wait` (`ticket`, or `batch` and `tickets`; `gate`, `sha`, `minutes` from the gate's start to its outcome, `outcome`: `success`, `red`, `infrastructure` (#420: red with no test failed, only infrastructure steps; parked on CI) or `no-verdict`)
 - which `wave.sh report` (`ci_wait`) and the run digest add up per merge and in total
 - and for the detached merge gate (#142) `merge-gate` (`ticket`, `attempt`, `gate`, `mode`, `sha`: a gate started, between `verified` and `merge`)
 - `merge-gate-resumed` (`ticket`, `branch`, `run_id`)

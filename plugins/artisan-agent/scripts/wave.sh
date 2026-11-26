@@ -1813,9 +1813,11 @@ finish_gate() {
       apply '.ci_park = ({ticket: $t, attempt: $n, pre: $pre, sha: $sha, minutes: $m, at: $now}
             + ($g | {workflow, branch, run_id, url, conclusion, why}))
         | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $t,
-            question: "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+            question: (if $g.kind == "infrastructure"
+              then "The merge gate for #\($t) went red on CI infrastructure: no test failed. \($g.failed_steps | map("\(.job): \(.step // "the job") (\(.error // "no error message"))") | join("; "))\(if $g.url then " (\($g.url))" else "" end). Neither the ticket nor the base is at fault, and it uses no attempt; nothing new merges or dispatches. Recommended: fix CI (the step and error above), then clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?"
+              else "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?" end),
             status: "waiting", at: $now}]
-        | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why}; $now)' \
+        | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why} + (if $g.kind then {kind: $g.kind} else {} end); $now)' \
         --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --argjson m "$minutes" --argjson g "$GATE_JSON"
       state_die 19 "wave.sh: #$t not merged: $why; the run is parked on CI (wave.sh unpark-ci retries the gate)"
     fi
@@ -2129,9 +2131,11 @@ batch_park() {
     | .ci_park = ({ticket: $b.order[0], tickets: $b.order, batch: $b.id, attempt: $b.attempts[$b.order[0]],
           pre: $mg.pre, sha: $mg.sha, minutes: $m, at: $now} + ($g | {workflow, branch, run_id, url, conclusion, why}))
     | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $b.order[0],
-        question: "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The tickets are not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+        question: (if $g.kind == "infrastructure"
+          then "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) went red on CI infrastructure: no test failed. \($g.failed_steps | map("\(.job): \(.step // "the job") (\(.error // "no error message"))") | join("; "))\(if $g.url then " (\($g.url))" else "" end). Neither the tickets nor the base are at fault; nothing new merges or dispatches. Recommended: fix CI (the step and error above), then clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?"
+          else "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The tickets are not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?" end),
         status: "waiting", at: $now}]
-    | event({event: "parked", reason: "ci", ticket: $b.order[0], tickets: $b.order, batch: $b.id, detail: $g.why}; $now)
+    | event({event: "parked", reason: "ci", ticket: $b.order[0], tickets: $b.order, batch: $b.id, detail: $g.why} + (if $g.kind then {kind: $g.kind} else {} end); $now)
     | .merge_gate = null' --argjson m "$minutes" --argjson g "$GATE_JSON"
   batch_report
   batch_close
@@ -2252,7 +2256,7 @@ note_ci_wait() {
     | ((if $fin == "" then $now else ($fin | fromdateiso8601) end) - ($g.at // $now)) as $s
     | event({event: "ci-wait", gate: $g.gate, sha: $g.sha, tier: ($r.tier // "ci"),
              minutes: (if $s < 0 then 0 else ($s / 6 | round) / 10 end),
-             outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" else "no-verdict" end)} + $who; $now)' \
+             outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" elif ($r.kind // "") == "infrastructure" then "infrastructure" else "no-verdict" end)} + $who; $now)' \
     --arg fin "$fin" --argjson rc "$1" --argjson who "$2" --argjson r "$(jq -c 'if type == "object" then . else {} end' <<<"${GATE_JSON:-null}")"
 }
 

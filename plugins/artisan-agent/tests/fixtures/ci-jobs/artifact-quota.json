@@ -1,0 +1,16 @@
+{"databaseId": 9001, "attempt": 1, "status": "completed", "conclusion": "failure", "headSha": "SHA", "url": "https://github.com/local/sample/actions/runs/9001",
+ "jobs": [
+  {"databaseId": 900101, "name": "e2e (1/2)", "status": "completed", "conclusion": "failure",
+   "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success"},
+    {"name": "Run actions/checkout@v4", "number": 2, "status": "completed", "conclusion": "success"},
+    {"name": "Run e2e tests", "number": 3, "status": "completed", "conclusion": "success"},
+    {"name": "Upload test results", "number": 4, "status": "completed", "conclusion": "failure"},
+    {"name": "Post Run actions/checkout@v4", "number": 5, "status": "completed", "conclusion": "success"}],
+   "annotations": [{"annotation_level": "failure", "title": "", "message": "Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts."}]},
+  {"databaseId": 900102, "name": "e2e (2/2)", "status": "completed", "conclusion": "failure",
+   "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success"},
+    {"name": "Run e2e tests", "number": 2, "status": "completed", "conclusion": "success"},
+    {"name": "Upload test results", "number": 3, "status": "completed", "conclusion": "failure"}],
+   "annotations": [{"annotation_level": "failure", "title": "", "message": "Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts."}]}]}

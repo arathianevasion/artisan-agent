@@ -560,6 +560,19 @@ test_facts_show_what_the_merge_gates_cost() {
   assert_eq '2 107 76' "$(jq -r '.artisan_wait | "\(.decisions) \(.minutes) \(.longest_minutes)"' <<<"$f")" "waiting on the Artisan"
 }
 
+test_an_infrastructure_gate_is_counted_apart_from_a_red_base_and_the_tickets_own_failure() {
+  sample_run; gate_events; seed_lessons
+  # #420: red on a full artifact quota, no test failed: parked on CI, kind infrastructure.
+  jq '.events += [
+      {seq: 30, at: 1800011000, event: "ci-wait", ticket: "13", gate: 7, minutes: 9, outcome: "infrastructure"},
+      {seq: 31, at: 1800011000, event: "parked", reason: "ci", kind: "infrastructure", ticket: "13"}]' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '6 2 1 1 1 1' "$(jq -r '.merge_gates.red | "\(.total) \(.own) \(.base) \(.flaky) \(.infrastructure) \(.no_verdict)"' <<<"$f")" "infrastructure on its own count"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "| Red gates by cause | 6: own failure 2 · red base 1 · flaky 1 · infrastructure 1 · no verdict 1 |"
+}
+
 test_a_state_file_from_before_the_gate_events_gives_null_figures() {
   sample_run
   local f=; f=$("$RETRO" facts "$RUN_DIR")
@@ -576,7 +589,7 @@ test_the_retro_round_shows_the_merge_gate_costs_as_a_table() {
   local out=; out=$("$RETRO" render "$RUN_DIR")
   assert_contains "$out" "| Merge gates run | 5 (2.5 per merged ticket) |"
   assert_contains "$out" "| Waiting on merge gates | 55 min (27.5 per merged ticket) |"
-  assert_contains "$out" "| Red gates by cause | 5: own failure 2 · red base 1 · flaky 1 · no verdict 1 |"
+  assert_contains "$out" "| Red gates by cause | 5: own failure 2 · red base 1 · flaky 1 · infrastructure 0 · no verdict 1 |"
   assert_contains "$out" "| Gates not run | skipped 1 · reused 0 |"
   assert_contains "$out" "| Waiting on the Artisan | 107 min over 2 decisions (longest 76 min) |"
 }
