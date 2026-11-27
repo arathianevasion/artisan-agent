@@ -138,6 +138,14 @@ minimum_estimates:
 #   human_check_phrases: [in the editor, on the console]
 human_check_phrases: []
 
+# Phrases that make a criterion read as needing the running app, a value only
+# obtainable there (#424). The plan step lists such a criterion, per ticket,
+# as a warning (it does not block approval): a headless worker can't meet it,
+# so split it into a Human check or reword it. None by default.
+# Example:
+#   running_app_phrases: [with KSP running, in the editor]
+running_app_phrases: []
+
 # The project's board (#146): the GitHub Project every issue the plugin opens
 # that outlives the run goes on (plan issues, findings, Human checks, rework
 # and split tickets; never gates or worker questions). owner and number name

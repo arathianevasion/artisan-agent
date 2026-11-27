@@ -111,13 +111,14 @@ CONFIG_JQ_DEFS='
     [($turns * .orchestrator_usd_per_turn * 100 | round) / 100, 0.01] | max;
   def settings_list:
     . as $c
-    | [leaves | select(.[0] != "areas" and .[0] != "tracker" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases" and .[0] != "merge_gate_skip_paths" and .[0] != "main_checkout_runtime")
+    | [leaves | select(.[0] != "areas" and .[0] != "tracker" and .[0] != "estimate_multipliers" and .[0] != "human_check_phrases" and .[0] != "running_app_phrases" and .[0] != "merge_gate_skip_paths" and .[0] != "main_checkout_runtime")
        | {key: join("."), value: (. as $p | $c | getpath($p))}]
     + (if ($c.areas | length) == 0 then [{key: "areas", value: "none"}]
        else [$c.areas | to_entries[] | {key: "areas.\(.key)", value: (.value | tojson)}] end)
     + (if ($c.estimate_multipliers | length) == 0 then [{key: "estimate_multipliers", value: "none"}]
        else [$c.estimate_multipliers | to_entries[] | {key: "estimate_multipliers.\(.key)", value: .value}] end)
     + [{key: "human_check_phrases", value: (($c.human_check_phrases // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}]
+    + [{key: "running_app_phrases", value: (($c.running_app_phrases // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}]
     + [{key: "merge_gate_skip_paths", value: (($c.merge_gate_skip_paths // []) | if length == 0 then "none" else map(tostring) | join(", ") end)}]
     + [{key: "tracker.board", value: (($c.tracker.board // {}) | if length == 0 then "none"
         else "\(.owner)/\(.number), fields at filing: \((.fields_at_filing // []) | if length == 0 then "none" else join(", ") end)" end)}]
