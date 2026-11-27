@@ -982,7 +982,6 @@ cmd_finish() {
     elif [ "$have" -lt "$want" ]; then refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
     fi
   fi
-  auto=0
   if [ "$outside" -eq 0 ] && [ "$have" -gt 0 ] && auto_merge_on; then merge_stack; auto=1; fi
   repo=$(get -r .repo)
   waiting=
