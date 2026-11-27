@@ -177,3 +177,33 @@ test_ws_preflight_with_no_recorded_checks_is_16_and_calls_no_host() {
   assert_eq 16 "$RC" "$OUT"
   [ ! -s "$FAKE_SSH_LOG" ] || fail "ssh was called with nothing to run"
 }
+
+# A host with no working `timeout` (macOS has none) still gives the suite its
+# seconds: the preflight times it itself rather than taking the host as
+# working unchecked (#423 attempt 2: macOS CI went green without running it).
+no_timeout_on_host() {
+  printf '#!/bin/sh\nexit 127\n' >"$TEST_TMPDIR/bin/timeout"
+  chmod +x "$TEST_TMPDIR/bin/timeout"
+}
+
+test_ws_preflight_without_timeout_a_suite_failing_at_once_is_a_broken_host() {
+  setup_project; fake_ssh; no_timeout_on_host; export FAKE_SSH_UP=1
+  ws_preflight --command "echo 'dotnet: command not found' >&2; exit 127"
+  assert_eq 7 "$RC" "$OUT"
+  assert_contains "$(jq -r .tail <<<"$OUT")" "dotnet: command not found"
+}
+
+test_ws_preflight_without_timeout_runs_the_recorded_suite() {
+  setup_project; fake_ssh; no_timeout_on_host; export FAKE_SSH_UP=1
+  ws_preflight
+  assert_eq 0 "$RC" "$OUT"
+  assert_eq "$(git -C "$P" rev-parse HEAD)" "$(cat "$TEST_TMPDIR/ran")"
+}
+
+test_ws_preflight_without_timeout_stops_a_suite_still_running_after_its_seconds() {
+  setup_project; fake_ssh; no_timeout_on_host; export FAKE_SSH_UP=1
+  local t0=$SECONDS
+  ws_preflight --seconds 1 --command "sleep 8; exit 1"
+  assert_eq 0 "$RC" "$OUT $(cat "$TEST_TMPDIR/ws.err")"
+  [ $((SECONDS - t0)) -lt 6 ] || fail "the suite was not stopped at its seconds: $((SECONDS - t0))s"
+}

@@ -37,7 +37,8 @@
 #       broken (a tool not on PATH for a non-interactive ssh shell, an
 #       assembly missing), which would fail every worker's suite the same
 #       way; still running after them, or done green, is a working host and
-#       is stopped there. A host without `timeout` is taken as working.
+#       is stopped there. A host without `timeout` (macOS) is timed by
+#       the preflight itself.
 #       A suite red at once on HEAD itself (a failing first test) fails it
 #       too: every worker would hand in red there as well.
 #       Uncommitted work in D is not refused: HEAD is what is checked.
@@ -132,11 +133,21 @@ cmd_run() {
   [ "$passed" = true ] || return 7
 }
 
-# preflight_command cmd seconds: cmd under `timeout seconds` on the host, or
-# exit 0 there when it has no timeout to give it.
+# preflight_command cmd seconds: cmd given seconds on the host, exiting 124
+# when it is stopped there. Under `timeout` where one works; a host without
+# (macOS has none) times it itself: cmd in its own process group (set -m),
+# a watcher that stops the group after the seconds, and 124 when the watcher
+# had already fired.
 preflight_command() {
-  printf "command -v timeout >/dev/null 2>&1 || exit 0; exec timeout %s sh -c '%s'" \
-    "$2" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  local q=""
+  q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+  printf "if timeout 1 true >/dev/null 2>&1; then exec timeout %s sh -c '%s'; fi
+set -m
+sh -c '%s' & p=\$!
+( sleep %s; kill -TERM -\$p 2>/dev/null || kill -TERM \$p 2>/dev/null ) >/dev/null 2>&1 & w=\$!
+wait \$p; rc=\$?
+if kill -TERM -\$w 2>/dev/null || kill -TERM \$w 2>/dev/null; then exit \$rc; fi
+exit 124" "$2" "$q" "$q" "$2"
 }
 
 cmd_preflight() {
