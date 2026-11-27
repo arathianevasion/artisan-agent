@@ -279,8 +279,9 @@ def carried_section(view):
         return []
     state = view["state"]
     out = ["## Gates carried to the end gate", "",
-           "The run was small (`small_run_tickets`) and every ticket passed verification on its first attempt, "
-           "so these gates did not wait on you. Approving the end gate answers each.", ""]
+           "The run was small (`small_run_tickets`), and when each of these gates was due no attempt had failed, "
+           "nothing had been redirected and no exception gate had been raised, so they did not wait on you. "
+           "Approving the end gate answers each.", ""]
     for f in carried:
         ts = [str(t) for t in f.get("tickets") or []]
         out += ["### %s: %s" % (f["id"], ", ".join(ticket_label(state, t) for t in ts)), ""]

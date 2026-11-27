@@ -27,7 +27,8 @@
 #   GATE_CARRY_JQ: the small-run rule (#407), run over the state file.
 #     run_small_clean is true when the plan's small_run_tickets is above 0,
 #     the run has at most that many tickets in scope, and none has failed an
-#     attempt, no gate was redirected and no exception gate was raised.
+#     attempt, no gate or decision was redirected and no exception gate was
+#     raised.
 #     carry_to_end($g) is true when slice or risk gate $g is carried to the
 #     end gate instead of waiting on the Artisan: the run is small and clean,
 #     the plan places an end gate not yet opened, and the gate was not kept
@@ -55,6 +56,7 @@ GATE_CARRY_JQ='
     | $n > 0 and ((.plan.scope // []) | length) <= $n
       and all((.tickets // {})[]; ((.failures // []) | length) == 0)
       and all((.review_gates // [])[]; .status != "redirected" and .redirect == null)
+      and all((.decisions // [])[]; .redirect? == null)
       and ((.exception_gates // []) | length) == 0;
   def carry_to_end($g):
     (($g.kind // "slice") as $k | $k == "slice" or $k == "risk")

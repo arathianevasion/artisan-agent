@@ -160,3 +160,10 @@ test_the_end_gate_shows_the_carried_gates_cards_and_approving_it_answers_them() 
   assert_eq '["gate-folded","gate-decision keep end","gate-approved"]' \
     "$(state_get '[.events[] | select(.gate == "slice-1") | .event + (if .event == "gate-decision" then " \(.outcome) \(.folded_into)" else "" end)]' | jq -c .)"
 }
+
+test_a_run_with_a_redirect_on_a_decision_keeps_its_gates() {
+  setup_small "$SLICE_END"
+  merged_with_cards 1 none
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.decisions += [{id: 1, kind: "review-gate", gate: "risk-9", status: "decided", choice: "approve", by: "Artisan", redirect: "split the export"}]'
+  opens_as_today "a decision with a redirect"
+}

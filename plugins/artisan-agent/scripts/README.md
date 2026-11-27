@@ -160,6 +160,7 @@ How the plan step reads the project config, estimates a run and records the numb
 | usage reserve | `usage_reserve.five_hour_reserve_percent`, `usage_reserve.seven_day_ceiling_percent` | 20, 90 |
 | stale usage reading | `stale_usage_minutes` | 10 |
 | attempts per ticket | `attempts_per_ticket` | 2 |
+| small run, its gates carried to the end gate (#407; 0 off) | `small_run_tickets` | 3 |
 | deferral review | `deferral_review_days` | 30 |
 | evidence threshold | `evidence_threshold` | 3 |
 | hands-on nudge | `hands_on_nudge_runs` | 5 |
