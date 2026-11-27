@@ -262,7 +262,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 
 ## The end gate
 
-Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], left_out?, ended_at}` (`left_out`: the tickets left out as already on `main` when the first PR was cut, so the PRs keep their numbers; #363).
+Once the end gate opens, the state file gains a top-level `end_gate` (absent until then; `scripts/end-gate.sh`, `references/end-gate.md`): `{status: open|approved|ended, issue, title, opened_at, approved_at, by, boundary: {value, source, level?, by?}, prs: [{n, branch, base, tickets, url, at}], left_out?, kept_cards?, ended_at}` (`kept_cards`: `{issue, cards, left_out, at}`, the run's kept-cards ticket, #426; `left_out`: the tickets left out as already on `main` when the first PR was cut, so the PRs keep their numbers; #363).
 
 ## Where a run lives
 
@@ -310,7 +310,7 @@ Every event that changes a ticket is appended to `events` in the same one-step r
 - and `gate-approved` (`gate`, `issue`, `by`)
 - and for gate actions and exception gates (`scripts/gate-action.sh`)
 - `gate-opened` with `kind: "exception"` (or `"end"`)
-- the end gate's `end-gate-approved`
+- the end gate's `end-gate-approved`, and `kept-cards-filed` (`issue`, `cards`, `left_out`) when approving it filed the run's kept-cards ticket (#426; also `end_gate.kept_cards`: `{issue, cards, left_out, at}`)
 - `pr-cut` and `run-ended` (`references/end-gate.md`)
 - `end-gate-setup-failed` (`n`, `branch`, `command`, `exit`, `stderr`, `decision`: a PR's `worktree_setup` failed at the end gate, #182)
 - `integration-setup-failed` (`branch`, `worktree`, `command`, `exit`, `stderr`: the run's `worktree_setup` failed in a new integration worktree at `wave.sh start`, which removed the worktree, and the branch if it made it, and exited 6, #252)

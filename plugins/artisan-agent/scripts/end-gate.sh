@@ -656,6 +656,85 @@ open_deferred() {
   get -r "$(state_deferred_gates_jq)"'| map("\(.title) #\(.issue)") | join("; ")'
 }
 
+# The cards the Artisan kept at the run's gates (#426), for the kept-cards
+# ticket: {kept: [{ticket, gate, question, choice, confidence, criterion,
+# area}], left_out: N}. A card is kept when its gate was approved (a folded
+# gate answered with the gate it folded into, one closed on the tracker, a
+# deferred one answered at the end gate) and the Artisan didn't change it,
+# make it a guardrail or send it to triage at any gate; those are counted in
+# left_out. A card is its ticket and question, so a risk gate's card shown
+# again at its slice gate is listed once, at the first gate that showed it.
+KEPT_CARDS_JQ='
+  def key($c): "\($c.ticket | tostring)\u0000\($c.question)";
+  . as $s
+  | (.review_gates // []) as $gs
+  | ($gs | map({key: .id, value: .}) | from_entries) as $by_id
+  | def link($g): if $g.issue then "#\($g.issue)"
+      elif $g.folded_into == "end" then (if $s.end_gate.issue then "#\($s.end_gate.issue)" else "the end gate" end)
+      elif $by_id[$g.folded_into // ""].issue then "#\($by_id[$g.folded_into].issue)"
+      else $g.id end;
+    ([$gs[] | . as $g
+      | ([.decisions[]? | select(.outcome? == "change" or .guardrail_level != null) | .card]
+         + [.triaged[]? | .card]) as $acted
+      | (.cards // [])[] | select(.card as $n | $acted | index($n)) | key(.)] | unique) as $done
+  | [$gs[] | select(.status == "approved") | . as $g
+     | (.cards // [])[] | select(key(.) as $k | $done | index($k) | not)
+     | {key: key(.), ticket: (.ticket | tostring), gate: link($g), question, choice,
+        confidence: (.confidence // "provisional"), criterion: (.criterion // null)}]
+  | reduce .[] as $c ([]; if any(.[]; .key == $c.key) then . else . + [$c] end)
+  | map(del(.key)) as $kept
+  | {kept: $kept, left_out: ($done | length)}
+  | .kept |= map(. as $c | . + {area: (($s.plan.tickets[$c.ticket].areas // []) | join(", "))})'
+
+# kept_cards_body run-id: the kept-cards ticket body, from KEPT_CARDS_JQ on stdin.
+kept_cards_body() {
+  jq -r --arg run "$1" '
+    def cell: tostring | gsub("\\|"; "/") | gsub("\n"; " ");
+    "> *Filed by the end gate of run \($run): an agent-filed review of kept decision cards, not yet triaged.*",
+    "",
+    "<!-- artisan-agent:kept-cards \($run) -->",
+    "",
+    "The decision cards the Artisan kept at this run'"'"'s gates, each listed once, grouped by the area of its ticket.",
+    "",
+    (.kept | group_by(.area == "") | map(group_by(.area)) | flatten(1)[]
+      | "### \(if .[0].area == "" then "No area" else .[0].area end)", "",
+        "| Ticket | Kept at | Question | Choice | Confidence | Criterion |", "|---|---|---|---|---|---|",
+        (.[] | "| #\(.ticket) | \(.gate) | \(.question | cell) | \(.choice | cell) | \(.confidence) | \(.criterion // "-") |"),
+        ""),
+    (if .left_out > 0 then "\(.left_out) card\(if .left_out == 1 then " is" else "s are" end) left out: the Artisan already changed them, made them a guardrail or sent them to triage.", "" else empty end),
+    "**To act on it**, in the Decision chat: name any card to change, and each named card becomes its own ticket for triage. Closing this ticket with nothing named keeps them all. It blocks nothing: not the end gate, the PRs to main or any ticket."'
+}
+
+# file_kept_cards: files the kept-cards ticket once per run (#426) and records
+# it as end_gate.kept_cards with a kept-cards-filed event; nothing when no card
+# was kept. Approve runs it, and finish again for one approve couldn't file.
+# One already recorded, or already on the tracker (a crash between
+# filing and recording), is reused. A failure warns and never holds approval.
+KEPT_N=
+file_kept_cards() {
+  local cards= n= repo= title= url=
+  KEPT_N=$(get -r '.end_gate.kept_cards.issue // empty')
+  [ -z "$KEPT_N" ] || return 0
+  cards=$(jq -c "$KEPT_CARDS_JQ" "$FILE") \
+    || { echo "end-gate.sh: could not read the kept decision cards; file them by hand" >&2; return 0; }
+  n=$(jq '.kept | length' <<<"$cards")
+  [ "$n" -gt 0 ] || return 0
+  repo=$(get -r .repo)
+  title="Review kept decision cards: run $RUN_ID"
+  # By title, whatever its labels: triage may have relabelled it already.
+  KEPT_N=$(gh issue list -R "$repo" --state all --limit 10000 --json number,title 2>/dev/null \
+    | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty') || KEPT_N=
+  if [ -z "$KEPT_N" ]; then
+    url=$(kept_cards_body "$RUN_ID" <<<"$cards" \
+      | "$SCRIPT_DIR/tracker.sh" new-issue --kind question -- -R "$repo" --title "$title" --label needs-triage --body-file -) \
+      || { echo "end-gate.sh: could not file the kept decision cards' ticket; end-gate.sh finish tries again" >&2; return 0; }
+    KEPT_N=${url##*/}
+  fi
+  apply '.end_gate = ((.end_gate // {}) + {kept_cards: {issue: $n, cards: $c, left_out: $l, at: $now}})
+    | event({event: "kept-cards-filed", issue: $n, cards: $c, left_out: $l}; $now)' \
+    --argjson n "$KEPT_N" --argjson c "$n" --argjson l "$(jq .left_out <<<"$cards")"
+}
+
 cmd_approve() {
   [ $# -ge 1 ] || usage
   open_run "$1"
@@ -695,6 +774,8 @@ cmd_approve() {
   else
     refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket|run)"
   fi
+  # Before the approval is recorded, so a rerun after a crash files it then.
+  file_kept_cards
   issue=$(get -r '.end_gate.issue // empty')
   apply '
     .end_gate = ((.end_gate // {}) + {status: "approved", approved_at: $now, by: $by, boundary: ($b | del(.proposed))})
@@ -713,6 +794,7 @@ cmd_approve() {
     gh issue close "$issue" -R "$(get -r .repo)" --comment "Approved by $by. PRs to main: one per $(jq -r .value <<<"$b") ($src$([ "$src" = guardrail ] && printf ', %s level' "$(jq -r .level <<<"$b")")).$([ -n "$why" ] && printf ' Why: %s' "$why")" >/dev/null \
       || die "approved in the state file, but could not close #$issue"
   fi
+  [ -z "$KEPT_N" ] || echo "kept decision cards: #$KEPT_N for the Decision chat to review (needs-triage; it blocks nothing)"
   echo "approved: PRs one per $(jq -r .value <<<"$b"); next: end-gate.sh prs, then write each body with upstream pr and end-gate.sh cut"
 }
 
@@ -872,6 +954,8 @@ cmd_finish() {
   fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
   [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
+  file_kept_cards   # files it now if approving couldn't
+  [ -z "$KEPT_N" ] || echo "Kept decision cards: #$KEPT_N, for review in the Decision chat."
   # For the run summary: what the merge gates cost (#199).
   echo
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \
