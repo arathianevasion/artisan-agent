@@ -217,7 +217,7 @@ Fields scripts treat as absent-means-default, so a state file from before the fi
 | `halted` | `null`: the run is not halted |
 | `urgent_gates` | `{}`: no urgent ticket's end gate opened. Per urgent ticket: `{status: open\|approved\|ended, issue, title, opened_at, approved_at?, by?, pr?: {url, branch, base, at}, ended_at?, sync_commit?}` (`end-gate.sh urgent-*`) |
 | `plan.additions` | `[]`: nothing added mid-run. Per ticket added (`lever.sh add`, `urgent`): `{ticket, urgent, estimate_usd, budget_before, budget_after, by, at}`; the estimate and its overrun allowance are already in `plan.estimate_usd` and `plan.budget_usd` |
-| `plan.tickets.<t>.priority` | `0`: a planned ticket. A ticket added mid-run has 1 (urgent 2); the frontier is ordered by priority, then number |
+| `plan.tickets.<t>.priority` | Absent reads `0`. `plan.sh build` sets it from the approved order: `0` for the first ticket, one lower for each next, in scope order (plan order, then listed order) with `ci: true` tickets first. A ticket added mid-run has 1 (urgent 2), above every planned one; the frontier is ordered by priority, then number |
 | `waves` | `[]`: no wave started, so no starting plugin version to name |
 | `location` | absent: the run is live on this machine (`Where a run lives`) |
 | `provisional_shown` | `[]` |

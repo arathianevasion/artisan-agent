@@ -33,6 +33,8 @@
 #   overrides      {key: {value, project}} for every --set; never written to config.yml
 #   max_agents, attempts_per_ticket   from the config
 #   tickets.<t>.estimate_usd, .estimate_basis, .caps
+#   tickets.<t>.priority   0 for the first ticket, one lower for each next, in scope
+#                  order with "ci": true tickets first; a draft's own is kept (#416)
 #   hands_on       when the draft has a "hands_on" object {ticket, focus, minutes?}
 #                  (at most one per plan; blocked_by per ticket gives the critical
 #                  path): the ticket, its focus, whether it is on the critical path
@@ -279,6 +281,15 @@ cmd_build() {
               deadline_seconds: ($x.minutes * 120 | ceil)
             }
           }))
+    # Priority from the approved order (#416): tickets marked "ci": true first
+    # (the owner rule), then the rest, each group in scope order (plan order,
+    # then listed order). The frontier is sorted by priority, highest first,
+    # so the first gets 0 and each next one a step lower; a ticket lever.sh
+    # add records (priority 1, urgent 2) still sorts ahead of all of them.
+    # A priority the draft already sets is kept.
+    | ([.scope[] as $t | select(.tickets[$t].ci == true) | $t] + [.scope[] as $t | select(.tickets[$t].ci != true) | $t]) as $order
+    | reduce range(0; $order | length) as $i (.;
+        .tickets[$order[$i]].priority = (.tickets[$order[$i]].priority // (0 - $i)))
     | .estimate_usd = ([.scope[] as $t | .tickets[$t].estimate_usd] | add | round2)
     | .budget_usd = (.estimate_usd * (1 + .config.overrun_allowance_percent / 100) | round2)
     # The suite: the recorded checks unless the draft changes it, visibly.
