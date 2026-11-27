@@ -2,6 +2,18 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## 0.15.0 (2026-11-27)
+
+Merge gates that read CI failures correctly, runs whose record survives a lost machine, plan-step checks that catch problems before dispatch, and an end gate that does the routine work.
+
+- **CI failures read correctly:** the merge gate tells an infrastructure failure (set-up, upload, checkout or a lost runner) from a test failure, and parks it on CI with no attempt charged and no base check (#420). Launch probes the suite host with `worker-suite.sh preflight` and refuses (24) when the suite fails within seconds; a worker can mark a failed result as an environment failure, which parks the ticket and gives the attempt back (#423). The per-file timing test no longer orders files by whole seconds, which made it flaky on macOS (#418). `script-tests.yml` queues on the home PC when its runners are busy and falls back only when none is online (#419).
+- **Runs survive a lost machine:** `run-lock.sh check` also looks on the remote for an unmerged `run/<id>` branch, a `runs/<id>` snapshot or open `in-run` tickets, and exits 4 (`--local` keeps hooks and sweeps to this machine; `--override` records why) (#430). A closed plan is done only when its tickets' work is on main (`plan-done.sh`) (#431). Each wave pushes the run's state snapshot to `runs/<run-id>` (`move.sh snapshot`) (#429). ADR 0005 records that GitHub, not one machine, holds the record of an open run.
+- **Tidy sweep:** once a run's PRs have merged, `tidy.sh` (called by `end-gate.sh finish`) fast-forwards a clean main checkout that is only behind, and removes the run's integration, PR and retro worktrees and their merged branches. Dirty work and unmerged branches are kept and named (#427).
+- **Plan step:** `plan.sh build` warns when tickets share a folder in `expected_files` (#415) and sets each ticket's priority from its plan order, CI tickets first (#416). `to-plan.sh graph --rulings` reads a map's rulings, and `check` flags a ticket that names a ruled concept without the ruled value (#378). The sweep flags acceptance criteria a headless worker can't meet before dispatch (#424).
+- **End gate:** a small clean run carries its slice and risk gates to the end gate, and the retro counts them (#407). Approving the end gate files one ticket listing each kept decision card, by area (#426). With `auto_merge` on, `finish` merges the PR stack in order, retargeting before it deletes branches; it is off by default (#393).
+- **Setup:** machine setup offers to turn off Claude Code's idle compaction, so a Run chat waiting on dispatched work isn't compacted mid-run (`machine-setup.sh idle-compaction`) (#260).
+- **Coding standards:** `CODING_STANDARDS.md` lists the conventions the repo's tests enforce, each with its test, so workers meet them before the merge gate.
+
 ## 0.14.0 (2026-11-22)
 
 A design stage before the spec, CI and merge gates that don't wait on a missing runner, workers that run the full suite before handing in, and end gates that finish every way a run can end.
@@ -15,7 +27,6 @@ A design stage before the spec, CI and merge gates that don't wait on a missing 
 - **End gate:** deferred overrun gates can be approved or bypassed at the end gate (#362). `pr-boundaries` accepts `run`, one PR from the integration branch; groups already on main are left out (#363). `finish` ends a run whose integration branch merged as one PR (#364). Stacked PRs come with merge steps that keep each branch and retarget the next PR (#271).
 - **Retro and setup:** retro deliver checks the kept voice lessons together before writing any (#302), refuses a lesson that edits a file missing from its base (#315), and counts a card changed at a gate as changed (#379). Removing a stray project-scope install keeps the project's `enabledPlugins` (#301), and setup's hook probe reads the guard's current output (#383). Typing a replaced skill's bare name runs the artisan-agent version (#374).
 - **Decision chat and scripts:** the sweep lists incoming triage tickets, open decisions first, and notifies for open decisions (#316). `sweep.sh` reads findings from a file, not a jq argument (#264). `plan.sh build` checks the draft's spec shape (#270), and `config.sh get` on an empty setting exits 0 (#358).
-- **Tidy sweep:** once a run's PRs have merged, `tidy.sh` (called by `end-gate.sh finish`) fast-forwards a clean main checkout that is only behind, and removes the run's integration, PR and retro worktrees and their merged branches. Dirty work and unmerged branches are kept and named (#427).
 
 ## 0.13.0 (2026-11-21)
 
