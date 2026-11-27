@@ -930,3 +930,44 @@ api --method DELETE repos/local/sample/git/refs/heads/pr/r1/2" "$calls"
   assert_contains "$out" "Merged the stack"
   assert_not_contains "$out" "Merge the stack in this order"
 }
+
+test_a_failed_merge_stops_the_stack_leaves_later_prs_open_and_names_the_cause() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  echo "Pull request is not mergeable: the merge commit cannot be cleanly created." >"$FAKE_GH_DIR/pr-merge-fail-1"
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) && fail "finish succeeded with a merge that failed"
+  assert_contains "$out" "auto-merge stopped at PR 1"
+  assert_contains "$out" "the merge commit cannot be cleanly created"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq pr/r1/1 "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq 0 "$(grep -c '^pr merge.*/pull/2' "$FAKE_GH_DIR/calls" || true)"
+  [ ! -f "$FAKE_GH_DIR/deleted-branches" ] || fail "a branch was deleted: $(cat "$FAKE_GH_DIR/deleted-branches")"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+  assert_eq "auto-merge-stopped" "$(state_get '.events[-1].event')"
+  # Fixed, a rerun carries on from where it stopped.
+  rm "$FAKE_GH_DIR/pr-merge-fail-1"
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_off_or_unset_finish_merges_nothing() {
+  setup_end
+  cut_two_stacked_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR")
+  assert_contains "$out" "Merge the stack in this order"
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_set_off_finish_merges_nothing() {
+  setup_end
+  auto_merge false
+  cut_two_stacked_prs
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-1.json")"
+}

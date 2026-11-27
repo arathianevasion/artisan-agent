@@ -59,6 +59,9 @@
 #       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
 #       the setup).
 #   end-gate.sh finish <run-dir>
+#       with end_gate.auto_merge true in the project config (#393), first
+#       merges the cut PRs in stack order (merge_stack; a failed merge stops
+#       it, exit 1, and the run does not end); then,
 #       once every PR is cut, or once the integration branch's tip is already
 #       on the default branch because the Artisan merged it as one PR (#364:
 #       records that PR, found with gh pr list, as end_gate.merged_outside;
