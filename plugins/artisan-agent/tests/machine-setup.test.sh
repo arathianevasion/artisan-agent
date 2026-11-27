@@ -25,7 +25,7 @@ JSON
 JSON
   cat >"$CLAUDE_CONFIG_DIR/plugins/known_marketplaces.json" <<JSON
 {"claude-plugins-official": {"source": {"source": "github", "repo": "anthropics/claude-plugins-official"}, "autoUpdate": true},
- "artisan-agent": {"source": {"source": "github", "repo": "arathianevasion/artisan-agent"}}}
+ "artisan-agent": {"source": {"source": "github", "repo": "watsonsoft/artisan-agent"}}}
 JSON
   printf '#!/bin/sh\necho "$PWD $*" >>"%s/claude-calls"\n' "$TEST_TMPDIR" >"$ARTISAN_CLAUDE_BIN"
   chmod +x "$ARTISAN_CLAUDE_BIN"

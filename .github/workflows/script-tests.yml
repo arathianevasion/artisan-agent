@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: Linux runner (auto = the home-wsl PC when it has a free runner and takes the job within 10 minutes, else github; macOS always runs on macos-latest)
+        description: Linux runner (auto = the watsonsoft pool when it's online and takes the job within 10 minutes, else github; home-wsl = the pool, waiting for it; macOS always runs on macos-latest)
         type: choice
         options: [auto, home-wsl, github, ubicloud]
         default: auto
@@ -55,63 +55,36 @@ permissions:
   contents: read
 
 jobs:
-  # Picks the Linux runner. The owner's home-wsl PC (self-hosted, label home-wsl, 20
-  # cores) comes first when one of its runners for this repo is online (busy ones queue the job);
-  # otherwise GitHub-hosted ubuntu-latest (free for this public repo), or Ubicloud
-  # when dispatched with runner=ubicloud. A pull request from a fork never gets the PC:
-  # this repo is public, and a fork's PR must not run code on a self-hosted machine.
-  # Fork PRs get no secrets either, so the check below can't see the PC for them.
-  # RUNNER_STATUS_TOKEN is a fine-grained token with read-only Administration access,
-  # the only way to read a repo's runner status; without it the PC is never picked.
-  pick-runner:
-    name: Pick the Linux runner
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      runner: ${{ steps.pick.outputs.runner }}
-      pc: ${{ steps.pick.outputs.pc }}
-    steps:
-      - id: pick
-        env:
-          GH_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
-          CHOICE: ${{ inputs.runner || 'auto' }}
-          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          pc='["self-hosted","home-wsl"]'
-          case "$CHOICE" in
-            github) runner='"ubuntu-latest"' ;;
-            ubicloud) runner='"ubicloud-standard-4"' ;;
-            home-wsl) runner=$pc ;;
-            *)
-              free=0
-              if [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ]; then
-                free=$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '[.runners[] | select(.status == "online" and any(.labels[]; .name == "home-wsl"))] | length' 2>/dev/null || echo 0)
-              fi
-              if [ "${free:-0}" -gt 0 ]; then runner=$pc; else runner='"ubuntu-latest"'; fi ;;
-          esac
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
-          # Only an auto pick is probed and may fall back; an explicit home-wsl keeps waiting.
-          if [ "$runner" = "$pc" ] && [ "$CHOICE" != home-wsl ]; then echo "pc=true" >> "$GITHUB_OUTPUT"; else echo "pc=false" >> "$GITHUB_OUTPUT"; fi
-          echo "Linux runner: $runner (choice $CHOICE, trusted $TRUSTED)" >> "$GITHUB_STEP_SUMMARY"
+  # Picks the Linux runner through watsonsoft/ci-shared's runner picker: the org's home-wsl pool
+  # (the owner's PC) first, else GitHub-hosted ubuntu-latest (free for this public repo). A pull
+  # request from a fork never gets the pool: this repo is public, and a fork's PR must not run code
+  # on a self-hosted machine. runner=home-wsl forces the pool and runner=github the fallback;
+  # runner=ubicloud is applied in pick-final.
+  pick:
+    uses: watsonsoft/ci-shared/.github/workflows/runner-picker.yml@v1
+    secrets:
+      RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+    with:
+      force: ${{ inputs.runner == 'home-wsl' && 'pool' || ((inputs.runner == 'github' || inputs.runner == 'ubicloud') && 'fallback' || '') }}
 
   # The PC can drop off after the pick, and a job queued for a runner that isn't there
   # waits for hours (#399). So when the PC was picked, a probe job queues for it first
   # and pick-final watches the probe: if the probe hasn't started within the wait
   # (10 minutes), the Linux tests go to ubuntu-latest instead. The probe does nothing
   # but start. Same trust rule as above: the PC is only ever picked for a run that
-  # pick-runner trusted, so a fork PR never gets a probe or the tests on the PC.
+  # the picker trusted, so a fork PR never gets a probe or the tests on the PC.
   pc-probe:
     name: Probe the PC runner
-    needs: pick-runner
-    if: needs.pick-runner.outputs.pc == 'true'
-    runs-on: ["self-hosted", "home-wsl"]
+    needs: pick
+    if: needs.pick.outputs.pool == 'true' && inputs.runner != 'home-wsl'
+    runs-on: ${{ fromJSON(needs.pick.outputs.runner) }}
     timeout-minutes: 2
     steps:
       - run: echo "the PC runner picked this up"
 
   pick-final:
     name: Confirm the Linux runner
-    needs: pick-runner
+    needs: pick
     runs-on: ubuntu-latest
     timeout-minutes: 13
     permissions:
@@ -122,11 +95,15 @@ jobs:
       - id: final
         env:
           GH_TOKEN: ${{ github.token }}
-          PICKED: ${{ needs.pick-runner.outputs.runner }}
-          PC: ${{ needs.pick-runner.outputs.pc }}
+          PICKED: ${{ needs.pick.outputs.runner }}
+          FALLBACK: ${{ needs.pick.outputs.fallback }}
+          # Only an auto pick of the pool is probed and may fall back; an explicit home-wsl keeps waiting.
+          PC: ${{ needs.pick.outputs.pool == 'true' && inputs.runner != 'home-wsl' }}
+          UBICLOUD: ${{ inputs.runner == 'ubicloud' }}
           WAIT_MINUTES: 10
         run: |
           runner=$PICKED
+          if [ "$UBICLOUD" = true ]; then PICKED='"ubicloud-standard-4"'; runner=$PICKED; fi
           if [ "$PC" = true ]; then
             started=false
             end=$(( $(date +%s) + WAIT_MINUTES * 60 ))
@@ -136,7 +113,7 @@ jobs:
               [ "$(date +%s)" -ge "$end" ] && break
               sleep 10
             done
-            if [ "$started" != true ]; then runner='"ubuntu-latest"'; fi
+            if [ "$started" != true ]; then runner=$FALLBACK; fi
           fi
           if [ "$runner" != "$PICKED" ]; then fired="the PC runner did not start within $WAIT_MINUTES minutes, so the Linux tests fell back to $runner"; else fired="no fallback fired"; fi
           echo "runner=$runner" >> "$GITHUB_OUTPUT"

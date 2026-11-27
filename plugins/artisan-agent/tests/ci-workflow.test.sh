@@ -173,22 +173,25 @@ test_a_pc_pick_is_probed_and_falls_back_when_the_probe_never_starts() {
   probe=$(wf_job pc-probe)
   final=$(wf_job pick-final)
   [ -n "$probe" ] || fail "no pc-probe job"
-  assert_contains "$probe" "needs.pick-runner.outputs.pc == 'true'" "the probe runs only for a PC pick"
-  assert_contains "$probe" '["self-hosted", "home-wsl"]' "the probe queues for the PC"
+  assert_contains "$probe" "needs.pick.outputs.pool == 'true' && inputs.runner != 'home-wsl'" "the probe runs only for an auto pick of the pool"
+  assert_contains "$probe" 'fromJSON(needs.pick.outputs.runner)' "the probe queues for the pool"
   assert_contains "$final" 'WAIT_MINUTES: 10' "the wait before falling back"
   assert_contains "$final" 'actions/runs/$GITHUB_RUN_ID/jobs' "pick-final reads the probe's status"
-  assert_contains "$final" 'runner='"'"'"ubuntu-latest"'"'"'' "pick-final falls back to GitHub-hosted"
-  assert_contains "$final" 'in_progress | completed' "a started probe keeps the PC"
+  assert_contains "$final" 'FALLBACK: ${{ needs.pick.outputs.fallback }}' "pick-final falls back to the picker's fallback"
+  assert_contains "$final" 'runner=$FALLBACK' "pick-final falls back to the picker's fallback"
+  assert_contains "$final" 'in_progress | completed' "a started probe keeps the pool"
   assert_contains "$final" 'no fallback fired' "the step summary says the fallback did not fire"
   assert_contains "$final" 'fell back to $runner' "the step summary says the fallback fired"
-  assert_contains "$(wf_job pick-runner)" '"$CHOICE" != home-wsl' "an explicit home-wsl is not probed and keeps waiting"
+  assert_contains "$final" "inputs.runner != 'home-wsl'" "an explicit home-wsl is not probed and keeps waiting"
 }
 
-test_an_online_pc_is_still_picked_and_forks_never_get_it() {
+# The pool pick, its online check and the fork rule live in watsonsoft/ci-shared's runner
+# picker, which tests them; this workflow must call it with the status token.
+test_the_pool_is_picked_by_the_shared_picker_and_pick_final_never_picks_it_itself() {
   local pick=""
-  pick=$(wf_job pick-runner)
-  assert_contains "$pick" 'if [ "$TRUSTED" = true ] && [ -n "$GH_TOKEN" ]' "the PC needs a trusted run"
-  assert_contains "$pick" 'if [ "${free:-0}" -gt 0 ]; then runner=$pc' "an online idle PC runner is still picked"
-  assert_contains "$pick" 'head.repo.full_name == github.repository' "a fork PR is untrusted"
-  assert_not_contains "$(wf_job pick-final)" 'self-hosted' "pick-final never picks the PC itself"
+  pick=$(wf_job pick)
+  assert_contains "$pick" 'uses: watsonsoft/ci-shared/.github/workflows/runner-picker.yml@v1' "the shared runner picker"
+  assert_contains "$pick" 'RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}' "the picker gets the status token"
+  assert_contains "$pick" "inputs.runner == 'home-wsl' && 'pool'" "runner=home-wsl forces the pool"
+  assert_not_contains "$(wf_job pick-final)" 'self-hosted' "pick-final never picks the pool itself"
 }

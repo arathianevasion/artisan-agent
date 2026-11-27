@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues for arathianevasion/artisan-agent, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues for watsonsoft/artisan-agent, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

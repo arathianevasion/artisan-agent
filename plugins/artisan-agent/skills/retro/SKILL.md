@@ -50,7 +50,7 @@ Every retro, after the lessons are delivered, run `bash "${CLAUDE_PLUGIN_ROOT}/s
 | Product taste | product standards | a commit in the project PR |
 | Domain | the glossary or an ADR | a commit in the project PR |
 | Calibration | the project's config numbers, including estimate multipliers | a commit in the project PR (`.artisan-agent/config.yml`) |
-| Pipeline | a ticket in arathianevasion/artisan-agent | a `needs-triage` ticket there |
+| Pipeline | a ticket in watsonsoft/artisan-agent | a `needs-triage` ticket there |
 | Upstream | the upstream check | a note in the individual home's `upstream-notes.md`, committed |
 | Artisan experience | the satisfaction record | a `lesson` line in `satisfaction.jsonl`, committed |
 | Voice, individual level | `VOICE_STANDARDS.md` in the individual home | a commit there, origin in its message |

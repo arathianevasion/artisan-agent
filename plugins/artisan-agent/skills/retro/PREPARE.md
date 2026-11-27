@@ -50,7 +50,7 @@ Every lesson has a kind, and the kind decides its home:
 | `product-taste` | product standards | `{path: "PRODUCT_STANDARDS.md", section, text}` |
 | `domain` | the glossary or an ADR | `{path: "GLOSSARY.md" or "docs/adr/<n>-<slug>.md", section?, text, replace?}` |
 | `calibration` | the project's config numbers, including estimate multipliers | `{key, value}`: a key from `templates/config.yml`, at most one level of nesting |
-| `pipeline` | a ticket in arathianevasion/artisan-agent | none; give `ticket: {title, body}` |
+| `pipeline` | a ticket in watsonsoft/artisan-agent | none; give `ticket: {title, body}` |
 | `upstream` | the upstream check | none |
 | `experience` | the satisfaction record | none |
 | `voice` | voice standards (`VOICE_STANDARDS.md`) at a level | optional `{text?, mode?, rule?}`: `text` is the rule line (default: the lesson as a list item); `mode` is `append` (default), `merge` or `replace`, and a merge or replace names in `rule` the line in the Artisan's own section it takes the place of |

@@ -72,7 +72,7 @@ test_fresh_repo_gets_one_pr_with_every_item_and_the_main_checkout_is_untouched()
   assert_contains "$(branch_file .gitignore)" ".artisan-agent/runs/"
   local s=; s=$(branch_file .claude/settings.json)
   assert_eq true "$(printf '%s' "$s" | jq '.enabledPlugins["artisan-agent@artisan-agent"] and .enabledPlugins["mattpocock-skills@claude-plugins-official"]')"
-  assert_eq arathianevasion/artisan-agent "$(printf '%s' "$s" | jq -r '.extraKnownMarketplaces["artisan-agent"].source.repo')"
+  assert_eq watsonsoft/artisan-agent "$(printf '%s' "$s" | jq -r '.extraKnownMarketplaces["artisan-agent"].source.repo')"
   assert_eq null "$(printf '%s' "$s" | jq '.hooks')" "no hook unless plugin hooks don't fire"
   assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "## Always ask"
   assert_contains "$(branch_file PRODUCT_STANDARDS.md)" "- Pricing changes"

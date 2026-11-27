@@ -66,7 +66,7 @@ HOMES = {
     "product-taste": ("product standards (PRODUCT_STANDARDS.md)", "project"),
     "domain": ("the glossary or an ADR", "project"),
     "calibration": ("the project's config numbers (.artisan-agent/config.yml)", "project"),
-    "pipeline": ("a ticket in arathianevasion/artisan-agent", "pipeline"),
+    "pipeline": ("a ticket in watsonsoft/artisan-agent", "pipeline"),
     "upstream": ("the upstream check", "individual"),
     "experience": ("the satisfaction record", "individual"),
     "voice": ("voice standards (VOICE_STANDARDS.md)", "by level"),

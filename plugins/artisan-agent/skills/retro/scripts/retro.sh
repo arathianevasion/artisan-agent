@@ -45,7 +45,7 @@
 #
 # Environment: ARTISAN_HOME (or ARTISAN_INDIVIDUAL_HOME) the individual home, default
 # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/artisan-agent; ARTISAN_PIPELINE_REPO, default
-# arathianevasion/artisan-agent; GH_BIN, ARTISAN_CLAUDE_BIN stand-ins for gh and claude;
+# watsonsoft/artisan-agent; GH_BIN, ARTISAN_CLAUDE_BIN stand-ins for gh and claude;
 # ARTISAN_VOICE_TEMPLATE the default voice template (default templates/VOICE_STANDARDS.md).
 #
 # Exit status: 0 ok, 1 failed, 2 bad usage, 3 already recorded. Portable to bash 3.2.
@@ -57,7 +57,7 @@ PLUGIN_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 py() { python3 -I "$SCRIPT_DIR/retro.py" "$@"; }
 CFG=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 HOME_DIR=${ARTISAN_HOME:-${ARTISAN_INDIVIDUAL_HOME:-$CFG/artisan-agent}}
-PIPELINE_REPO=${ARTISAN_PIPELINE_REPO:-arathianevasion/artisan-agent}
+PIPELINE_REPO=${ARTISAN_PIPELINE_REPO:-watsonsoft/artisan-agent}
 VOICE_TEMPLATE=${ARTISAN_VOICE_TEMPLATE:-$PLUGIN_ROOT/templates/VOICE_STANDARDS.md}
 GH=${GH_BIN:-gh}
 CLAUDE=${ARTISAN_CLAUDE_BIN:-claude}

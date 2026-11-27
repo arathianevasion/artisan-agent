@@ -23,7 +23,7 @@ import re
 import sys
 
 ENABLED = ["artisan-agent@artisan-agent", "mattpocock-skills@claude-plugins-official"]
-MARKETPLACE = ("artisan-agent", {"source": {"source": "github", "repo": "arathianevasion/artisan-agent"}})
+MARKETPLACE = ("artisan-agent", {"source": {"source": "github", "repo": "watsonsoft/artisan-agent"}})
 
 # role -> meaning; upstream's five (the doc maps each to a tracker string), then ours.
 UPSTREAM_LABELS = [
