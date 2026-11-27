@@ -103,6 +103,11 @@
 #                  has a package.json and the run's config.worktree_setup is
 #                  empty (#252): shown under "Needs your attention"; never
 #                  blocks approval. Absent otherwise.
+#   shared_folder_warnings  [{entry, tickets}], one per expected_files entry
+#                  ending in "/" that two or more tickets in scope list (#415):
+#                  each such ticket overlaps the others, so the wave picker
+#                  runs them one at a time. Shown under "Needs your attention";
+#                  never blocks approval. [] when none.
 #   merge_gate     only on a machine whose merge gate runs on CI (merge-gate.sh
 #                  mode): {mode: "ci", workflow, timeout_minutes,
 #                  minutes_per_merge, from_runs, note?}, the expected CI
@@ -391,6 +396,15 @@ cmd_build() {
     out=$(printf '%s' "$out" | jq 'if ((.config.worktree_setup // "") | tostring | test("^\\s*$"))
       then .worktree_setup_warning = {file: "package.json"} else . end')
   fi
+  # A folder entry two or more tickets share (#415): wave-width.sh then sees
+  # them overlap and runs them one at a time. A warning, never a refusal.
+  out=$(printf '%s' "$out" | jq '
+    def folders($t): (.tickets[$t].expected_files // []) | map(tostring | select(endswith("/")));
+    . as $p
+    | ([$p.scope[] as $t | $p | folders($t)[]] | reduce .[] as $e ([]; if index($e) then . else . + [$e] end)) as $entries
+    | .shared_folder_warnings = [$entries[] as $e
+        | {entry: $e, tickets: [$p.scope[] as $t | select($p | folders($t) | index($e)) | $t]}
+        | select(.tickets | length > 1)]')
   printf '%s\n' "$out"
 }
 
@@ -544,7 +558,8 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
-      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] and $p.worktree_setup_warning == null then empty
+      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] and $p.worktree_setup_warning == null
+              and ($p.shared_folder_warnings // []) == [] then empty
         else "### Needs your attention" end ),
       ( ($p.open_decision_flags // []) | if length == 0 then empty else
         "| Ticket | Open decision | Harm | Recommendation |",
@@ -560,6 +575,9 @@ cmd_render() {
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),
+      ( ($p.shared_folder_warnings // []) | if length == 0 then empty else
+        ( .[] | "**`\(.entry)` is listed by \(.tickets | map(ticket(.)) | join(", ")).** A folder overlaps every file under it, so these tickets are treated as touching the same files and run one at a time. Name the specific files each one changes to let them share a wave. A warning only: it does not block approval.",
+          "" ) end ),
       ( if $p.worktree_setup_warning == null then empty else
         "**`worktree_setup` is empty in a Node project.** This project has a `package.json`, but the run has no `worktree_setup`, so the integration worktree and every worker and verifier start without `node_modules`: the first merge gate and every test, typecheck and lint fail as setup failures. Recommended: rebuild with `--set '"'"'worktree_setup=<command>'"'"'` (the command that installs the dependencies), so this run has it from its first worktree; once approved, `state.sh override <run-dir> worktree_setup '"'"'<command>'"'"'` does the same for the next worktree. Setting it only in `.artisan-agent/config.yml` by PR reaches this run only once the main checkout has the change, so it is the fix for later runs, not this one. A warning only: it does not block approval.",
         "" end ),
