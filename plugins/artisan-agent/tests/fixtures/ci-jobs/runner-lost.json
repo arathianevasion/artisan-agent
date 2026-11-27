@@ -1,0 +1,7 @@
+{"databaseId": 9001, "attempt": 1, "status": "completed", "conclusion": "failure", "headSha": "SHA", "url": "https://github.com/local/sample/actions/runs/9001",
+ "jobs": [
+  {"databaseId": 900101, "name": "unit", "status": "completed", "conclusion": "failure",
+   "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success"},
+    {"name": "Run tests", "number": 2, "status": "completed", "conclusion": "cancelled"}],
+   "annotations": [{"annotation_level": "failure", "title": "", "message": "The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection."}]}]}

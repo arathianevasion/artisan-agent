@@ -714,6 +714,7 @@ cmd_retry() {
   record_answer decided "$choice" outcome '
     .tickets[$t] |= (.status = "queued" | .pid = null | del(.blocked_reason)
       | if .unmeetable then .unmeetable.status = "answered" else . end
+      | if .environment then .environment.status = "answered" else . end
       | .extra_attempts = ((.extra_attempts // 0) + 1)
       | .notes = ((.notes // []) + [{note: $notes, issue: ($issue | tonumber), by: $by, at: $now}]))' \
     --arg t "$t" --argjson rec '{}'
@@ -1070,6 +1071,7 @@ cmd_stranded() {
 reason_of() { # ticket
   get --arg t "$1" '.tickets[$t] as $k
     | if ($k.unmeetable.status? // "") == "open" then "unmeetable"
+      elif ($k.environment.status? // "") == "open" then "environment"
       elif ($k.blocked_reason // "") | test("suite failed") then "red-check"
       elif ($k.failures | length) >= (.plan.attempts_per_ticket + ($k.extra_attempts // 0)) then "gave-up"
       else "blocked" end'
@@ -1143,6 +1145,8 @@ open_exception() { # decision-json
                headline="A check on #$t won't go green." ;;
     unmeetable) title="Exception gate: #$t has criteria no worker can meet (run $RUN_ID)"
                 headline="The verifier agrees no worker can meet $(get --arg t "$t" '.tickets[$t].unmeetable.criteria | length') of #$t's criteria here; another attempt would fail the same way." ;;
+    environment) title="Exception gate: #$t stopped on its environment, not its code (run $RUN_ID)"
+                 headline="#$t's worker stopped on its environment, not its code: $(get --arg t "$t" '.tickets[$t].environment.why // "see the run"'). No attempt was counted; fix it and retry." ;;
     *) title="Exception gate: #$t is blocked (run $RUN_ID)"
        headline="#$t is blocked: $(get --arg t "$t" '.tickets[$t].blocked_reason // "see the run"')." ;;
   esac

@@ -229,3 +229,55 @@ test_the_remote_state_is_set_before_the_fetch_that_may_fail() {
     [ -n "$assign" ] && [ "$assign" -lt "$fetch" ] || fail "$var is not set before the runs/<id> fetch (unbound under set -u on bash 4+)"
   done
 }
+
+# ---- a snapshot after every wave (#429): wave.sh report pushes runs/<id>
+
+test_each_wave_report_pushes_the_snapshot_fast_forward_and_in_restores_it() {
+  two_machines
+  laptop "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  local first=
+  first=$(git -C "$REMOTE" rev-parse refs/heads/runs/r1)
+  assert_eq r1 "$(git -C "$REMOTE" show refs/heads/runs/r1:.artisan-agent/runs/r1/state.json | jq -r .run_id)"
+  assert_eq state-pushed "$(state_get '[.events[] | select(.event | startswith("state-push"))] | last | .event')"
+  # the local copy stays live: the run carries on
+  assert_eq "live laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+  printf '{"ticket":"11"}\n' >"$RUN_DIR/results/11.1.result.json"
+  laptop "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  git -C "$REMOTE" merge-base --is-ancestor "$first" refs/heads/runs/r1
+  assert_eq false "$([ "$first" = "$(git -C "$REMOTE" rev-parse refs/heads/runs/r1)" ] && echo true || echo false)"
+  # a fresh clone restores it
+  host "$SCRIPTS/move.sh" in r1 >/dev/null
+  assert_eq "live host" "$(host "$SCRIPTS/move.sh" where "$CLONE_RUN")"
+  assert_eq '{"ticket":"11"}' "$(cat "$CLONE_RUN/results/11.1.result.json")"
+  assert_eq work "$(cat "$TEST_TMPDIR/host/project-wt/run-r1/work.txt")"
+}
+
+test_an_unreachable_remote_logs_state_push_failed_and_the_report_still_runs() {
+  two_machines
+  git_quiet -C "$PROJECT" remote set-url origin "$TEST_TMPDIR/nowhere.git"
+  laptop "$SCRIPTS/wave.sh" report "$RUN_DIR" | jq -e '.run_id == "r1"' >/dev/null
+  assert_eq state-push-failed "$(state_get '[.events[] | select(.event | startswith("state-push"))] | last | .event')"
+  state_get '[.events[] | select(.event == "state-push-failed")] | last | .reason | length > 0' | grep -qx true || fail "no reason recorded"
+  assert_eq "live laptop" "$(laptop "$SCRIPTS/move.sh" where "$RUN_DIR")"
+}
+
+test_a_snapshot_is_refused_when_another_machine_holds_runs_branch() {
+  two_machines
+  laptop "$SCRIPTS/move.sh" out "$RUN_DIR" >/dev/null
+  host "$SCRIPTS/move.sh" in r1 >/dev/null
+  # the laptop, back to live by hand, must not push over the host's claim
+  jq '.location = {status: "live", machine: "laptop"}' "$RUN_DIR/state.json" >"$RUN_DIR/s.tmp" && mv "$RUN_DIR/s.tmp" "$RUN_DIR/state.json"
+  before=$(git -C "$REMOTE" rev-parse refs/heads/runs/r1)
+  laptop "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  assert_eq "$before" "$(git -C "$REMOTE" rev-parse refs/heads/runs/r1)"
+  assert_eq state-push-failed "$(state_get '[.events[] | select(.event | startswith("state-push"))] | last | .event')"
+}
+
+test_a_run_without_a_remote_logs_nothing_for_the_snapshot() {
+  make_project
+  write_plan "$TEST_TMPDIR/plan.json"
+  "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  "$SCRIPTS/wave.sh" report "$RUN_DIR" >/dev/null
+  assert_eq 0 "$(state_get '[.events[] | select(.event | startswith("state-push"))] | length')"
+}

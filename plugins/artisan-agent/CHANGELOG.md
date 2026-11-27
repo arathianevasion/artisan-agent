@@ -15,6 +15,7 @@ A design stage before the spec, CI and merge gates that don't wait on a missing 
 - **End gate:** deferred overrun gates can be approved or bypassed at the end gate (#362). `pr-boundaries` accepts `run`, one PR from the integration branch; groups already on main are left out (#363). `finish` ends a run whose integration branch merged as one PR (#364). Stacked PRs come with merge steps that keep each branch and retarget the next PR (#271).
 - **Retro and setup:** retro deliver checks the kept voice lessons together before writing any (#302), refuses a lesson that edits a file missing from its base (#315), and counts a card changed at a gate as changed (#379). Removing a stray project-scope install keeps the project's `enabledPlugins` (#301), and setup's hook probe reads the guard's current output (#383). Typing a replaced skill's bare name runs the artisan-agent version (#374).
 - **Decision chat and scripts:** the sweep lists incoming triage tickets, open decisions first, and notifies for open decisions (#316). `sweep.sh` reads findings from a file, not a jq argument (#264). `plan.sh build` checks the draft's spec shape (#270), and `config.sh get` on an empty setting exits 0 (#358).
+- **Tidy sweep:** once a run's PRs have merged, `tidy.sh` (called by `end-gate.sh finish`) fast-forwards a clean main checkout that is only behind, and removes the run's integration, PR and retro worktrees and their merged branches. Dirty work and unmerged branches are kept and named (#427).
 
 ## 0.13.0 (2026-11-21)
 

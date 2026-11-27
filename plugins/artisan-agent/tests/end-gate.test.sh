@@ -9,64 +9,7 @@
 
 E="$PLUGIN_ROOT/scripts/end-gate.sh"
 
-cleanup() {
-  kill_test_processes
-  kill_workers
-}
-
-# Three tickets merged --no-ff into run/r1 in order 1, 2, 3. Slices: 1 and 2
-# are "export", 3 is "billing". Plans: 1 is plan #100; 2 and 3 are plan #101.
-setup_end() { # gates-json
-  make_project
-  export FAKE_GH_DIR="$TEST_TMPDIR/tracker"
-  mkdir -p "$FAKE_GH_DIR"
-  local n= wt=
-  for n in 1 2 3; do
-    jq -n --argjson n "$n" '{number: $n, title: "Ticket \($n)", state: "closed", labels: [{name: "in-run"}, {name: "ready-for-agent"}], body: "x"}' \
-      >"$FAKE_GH_DIR/issue-$n.json"
-  done
-  wt="$TEST_TMPDIR/project-wt/run-r1"
-  git_quiet -C "$PROJECT" worktree add -b run/r1 "$wt" main
-  for n in 1 2 3; do
-    git_quiet -C "$PROJECT" branch "agent/$n" main
-    git_quiet -C "$PROJECT" worktree add "$TEST_TMPDIR/w$n" "agent/$n"
-    echo "$n" >"$TEST_TMPDIR/w$n/t$n.txt"
-    git_quiet -C "$TEST_TMPDIR/w$n" add -A
-    git_quiet -C "$TEST_TMPDIR/w$n" commit -m "ticket $n"
-    git_quiet -C "$wt" merge --no-ff -m "Merge #$n" "agent/$n"
-    eval "M$n=\$(git -C \"\$wt\" rev-parse HEAD)"
-  done
-  local gates='[{"kind": "end"}]'
-  [ $# -eq 0 ] || gates=$1
-  jq -n --argjson gates "$gates" '
-    def t($n; $s; $p): {title: "Ticket \($n)", slice: $s, plan: $p, model: "claude-sonnet-5-5", estimate_usd: 0.25,
-                        expected_output: "t\($n).txt", caps: {max_budget_usd: 0.5, max_turns: 20, deadline_seconds: 120}};
-    {run_id: "r1", repo: "local/sample", integration_branch: "run/r1", scope: ["1", "2", "3"],
-     waves: [["1"], ["2"], ["3"]], max_agents: 2, attempts_per_ticket: 2, estimate_usd: 1, budget_usd: 1.25,
-     gates: $gates,
-     tickets: {"1": t(1; "export"; 100), "2": t(2; "export"; 101), "3": t(3; "billing"; 101)}}' >"$TEST_TMPDIR/plan.json"
-  "$SCRIPTS/state.sh" init "$RUN_DIR" "$TEST_TMPDIR/plan.json"
-  "$SCRIPTS/state.sh" update "$RUN_DIR" '
-    .integration += {worktree: $wt, base: $base, merges: [{ticket: "1", commit: $m1}, {ticket: "2", commit: $m2}, {ticket: "3", commit: $m3}]}
-    | .tickets["1"] += {status: "merged", merge_commit: $m1, tracker_closed: true}
-    | .tickets["2"] += {status: "merged", merge_commit: $m2, tracker_closed: true}
-    | .tickets["3"] += {status: "merged", merge_commit: $m3, tracker_closed: true}' \
-    --arg wt "$wt" --arg base "$(git -C "$PROJECT" rev-parse main)" --arg m1 "$M1" --arg m2 "$M2" --arg m3 "$M3"
-  PATH="$TESTS_DIR/fixtures/fake-gh:$PATH"
-  export PATH
-  export ARTISAN_HOME="$TEST_TMPDIR/artisan-home" ARTISAN_TEAM_CACHE="$TEST_TMPDIR/team-cache"
-  merge_gate_local "$ARTISAN_HOME"   # lib.sh's host.json is not read once ARTISAN_HOME moves
-  export CLAUDE_CONFIG_DIR="$TEST_TMPDIR/claude-config"
-  CHAT=$(start_worker)
-  export ARTISAN_WRITER_PID=$CHAT
-  trap cleanup EXIT
-}
-
-product_boundary() { # slice|plan|ticket: as setup records it, in the PR it lands
-  printf '# Coding standards\n\n## Guardrails\n\n- `pr-boundaries`: one PR per %s\n' "$1" >"$PROJECT/CODING_STANDARDS.md"
-  git_quiet -C "$PROJECT" add CODING_STANDARDS.md
-  git_quiet -C "$PROJECT" commit -m "setup"
-}
+. "$TESTS_DIR/helpers/end-gate-run.sh"
 
 individual_boundary() {
   mkdir -p "$ARTISAN_HOME"
@@ -443,6 +386,18 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
 }
 
+test_finish_runs_the_tidy_sweep_and_says_why_it_removed_nothing_while_prs_are_open() {
+  setup_end
+  product_boundary plan
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1)
+  assert_contains "$out" "tidy:"
+  assert_eq "yes" "$([ -d "$TEST_TMPDIR/project-wt/run-r1" ] && echo yes || echo no)"
+}
+
 # A run whose integration branch the Artisan merged into main as one PR (#364).
 merge_integration_into_main() { # [pr-number]: --no-ff into main, and a merged PR in the fake tracker
   git_quiet -C "$PROJECT" merge --no-ff -m "Merge run/r1 (#${1:-7})" run/r1
@@ -480,10 +435,12 @@ test_finish_ends_that_run_even_when_the_merging_pr_cannot_be_found() {
   setup_end
   approved_end
   merge_integration_into_main
+  local tip=
+  tip=$(git -C "$PROJECT" rev-parse run/r1)   # the tidy sweep removes the merged branch at finish
   "$E" finish "$RUN_DIR" >/dev/null
   assert_eq ended "$("$E" status "$RUN_DIR")"
   assert_eq "null" "$(state_get '.end_gate.merged_outside.url')"
-  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(state_get '.end_gate.merged_outside.tip')"
+  assert_eq "$tip" "$(state_get '.end_gate.merged_outside.tip')"
 }
 
 test_finish_still_refuses_when_the_integration_tip_is_not_on_main_and_names_the_missing_merges() {
@@ -952,4 +909,79 @@ test_a_design_whose_tickets_ride_two_prs_waits_for_the_later_pr_whatever_the_sco
 test_the_design_skill_and_the_end_gate_reference_say_retire_runs_after_the_merge() {
   assert_contains "$(cat "$SCRIPTS/../skills/design/SKILL.md")" "Retire runs after the merge, not at the cut"
   assert_contains "$(cat "$SCRIPTS/../references/end-gate.md")" "after the merge, not at the cut"
+}
+
+# ------------------------------------------------- end_gate.auto_merge (#393)
+
+auto_merge() { # true|false: the project's end_gate.auto_merge
+  printf 'end_gate:\n  auto_merge: %s\n' "$1" >>"$PROJECT/.artisan-agent/config.yml"
+}
+
+cut_two_stacked_prs() {
+  product_boundary plan   # plan #100 (ticket 1), plan #101 (tickets 2 and 3): two stacked PRs
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_eq 2 "$(state_get '.end_gate.prs | length')"
+}
+
+test_with_auto_merge_on_finish_merges_the_stack_in_order_and_retargets_before_deleting_branches() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  local out= calls=
+  out=$("$E" finish "$RUN_DIR")
+  calls=$(grep -E '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" | sed -E 's|https://github.com/local/sample/pull/||; s| -R local/sample||')
+  assert_eq "pr merge 1 --merge
+pr edit 2 --base main
+pr merge 2 --merge
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/1
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/2" "$calls"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-1.json")"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq main "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_contains "$out" "Merged the stack"
+  assert_not_contains "$out" "Merge the stack in this order"
+}
+
+test_a_failed_merge_stops_the_stack_leaves_later_prs_open_and_names_the_cause() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  echo "Pull request is not mergeable: the merge commit cannot be cleanly created." >"$FAKE_GH_DIR/pr-merge-fail-1"
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) && fail "finish succeeded with a merge that failed"
+  assert_contains "$out" "auto-merge stopped at PR 1"
+  assert_contains "$out" "the merge commit cannot be cleanly created"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq pr/r1/1 "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq 0 "$(grep -c '^pr merge.*/pull/2' "$FAKE_GH_DIR/calls" || true)"
+  [ ! -f "$FAKE_GH_DIR/deleted-branches" ] || fail "a branch was deleted: $(cat "$FAKE_GH_DIR/deleted-branches")"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+  assert_eq "auto-merge-stopped" "$(state_get '.events[-1].event')"
+  # Fixed, a rerun carries on from where it stopped.
+  rm "$FAKE_GH_DIR/pr-merge-fail-1"
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_off_or_unset_finish_merges_nothing() {
+  setup_end
+  cut_two_stacked_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR")
+  assert_contains "$out" "Merge the stack in this order"
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_set_off_finish_merges_nothing() {
+  setup_end
+  auto_merge false
+  cut_two_stacked_prs
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-1.json")"
 }

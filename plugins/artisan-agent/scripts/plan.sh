@@ -33,6 +33,8 @@
 #   overrides      {key: {value, project}} for every --set; never written to config.yml
 #   max_agents, attempts_per_ticket   from the config
 #   tickets.<t>.estimate_usd, .estimate_basis, .caps
+#   tickets.<t>.priority   0 for the first ticket, one lower for each next, in scope
+#                  order with "ci": true tickets first; a draft's own is kept (#416)
 #   hands_on       when the draft has a "hands_on" object {ticket, focus, minutes?}
 #                  (at most one per plan; blocked_by per ticket gives the critical
 #                  path): the ticket, its focus, whether it is on the critical path
@@ -59,6 +61,13 @@
 #                  tickets.<t>.acceptance_source says where a read list came
 #                  from ("body" or the comment's url). While one stands the
 #                  plan is not approvable: render says so, state.sh init refuses.
+#   running_app_flags  each criterion containing a phrase of the config's
+#                  running_app_phrases (a value only the running app gives),
+#                  [{ticket, criterion, phrase}] (#424); a warning, never
+#                  blocks approval
+#   undeclared_dependency_flags  each criterion that cites another ticket of the
+#                  plan ("#12") that the ticket is not blocked by, directly or
+#                  through others: [{ticket, criterion, needs}] (#424); a warning
 #   human_check_overrides  [{ticket, criterion, why}], one per
 #                  --override-human-check, the Artisan's reason recorded
 #   merge_gate_flags  each criterion, read as for human_check_flags, that reads
@@ -103,6 +112,11 @@
 #                  has a package.json and the run's config.worktree_setup is
 #                  empty (#252): shown under "Needs your attention"; never
 #                  blocks approval. Absent otherwise.
+#   shared_folder_warnings  [{entry, tickets}], one per expected_files entry
+#                  ending in "/" that two or more tickets in scope list (#415):
+#                  each such ticket overlaps the others, so the wave picker
+#                  runs them one at a time. Shown under "Needs your attention";
+#                  never blocks approval. [] when none.
 #   merge_gate     only on a machine whose merge gate runs on CI (merge-gate.sh
 #                  mode): {mode: "ci", workflow, timeout_minutes,
 #                  minutes_per_merge, from_runs, note?}, the expected CI
@@ -274,6 +288,15 @@ cmd_build() {
               deadline_seconds: ($x.minutes * 120 | ceil)
             }
           }))
+    # Priority from the approved order (#416): tickets marked "ci": true first
+    # (the owner rule), then the rest, each group in scope order (plan order,
+    # then listed order). The frontier is sorted by priority, highest first,
+    # so the first gets 0 and each next one a step lower; a ticket lever.sh
+    # add records (priority 1, urgent 2) still sorts ahead of all of them.
+    # A priority the draft already sets is kept.
+    | ([.scope[] as $t | select(.tickets[$t].ci == true) | $t] + [.scope[] as $t | select(.tickets[$t].ci != true) | $t]) as $order
+    | reduce range(0; $order | length) as $i (.;
+        .tickets[$order[$i]].priority = (.tickets[$order[$i]].priority // (0 - $i)))
     | .estimate_usd = ([.scope[] as $t | .tickets[$t].estimate_usd] | add | round2)
     | .budget_usd = (.estimate_usd * (1 + .config.overrun_allowance_percent / 100) | round2)
     # The suite: the recorded checks unless the draft changes it, visibly.
@@ -376,6 +399,7 @@ cmd_build() {
   fi
   out=$(printf '%s' "$out" | jq --argjson ov "$ov" '. + $ov')
   flags=$(printf '%s' "$out" | TO_PLAN_EXTRA_PHRASES=$(printf '%s' "$out" | jq -c '.config.human_check_phrases // []') \
+    TO_PLAN_RUNNING_APP_PHRASES=$(printf '%s' "$out" | jq -c '.config.running_app_phrases // []') \
     python3 -I "$SCRIPT_DIR/lib/to-plan.py" flags 2>&1) || die "$(printf '%s' "$flags" | sed 's/^to-plan: //')"
   out=$(printf '%s' "$out" | jq --argjson f "$flags" '. + $f')
   # The draft's one hands-on ticket, if it names one (human.sh annotate).
@@ -391,6 +415,15 @@ cmd_build() {
     out=$(printf '%s' "$out" | jq 'if ((.config.worktree_setup // "") | tostring | test("^\\s*$"))
       then .worktree_setup_warning = {file: "package.json"} else . end')
   fi
+  # A folder entry two or more tickets share (#415): wave-width.sh then sees
+  # them overlap and runs them one at a time. A warning, never a refusal.
+  out=$(printf '%s' "$out" | jq '
+    def folders($t): (.tickets[$t].expected_files // []) | map(tostring | select(endswith("/")));
+    . as $p
+    | ([$p.scope[] as $t | $p | folders($t)[]] | reduce .[] as $e ([]; if index($e) then . else . + [$e] end)) as $entries
+    | .shared_folder_warnings = [$entries[] as $e
+        | {entry: $e, tickets: [$p.scope[] as $t | select($p | folders($t) | index($e)) | $t]}
+        | select(.tickets | length > 1)]')
   printf '%s\n' "$out"
 }
 
@@ -544,7 +577,8 @@ cmd_render() {
         "",
         (if .delay_minutes > 0 then "Building this by hand delays the run\(if .on_critical_path then " (it is on the critical path)" else " (its hands-on time exceeds its slack)" end): the run finishes about \(.delay_minutes) minutes later, and \(.dependents | map(ticket(.)) | join(", ") | if . == "" then "nothing" else . end) waits for it. Confirm the delay, or choose a ticket off the critical path." else "\(if .on_critical_path then "On the critical path, but no delay is expected" else "Off the critical path" end): the run is not delayed. It is held without dispatch, built in its own worktree, and goes through the same verifier, suite and merge as a worker'"'"'s ticket." end),
         "" end),
-      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] and $p.worktree_setup_warning == null then empty
+      ( if (($p.human_check_flags // []) + ($p.open_decision_flags // [])) == [] and $p.worktree_setup_warning == null
+              and ($p.shared_folder_warnings // []) == [] then empty
         else "### Needs your attention" end ),
       ( ($p.open_decision_flags // []) | if length == 0 then empty else
         "| Ticket | Open decision | Harm | Recommendation |",
@@ -560,6 +594,9 @@ cmd_render() {
         "",
         "An agent can'"'"'t show these, so the verifier could never pass them. Split each into a Human check (`to-plan.sh split-human-check`), or override it with a reason (`--override-human-check <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
         "" end ),
+      ( ($p.shared_folder_warnings // []) | if length == 0 then empty else
+        ( .[] | "**`\(.entry)` is listed by \(.tickets | map(ticket(.)) | join(", ")).** A folder overlaps every file under it, so these tickets are treated as touching the same files and run one at a time. Name the specific files each one changes to let them share a wave. A warning only: it does not block approval.",
+          "" ) end ),
       ( if $p.worktree_setup_warning == null then empty else
         "**`worktree_setup` is empty in a Node project.** This project has a `package.json`, but the run has no `worktree_setup`, so the integration worktree and every worker and verifier start without `node_modules`: the first merge gate and every test, typecheck and lint fail as setup failures. Recommended: rebuild with `--set '"'"'worktree_setup=<command>'"'"'` (the command that installs the dependencies), so this run has it from its first worktree; once approved, `state.sh override <run-dir> worktree_setup '"'"'<command>'"'"'` does the same for the next worktree. Setting it only in `.artisan-agent/config.yml` by PR reaches this run only once the main checkout has the change, so it is the fix for later runs, not this one. A warning only: it does not block approval.",
         "" end ),
@@ -570,6 +607,22 @@ cmd_render() {
         ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \(.needs) |" ),
         "",
         "A worker runs no CI, opens no PR and runs only the tests that cover its change, so it can'"'"'t meet these, and the verifier would judge them. The merge gate already runs the suite on every merge. Drop it, or reword it to \"CI is green\" or \"The PR shows ...\", which the verifier leaves to the merge gate (in the ticket, then rebuild), or override it with a reason (`--override-merge-gate <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
+        "" end ),
+      ( ($p.running_app_flags // []) | if length == 0 then empty else
+        "### Criteria that may need the running app",
+        "| Ticket | Criterion | Reads as needing |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
+        "",
+        "A headless worker can'"'"'t read a value only the running app gives, so it would end the attempt with the criterion unmeetable. Split it into a Human check (`to-plan.sh split-human-check`), reword it to something the tests can show, or leave it if the worker can meet it. A warning only: it does not block approval.",
+        "" end ),
+      ( ($p.undeclared_dependency_flags // []) | if length == 0 then empty else
+        "### Criteria that depend on a ticket the ticket is not blocked by",
+        "| Ticket | Criterion | Depends on |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \(ticket(.needs)) (\($p.tickets[.needs].title // "untitled")) |" ),
+        "",
+        "The criterion cites a ticket of this plan that has no blocking edge to the ticket, so the worker may run before that ticket'"'"'s output exists and could not meet it. Add the blocking edge (`blocked_by` in the draft), or reword the criterion. A warning only: it does not block approval.",
         "" end ),
       ( ($p.criteria_missing // []) | if length == 0 then empty else
         "### Tickets with no acceptance criteria",

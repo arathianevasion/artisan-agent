@@ -694,7 +694,7 @@ STATE_JQ_DEFS='
         | event({event: "gate-decision", gate: $f.id, card: null, by: $by,
                  outcome: (if $ch then "change" else "keep" end), redirect: ($status == "redirected"),
                  areas: ticket_areas($f.tickets), cards: ($f.cards // [] | length), folded_into: $into}; $at)
-        | event({event: "gate-\($status)", gate: $f.id, issue: null, kind: "risk", folded_into: $into, by: $by}; $at));
+        | event({event: "gate-\($status)", gate: $f.id, issue: null, kind: ($f.kind // "risk"), folded_into: $into, by: $by}; $at));
 '
 
 # How the run stands, from the state file, for `wave.sh status` and the run

@@ -21,7 +21,9 @@ Usage:
   python3 -I packet.py folded < view.json
       the "## Folded risk gates" section: each risk gate the run folded into
       this gate (#241: review_gates with folded_into its id; "end" for the
-      end gate), with what raised it and its cards; nothing when none.
+      end gate), with what raised it and its cards; then "## Gates carried
+      to the end gate": the slice and risk gates a small clean run carried
+      there (#407: carried true), each with its cards; nothing when none.
   python3 -I packet.py risk < view.json
       the "Risk" section of an urgent ticket's end gate packet: the escalation
       tests it meets (plan.tickets.<t>.escalation), or "No escalation tests met."
@@ -251,10 +253,42 @@ def risk_section(view):
     return ["## Risk", ""] + (rows or ["No escalation tests met."]) + [""]
 
 
-def folded_gates(view):
+def folded_gates(view, carried=False):
+    """The gates folded into this one: the risk gates folded by #241, or with
+    carried, the slice and risk gates a small clean run carried here (#407)."""
     gate_id = view["gate"].get("id") or ("end" if view["gate"].get("kind") == "end" else None)
     return [g for g in view["state"].get("review_gates") or []
-            if gate_id is not None and g.get("folded_into") == gate_id]
+            if gate_id is not None and g.get("folded_into") == gate_id and bool(g.get("carried")) == carried]
+
+
+def cards_table(cs):
+    """A folded gate's cards, listed (at the end gate)."""
+    if not cs:
+        return ["- **Its cards:** none: no agent made a decision alone in it", ""]
+    return (["", "| Card | Ticket | Decision | Confidence |", "|---|---|---|---|"]
+            + ["| %s | #%s | %s → %s | %s |" % (c.get("card"), c.get("ticket"), cell(c.get("question")),
+                                                 cell(c.get("choice")), c.get("confidence", "provisional"))
+               for c in cs] + [""])
+
+
+def carried_section(view):
+    """The slice and risk gates a small clean run carried to the end gate
+    instead of waiting on the Artisan (#407), each with its cards."""
+    carried = folded_gates(view, carried=True)
+    if not carried:
+        return []
+    state = view["state"]
+    out = ["## Gates carried to the end gate", "",
+           "The run was small (`small_run_tickets`), and when each of these gates was due no attempt had failed, "
+           "nothing had been redirected and no exception gate had been raised, so they did not wait on you. "
+           "Approving the end gate answers each.", ""]
+    for f in carried:
+        ts = [str(t) for t in f.get("tickets") or []]
+        out += ["### %s: %s" % (f["id"], ", ".join(ticket_label(state, t) for t in ts)), ""]
+        if f.get("why"):
+            out.append("- **Raised for:** %s" % cell(f["why"]))
+        out += cards_table(f.get("cards") or [])
+    return out
 
 
 def folded_section(view, the_cards=None):
@@ -278,15 +312,7 @@ def folded_section(view, the_cards=None):
                 ("%s, under Decisions" % ", ".join(mine)) if mine else "none: no agent made a decision alone in it"))
             out.append("")
         else:
-            cs = f.get("cards") or []
-            if cs:
-                out += ["", "| Card | Ticket | Decision | Confidence |", "|---|---|---|---|"]
-                out += ["| %s | #%s | %s → %s | %s |" % (c.get("card"), c.get("ticket"), cell(c.get("question")),
-                                                         cell(c.get("choice")), c.get("confidence", "provisional"))
-                        for c in cs]
-            else:
-                out.append("- **Its cards:** none: no agent made a decision alone in it")
-            out.append("")
+            out += cards_table(f.get("cards") or [])
     return out
 
 
@@ -550,7 +576,7 @@ def main():
     elif cmd == "checks":
         sys.stdout.write("\n".join(end_checks(view)) + "\n")
     elif cmd == "folded":
-        lines = folded_section(view)
+        lines = folded_section(view) + carried_section(view)
         if lines:
             sys.stdout.write("\n".join(lines) + "\n")
     elif cmd == "risk":

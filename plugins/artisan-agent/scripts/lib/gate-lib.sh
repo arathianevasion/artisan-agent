@@ -24,6 +24,17 @@
 #     else "end" when $gates has an end gate not in $past, else null.
 #     $gates: [{id, kind, tickets}], as the plan numbers them.
 #
+#   GATE_CARRY_JQ: the small-run rule (#407), run over the state file.
+#     run_small_clean is true when the plan's small_run_tickets is above 0,
+#     the run has at most that many tickets in scope, and none has failed an
+#     attempt, no gate or decision was redirected and no exception gate was
+#     raised.
+#     carry_to_end($g) is true when slice or risk gate $g is carried to the
+#     end gate instead of waiting on the Artisan: the run is small and clean,
+#     the plan places an end gate not yet opened, and the gate was not kept
+#     as its own (`own`). A plan from before #407 has no small_run_tickets
+#     in its config: its gates wait as they always did.
+#
 # The slice gate's body header (| Gate | Role needed | Slice | Tickets blocked |)
 # is written by lib/packet.py, which owns it: `packet.py header` prints it.
 
@@ -37,6 +48,22 @@ GATE_FOLD_JQ='
           | first)
          // (if any($gates[]; .kind == "end") and ($past | index("end")) == null then "end" else null end)
     end;
+'
+
+GATE_CARRY_JQ='
+  def run_small_clean:
+    (.plan.config.small_run_tickets? // 0) as $n
+    | $n > 0 and ((.plan.scope // []) | length) <= $n
+      and all((.tickets // {})[]; ((.failures // []) | length) == 0)
+      and all((.review_gates // [])[]; .status != "redirected" and .redirect == null)
+      and all((.decisions // [])[]; .redirect? == null)
+      and ((.exception_gates // []) | length) == 0;
+  def carry_to_end($g):
+    (($g.kind // "slice") as $k | $k == "slice" or $k == "risk")
+    and (($g.own // false) | not)
+    and any((.plan.gates // [])[]; .kind? == "end")
+    and .end_gate.issue? == null and .end_gate.status? == null
+    and run_small_clean;
 '
 
 exception_choices_table() { # body|chat

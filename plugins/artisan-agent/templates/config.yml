@@ -49,6 +49,15 @@ stale_usage_minutes: 10
 # Failed attempts allowed before a ticket is blocked.
 attempts_per_ticket: 2
 
+# Small clean runs (#407): a run with at most this many tickets in scope, in
+# which no attempt has failed, no gate was redirected and no exception gate
+# was raised, doesn't wait on the Artisan at slice and risk gates. Each is
+# carried to the end gate, which shows its cards and whose approval answers
+# it. 0 turns this off. Source: the Artisan's ruling at claudia-kerman run
+# 1260's retro (2026-11-22): three clean tickets, four gates approved
+# unchanged in one burst after 80 minutes of waiting.
+small_run_tickets: 3
+
 # The orchestrator's turn budget (#175): wave.sh launch gives each wave's
 # orchestrator --max-turns base + per_ticket x T + per_ci_gate x G, where T is
 # the tickets the wave can take (the scope's tickets not yet merged or blocked,
@@ -128,6 +137,14 @@ minimum_estimates:
 # Example:
 #   human_check_phrases: [in the editor, on the console]
 human_check_phrases: []
+
+# Phrases that make a criterion read as needing the running app, a value only
+# obtainable there (#424). The plan step lists such a criterion, per ticket,
+# as a warning (it does not block approval): a headless worker can't meet it,
+# so split it into a Human check or reword it. None by default.
+# Example:
+#   running_app_phrases: [with KSP running, in the editor]
+running_app_phrases: []
 
 # The project's board (#146): the GitHub Project every issue the plugin opens
 # that outlives the run goes on (plan issues, findings, Human checks, rework
@@ -264,3 +281,16 @@ worktree_setup_timeout: 900
 # Example (a folder kept untracked but not ignored, so /move-session carries it):
 #   main_checkout_runtime: [.claude/orchestrator/]
 main_checkout_runtime: []
+
+# The end of a run (#393). auto_merge: true has end-gate.sh finish merge the
+# run's cut PRs into the default branch itself, in stack order, the way
+# end-gate.sh prs prints the steps (#271): each PR merged with a merge commit
+# and its branch kept, the next PR retargeted to the default branch, and the
+# merged branches deleted only once the whole stack is in; then the run ends.
+# A merge that fails (a conflict, a required check red, branch protection)
+# stops it there: the PRs after it stay open, finish names the PR and the
+# reason, and the run does not end until finish runs again. For a project
+# where the Artisan is the only one a change affects. Off, the default, merges
+# nothing: the Artisan merges the PRs by hand.
+end_gate:
+  auto_merge: false

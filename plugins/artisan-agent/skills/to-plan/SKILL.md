@@ -30,6 +30,8 @@ It records each ticket's title, acceptance criteria and blockers within the set.
 
 When the tickets come from a spec, pass it with `--spec`: the graph then holds the changed journey steps of the spec's Experience section (`experience_steps`) and each ticket's `Steps:` line (`steps`). A spec with no Experience section adds nothing.
 
+When the map or spec has a `## Rulings` (or `## Decisions`) section (bullets like `- journeys folder: `docs/journeys/``), pass it with `--rulings <n>` (repeatable). The graph then holds the `rulings` and each ticket's body, and `check` flags, by name, a ticket that names a ruled concept without any of its ruled values, and refuses approval until the value is written into the ticket (#378).
+
 ### 2. Name the slices and estimate
 
 Add two things to each ticket in `graph.json`, from its body:

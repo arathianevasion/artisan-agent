@@ -59,6 +59,9 @@
 #       state.sh decide <run-dir> <id> retry|bypass (bypass: cut it without
 #       the setup).
 #   end-gate.sh finish <run-dir>
+#       with end_gate.auto_merge true in the project config (#393), first
+#       merges the cut PRs in stack order (merge_stack; a failed merge stops
+#       it, exit 1, and the run does not end); then,
 #       once every PR is cut, or once the integration branch's tip is already
 #       on the default branch because the Artisan merged it as one PR (#364:
 #       records that PR, found with gh pr list, as end_gate.merged_outside;
@@ -71,7 +74,10 @@
 #       of the last PR carrying one of its tickets; a design no ticket names is
 #       left alone), removes the in-run label from every ticket in
 #       scope, records the run's end and prints the merge gate costs
-#       (retro.py gate-costs) and the retro offer.
+#       (retro.py gate-costs) and the retro offer. Then runs tidy.sh: with every
+#       PR merged on the origin, it fast-forwards the main checkout and removes
+#       the run's worktrees and merged branches; run finish again after the
+#       merges (and the retro's) to tidy then.
 #
 # An urgent ticket (lever.sh urgent, references/run-levers.md) ships through
 # its own end gate and PR, scoped to that one ticket and based on main, with
@@ -481,7 +487,8 @@ packet() {
   fi
   [ -z "$(unruled)" ] || sync_unruled >/dev/null
   # The risk gates folded into the end gate (#241): their slice gate had
-  # opened when they were raised. Nothing when there are none.
+  # opened when they were raised; and the gates a small clean run carried
+  # here (#407). Nothing when there are none.
   jq -n --slurpfile s "$FILE" '{gate: {id: "end", kind: "end", tickets: []}, state: $s[0]}' | PACKET folded
   echo "## Deferred gates"
   echo
@@ -655,6 +662,85 @@ open_deferred() {
   get -r "$(state_deferred_gates_jq)"'| map("\(.title) #\(.issue)") | join("; ")'
 }
 
+# The cards the Artisan kept at the run's gates (#426), for the kept-cards
+# ticket: {kept: [{ticket, gate, question, choice, confidence, criterion,
+# area}], left_out: N}. A card is kept when its gate was approved (a folded
+# gate answered with the gate it folded into, one closed on the tracker, a
+# deferred one answered at the end gate) and the Artisan didn't change it,
+# make it a guardrail or send it to triage at any gate; those are counted in
+# left_out. A card is its ticket and question, so a risk gate's card shown
+# again at its slice gate is listed once, at the first gate that showed it.
+KEPT_CARDS_JQ='
+  def key($c): "\($c.ticket | tostring)\u0000\($c.question)";
+  . as $s
+  | (.review_gates // []) as $gs
+  | ($gs | map({key: .id, value: .}) | from_entries) as $by_id
+  | def link($g): if $g.issue then "#\($g.issue)"
+      elif $g.folded_into == "end" then (if $s.end_gate.issue then "#\($s.end_gate.issue)" else "the end gate" end)
+      elif $by_id[$g.folded_into // ""].issue then "#\($by_id[$g.folded_into].issue)"
+      else $g.id end;
+    ([$gs[] | . as $g
+      | ([.decisions[]? | select(.outcome? == "change" or .guardrail_level != null) | .card]
+         + [.triaged[]? | .card]) as $acted
+      | (.cards // [])[] | select(.card as $n | $acted | index($n)) | key(.)] | unique) as $done
+  | [$gs[] | select(.status == "approved") | . as $g
+     | (.cards // [])[] | select(key(.) as $k | $done | index($k) | not)
+     | {key: key(.), ticket: (.ticket | tostring), gate: link($g), question, choice,
+        confidence: (.confidence // "provisional"), criterion: (.criterion // null)}]
+  | reduce .[] as $c ([]; if any(.[]; .key == $c.key) then . else . + [$c] end)
+  | map(del(.key)) as $kept
+  | {kept: $kept, left_out: ($done | length)}
+  | .kept |= map(. as $c | . + {area: (($s.plan.tickets[$c.ticket].areas // []) | join(", "))})'
+
+# kept_cards_body run-id: the kept-cards ticket body, from KEPT_CARDS_JQ on stdin.
+kept_cards_body() {
+  jq -r --arg run "$1" '
+    def cell: tostring | gsub("\\|"; "/") | gsub("\n"; " ");
+    "> *Filed by the end gate of run \($run): an agent-filed review of kept decision cards, not yet triaged.*",
+    "",
+    "<!-- artisan-agent:kept-cards \($run) -->",
+    "",
+    "The decision cards the Artisan kept at this run'"'"'s gates, each listed once, grouped by the area of its ticket.",
+    "",
+    (.kept | group_by(.area == "") | map(group_by(.area)) | flatten(1)[]
+      | "### \(if .[0].area == "" then "No area" else .[0].area end)", "",
+        "| Ticket | Kept at | Question | Choice | Confidence | Criterion |", "|---|---|---|---|---|---|",
+        (.[] | "| #\(.ticket) | \(.gate) | \(.question | cell) | \(.choice | cell) | \(.confidence) | \(.criterion // "-") |"),
+        ""),
+    (if .left_out > 0 then "\(.left_out) card\(if .left_out == 1 then " is" else "s are" end) left out: the Artisan already changed them, made them a guardrail or sent them to triage.", "" else empty end),
+    "**To act on it**, in the Decision chat: name any card to change, and each named card becomes its own ticket for triage. Closing this ticket with nothing named keeps them all. It blocks nothing: not the end gate, the PRs to main or any ticket."'
+}
+
+# file_kept_cards: files the kept-cards ticket once per run (#426) and records
+# it as end_gate.kept_cards with a kept-cards-filed event; nothing when no card
+# was kept. Approve runs it, and finish again for one approve couldn't file.
+# One already recorded, or already on the tracker (a crash between
+# filing and recording), is reused. A failure warns and never holds approval.
+KEPT_N=
+file_kept_cards() {
+  local cards= n= repo= title= url=
+  KEPT_N=$(get -r '.end_gate.kept_cards.issue // empty')
+  [ -z "$KEPT_N" ] || return 0
+  cards=$(jq -c "$KEPT_CARDS_JQ" "$FILE") \
+    || { echo "end-gate.sh: could not read the kept decision cards; file them by hand" >&2; return 0; }
+  n=$(jq '.kept | length' <<<"$cards")
+  [ "$n" -gt 0 ] || return 0
+  repo=$(get -r .repo)
+  title="Review kept decision cards: run $RUN_ID"
+  # By title, whatever its labels: triage may have relabelled it already.
+  KEPT_N=$(gh issue list -R "$repo" --state all --limit 10000 --json number,title 2>/dev/null \
+    | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty') || KEPT_N=
+  if [ -z "$KEPT_N" ]; then
+    url=$(kept_cards_body "$RUN_ID" <<<"$cards" \
+      | "$SCRIPT_DIR/tracker.sh" new-issue --kind question -- -R "$repo" --title "$title" --label needs-triage --body-file -) \
+      || { echo "end-gate.sh: could not file the kept decision cards' ticket; end-gate.sh finish tries again" >&2; return 0; }
+    KEPT_N=${url##*/}
+  fi
+  apply '.end_gate = ((.end_gate // {}) + {kept_cards: {issue: $n, cards: $c, left_out: $l, at: $now}})
+    | event({event: "kept-cards-filed", issue: $n, cards: $c, left_out: $l}; $now)' \
+    --argjson n "$KEPT_N" --argjson c "$n" --argjson l "$(jq .left_out <<<"$cards")"
+}
+
 cmd_approve() {
   [ $# -ge 1 ] || usage
   open_run "$1"
@@ -694,6 +780,8 @@ cmd_approve() {
   else
     refuse "no pr-boundaries guardrail is recorded: the boundary is the Artisan's to approve. Proposed: one PR per slice (--boundary slice|plan|ticket|run)"
   fi
+  # Before the approval is recorded, so a rerun after a crash files it then.
+  file_kept_cards
   issue=$(get -r '.end_gate.issue // empty')
   apply '
     .end_gate = ((.end_gate // {}) + {status: "approved", approved_at: $now, by: $by, boundary: ($b | del(.proposed))})
@@ -712,6 +800,7 @@ cmd_approve() {
     gh issue close "$issue" -R "$(get -r .repo)" --comment "Approved by $by. PRs to main: one per $(jq -r .value <<<"$b") ($src$([ "$src" = guardrail ] && printf ', %s level' "$(jq -r .level <<<"$b")")).$([ -n "$why" ] && printf ' Why: %s' "$why")" >/dev/null \
       || die "approved in the state file, but could not close #$issue"
   fi
+  [ -z "$KEPT_N" ] || echo "kept decision cards: #$KEPT_N for the Decision chat to review (needs-triage; it blocks nothing)"
   echo "approved: PRs one per $(jq -r .value <<<"$b"); next: end-gate.sh prs, then write each body with upstream pr and end-gate.sh cut"
 }
 
@@ -827,16 +916,71 @@ EOF2
   return 1
 }
 
+# auto_merge_on: the project's end_gate.auto_merge is true (#393). An invalid
+# value stops finish rather than reading as off.
+auto_merge_on() {
+  local f="$MAIN/.artisan-agent/config.yml" v=
+  [ -f "$f" ] || return 1
+  v=$("$SCRIPT_DIR/config.sh" get end_gate.auto_merge --file "$f") || die "could not read end_gate.auto_merge from $f"
+  [ "$v" = true ]
+}
+
+# merge_stack: with end_gate.auto_merge on, merges the cut PRs in stack order
+# as stack_steps prints them (#271): each PR not merged yet is retargeted to the
+# default branch (the PR under it has merged by then), then merged with a
+# merge commit and its branch kept, since deleting it would close the PR
+# stacked on it. The merged branches go once the whole stack is in, all but
+# the integration branch. The first merge that fails stops it there: an
+# auto-merge-stopped event, the PR and gh's reason, exit 1, and the PRs after
+# it left as they are. Safe to run again: merged PRs are skipped.
+merge_stack() {
+  local repo= main= ib= n= i= u= st= err= b= merged=
+  repo=$(get -r .repo); main=$(main_branch); ib=$(integration_branch)
+  n=$(get '(.end_gate.prs // []) | length')
+  for ((i = 1; i <= n; i++)); do
+    u=$(get -r --argjson n "$i" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+    [ -n "$u" ] || die "PR $i of the stack has no URL recorded"
+    st=$(gh pr view "${u##*/}" -R "$repo" --json state -q .state 2>&1) || stop_merge "$i" "$u" "could not read its state: $st"
+    [ "$st" != MERGED ] || continue
+    if [ "$i" -gt 1 ]; then
+      err=$(gh pr edit "$u" -R "$repo" --base "$main" 2>&1 >/dev/null) || stop_merge "$i" "$u" "could not retarget it to $main: $err"
+    fi
+    err=$(gh pr merge "$u" -R "$repo" --merge 2>&1 >/dev/null) || stop_merge "$i" "$u" "$err"
+    merged="$merged $u"
+  done
+  for b in $(get -r '(.end_gate.prs // [])[].branch'); do
+    [ "$b" != "$ib" ] || continue
+    gh api --method DELETE "repos/$repo/git/refs/heads/$b" >/dev/null 2>&1 \
+      || echo "end-gate.sh: could not delete the merged branch $b; delete it by hand" >&2
+  done
+  apply 'event({event: "auto-merged", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
+  echo "Merged the stack into $main (end_gate.auto_merge):${merged:- every PR had merged already}."
+}
+
+stop_merge() { # n url why
+  apply 'event({event: "auto-merge-stopped", n: $n, url: $url, why: $why}; $now)' \
+    --argjson n "$1" --arg url "$2" --arg why "$3"
+  die "auto-merge stopped at PR $1 ($2): $3. The PRs after it are left open and the run has not ended; fix that and run end-gate.sh finish again, or merge the rest by hand"
+}
+
+# The tidy sweep (#427): once the run's PRs have merged, fast-forward the main
+# checkout and remove the run's worktrees. Says why when it does nothing; a
+# failure never fails finish.
+tidy_run() {
+  "$SCRIPT_DIR/tidy.sh" "$RUN_DIR" || echo "end-gate.sh: the tidy sweep failed; run tidy.sh $RUN_DIR" >&2
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local want= have= repo= t= bad=0 done_list= outside=0 via=
+  local want= have= repo= t= bad=0 done_list= outside=0 via= auto=0
   # A rerun after the run ended retires the designs whose PRs have merged since (#396).
   if [ "$(status_word)" = ended ]; then
     waiting=
     retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
     if [ -n "$waiting" ]; then echo "Run $RUN_ID has ended; designs still waiting on their PR's merge:$waiting."
     else echo "Run $RUN_ID has ended; every design it ships is retired."; fi
+    tidy_run
     return 0
   fi
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
@@ -849,6 +993,7 @@ cmd_finish() {
     elif [ "$have" -lt "$want" ]; then refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
     fi
   fi
+  if [ "$outside" -eq 0 ] && [ "$have" -gt 0 ] && auto_merge_on; then merge_stack; auto=1; fi
   repo=$(get -r .repo)
   waiting=
   retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
@@ -870,12 +1015,15 @@ cmd_finish() {
     echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
   fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
-  [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
+  [ "$outside" -eq 1 ] || [ "$auto" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
+  file_kept_cards   # files it now if approving couldn't
+  [ -z "$KEPT_N" ] || echo "Kept decision cards: #$KEPT_N, for review in the Decision chat."
   # For the run summary: what the merge gates cost (#199).
   echo
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \
     || echo "end-gate.sh: could not total the merge gates' costs" >&2
   echo
+  tidy_run
   echo "Next: offer the retro, /artisan-agent:retro."
 }
 

@@ -618,6 +618,8 @@ test_resolve_scope_reads_a_plan_issues_body_blockers_where_there_are_no_native_d
   jq -n '{number: 71, id: 1071, title: "Old plan", state: "closed", labels: [{name: "plan"}], body: ""}' >"$FAKE_GH_DIR/issue-71.json"
   set_body "$P2" "Plan two\n\n## Blocked by\n\n- #70\n- #71\n- #$P1\n"
   fail_gh_on "*issues/$P2/dependencies/blocked_by*" "gh: Not Found (HTTP 404)"
+  # Closed plan 71 is checked for work on main (#431): in a repo, with nothing merged.
+  git init -q -b main . && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   local out=; out=$("$RS" --repo local/sample "$P1" "$P2")
   assert_eq "[{\"plan\":$P2,\"blocker\":70}]" "$(jq -c '.outside_blockers' <<<"$out")" "open unnamed plan 70 listed; closed 71 and named $P1 not"
 }
@@ -1077,4 +1079,58 @@ test_check_flags_a_criterion_measured_after_merge_and_split_moves_it_to_the_huma
   assert_contains "$(jq -r .body "$FAKE_GH_DIR/issue-$hc.json")" "- [ ] A PR run's wall time is <= 8 min. Give the run id."
   assert_not_contains "$(jq -r .body "$FAKE_GH_DIR/issue-2.json")" "wall time"
   "$TP" check "$PLANS" --graph "$GRAPH"
+}
+
+# ---- a ticket that names a ruled concept without its ruled value (#378) -----
+# The map or spec lists its rulings under a "Rulings" heading as
+# `- concept: `value``. graph --rulings <n> reads them; check flags a ticket
+# that mentions the concept but holds none of the ruled values.
+
+rulings_graph() {
+  sample_graph
+  jq '.rulings = [{concept: "journeys folder", values: ["docs/journeys/"]}]
+      | .tickets["1"].body = "Write the journeys folder with the first journey."
+      | .tickets["2"].body = "Put each journey in the journeys folder, docs/journeys/."
+      | .tickets["3"].body = "Nothing about it."' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" propose --graph "$GRAPH" --budget 6 >"$PLANS"
+}
+
+test_check_flags_a_ticket_that_names_a_ruled_concept_without_the_ruled_value() {
+  rulings_graph
+  local out=""
+  assert_status 1 "$TP" check "$PLANS" --graph "$GRAPH"
+  out=$("$TP" check "$PLANS" --graph "$GRAPH" 2>&1 || true)
+  assert_contains "$out" "## Needs your attention"
+  assert_contains "$out" "docs/journeys/"
+  assert_contains "$out" "journeys folder"
+  assert_contains "$out" "Upload endpoint"
+  assert_not_contains "$out" "| #2"
+  assert_not_contains "$out" "Billing model"
+  assert_contains "$out" "not ready to approve: 1 ticket(s) name a ruling without its ruled value"
+}
+
+test_check_passes_when_the_value_is_carried_or_there_are_no_rulings() {
+  rulings_graph
+  jq '.tickets["1"].body += " It lives in docs/journeys/."' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+  rulings_graph
+  jq 'del(.rulings)' "$GRAPH" >"$GRAPH.t" && mv "$GRAPH.t" "$GRAPH"
+  "$TP" check "$PLANS" --graph "$GRAPH"
+}
+
+test_graph_reads_rulings_from_the_map_and_keeps_each_tickets_text() {
+  use_fake_gh
+  jq -n '{number: 46, id: 1046, title: "Map", state: "open", labels: [],
+    body: "## Why\nx\n\n## Rulings\n\n- Journeys folder: `docs/journeys/`\n- **Result file** (the record): `a.json` or `b.json`\n- No value here\n\n## Other\n- Not: `a ruling`"}' >"$FAKE_GH_DIR/issue-46.json"
+  local g=; g=$("$TP" graph --repo local/sample --rulings 46 1 2)
+  assert_eq "Journeys folder|docs/journeys/;Result file|a.json,b.json" \
+    "$(jq -r '[.rulings[] | .concept + "|" + (.values | join(","))] | join(";")' <<<"$g")"
+  assert_contains "$(jq -r '.tickets["1"].body' <<<"$g")" "first 1"
+  assert_eq "null" "$(jq -c '.rulings' <<<"$("$TP" graph --repo local/sample 1)")"
+}
+
+test_a_decisions_heading_is_read_as_rulings_too() {
+  use_fake_gh
+  jq -n '{number: 47, id: 1047, title: "Spec", state: "open", labels: [], body: "## Decisions\n\n- Result file: `r.json`\n"}' >"$FAKE_GH_DIR/issue-47.json"
+  assert_eq "Result file" "$("$TP" graph --repo local/sample --rulings 47 1 | jq -r '.rulings[0].concept')"
 }

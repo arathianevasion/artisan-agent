@@ -43,6 +43,13 @@
 #       carries out the Artisan's answer to an orchestrator-exit decision
 #       (resume, retry, halt); 23 while one waits (--resume answers it
 #       "resume").
+#       Then (not on --handoff) it starts the recorded suite on the suite
+#       host against the integration tip (worker-suite.sh preflight, #423):
+#       failing within its seconds is a host whose build is broken, which
+#       would fail every worker the same way. 24: nothing launched, a
+#       preflight-failed event logged, and the reason and the log's last
+#       lines on stderr. A host that doesn't answer, or no recorded checks,
+#       is no refusal.
 #   wave.sh wait <run-dir> [--timeout SECONDS]
 #       block until the last orchestrator has ended (default at most 6600
 #       seconds, then 3: wait again), then print "orchestrator: <state>". The
@@ -225,7 +232,8 @@
 # 17 the overrun gate holds dispatch, 18 parked on plan usage, 19 parked on
 # CI, 20 the merge gate is still running, 21 launch: main changed a product
 # guardrail but the run's base is not in it, a decision is waiting, 23 launch:
-# an orchestrator-exit decision is waiting. One table of every code, with
+# an orchestrator-exit decision is waiting, 24 launch: the suite host failed
+# its preflight. One table of every code, with
 # verify.sh's: scripts/README.md, "Exit status".
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git, jq, python3, gh.
@@ -740,6 +748,23 @@ cmd_launch() {
   # halt is already gone by here, and the sweep and dispatch guard the wave.
   if [ "$handoff" -eq 0 ] && [ "$was_halted" -eq 0 ]; then
     "$SCRIPT_DIR/budget.sh" guard "$RUN_DIR" >&2 || exit $?
+  fi
+
+  # The suite host before anyone is dispatched (#423): every worker runs the
+  # full suite there before hand-in (worker-suite.sh), so a host whose build
+  # is broken fails them all the same way, each attempt. Its suite is
+  # started on the integration tip and given a few seconds; failing in them
+  # refuses the launch (24). A host that doesn't answer is no refusal: the
+  # workers fall back to their guard and covering tests.
+  if [ "$handoff" -eq 0 ]; then
+    local pre="" prc=0
+    pre=$("$SCRIPT_DIR/worker-suite.sh" preflight --dir "$wt" 2>/dev/null) || prc=$?
+    if [ "$prc" -eq 7 ]; then
+      apply 'event({event: "preflight-failed", wave: $w} + ($p | {host: .where, commit, why, log}); $now)' \
+        --argjson w "$wave" --argjson p "$pre"
+      state_die 24 "wave.sh: nothing launched: $(jq -r .why <<<"$pre"). Fix the host, then launch again. Its last lines (log $(jq -r .log <<<"$pre")):
+$(jq -r .tail <<<"$pre")"
+    fi
   fi
 
   # The plan's model, estimate and deadline for the orchestrator, in one
@@ -1813,9 +1838,11 @@ finish_gate() {
       apply '.ci_park = ({ticket: $t, attempt: $n, pre: $pre, sha: $sha, minutes: $m, at: $now}
             + ($g | {workflow, branch, run_id, url, conclusion, why}))
         | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $t,
-            question: "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+            question: (if $g.kind == "infrastructure"
+              then "The merge gate for #\($t) went red on CI infrastructure: no test failed. \($g.failed_steps | map("\(.job): \(.step // "the job") (\(.error // "no error message"))") | join("; "))\(if $g.url then " (\($g.url))" else "" end). Neither the ticket nor the base is at fault, and it uses no attempt; nothing new merges or dispatches. Recommended: fix CI (the step and error above), then clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?"
+              else "The merge gate for #\($t) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The ticket is not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park to retry the gate (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?" end),
             status: "waiting", at: $now}]
-        | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why}; $now)' \
+        | event({event: "parked", reason: "ci", ticket: $t, detail: $g.why} + (if $g.kind then {kind: $g.kind} else {} end); $now)' \
         --arg t "$t" --argjson n "$n" --arg pre "$pre" --arg sha "$sha" --argjson m "$minutes" --argjson g "$GATE_JSON"
       state_die 19 "wave.sh: #$t not merged: $why; the run is parked on CI (wave.sh unpark-ci retries the gate)"
     fi
@@ -2129,9 +2156,11 @@ batch_park() {
     | .ci_park = ({ticket: $b.order[0], tickets: $b.order, batch: $b.id, attempt: $b.attempts[$b.order[0]],
           pre: $mg.pre, sha: $mg.sha, minutes: $m, at: $now} + ($g | {workflow, branch, run_id, url, conclusion, why}))
     | .decisions += [{id: ((.decisions | length) + 1), kind: "ci", ticket: $b.order[0],
-        question: "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The tickets are not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?",
+        question: (if $g.kind == "infrastructure"
+          then "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) went red on CI infrastructure: no test failed. \($g.failed_steps | map("\(.job): \(.step // "the job") (\(.error // "no error message"))") | join("; "))\(if $g.url then " (\($g.url))" else "" end). Neither the tickets nor the base are at fault; nothing new merges or dispatches. Recommended: fix CI (the step and error above), then clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?"
+          else "The merge gate for merge batch \($b.id) (\($b.order | map("#" + .) | join(", "))) got no verdict from CI: \($g.why)\(if $g.url then " (\($g.url))" else "" end). The tickets are not at fault and nothing new merges or dispatches. Recommended: once CI is back, clear the park and merge them again (wave.sh unpark-ci); or set this machine'"'"'s merge_gate to local?" end),
         status: "waiting", at: $now}]
-    | event({event: "parked", reason: "ci", ticket: $b.order[0], tickets: $b.order, batch: $b.id, detail: $g.why}; $now)
+    | event({event: "parked", reason: "ci", ticket: $b.order[0], tickets: $b.order, batch: $b.id, detail: $g.why} + (if $g.kind then {kind: $g.kind} else {} end); $now)
     | .merge_gate = null' --argjson m "$minutes" --argjson g "$GATE_JSON"
   batch_report
   batch_close
@@ -2252,7 +2281,7 @@ note_ci_wait() {
     | ((if $fin == "" then $now else ($fin | fromdateiso8601) end) - ($g.at // $now)) as $s
     | event({event: "ci-wait", gate: $g.gate, sha: $g.sha, tier: ($r.tier // "ci"),
              minutes: (if $s < 0 then 0 else ($s / 6 | round) / 10 end),
-             outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" else "no-verdict" end)} + $who; $now)' \
+             outcome: (if $rc == 0 then "success" elif $rc == 7 then "red" elif ($r.kind // "") == "infrastructure" then "infrastructure" else "no-verdict" end)} + $who; $now)' \
     --arg fin "$fin" --argjson rc "$1" --argjson who "$2" --argjson r "$(jq -c 'if type == "object" then . else {} end' <<<"${GATE_JSON:-null}")"
 }
 
@@ -2553,9 +2582,26 @@ cmd_close() {
 
 # ------------------------------------------------------------------ report
 
+# The wave's state snapshot goes to runs/<run-id> (move.sh snapshot, #429), so
+# a lost machine loses at most one wave. A failure is logged and never stops
+# the run; a project with no remote has nothing to push and logs nothing.
+push_state_snapshot() {
+  local out= rc=0 reason=
+  out=$("$SCRIPT_DIR/move.sh" snapshot "$RUN_DIR" 2>&1) || rc=$?
+  case "$rc" in
+    0) apply 'event({event: "state-pushed", commit: $c}; $now)' --arg c "$(printf '%s\n' "$out" | tail -n 1)" ;;
+    7) ;;
+    *)
+      reason=$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)
+      apply 'event({event: "state-push-failed", reason: $r}; $now)' --arg r "${reason:-move.sh snapshot exited $rc}" ;;
+  esac
+  return 0
+}
+
 cmd_report() {
   open_run "${1:-}"
   halt_if_wave_failed
+  push_state_snapshot
   jq "$STATE_JQ_DEFS"'{
     run_id, wave: ((.orchestrators // []) | last | .wave // null),
     integration: .integration,

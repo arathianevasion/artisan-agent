@@ -49,6 +49,7 @@ An exception gate covers what has no ticket to triage. It opens for every `excep
 | the ticket failed its attempts (the sweep, `verify.sh judge` or `wave.sh merge` counted the last) | `Exception gate: run <id> gave up on #<t> after <n> attempts` | `gave-up` |
 | the suite went red after merging it (a check that won't go green) | `Exception gate: #<t>'s check won't go green (run <id>)` | `red-check` |
 | the worker said no worker could meet a criterion here and the verifier agrees (`verify.sh judge`, #186) | `Exception gate: #<t> has criteria no worker can meet (run <id>)` | `unmeetable` |
+| the worker stopped on its environment, not its code: its `failed` record named it (`environment.why`, the sweep, #423); no attempt counted, and retry gives it back | `Exception gate: #<t> stopped on its environment, not its code (run <id>)` | `environment` |
 | anything else that blocked it (an unresolved conflict, a result describing another commit, a diff missing its expected output) | `Exception gate: #<t> is blocked (run <id>)` | `blocked` |
 
 The overrun gate, the third kind of exception, is #72's. A deferred overrun gate is resolved at the end gate with `gate-action.sh approve` or `bypass` (#362): it closes as `resolved` (under `resolution`, event `gate-resolved`), refused (6) while it is open or before the end gate is open; `end-gate.sh approve` waits until none is deferred.

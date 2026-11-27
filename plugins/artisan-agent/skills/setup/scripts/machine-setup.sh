@@ -21,6 +21,14 @@
 #                                   no import line exists and no decline is recorded. yes adds the line once
 #                                   (other content kept); no records voice_import_declined in host.json
 #                                   (other keys kept) and leaves CLAUDE.md alone
+#   machine-setup.sh idle-compaction [state|yes|no]
+#                                   the offer (#260) to turn off Claude Code's idle compaction, which can
+#                                   compact a Run chat while its workers still run. state (the default)
+#                                   prints JSON {due, state}: due only when settings.json has no
+#                                   idleCompaction and no decline is recorded (state: due, off, on,
+#                                   declined). yes sets idleCompaction false in settings.json (other keys
+#                                   kept); no records idle_compaction_declined in host.json (other keys
+#                                   kept) and leaves settings.json alone. An explicit value is never changed.
 #   machine-setup.sh aliases        install an alias skill in $CFG/skills for each replaced upstream
 #                                   skill in guard/replaced-skills.list whose replacement exists (#374),
 #                                   so the bare /triage runs /artisan-agent:triage. A personal skill that
@@ -202,6 +210,44 @@ cmd_voice_import() {
   esac
 }
 
+# Claude Code's idle compaction (#260) is a user-level setting, so the offer reaches every session on
+# the machine. An explicit value, true or false, means no offer and is never changed.
+idle_value() { # prints true or false when set to one; anything else counts as unset
+  [ -f "$CFG/settings.json" ] || return 0
+  jq -r 'if .idleCompaction == true or .idleCompaction == false then (.idleCompaction | tostring) else empty end' "$CFG/settings.json"
+}
+idle_declined() {
+  [ -f "$HOME_DIR/host.json" ] && [ "$(jq -r '.idle_compaction_declined // false' "$HOME_DIR/host.json")" = true ]
+}
+
+cmd_idle_compaction() {
+  local act="${1:-state}" f="$HOME_DIR/host.json" s="$CFG/settings.json" tmp= v=
+  case "$act" in state | yes | no) ;; *) echo "usage: machine-setup.sh idle-compaction [state|yes|no]" >&2; return 2 ;; esac
+  command -v jq >/dev/null 2>&1 || { echo "missing: jq"; return 1; }
+  v=$(idle_value) || { echo "failed: $s is not valid JSON" >&2; return 1; }
+  case "$act" in
+    state)
+      if [ "$v" = false ]; then echo '{"due":false,"state":"off"}'
+      elif [ "$v" = true ]; then echo '{"due":false,"state":"on"}'
+      elif idle_declined; then echo '{"due":false,"state":"declined"}'
+      else echo '{"due":true,"state":"due"}'; fi ;;
+    yes)
+      if [ -n "$v" ]; then echo "unchanged: $s already has idleCompaction $v"; return 0; fi
+      mkdir -p "$CFG"
+      tmp="$s.tmp.$$"
+      { if [ -f "$s" ]; then cat "$s"; else echo '{}'; fi; } | jq '.idleCompaction = false' >"$tmp" || { rm -f "$tmp"; echo "failed: $s is not valid JSON; setting not changed" >&2; return 1; }
+      mv -f "$tmp" "$s"
+      echo "changed: idleCompaction is false in $s" ;;
+    no)
+      if idle_declined; then echo "unchanged: the idle compaction decline is recorded in $f"; return 0; fi
+      mkdir -p "$HOME_DIR"
+      tmp="$f.tmp.$$"
+      { if [ -f "$f" ]; then cat "$f"; else echo '{}'; fi; } | jq '.idle_compaction_declined = true' >"$tmp" || { rm -f "$tmp"; echo "failed: $f is not valid JSON; decline not recorded" >&2; return 1; }
+      mv -f "$tmp" "$f"
+      echo "changed: idle_compaction_declined is true in $f" ;;
+  esac
+}
+
 is_alias() { # name: a skill we generated, recognised by its marker
   [ -f "$CFG/skills/$1/SKILL.md" ] && grep -qF "$ALIAS_MARKER" "$CFG/skills/$1/SKILL.md"
 }
@@ -351,5 +397,6 @@ case ${1:-} in
     fi
     cmd_merge_batch "$@" ;;
   voice-import) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh voice-import [state|yes|no]" >&2; exit 2; }; cmd_voice_import "$@" ;;
-  *) echo "usage: machine-setup.sh init|check|scan|aliases|remove ID...|merge-gate [auto|local|ci]|merge-batch [on|off]|voice-import [state|yes|no]" >&2; exit 2 ;;
+  idle-compaction) shift; [ $# -le 1 ] || { echo "usage: machine-setup.sh idle-compaction [state|yes|no]" >&2; exit 2; }; cmd_idle_compaction "$@" ;;
+  *) echo "usage: machine-setup.sh init|check|scan|aliases|remove ID...|merge-gate [auto|local|ci]|merge-batch [on|off]|voice-import [state|yes|no]|idle-compaction [state|yes|no]" >&2; exit 2 ;;
 esac

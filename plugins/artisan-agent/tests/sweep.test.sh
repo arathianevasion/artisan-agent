@@ -228,3 +228,35 @@ test_a_blocking_scope_question_filed_by_questions_sh_logs_it_for_a_ticket_with_n
   "$SCRIPTS/sweep.sh" "$RUN_DIR"
   assert_eq "scope-floor 10 0 91" "$(state_get '.events[] | select(.event == "guardrail-fired") | [.guardrail, .ticket, (.areas | length), .question] | join(" ")')"
 }
+
+# #423: a worker whose record names an environment failure (the suite host's
+# build broke, not the code) is parked for the Artisan with an exception
+# decision; no retry is queued and no attempt is counted against it.
+test_a_failed_result_marked_environment_parks_without_a_retry() {
+  trap kill_workers EXIT
+  init_run
+  local pid=
+  pid=$(start_worker)
+  "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
+  printf '{"ticket":"10","status":"failed","environment":{"why":"home-wsl: dotnet not on PATH for non-interactive ssh"}}' \
+    >"$RUN_DIR/results/10.1.result.json"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq blocked "$(state_get '.tickets["10"].status')"
+  assert_eq 0 "$(state_get '.tickets["10"].failures | length')" "no failed attempt counted"
+  assert_eq "open 1" "$(state_get '.tickets["10"].environment | "\(.status) \(.attempt)"')"
+  assert_eq "exception environment 10" "$(state_get '.decisions[0] | "\(.kind) \(.reason) \(.ticket)"')"
+  assert_contains "$(state_get '.decisions[0].question')" "dotnet not on PATH"
+  assert_eq environment-failure "$(state_get '[.events[] | select(.ticket == "10")] | last | .event')"
+}
+
+test_a_failed_result_without_the_environment_mark_is_still_a_failed_attempt() {
+  trap kill_workers EXIT
+  init_run
+  local pid=
+  pid=$(start_worker)
+  "$SCRIPTS/state.sh" dispatch "$RUN_DIR" 10 "$pid"
+  printf '{"ticket":"10","status":"failed","notes":"ran out"}' >"$RUN_DIR/results/10.1.result.json"
+  "$SCRIPTS/sweep.sh" "$RUN_DIR"
+  assert_eq queued "$(state_get '.tickets["10"].status')"
+  assert_eq 1 "$(state_get '.tickets["10"].failures | length')"
+}

@@ -258,6 +258,11 @@ cmd_open() {
     || state_die 6 "gate.sh: $id is not due: not every ticket of its slice has merged"
   def=$(without_left "$def")
   dir=$(gates_dir)
+  # A small clean run (#407, GATE_CARRY_JQ): the gate doesn't wait on the
+  # Artisan; it is carried to the end gate, which shows its cards.
+  if [ "$(jget "$GATE_CARRY_JQ"' carry_to_end($g)' --argjson g "$def")" = true ]; then
+    fold_gate "$def" end carried; return 0
+  fi
   # The fold rule (lib/gate-lib.sh, as at the plan step): a risk gate no
   # unmerged ticket in scope depends on folds into its next gate.
   if [ "$(jq -r .kind <<<"$def")" = risk ]; then
@@ -343,12 +348,14 @@ fold_target() { # def dependents-json
     // empty' --argjson g "$1" --argjson w "$2"
 }
 
-# fold_gate def into: records the risk gate as folded (no issue, no
+# fold_gate def into [carried]: records the gate as folded (no issue, no
 # decision): its cards are kept for the gate it folds into, whose packet
 # shows it (packet.py folded) and whose answer answers it (answer_folded).
-# Logs gate-folded, and guardrail-fired for an area's risk gate.
+# "carried" (#407): a slice or risk gate of a small clean run, carried to the
+# end gate; recorded with carried: true. Logs gate-folded (with carried), and
+# guardrail-fired for an area's risk gate.
 fold_gate() {
-  local def="$1" into="$2" f=
+  local def="$1" into="$2" carried="${3:-}" f=
   f="$(gates_dir)/$(jq -r .id <<<"$def").fold.json"
   jq -n --argjson g "$def" --slurpfile s "$FILE" '{gate: ($g + {dependents: []}), state: $s[0]}' >"$f"
   PACKET cards <"$f" >"$f.cards"
@@ -356,14 +363,17 @@ fold_gate() {
     if any((.review_gates // [])[]; .id == $g.id) then .
     else . as $s | ($g + {title: ($s | gate_title($g; $run))}) as $g
       | .review_gates = ((.review_gates // []) + [{
-          id: $g.id, kind: "risk", slice: $g.slice, title: $g.title, role: $g.role, why: $g.why,
+          id: $g.id, kind: ($g.kind // "slice"), slice: $g.slice, title: $g.title, role: $g.role, why: $g.why,
           issue: null, tickets: $g.tickets, dependents: [], cards: $cards[0], uncertainties: [],
           human_checks: [], left_run: ($g.left_run // []), status: "folded", folded_into: $into,
           folded_at: $now, opened_at: null, decisions: [], reworks: []}
-          + (if $g.guardrails then {guardrails: $g.guardrails} else {} end)])
-      | event({event: "gate-folded", gate: $g.id, kind: "risk", into: $into, tickets: $g.tickets}; $now)
+          + (if $g.guardrails then {guardrails: $g.guardrails} else {} end)
+          + (if $carried then {carried: true} else {} end)])
+      | event({event: "gate-folded", gate: $g.id, kind: ($g.kind // "slice"), into: $into, tickets: $g.tickets}
+              + (if $carried then {carried: true} else {} end); $now)
       | guardrails_fired($g; $now)
-    end' --argjson g "$def" --arg into "$into" --arg run "$RUN_ID" --slurpfile cards "$f.cards"
+    end' --argjson g "$def" --arg into "$into" --arg run "$RUN_ID" --slurpfile cards "$f.cards" \
+    --argjson carried "$([ -n "$carried" ] && echo true || echo false)"
   rm -f "$f" "$f.cards"
 }
 
@@ -892,7 +902,9 @@ cmd_sync() {
     [ -z "$(recorded "$id")" ] || continue
     num=$(cmd_open "$RUN_DIR" "$id") || exit $?
     if [ -n "$num" ]; then echo "opened #$num $id"
-    else echo "folded $id into $(jq -r .folded_into <<<"$(recorded "$id")")"; fi
+    else
+      jq -r 'if .carried then "carried \(.id) to the end gate" else "folded \(.id) into \(.folded_into)" end' <<<"$(recorded "$id")"
+    fi
   done
   close_empty
 }

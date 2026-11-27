@@ -78,6 +78,10 @@
 # TESTS_TIMES=files prints the same per file instead: one "<seconds> <file>"
 # line per test file (its tests' seconds added up, so under -j it is work, not
 # wall-clock), slowest first. Tests never see TESTS_TIMES.
+# TESTS_FAKE_SECS=<file> (for run.sh's own tests) replaces measured seconds:
+# each "<file>: <test> <seconds>" line gives that test's seconds, so a test of
+# the ordering needs no sleeps and no sub-second clock (#418). Only for run.sh's
+# own tests. Tests never see it.
 #
 # Exit status: 0 when every test passes (flaky and quarantined ones aside),
 # 1 when any fails, 2 when no tests
@@ -112,7 +116,7 @@ now() {
 # the printer never reads a half-written result. Always exits 0.
 run_one() {
   local resdir=$1 file=$2 name=$3 idx=$4
-  local tmp= markdir= marker= output= status= pid= started=
+  local tmp= markdir= marker= output= status= pid= started= fake=
   started=$(now)
   tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/artisan-test.XXXXXX")" && pwd -P)
   markdir=$(mktemp -d "${TMPDIR:-/tmp}/artisan-pass.XXXXXX")
@@ -124,7 +128,7 @@ run_one() {
     for v in $(compgen -v ARTISAN_); do unset "$v"; done
     # Nor the Claude session the caller runs in (#283).
     unset CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID
-    unset TESTS_TIMES GITHUB_STEP_SUMMARY
+    unset TESTS_TIMES TESTS_FAKE_SECS GITHUB_STEP_SUMMARY
     source "$TESTS_DIR/lib.sh"
     source "$1"
     "$2"
@@ -146,6 +150,11 @@ run_one() {
   rm -rf "$tmp" "$tmp.usage.json" "$tmp.claude" "$markdir"   # lib.sh's usage reading and config folder sit beside the test's folder
   printf '%s\n' "$output" >"$resdir/$idx.out"
   awk -v a="$started" -v b="$(now)" 'BEGIN { printf "%.2f\n", b - a }' >"$resdir/$idx.secs"
+  if [ -n "${TESTS_FAKE_SECS:-}" ]; then
+    fake=$(awk -v k="$(basename "$file" .test.sh): $name" \
+      'index($0, k " ") == 1 { print substr($0, length(k) + 2); exit }' "$TESTS_FAKE_SECS")
+    [ -z "$fake" ] || echo "$fake" >"$resdir/$idx.secs"
+  fi
   [ "$status" -eq 0 ] || status=1
   echo "$status" >"$resdir/$idx.status.tmp"
   mv "$resdir/$idx.status.tmp" "$resdir/$idx.status"

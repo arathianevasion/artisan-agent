@@ -127,6 +127,88 @@ test_mg_failed_tests_never_names_a_flaky_or_quarantined_test_or_takes_its_output
   assert_eq '[{"job":"unit","name":"sample: test_real","where":null,"message":null}]' "$(jq -c '.tests' <<<"$out")"
 }
 
+# Saved job responses (fixtures/ci-jobs): what gh run view --json jobs and
+# the check-runs annotations served for a run that went red without a test
+# failing (#420). The fake serves the run's jobs from the fixture.
+saved_jobs() { # fixture: the run 9001 file and its jobs, as the fixture saved them
+  jq -c '.' "$TESTS_DIR/fixtures/ci-jobs/$1.json" >"$FAKE_GH_DIR/run-9001.json"
+}
+
+# job_details fixture: the fake's ci-jobs and ci-job-details for a dispatched run.
+job_details() {
+  jq -c '[.jobs[].name]' "$TESTS_DIR/fixtures/ci-jobs/$1.json" >"$FAKE_GH_DIR/ci-jobs"
+  jq -c '[.jobs[] | {key: .name, value: {steps, annotations}}] | from_entries' "$TESTS_DIR/fixtures/ci-jobs/$1.json" >"$FAKE_GH_DIR/ci-job-details"
+}
+
+test_mg_infra_failure_names_the_failed_step_and_error_when_only_an_upload_step_failed() {
+  setup_ci
+  saved_jobs artifact-quota
+  local out=
+  out=$("$MG" infra-failure --repo local/sample --run-id 9001)
+  assert_eq true "$(jq -r .infrastructure <<<"$out")" "$out"
+  assert_eq '[{"job":"e2e (1/2)","step":"Upload test results","error":"Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts."},{"job":"e2e (2/2)","step":"Upload test results","error":"Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts."}]'     "$(jq -c .failed_steps <<<"$out")"
+}
+
+test_mg_infra_failure_takes_a_job_that_failed_with_no_failed_step_as_a_lost_runner() {
+  setup_ci
+  saved_jobs runner-lost
+  local out=
+  out=$("$MG" infra-failure --repo local/sample --run-id 9001)
+  assert_eq true "$(jq -r .infrastructure <<<"$out")" "$out"
+  assert_eq '[{"job":"unit","step":"Run tests","error":"The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection."}]' \
+    "$(jq -c .failed_steps <<<"$out")"
+}
+
+test_mg_infra_failure_is_false_when_a_test_step_failed_beside_an_upload_step() {
+  setup_ci
+  saved_jobs test-failed
+  local out=
+  out=$("$MG" infra-failure --repo local/sample --run-id 9001)
+  assert_eq false "$(jq -r .infrastructure <<<"$out")" "$out"
+  assert_eq '["Run tests","Upload test results"]' "$(jq -c '[.failed_steps[].step]' <<<"$out")" "all the failed steps are still named"
+}
+
+test_mg_infra_failure_is_false_for_a_test_step_whose_name_only_mentions_upload_cache_or_checkout() {
+  setup_ci
+  jq -c '.jobs[0].steps |= map(if .name == "Run e2e tests" then .name = "Run checkout and cache tests" | .conclusion = "failure" else . end)
+      | .jobs[0].steps |= map(select(.name != "Upload test results")) | .jobs |= [.[0]]' \
+    "$TESTS_DIR/fixtures/ci-jobs/artifact-quota.json" >"$FAKE_GH_DIR/run-9001.json"
+  assert_eq false "$("$MG" infra-failure --repo local/sample --run-id 9001 | jq -r .infrastructure)"
+}
+
+test_mg_infra_failure_is_false_for_a_cancelled_step_whose_job_names_no_lost_runner() {
+  setup_ci
+  jq -c '.jobs[0].annotations = [{annotation_level: "failure", message: "The job exceeded the maximum execution time of 10 minutes."}]' \
+    "$TESTS_DIR/fixtures/ci-jobs/runner-lost.json" | jq -c '.jobs[0] as $j | .jobs[0] = ($j | del(.annotations))' >"$FAKE_GH_DIR/run-9001.json"
+  assert_eq false "$("$MG" infra-failure --repo local/sample --run-id 9001 | jq -r .infrastructure)"
+}
+
+test_mg_an_infrastructure_failure_parks_on_ci_naming_the_step_and_error_and_uses_no_attempt() {
+  setup_ci
+  verified_ticket
+  red_ci_with_log
+  printf '' >"$FAKE_GH_DIR/ci-log-failed"
+  job_details artifact-quota
+  merge_1
+  assert_eq 19 "$MERGE_STATUS" "merge: $(cat "$TEST_TMPDIR/merge.err")"
+  assert_eq returned "$(state_get '.tickets["1"].status')" "infrastructure is not the ticket's fault"
+  assert_eq null "$(state_get '.base_park | tojson')" "not a red base"
+  assert_eq 0 "$(grep -c -- '--ref ci/.*-base' "$FAKE_GH_DIR/calls")" "no base check for an infrastructure failure"
+  assert_eq "" "$(ci_branches)"
+  assert_contains "$(state_get '.ci_park.why')" "infrastructure"
+  assert_contains "$(state_get '.ci_park.why')" "Upload test results"
+  assert_contains "$(state_get '.ci_park.why')" "Artifact storage quota has been hit"
+  local q=
+  q=$(state_get '.decisions | last | .question')
+  assert_contains "$q" "infrastructure"
+  assert_contains "$q" "Upload test results"
+  assert_contains "$q" "Artifact storage quota has been hit"
+  assert_contains "$q" "no test failed"
+  assert_contains "$q" "fix CI"
+  assert_eq "infrastructure" "$(state_get '[.events[] | select(.event == "ci-wait")] | last | .outcome')"
+  assert_eq "ci infrastructure" "$(state_get '[.events[] | select(.event == "parked")] | last | "\(.reason) \(.kind)"')"
+}
+
 test_mg_a_red_ci_run_with_attempts_left_is_a_failed_attempt_requeued_with_the_failing_tests() {
   setup_ci
   verified_ticket

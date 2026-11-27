@@ -102,11 +102,13 @@ The merge gate table (`facts.json` `merge_gates` and `artisan_wait`; `retro.py g
 | Red gates: red base | `merge_gates.red.base` | `parked` events with `reason: "base"` |
 | Red gates: the ticket's own failure | `merge_gates.red.own` | `ci-wait` events with `outcome: "red"` less the red bases, plus local gates that ended `failed` or `blocked` |
 | Red gates: flaky | `merge_gates.red.flaky` | a ticket's `suite` record with `base_check.verdict: "flaky"` (a red gate whose rerun passed logs a green `ci-wait` and no event of its own), one per CI run |
+| Red gates: infrastructure | `merge_gates.red.infrastructure` | `ci-wait` events with `outcome: "infrastructure"` (#420): the gate went red with no test failed and only infrastructure steps failed (artifact upload, runner lost, setup); the run parked on CI, not on a red base, and no ticket was charged |
 | Red gates: no verdict | `merge_gates.red.no_verdict` | `ci-wait` events with `outcome: "no-verdict"` |
 | Gates not run: skipped | `merge_gates.not_run.skipped` | `merge-gate-skipped` events (#168) |
 | Gates not run: reused | `merge_gates.not_run.reused` | a ticket's `suite` record with `reused` (#194), one per CI run |
 | The time limit (#200) | `merge_gates.median_minutes`, `limit_minutes`, `over_limit` | the median of each gate that ran: each `ci-wait` event's `minutes`, less those whose `sha` a `merge-gate-skipped` or `merge-gate-reused` event names (CI ran nothing), plus each local gate as above; the limit is the plan's `merge_gate_minutes_limit` (its config, defaults filled); over means the median is above it, not at it |
 | Waiting on the Artisan | `artisan_wait.minutes`, `longest_minutes`, `decisions` | each `gate-opened` to the first `gate-approved`, `gate-decided`, `gate-redirected`, `gate-bypassed`, `gate-deferred`, `gate-resolved`, `gate-empty` or `end-gate-approved` with its `gate` (`end-gate-approved` with none closes `end`); a gate still open is not counted |
+| Gates carried to the end gate | `artisan_wait.carried`, `carried_gates` | the slice and risk gates a small clean run carried to the end gate instead of waiting on the Artisan (#407: `review_gates` with `carried`); they never waited, so they add no minutes |
 
 A run with no `merge-gate` and no `ci-wait` event (no merge gate ran, or a state file from before they were recorded) has every `merge_gates` figure null, one whose CI gates logged no `ci-wait` (before #195) has its minutes and red gates null, and one with no decided gate has the `artisan_wait` minutes null; the table shows each as a dash. With no gate minutes, `median_minutes` and `over_limit` are null; a plan from before #200 has no limit, so `limit_minutes` and `over_limit` are null.
 

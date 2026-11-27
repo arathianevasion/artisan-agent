@@ -1130,3 +1130,19 @@ test_an_open_overrun_gate_is_not_resolved_and_a_deferred_one_is_not_redirected()
   assert_status 6 "$A" bypass "$RUN_DIR" 51
   assert_status 6 "$A" redirect "$RUN_DIR" 50 --notes x
 }
+
+# #423: a ticket parked on its environment (sweep.sh) gets an exception gate
+# that says so, and retrying it once the host is fixed costs it no attempt.
+test_an_environment_park_opens_its_own_gate_and_retry_gives_the_attempt_back() {
+  setup_run
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.plan.gates = []
+    | .tickets["3"] |= (.attempts = 1 | .status = "blocked" | .blocked_reason = "environment failure: dotnet not on PATH"
+        | .environment = {status: "open", attempt: 1, why: "dotnet not on PATH"})
+    | .decisions += [{id: 1, kind: "exception", reason: "environment", ticket: "3", question: "q", status: "waiting", at: 1}]'
+  "$A" sync "$RUN_DIR" >/dev/null
+  local num=
+  num=$(state_get '.exception_gates[0].issue')
+  assert_contains "$(jq -r .title "$FAKE_GH_DIR/issue-$num.json")" "stopped on its environment"
+  "$A" retry "$RUN_DIR" "$num" --notes "dotnet is on PATH now" >/dev/null
+  assert_eq "queued answered 1" "$(state_get '.tickets["3"] | "\(.status) \(.environment.status) \(.extra_attempts)"')"
+}

@@ -42,6 +42,8 @@ Tickets from agents, findings or other people go through triage. **A ticket the 
 - tickets already `ready-for-agent` or `ready-for-human`, or `in-run`;
 - tickets authored by the Artisan (compare the author to the Artisan's identity, found the way `docs/agents/issue-tracker.md` says; on a local-markdown tracker make no `gh` call at all) that don't start with the triage disclaimer or an agent-filed marker and aren't labelled `needs-triage`.
 
+**A kept-cards ticket** (`Review kept decision cards: run <id>`, its first line the marker `Filed by the end gate of run <id>: an agent-filed review of kept decision cards`) is agent-filed and is **one item**, not one per card: it lists the decision cards the Artisan kept at that run's gates (`references/end-gate.md`, step 6). Present it as one line; the Artisan names any card to change, and each named card becomes its own `needs-triage` ticket (quoting the card's ticket, gate, question and choice). Closing it with nothing named keeps them all.
+
 An agent files with `needs-triage`, so that label (or no label from someone other than the Artisan) is what makes a ticket triage work. An explicitly named ticket is triaged whoever wrote it, except that if it is the Artisan's own, say it normally skips triage and ask once whether they want it triaged anyway.
 
 ## Showing what needs attention

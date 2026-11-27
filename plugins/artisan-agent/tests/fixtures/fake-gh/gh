@@ -39,6 +39,13 @@
 #   gh pr view <n|url> [-R repo] --json state,mergeCommit [-q filter]
 #                         from pr-<n>.json: state (OPEN unless the file says otherwise) and
 #                         mergeCommit {oid}; a test merges a PR by setting state and merge_oid
+#   gh pr merge <n|url> [-R repo] --merge
+#                         sets state MERGED in pr-<n>.json; refused (exit 1) with the text of
+#                         pr-merge-fail-<n> when the test wrote one, or when its base branch was deleted
+#   gh pr edit <n|url> [-R repo] --base B
+#                         sets base in pr-<n>.json
+#   gh api --method DELETE repos/<o>/<r>/git/refs/heads/<branch>
+#                         records the branch in deleted-branches, one per line
 #   gh pr list [-R repo] --state merged --search <sha> --json number,url [-q filter]
 #                         the merged PRs (state MERGED in pr-<n>.json) whose "commits" list holds <sha>
 #   gh workflow run <file> [-R repo] --ref <branch> [-f key=value]...
@@ -50,6 +57,8 @@
 #                           ci-red-outcome  the conclusion ci-red-if-file gives instead of failure (timed_out, ...)
 #                           ci-sha          a head SHA to report instead of the branch's tip
 #                           ci-jobs         the jobs, a JSON list of names (default ["bash 5.2", "bash 3.2"])
+#                           ci-job-details  a JSON object, job name -> {steps, annotations}: merged into that job
+#                                           (the steps gh run view --json jobs gives; the annotations gh api serves)
 #                           ci-unavailable  present: the dispatch fails, as with GitHub down
 #                           ci-no-runner    a JSON list of job names no runner picks up (#258): each is
 #                                           cancelled with GitHub's "not acquired by Runner" annotation
@@ -80,7 +89,8 @@
 #                         --failed reruns only the jobs that did not pass; a job no runner picks
 #                         up is cancelled again while ci-no-runner-attempts lasts
 #   gh api repos/<repo>/check-runs/<job id>/annotations
-#                         the job's annotations: GitHub's "not acquired by Runner" one for a job
+#                         the job's annotations: its own annotations list when the test wrote one on
+#                         the job, else GitHub's "not acquired by Runner" one for a job
 #                         ci-no-runner cancelled, else []; 404 for a job no run has
 #   gh project view|field-list|item-list <n> --owner O --format json
 #   gh project item-add <n> --owner O --url <issue url> --format json
@@ -214,6 +224,9 @@ case "${1:-} ${2:-}" in
           cur='[]'; [ -f "$FAKE_GH_DIR/blocked_by-$n.json" ] && cur=$(cat "$FAKE_GH_DIR/blocked_by-$n.json")
           printf '%s' "$cur" | jq -c --argjson b "$blocker" 'map(select(. != $b))' >"$FAKE_GH_DIR/blocked_by-$n.json"
           echo '{}' ;;
+        */git/refs/heads/*)
+          printf '%s\n' "${path#*/git/refs/heads/}" >>"$FAKE_GH_DIR/deleted-branches"
+          echo '{}' ;;
         *) echo "gh: unsupported api DELETE path: $path" >&2; exit 1 ;;
       esac
       exit 0
@@ -260,7 +273,7 @@ case "${1:-} ${2:-}" in
         job=$(for f in "$FAKE_GH_DIR"/run-*.json; do [ -f "$f" ] || continue
           jq -c --arg j "$jid" '.jobs[]? | select((.databaseId | tostring) == $j)' "$f"; done | head -n 1)
         [ -n "$job" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
-        jq -c --arg m "$NO_RUNNER_MESSAGE" 'if .no_runner then [{path: ".github", start_line: 1, end_line: 1,
+        jq -c --arg m "$NO_RUNNER_MESSAGE" 'if .annotations then .annotations elif .no_runner then [{path: ".github", start_line: 1, end_line: 1,
             annotation_level: "failure", title: "", message: $m}] else [] end' <<<"$job" ;;
       repos/*/issues/*/sub_issues)
         n=${path%/sub_issues}; n=${n##*/}
@@ -396,6 +409,31 @@ case "${1:-} ${2:-}" in
     [ -f "$FAKE_GH_DIR/pr-$n.json" ] || { echo "gh: no pull request #$n (HTTP 404)" >&2; exit 1; }
     out=$(jq -c '{state: (.state // "OPEN"), mergeCommit: (if .merge_oid then {oid: .merge_oid} else null end)}' "$FAKE_GH_DIR/pr-$n.json")
     if [ -n "$filter" ]; then printf '%s' "$out" | jq -r "$filter"; else printf '%s\n' "$out"; fi ;;
+  "pr merge"|"pr edit")
+    sub=$2
+    shift 2
+    n= base=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo) check_repo "$2"; shift 2 ;;
+        --merge) shift ;;
+        --base) base=$2; shift 2 ;;
+        -*) echo "gh (fake): pr $sub: unsupported: $1" >&2; exit 1 ;;
+        *) n=${1##*/}; shift ;;
+      esac
+    done
+    f="$FAKE_GH_DIR/pr-$n.json"
+    [ -f "$f" ] || { echo "gh: no pull request #$n (HTTP 404)" >&2; exit 1; }
+    if [ "$sub" = edit ]; then
+      [ -n "$base" ] || { echo "gh (fake): pr edit needs --base" >&2; exit 1; }
+      jq --arg b "$base" '.base = $b' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+      exit 0
+    fi
+    [ ! -f "$FAKE_GH_DIR/pr-merge-fail-$n" ] || { cat "$FAKE_GH_DIR/pr-merge-fail-$n" >&2; exit 1; }
+    if [ -f "$FAKE_GH_DIR/deleted-branches" ] && grep -qxF "$(jq -r .base "$f")" "$FAKE_GH_DIR/deleted-branches"; then
+      echo "gh: pull request #$n is closed: its base branch was deleted" >&2; exit 1
+    fi
+    jq '.state = "MERGED" | .merge_oid = "abc123"' "$f" >"$f.tmp" && mv "$f.tmp" "$f" ;;
   "pr list")
     shift 2
     search= filter=
@@ -433,6 +471,8 @@ case "${1:-} ${2:-}" in
     outcome=$(outcome_for "$sha")
     jobs='["bash 5.2", "bash 3.2"]'
     [ ! -s "$FAKE_GH_DIR/ci-jobs" ] || jobs=$(cat "$FAKE_GH_DIR/ci-jobs")
+    details='{}'
+    [ ! -s "$FAKE_GH_DIR/ci-job-details" ] || details=$(cat "$FAKE_GH_DIR/ci-job-details")
     title=$wf
     if [ -f "$FAKE_GH_DIR/ci-run-name" ]; then
       defaults='{}'
@@ -443,13 +483,14 @@ case "${1:-} ${2:-}" in
     id=9001
     while [ -f "$FAKE_GH_DIR/run-$id.json" ]; do id=$((id + 1)); done
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" \
+    jq -n --argjson id "$id" --arg wf "$wf" --arg b "$ref" --arg sha "$sha" --arg o "$outcome" --argjson jobs "$jobs" --argjson details "$details" \
       --arg now "$now" --arg repo "${FAKE_GH_REPO:-local/sample}" --argjson in "$inputs" --arg title "$title" \
       --argjson nr "$(no_runner_jobs "$id" 1)" '
       (if $o == "never" then {status: "in_progress", conclusion: null} elif $o == "queued" then {status: "queued", conclusion: null} else {status: "completed", conclusion: $o} end) as $s
       | [$jobs | to_entries[] | {databaseId: ($id * 100 + .key + 1), name: .value}
           + (if (.value | IN($nr[])) then {status: "completed", conclusion: "cancelled", no_runner: true}
-             else {status: $s.status, conclusion: $s.conclusion} end)] as $j
+             else {status: $s.status, conclusion: $s.conclusion} end)
+          + ($details[.value] // {})] as $j
       | {databaseId: $id, attempt: 1, workflowName: $wf, displayTitle: $title, headBranch: $b, headSha: $sha, event: "workflow_dispatch",
          url: "https://github.com/\($repo)/actions/runs/\($id)", createdAt: $now, updatedAt: $now, inputs: $in}
         + $s + (if $s.conclusion == "success" and any($j[]; .no_runner) then {conclusion: "failure"} else {} end)
