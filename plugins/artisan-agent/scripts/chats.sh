@@ -434,7 +434,7 @@ sweep_plans() {
   rows=$(plan_rows)
   [ -n "$rows" ] || return 0
   locked=0
-  held=$("$SCRIPT_DIR/run-lock.sh" check "$PROJECT" 2>/dev/null) || locked=1
+  held=$("$SCRIPT_DIR/run-lock.sh" check "$PROJECT" --local 2>/dev/null) || locked=1
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     n=$(jq -r .number <<<"$p")

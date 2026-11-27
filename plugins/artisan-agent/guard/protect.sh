@@ -138,7 +138,7 @@ case "$mode" in
     esac
     skill=${skill#artisan-agent:}
     [ "$skill" = implement-plan ] || exit 0
-    holder=$("$SCRIPTS/run-lock.sh" check "$cwd" 2>/dev/null) && exit 0
+    holder=$("$SCRIPTS/run-lock.sh" check "$cwd" --local 2>/dev/null) && exit 0
     [ -n "$holder" ] || exit 0          # not a repo, or the check itself failed: do not block
     run_id=${holder% *}; pid=${holder#* }
     # The chat that holds the run is carrying on or adding to its own run,
