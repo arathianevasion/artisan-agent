@@ -11,7 +11,7 @@ Two rules keep `main` free of uncommitted surprises and runs from colliding. Thi
 |---|---|---|
 | Plugin hook (`guard/protect.sh`, wired in `hooks/hooks.json`) | refuses `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on a file in a repo's main checkout, saying where to work; refuses `implement-plan` (typed, or called by Claude) while a run holds the lock and leaves the request as a `plan` issue | n/a |
 | Git pre-commit hook (`guard/pre-commit.sh`, installed per repo by `guard/install-pre-commit.sh`, which project setup is to call) | refuses a commit in the main checkout | yes: plain git |
-| `implement-plan`'s own check (`scripts/run-lock.sh check`, its preconditions) | refuses to start while another run holds the lock, and leaves the request as a `plan` issue | yes: part of the skill |
+| `implement-plan`'s own check (`scripts/run-lock.sh check`, its preconditions) | refuses to start while another run holds the lock, and leaves the request as a `plan` issue; refuses too when a run may be open on another machine (exit 4), unless the Artisan overrides it with `--override`, which is recorded | yes: part of the skill |
 
 The edit rule applies to repos that have adopted the pipeline (a committed `.artisan-agent/config.yml`) and skips git-ignored paths such as `.artisan-agent/runs/`, and paths under a folder the project config lists in `main_checkout_runtime`.
 A person can still use `git commit --no-verify`; the rule is a guardrail for agents, not a lock on the owner.
