@@ -896,3 +896,78 @@ test_the_design_skill_and_the_end_gate_reference_say_retire_runs_after_the_merge
   assert_contains "$(cat "$SCRIPTS/../skills/design/SKILL.md")" "Retire runs after the merge, not at the cut"
   assert_contains "$(cat "$SCRIPTS/../references/end-gate.md")" "after the merge, not at the cut"
 }
+
+# ------------------------------------------------- end_gate.auto_merge (#393)
+
+auto_merge() { # true|false: the project's end_gate.auto_merge
+  printf 'end_gate:\n  auto_merge: %s\n' "$1" >>"$PROJECT/.artisan-agent/config.yml"
+}
+
+cut_two_stacked_prs() {
+  product_boundary plan   # plan #100 (ticket 1), plan #101 (tickets 2 and 3): two stacked PRs
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_eq 2 "$(state_get '.end_gate.prs | length')"
+}
+
+test_with_auto_merge_on_finish_merges_the_stack_in_order_and_retargets_before_deleting_branches() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  local out= calls=
+  out=$("$E" finish "$RUN_DIR")
+  calls=$(grep -E '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" | sed -E 's|https://github.com/local/sample/pull/||; s| -R local/sample||')
+  assert_eq "pr merge 1 --merge
+pr edit 2 --base main
+pr merge 2 --merge
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/1
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/2" "$calls"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-1.json")"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq main "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_contains "$out" "Merged the stack"
+  assert_not_contains "$out" "Merge the stack in this order"
+}
+
+test_a_failed_merge_stops_the_stack_leaves_later_prs_open_and_names_the_cause() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  echo "Pull request is not mergeable: the merge commit cannot be cleanly created." >"$FAKE_GH_DIR/pr-merge-fail-1"
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1) && fail "finish succeeded with a merge that failed"
+  assert_contains "$out" "auto-merge stopped at PR 1"
+  assert_contains "$out" "the merge commit cannot be cleanly created"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq pr/r1/1 "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq 0 "$(grep -c '^pr merge.*/pull/2' "$FAKE_GH_DIR/calls" || true)"
+  [ ! -f "$FAKE_GH_DIR/deleted-branches" ] || fail "a branch was deleted: $(cat "$FAKE_GH_DIR/deleted-branches")"
+  assert_eq approved "$("$E" status "$RUN_DIR")"
+  assert_eq "auto-merge-stopped" "$(state_get '.events[-1].event')"
+  # Fixed, a rerun carries on from where it stopped.
+  rm "$FAKE_GH_DIR/pr-merge-fail-1"
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_off_or_unset_finish_merges_nothing() {
+  setup_end
+  cut_two_stacked_prs
+  local out=
+  out=$("$E" finish "$RUN_DIR")
+  assert_contains "$out" "Merge the stack in this order"
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+}
+
+test_with_auto_merge_set_off_finish_merges_nothing() {
+  setup_end
+  auto_merge false
+  cut_two_stacked_prs
+  "$E" finish "$RUN_DIR" >/dev/null
+  assert_eq 0 "$(grep -cE '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" || true)"
+  assert_eq OPEN "$(jq -r '.state // "OPEN"' "$FAKE_GH_DIR/pr-1.json")"
+}

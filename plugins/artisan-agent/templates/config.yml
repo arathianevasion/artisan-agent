@@ -281,3 +281,16 @@ worktree_setup_timeout: 900
 # Example (a folder kept untracked but not ignored, so /move-session carries it):
 #   main_checkout_runtime: [.claude/orchestrator/]
 main_checkout_runtime: []
+
+# The end of a run (#393). auto_merge: true has end-gate.sh finish merge the
+# run's cut PRs into the default branch itself, in stack order, the way
+# end-gate.sh prs prints the steps (#271): each PR merged with a merge commit
+# and its branch kept, the next PR retargeted to the default branch, and the
+# merged branches deleted only once the whole stack is in; then the run ends.
+# A merge that fails (a conflict, a required check red, branch protection)
+# stops it there: the PRs after it stay open, finish names the PR and the
+# reason, and the run does not end until finish runs again. For a project
+# where the Artisan is the only one a change affects. Off, the default, merges
+# nothing: the Artisan merges the PRs by hand.
+end_gate:
+  auto_merge: false
