@@ -1,0 +1,8 @@
+{"databaseId": 9001, "attempt": 1, "status": "completed", "conclusion": "failure", "headSha": "SHA", "url": "https://github.com/local/sample/actions/runs/9001",
+ "jobs": [
+  {"databaseId": 900101, "name": "unit", "status": "completed", "conclusion": "failure",
+   "steps": [
+    {"name": "Set up job", "number": 1, "status": "completed", "conclusion": "success"},
+    {"name": "Run tests", "number": 2, "status": "completed", "conclusion": "failure"},
+    {"name": "Upload test results", "number": 3, "status": "completed", "conclusion": "failure"}],
+   "annotations": [{"annotation_level": "failure", "title": "", "message": "Process completed with exit code 1."}]}]}

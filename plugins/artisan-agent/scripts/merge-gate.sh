@@ -145,6 +145,18 @@
 #       empty and why says so. Never fails a gate: exit 0 whether or not
 #       it names a test (2 on bad arguments). A log not served yet is asked
 #       for again, three times in all, ARTISAN_CI_POLL_SECONDS apart.
+#   merge-gate.sh infra-failure --repo O/N --run-id ID
+#       whether a red run failed only in infrastructure steps (#420), as JSON:
+#       {infrastructure, failed_steps: [{job, step, error}]}. step is each
+#       failed step (the one a lost runner cut off, when none failed); error
+#       is the first failure annotation of its job's check run, else null.
+#       infrastructure is true when every failed step is one no test runs in:
+#       set up and complete, checkout, cache, setup-* actions, artifact
+#       upload and download. ci runs it on a red run that names no failing
+#       test: when true the record holds kind: "infrastructure",
+#       failed_steps and why, no base check runs (the base is not in
+#       question) and the exit is 19, so the run parks on CI and no ticket
+#       is charged.
 #   merge-gate.sh sweep --prefix P [--dir D] [--remote R]
 #       delete every branch on the remote whose name starts with P (a run's
 #       ci/<run-id>- leftovers from a crash). Prints one "deleted <branch>"
@@ -552,7 +564,7 @@ CI_BASE=
 cmd_ci() {
   local timeout=30 run="" id="" view="" deadline=0 poll=${ARTISAN_CI_POLL_SECONDS:-20} conclusion="" resume=0 allowed=""
   local reuse_run="" reuse_sha=""
-  local window=0 red="" attempt="" w="" start_minutes=10 start_by=0
+  local window=0 red="" infra="" attempt="" w="" start_minutes=10 start_by=0
   local -a skip=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -658,6 +670,17 @@ cmd_ci() {
       base_check "$id" "$red" "$window" "$attempt" success ;;
     failure | timed_out)
       red=$(record "$view" "" | jq -c --argjson f "$(failed_tests "$id" 20)" '. + {failing_tests: $f}')
+      # No test failed and every failed step is infrastructure (#420): CI
+      # broke, not the code or the base. No base check, no attempt used.
+      if [ "$conclusion" = failure ] && [ "$(jq -r '.failing_tests.total // 0' <<<"$red")" = 0 ]; then
+        infra=$(infra_failure "$view") || infra=""
+        if [ -n "$infra" ] && [ "$(jq -r .infrastructure <<<"$infra")" = true ]; then
+          delete_branch
+          jq -c --argjson i "$infra" '. + {kind: "infrastructure", failed_steps: $i.failed_steps,
+              why: ("infrastructure failure, no test failed: " + ($i.failed_steps | map("\(.job): \(.step // "the job") (\(.error // "no error message"))") | join("; ")))}' <<<"$red"
+          return 19
+        fi
+      fi
       if [ -z "$CI_BASE" ]; then
         delete_branch
         printf '%s\n' "$red"
@@ -670,6 +693,54 @@ cmd_ci() {
       record "$view" "$CI_WF concluded ${conclusion:-nothing} for $CI_SHA, so CI did not judge it"
       return 19 ;;
   esac
+}
+
+# infra_failure view: a red run whose failed steps are infrastructure, not
+# tests (#420). Prints {infrastructure, failed_steps: [{job, step, error}]}:
+# every step of a failed job that failed (a failed job with no failed step,
+# a runner lost mid-step, names the step it was on), with the
+# error its check run's annotations give (the first failure-level one, else
+# the first). infrastructure is true when there is a failed job and each
+# failed step is one no test runs in: GitHub's own set up and complete
+# steps, checkout, cache, setup-* actions, artifact upload and download (by
+# the step's first word, so a test step that only mentions one is a test). A
+# job that failed with no failed step but a step cancelled or never finished
+# is infrastructure only when its annotation names the runner (lost,
+# shutdown); one with no step to show is not, so a run read without its steps
+# is judged as before. Never fails the
+# gate: annotations it cannot read leave the error null.
+INFRA_STEP='^(set up job|complete job|post )|^(run )?actions/(checkout|cache|upload-artifact|download-artifact|setup-[a-z0-9-]+)|^(set ?up|upload|download|checkout|restore|save|cache)\b'
+infra_failure() {
+  local view="$1" jid="" ann="" line="" lines=""
+  for jid in $(jq -r '.jobs[]? | select(.conclusion == "failure") | .databaseId // "none"' <<<"$view"); do
+    case "$jid" in '' | *[!0-9]*) continue ;; esac
+    ann=$(gh api "repos/$CI_REPO/check-runs/$jid/annotations" 2>/dev/null) || ann='[]'
+    line=$(jq -c --arg j "$jid" '{j: $j, m: ((map(select(.annotation_level == "failure")) | first // first // null) | .message? // null)}' <<<"$ann" 2>/dev/null) || line=""
+    [ -z "$line" ] || lines="$lines$line"$'\n'
+  done
+  # The view and each job's error go in on stdin: they grow with the run.
+  { printf '%s\n' "$view"; printf '%s' "$lines"; } | jq -cs --arg re "$INFRA_STEP" '
+    .[0] as $v | ((.[1:] | map({(.j): .m}) | add) // {}) as $e
+    | [$v.jobs[]? | select(.conclusion == "failure") | . as $j
+      | ([($j.steps // [])[] | select(.conclusion == "failure")]) as $f
+      | (if $f == [] then [{name: (([($j.steps // [])[] | select(.conclusion != "success" and .conclusion != "skipped")] | first | .name) // null), none: true}] else $f end)[]
+      | {job: $j.name, step: .name, error: ($e[($j.databaseId | tostring)] // null),
+         infra: (if .none then (($e[($j.databaseId | tostring)] // "") | test("runner"; "i")) else ((.name // "") | test($re; "i")) end)}] as $s
+    | {infrastructure: ($s != [] and all($s[]; .infra)), failed_steps: [$s[] | {job, step, error}]}'
+}
+
+# cmd_infra_failure: merge-gate.sh infra-failure --repo O/N --run-id ID
+cmd_infra_failure() {
+  local id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || usage; CI_REPO=$2; shift 2 ;;
+      --run-id) [ $# -ge 2 ] || usage; id=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$CI_REPO" ] && [ -n "$id" ] || usage
+  infra_failure "$(gh run view "$id" -R "$CI_REPO" --json jobs)" || die "could not read run $id's jobs (gh run view)"
 }
 
 # base_runner_retry base-run window: a base run that concluded with only
@@ -1049,6 +1120,7 @@ case "$cmd" in
   ci) cmd_ci "$@" ;;
   find) cmd_find "$@" ;;
   failed-tests) cmd_failed_tests "$@" ;;
+  infra-failure) cmd_infra_failure "$@" ;;
   local) cmd_local "$@" ;;
   start) cmd_start "$@" ;;
   run) cmd_run "$@" ;;

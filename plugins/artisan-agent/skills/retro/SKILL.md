@@ -102,6 +102,7 @@ The merge gate table (`facts.json` `merge_gates` and `artisan_wait`; `retro.py g
 | Red gates: red base | `merge_gates.red.base` | `parked` events with `reason: "base"` |
 | Red gates: the ticket's own failure | `merge_gates.red.own` | `ci-wait` events with `outcome: "red"` less the red bases, plus local gates that ended `failed` or `blocked` |
 | Red gates: flaky | `merge_gates.red.flaky` | a ticket's `suite` record with `base_check.verdict: "flaky"` (a red gate whose rerun passed logs a green `ci-wait` and no event of its own), one per CI run |
+| Red gates: infrastructure | `merge_gates.red.infrastructure` | `ci-wait` events with `outcome: "infrastructure"` (#420): the gate went red with no test failed and only infrastructure steps failed (artifact upload, runner lost, setup); the run parked on CI, not on a red base, and no ticket was charged |
 | Red gates: no verdict | `merge_gates.red.no_verdict` | `ci-wait` events with `outcome: "no-verdict"` |
 | Gates not run: skipped | `merge_gates.not_run.skipped` | `merge-gate-skipped` events (#168) |
 | Gates not run: reused | `merge_gates.not_run.reused` | a ticket's `suite` record with `reused` (#194), one per CI run |

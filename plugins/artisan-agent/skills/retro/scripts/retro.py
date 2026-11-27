@@ -219,7 +219,7 @@ def merge_gate_costs(s, merged):
     if not starts and not waits:
         return {"run": None, "run_per_merged": None, "minutes": None, "minutes_per_merged": None,
                 "median_minutes": None,
-                "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
+                "red": {"total": None, "own": None, "base": None, "flaky": None, "infrastructure": None, "no_verdict": None},
                 "not_run": {"skipped": None, "reused": None}}
     skipped = len([e for e in events if e.get("event") == "merge-gate-skipped"])
     # A gate #194 reuses records green with reused: <run id> on the suite
@@ -250,18 +250,19 @@ def merge_gate_costs(s, merged):
     base = len([e for e in events if e.get("event") == "parked" and e.get("reason") == "base"])
     ci_red = len([e for e in waits if e.get("outcome") == "red"])
     no_verdict = len([e for e in waits if e.get("outcome") == "no-verdict"])
+    infrastructure = len([e for e in waits if e.get("outcome") == "infrastructure"])
     own = max(0, ci_red - base) + local_red
     run = len(starts) - skipped
     if not waits and any(g.get("mode") != "local" for _, g in starts):
         # CI gates from before #195 logged no ci-wait: their minutes and red
         # causes are unknown, not zero.
         return {"run": run, "run_per_merged": per(run, merged), "minutes": None, "minutes_per_merged": None,
-                "median_minutes": None, "red": {"total": None, "own": None, "base": None, "flaky": None, "no_verdict": None},
+                "median_minutes": None, "red": {"total": None, "own": None, "base": None, "flaky": None, "infrastructure": None, "no_verdict": None},
                 "not_run": {"skipped": skipped, "reused": reused}}
     return {"run": run, "run_per_merged": per(run, merged),
             "minutes": num(minutes), "minutes_per_merged": per(minutes, merged),
-            "median_minutes": median(each), "red": {"total": own + base + flaky + no_verdict, "own": own, "base": base,
-                    "flaky": flaky, "no_verdict": no_verdict},
+            "median_minutes": median(each), "red": {"total": own + base + flaky + infrastructure + no_verdict, "own": own, "base": base,
+                    "flaky": flaky, "infrastructure": infrastructure, "no_verdict": no_verdict},
             "not_run": {"skipped": skipped, "reused": reused}}
 
 
@@ -691,8 +692,8 @@ def gate_costs_table(g, w):
         wait = "%s min (%s per merged ticket)" % (g["minutes"], dash(g["minutes_per_merged"]))
     r = g["red"]
     if r["total"] is not None:
-        red = "%s: own failure %s · red base %s · flaky %s · no verdict %s" % (
-            r["total"], r["own"], r["base"], r["flaky"], r["no_verdict"])
+        red = "%s: own failure %s · red base %s · flaky %s · infrastructure %s · no verdict %s" % (
+            r["total"], r["own"], r["base"], r["flaky"], r["infrastructure"], r["no_verdict"])
     artisan = ("%s min over %d decision%s (longest %s min)" % (
         w["minutes"], w["decisions"], "" if w["decisions"] == 1 else "s", w["longest_minutes"])
                if w["minutes"] is not None else "-")
