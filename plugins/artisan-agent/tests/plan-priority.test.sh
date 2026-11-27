@@ -11,7 +11,7 @@ plan() { "$SCRIPTS/plan.sh" "$@"; }
 
 # build_draft [jq filter on the draft]: tickets 30, 10, 20 in that scope order.
 build_draft() {
-  jq -n --arg f "${1:-.}" '
+  jq -n '
     def t($n): {title: "Ticket \($n)", model: "claude-sonnet-5-5", blocked_by: [],
                 acceptance: ["t\($n).txt exists"], expected_output: "t\($n).txt", expected_files: ["t\($n).txt"],
                 expected: {input_tokens: 100000, output_tokens: 10000, minutes: 10}};
@@ -46,7 +46,7 @@ test_a_priority_the_draft_sets_is_kept() {
   assert_eq '[0,-7,-2]' "$(prios)"
 }
 
-test_every_planned_priority_is_below_a_ticket_added_mid_run() {
+test_no_planned_priority_is_above_zero_so_added_tickets_stay_ahead() {
   make_project
   build_draft '.tickets["20"].ci = true'
   assert_eq 0 "$(jq '[.tickets[].priority | select(. > 0)] | length' "$TEST_TMPDIR/plan.json")"
