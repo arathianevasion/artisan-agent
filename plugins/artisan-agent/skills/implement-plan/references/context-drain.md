@@ -24,6 +24,10 @@ The thresholds are the run's `context.drain_percent` and `context.review_percent
 
 `risk-gate` means a merge you process now gets a risk gate. Only an orchestrator merges, so for the chat it asks nothing more than its band does.
 
+## Why machine setup offers to turn off idle compaction
+
+The drain assumes Claude Code compacts the Run chat only at `chat_context.compact_percent`, once its dispatched work has drained. Claude Code also compacts an idle session shortly before its one-hour prompt cache expires (`"idleCompaction": false` in `settings.json` turns that off), and a Run chat waiting on dispatched work is idle for exactly that long. On 2026-11-18 the Run chat compacted at 220k tokens with a worker still running. So machine setup (`machine-setup.sh idle-compaction`, #260) offers to set `idleCompaction` to `false`, recommending yes. It is an offer because the setting changes every Claude Code session on the machine, and costs a cache-less re-read when a session wakes after an hour idle.
+
 ## Reading the context percentage
 
 A headless session can't read its own context percentage from Claude Code (only the interactive status line is given it). So `drain.sh` uses the fallback: the session's transcript, its last main-thread record with usage (input, cache creation, cache read and output tokens), against the model's window. The window is 200,000 tokens, or 1,000,000 for a model id ending `[1m]` or once the context is past 200,000 (it can only be the larger one); `ARTISAN_CONTEXT_WINDOW` overrides it.
