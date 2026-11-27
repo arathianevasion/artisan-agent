@@ -618,6 +618,8 @@ test_resolve_scope_reads_a_plan_issues_body_blockers_where_there_are_no_native_d
   jq -n '{number: 71, id: 1071, title: "Old plan", state: "closed", labels: [{name: "plan"}], body: ""}' >"$FAKE_GH_DIR/issue-71.json"
   set_body "$P2" "Plan two\n\n## Blocked by\n\n- #70\n- #71\n- #$P1\n"
   fail_gh_on "*issues/$P2/dependencies/blocked_by*" "gh: Not Found (HTTP 404)"
+  # Closed plan 71 is checked for work on main (#431): in a repo, with nothing merged.
+  git init -q -b main . && git -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   local out=; out=$("$RS" --repo local/sample "$P1" "$P2")
   assert_eq "[{\"plan\":$P2,\"blocker\":70}]" "$(jq -c '.outside_blockers' <<<"$out")" "open unnamed plan 70 listed; closed 71 and named $P1 not"
 }

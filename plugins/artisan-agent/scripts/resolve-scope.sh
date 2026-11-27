@@ -30,8 +30,12 @@
 # 404 the plan body's blockers. A blocker read that fails any other way exits 1
 # naming the issue, never an empty list.
 #
+# A named plan's closed blocker plan whose work isn't on main (plan-done.sh)
+# still blocks it: exit 4, naming the plan, the blocker, its tickets and the
+# branch they are on (#431).
+#
 # Exit status: 0 ok, 1 an issue could not be read, 2 bad usage, 3 a plan issue
-# with no tickets. Needs gh and jq. Bash 3.2-safe.
+# with no tickets, 4 a blocker plan's work is not on main. Needs gh and jq. Bash 3.2-safe.
 
 set -euo pipefail
 
@@ -39,6 +43,8 @@ usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { printf 'resolve-scope.sh: %s\n' "$*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required but was not found on PATH"
 command -v gh >/dev/null 2>&1 || die "gh is required but was not found on PATH"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$SCRIPT_DIR/lib/plan-lib.sh"
 
 REPO=
 NAMED=()
@@ -57,9 +63,10 @@ done
 
 # The body's blockers, one parser for tickets and plans: the refs on the first
 # "Blocked by: #a, #b" line, or, when that line is a "## Blocked by" heading, the
-# refs listed below it up to the next heading. Prints the open ones as a JSON array.
-body_blockers() { # number what(ticket|plan)
-  local n=$1 what=$2 body= b= st= out='[]'
+# refs listed below it up to the next heading. Prints those in state want
+# (default open) as a JSON array.
+body_blockers() { # number what(ticket|plan) [want(open|closed)]
+  local n=$1 what=$2 want=${3:-open} body= b= st= out='[]'
   body=$(gh issue view "$n" -R "$REPO" --json body --jq '.body // ""') || die "cannot read the blockers of $what #$n: cannot read its body"
   for b in $(printf '%s\n' "$body" | awk '
     !seen && tolower($0) ~ /^[[:space:]]*(#+[[:space:]]*)?blocked by:?/ { seen = 1; head = ($0 ~ /^[[:space:]]*#+[[:space:]]/); print; next }
@@ -68,12 +75,12 @@ body_blockers() { # number what(ticket|plan)
     seen { exit }' | grep -oE '#[0-9]+' | tr -d '#'); do
     st=$(gh issue view "$b" -R "$REPO" --json state --jq '.state | ascii_downcase') \
       || die "cannot read the blockers of $what #$n: cannot read #$b"
-    [ "$st" != open ] || out=$(jq -c --argjson b "$b" '. + [$b]' <<<"$out")
+    [ "$st" != "$want" ] || out=$(jq -c --argjson b "$b" '. + [$b]' <<<"$out")
   done
   printf '%s\n' "$out"
 }
 
-tickets='[]' skipped='[]' outside='[]' plans='[]'
+tickets='[]' skipped='[]' outside='[]' plans='[]' undone='[]'
 add_ticket() { # number title state from
   if [ "$3" != open ]; then
     skipped=$(jq -c --argjson n "$1" '. + [{number: $n, reason: "closed"}]' <<<"$skipped")
@@ -91,16 +98,7 @@ for n in "${NAMED[@]}"; do
   fi
   plan_ref=$(jq -c '{number, title}' <<<"$issue")
   plans=$(jq -c --argjson i "$plan_ref" '. + [$i]' <<<"$plans")
-  subs=$(gh api "repos/$REPO/issues/$n/sub_issues") || die "cannot read the sub-issues of plan #$n"
-  members=$(jq -c '[.[] | {number, title, state: (.state | ascii_downcase)}]' <<<"$subs")
-  if [ "$(jq length <<<"$members")" -eq 0 ]; then
-    # No sub-issues: the task list in the body, each ticket read in turn.
-    members='[]'
-    for t in $(jq -r '.body // ""' <<<"$issue" | sed -n 's/^[[:space:]]*[-*][[:space:]]*\[[ xX]\][[:space:]]*#\([0-9][0-9]*\).*/\1/p'); do
-      m=$(gh issue view "$t" -R "$REPO" --json number,title,state) || die "cannot read #$t (listed in plan #$n)"
-      members=$(jq -c --argjson m "$m" '. + [$m | {number, title, state: (.state | ascii_downcase)}]' <<<"$members")
-    done
-  fi
+  members=$(plan_members "$REPO" "$n")
   if [ "$(jq length <<<"$members")" -eq 0 ]; then
     printf 'resolve-scope.sh: plan issue #%s has no tickets: it is a queued request, not a plan to run. Read it, then plan its work (/artisan-agent:to-plan) or name tickets instead.\n' "$n" >&2
     exit 3
@@ -111,17 +109,41 @@ for n in "${NAMED[@]}"; do
   if blockers=$(gh api "repos/$REPO/issues/$n/dependencies/blocked_by" 2>&1); then
     open_blockers=$(jq -r '.[] | select((.state | ascii_downcase) == "open") | .number' <<<"$blockers") \
       || die "cannot read the blockers of plan #$n: unreadable answer"
+    closed_blockers=$(jq -r '.[] | select((.state | ascii_downcase) != "open") | .number' <<<"$blockers")
   else
     printf '%s' "$blockers" | grep -Eq 'HTTP 404|Not Found' \
       || die "cannot read the blockers of plan #$n: $blockers"
     open_blockers=$(body_blockers "$n" plan | jq -r '.[]') || exit 1
+    closed_blockers=$(body_blockers "$n" plan closed | jq -r '.[]') || exit 1
   fi
+  # A closed blocker plan whose work isn't on main still blocks (#431).
+  for b in $closed_blockers; do
+    labels=$(gh issue view "$b" -R "$REPO" --json labels) || die "cannot read #$b (a blocker of plan #$n)"
+    jq -e '.labels | map(.name) | index("plan")' <<<"$labels" >/dev/null || continue
+    rc=0; check=$("$SCRIPT_DIR/plan-done.sh" --repo "$REPO" "$b") || rc=$?
+    case $rc in
+      0) ;;
+      3) undone=$(jq -c --argjson p "$n" --argjson c "$check" '. + [{plan: $p, blocker: $c}]' <<<"$undone") ;;
+      *) die "cannot tell whether blocker plan #$b of plan #$n is on main" ;;
+    esac
+  done
   for b in $open_blockers; do
     named=0
     for m in "${NAMED[@]}"; do [ "$m" != "$b" ] || named=1; done
     [ "$named" -eq 1 ] || outside=$(jq -c --argjson p "$n" --argjson b "$b" '. + [{plan: $p, blocker: $b}]' <<<"$outside")
   done
 done
+
+# The plan step refuses a plan whose blocker plan is closed with work missing
+# from main: its dependents would build on a main without it (#431).
+if [ "$undone" != '[]' ]; then
+  jq -r '.[] | "resolve-scope.sh: plan #\(.plan) is blocked by plan #\(.blocker.plan), whose work is not on \(.blocker.main)"
+    + ([.blocker.open[] | "#\(.)"] | if length > 0 then "; open: \(join(", "))" else "" end)
+    + (.blocker.not_on_main | group_by(.branch) | map("\(map("#\(.ticket)") | join(", ")) on \(.[0].branch)")
+       | if length > 0 then "; not on main: \(join("; "))" else "" end)
+    + ". Merge that run branch into main first."' <<<"$undone" >&2
+  exit 4
+fi
 
 # Each ticket's open blockers.
 ticket_blockers() { # number: prints a JSON array of open blocker numbers
