@@ -443,6 +443,55 @@ def merge_gate_flags(tickets, overrides):
     return out
 
 
+# ---- Criteria a headless worker can't meet, caught before dispatch (#424) ----
+# Two warnings, never a refusal: the planner splits, rewords or adds the edge.
+
+def running_app_flags(tickets, words):
+    """Each agent criterion that reads as needing the running app (a value only
+    obtainable in-game), by the project's own running_app_phrases:
+    [{"ticket", "criterion", "phrase"}]. Empty with no phrases."""
+    out = []
+    for n in sorted(tickets, key=key):
+        if human_check_for(tickets, n):
+            continue
+        for c in tickets[n].get("acceptance") or []:
+            w = needs_person(c, words)
+            if w:
+                out.append({"ticket": n, "criterion": c, "phrase": w})
+    return out
+
+
+def blockers_of(tickets, n):
+    """Every ticket `n` is blocked by, directly or through another ticket."""
+    seen, todo = set(), [n]
+    while todo:
+        for b in tickets.get(todo.pop(), {}).get("blocked_by") or []:
+            b = str(b).lstrip("#")
+            if b not in seen:
+                seen.add(b)
+                todo.append(b)
+    return seen
+
+
+def undeclared_dependency_flags(tickets):
+    """Each agent criterion that cites another ticket of the plan ("#12") that
+    the ticket is not blocked by, directly or through others:
+    [{"ticket", "criterion", "needs"}]. Only a ticket in the plan's graph is
+    checked; a citation of one outside it is not flagged."""
+    out = []
+    for n in sorted(tickets, key=key):
+        if human_check_for(tickets, n):
+            continue
+        have = blockers_of(tickets, n)
+        for c in tickets[n].get("acceptance") or []:
+            for m in re.finditer(r"(?<![A-Za-z0-9_/])#(\d+)\b", str(c)):
+                d = m.group(1)
+                if d != n and d in tickets and d not in have \
+                        and not any(f["ticket"] == n and f["criterion"] == c and f["needs"] == d for f in out):
+                    out.append({"ticket": n, "criterion": c, "needs": d})
+    return out
+
+
 def add_overrides(plans, tickets, new):
     """Record the Artisan's overrides on the plan: each must name a criterion of
     the ticket and carry a reason. A repeat replaces the reason. An override's
@@ -836,11 +885,20 @@ def main(argv):
         save(path, plans)
     elif cmd == "flags":
         # stdin {"tickets", "human_check_overrides"?, "merge_gate_overrides"?}:
-        # the open flags, {human_check_flags, merge_gate_flags} (plan.sh build).
+        # the open flags, {human_check_flags, merge_gate_flags, running_app_flags,
+        # undeclared_dependency_flags} (plan.sh build).
         data = json.load(sys.stdin)
         tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
+        try:
+            app = json.loads(os.environ.get("TO_PLAN_RUNNING_APP_PHRASES") or "[]")
+        except ValueError:
+            app = None
+        if not isinstance(app, list):
+            raise Refusal("running_app_phrases must be a list of phrases")
         print(json.dumps({"human_check_flags": human_check_flags(tickets, data.get("human_check_overrides")),
-                          "merge_gate_flags": merge_gate_flags(tickets, data.get("merge_gate_overrides"))}))
+                          "merge_gate_flags": merge_gate_flags(tickets, data.get("merge_gate_overrides")),
+                          "running_app_flags": running_app_flags(tickets, [str(x) for x in app if str(x).strip()]),
+                          "undeclared_dependency_flags": undeclared_dependency_flags(tickets)}))
     elif cmd == "overrides":
         # stdin {"tickets"}, argv overrides.json: checked overrides,
         # {human_check_overrides, merge_gate_overrides} (plan.sh build).

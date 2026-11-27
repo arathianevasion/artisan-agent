@@ -61,6 +61,13 @@
 #                  tickets.<t>.acceptance_source says where a read list came
 #                  from ("body" or the comment's url). While one stands the
 #                  plan is not approvable: render says so, state.sh init refuses.
+#   running_app_flags  each criterion containing a phrase of the config's
+#                  running_app_phrases (a value only the running app gives),
+#                  [{ticket, criterion, phrase}] (#424); a warning, never
+#                  blocks approval
+#   undeclared_dependency_flags  each criterion that cites another ticket of the
+#                  plan ("#12") that the ticket is not blocked by, directly or
+#                  through others: [{ticket, criterion, needs}] (#424); a warning
 #   human_check_overrides  [{ticket, criterion, why}], one per
 #                  --override-human-check, the Artisan's reason recorded
 #   merge_gate_flags  each criterion, read as for human_check_flags, that reads
@@ -392,6 +399,7 @@ cmd_build() {
   fi
   out=$(printf '%s' "$out" | jq --argjson ov "$ov" '. + $ov')
   flags=$(printf '%s' "$out" | TO_PLAN_EXTRA_PHRASES=$(printf '%s' "$out" | jq -c '.config.human_check_phrases // []') \
+    TO_PLAN_RUNNING_APP_PHRASES=$(printf '%s' "$out" | jq -c '.config.running_app_phrases // []') \
     python3 -I "$SCRIPT_DIR/lib/to-plan.py" flags 2>&1) || die "$(printf '%s' "$flags" | sed 's/^to-plan: //')"
   out=$(printf '%s' "$out" | jq --argjson f "$flags" '. + $f')
   # The draft's one hands-on ticket, if it names one (human.sh annotate).
@@ -599,6 +607,22 @@ cmd_render() {
         ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \(.needs) |" ),
         "",
         "A worker runs no CI, opens no PR and runs only the tests that cover its change, so it can'"'"'t meet these, and the verifier would judge them. The merge gate already runs the suite on every merge. Drop it, or reword it to \"CI is green\" or \"The PR shows ...\", which the verifier leaves to the merge gate (in the ticket, then rebuild), or override it with a reason (`--override-merge-gate <ticket> \"<criterion>\" --why ...` on the build). Not approvable while one stands.",
+        "" end ),
+      ( ($p.running_app_flags // []) | if length == 0 then empty else
+        "### Criteria that may need the running app",
+        "| Ticket | Criterion | Reads as needing |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \"\(.phrase)\" |" ),
+        "",
+        "A headless worker can'"'"'t read a value only the running app gives, so it would end the attempt with the criterion unmeetable. Split it into a Human check (`to-plan.sh split-human-check`), reword it to something the tests can show, or leave it if the worker can meet it. A warning only: it does not block approval.",
+        "" end ),
+      ( ($p.undeclared_dependency_flags // []) | if length == 0 then empty else
+        "### Criteria that depend on a ticket the ticket is not blocked by",
+        "| Ticket | Criterion | Depends on |",
+        "|---|---|---|",
+        ( .[] | "| \(ticket(.ticket)) (\($p.tickets[.ticket].title // "untitled")) | \(.criterion) | \(ticket(.needs)) (\($p.tickets[.needs].title // "untitled")) |" ),
+        "",
+        "The criterion cites a ticket of this plan that has no blocking edge to the ticket, so the worker may run before that ticket'"'"'s output exists and could not meet it. Add the blocking edge (`blocked_by` in the draft), or reword the criterion. A warning only: it does not block approval.",
         "" end ),
       ( ($p.criteria_missing // []) | if length == 0 then empty else
         "### Tickets with no acceptance criteria",

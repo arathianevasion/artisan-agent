@@ -184,6 +184,7 @@ At the top, optionally `open_decisions`: `[{ticket, case, harm, recommendation}]
 | minimum estimates | `minimum_estimates` (`<model id>` or `all`: dollars) | Fable $2.00, Opus $1.00, Sonnet $0.50, Haiku $0.10, all $0.50 (source in `templates/config.yml`) |
 | host configured | `host_configured` | false |
 | extra Human check phrases | `human_check_phrases` (a list, added to `references/human-checks.md`'s) | none |
+| phrases that make a criterion read as needing the running app (#424) | `running_app_phrases` (a list) | none: the plan step lists a matching criterion as a warning, never blocking |
 | where this project's merge gate runs (#343) | `merge_gate` (`local` or `ci`) | empty: the machine's `merge_gate` in `host.json` decides; `ci` needs `ci_gate.workflow` (the plan step says so otherwise); the plan names the mode and its source (source in `templates/config.yml`) |
 | merge gate time limit (#200), in minutes | `merge_gate_minutes_limit` | 6: the plan step on a CI machine says so in one line when the expected CI minutes per merge are over it; the retro says so when the run's median merge gate was, and proposes a ticket to bring it back under. Nothing refuses, blocks or fails over it (source in `templates/config.yml`) |
 | runtime folders the main-checkout guard lets sessions write (#191) | `main_checkout_runtime` (a list of folders relative to the repo root, each ending in `/`; runtime files only, never source; `references/main-checkout.md`) | none; this repo lists `.claude/orchestrator/` |
