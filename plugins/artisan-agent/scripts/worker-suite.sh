@@ -135,18 +135,18 @@ cmd_run() {
 
 # preflight_command cmd seconds: cmd given seconds on the host, exiting 124
 # when it is stopped there. Under `timeout` where one works; a host without
-# (macOS has none) times it itself: cmd in its own process group (set -m),
-# a watcher that stops the group after the seconds, and 124 when the watcher
-# had already fired.
+# (macOS has none) times it itself: a watcher that stops cmd and everything
+# under it (walked with pgrep -P, as job control is off without a tty) after
+# the seconds, and 124 when the watcher had already fired.
 preflight_command() {
   local q=""
   q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
   printf "if timeout 1 true >/dev/null 2>&1; then exec timeout %s sh -c '%s'; fi
-set -m
+stop() { for c in \$(pgrep -P \$1); do stop \$c; done; kill -TERM \$1 2>/dev/null; }
 sh -c '%s' & p=\$!
-( sleep %s; kill -TERM -\$p 2>/dev/null || kill -TERM \$p 2>/dev/null ) >/dev/null 2>&1 & w=\$!
+( sleep %s; stop \$p ) >/dev/null 2>&1 & w=\$!
 wait \$p; rc=\$?
-if kill -TERM -\$w 2>/dev/null || kill -TERM \$w 2>/dev/null; then exit \$rc; fi
+if kill -0 \$w 2>/dev/null; then stop \$w; exit \$rc; fi
 exit 124" "$2" "$q" "$q" "$2"
 }
 
