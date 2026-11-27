@@ -85,9 +85,9 @@ test_with_nothing_open_anywhere_check_exits_0() {
   assert_eq "" "$OUT"
 }
 
-# snapshot id ended: a runs/<id> snapshot commit carrying the run's state.
+# push_snapshot id state-json: a runs/<id> snapshot commit carrying the run's state.
 push_snapshot() {
-  local id=$1 state=$2 blob= tree=
+  local id=$1 state=$2
   gq -C "$REPO" checkout -b "snap-$$"
   mkdir -p "$REPO/.artisan-agent/runs/$id"
   printf '%s\n' "$state" >"$REPO/.artisan-agent/runs/$id/state.json"

@@ -203,8 +203,15 @@ The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <t
 
 | Script | Does | Returns |
 | :- | :- | :- |
-| `run-lock.sh check [dir] [--local] [--override WHO]` | one run per repo: looks for a `runs/*/state.lock` naming a live pid in the repo's main checkout (stale locks ignored); then, unless `--local`, for a run open on another machine: an unmerged `run/<id>` or not-ended `runs/<id>` on origin, or an open `in-run` ticket (runs live here don't count; an unreachable remote or tracker is skipped with a note on stderr). `--override WHO` passes what was found elsewhere and appends it to `.artisan-agent/runs/run-lock-overrides.jsonl` | 0 free; 3 held, printing `<run-id> <pid>`; 4 maybe open elsewhere, printing `branch run/<id>`, `snapshot runs/<id>` or `ticket #<n> <title>` lines; 1 not a repo |
+| `run-lock.sh check [dir] [--local] [--override WHO]` | one run per repo: looks for a `runs/*/state.lock` naming a live pid in the repo's main checkout (stale locks ignored), then for a run open on another machine (below) | 0 free; 3 held, printing `<run-id> <pid>`; 4 maybe open elsewhere (below); 1 not a repo |
 | `doc-change.sh start <name>` / `finish <name>` | a chat's doc change: a short-lived `doc/<name>` branch worktree beside the repo, then a fast-forward of the main checkout (rebasing first if it moved) | the worktree path / 0; 1 when refused (dirty main, empty branch, conflict) |
+
+`run-lock.sh check`, continued (#430):
+
+- Open elsewhere: with no lock held here, an unmerged `run/<id>` branch or a not-ended `runs/<id>` snapshot on origin, or an open `in-run` ticket, prints `branch run/<id>`, `snapshot runs/<id>` or `ticket #<n> <title>` lines and exits 4. Runs whose folder is live here don't count.
+- An unreachable remote or tracker is skipped, with `remote not checked: …` or `tracker not checked: …` on stderr.
+- `--local`: only the lock here, no network (the run-start hook and the sweep).
+- `--override WHO`: what was found elsewhere passes (exit 0) and is appended to `.artisan-agent/runs/run-lock-overrides.jsonl` as `{at, by, machine, found}`.
 
 The rules, the plugin hook and the fallbacks: `references/main-checkout.md`, `guard/README.md`. Tests: `tests/main-checkout.test.sh`.
 
