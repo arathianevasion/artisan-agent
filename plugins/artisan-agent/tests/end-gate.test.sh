@@ -443,6 +443,18 @@ test_finishing_removes_the_in_run_labels_and_offers_the_retro() {
   assert_eq "run-ended" "$(state_get '.events[-1].event')"
 }
 
+test_finish_runs_the_tidy_sweep_and_says_why_it_removed_nothing_while_prs_are_open() {
+  setup_end
+  product_boundary plan
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1)
+  assert_contains "$out" "tidy:"
+  assert_eq "yes" "$([ -d "$TEST_TMPDIR/project-wt/run-r1" ] && echo yes || echo no)"
+}
+
 # A run whose integration branch the Artisan merged into main as one PR (#364).
 merge_integration_into_main() { # [pr-number]: --no-ff into main, and a merged PR in the fake tracker
   git_quiet -C "$PROJECT" merge --no-ff -m "Merge run/r1 (#${1:-7})" run/r1
@@ -480,10 +492,12 @@ test_finish_ends_that_run_even_when_the_merging_pr_cannot_be_found() {
   setup_end
   approved_end
   merge_integration_into_main
+  local tip=
+  tip=$(git -C "$PROJECT" rev-parse run/r1)   # the tidy sweep removes the merged branch at finish
   "$E" finish "$RUN_DIR" >/dev/null
   assert_eq ended "$("$E" status "$RUN_DIR")"
   assert_eq "null" "$(state_get '.end_gate.merged_outside.url')"
-  assert_eq "$(git -C "$PROJECT" rev-parse run/r1)" "$(state_get '.end_gate.merged_outside.tip')"
+  assert_eq "$tip" "$(state_get '.end_gate.merged_outside.tip')"
 }
 
 test_finish_still_refuses_when_the_integration_tip_is_not_on_main_and_names_the_missing_merges() {

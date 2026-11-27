@@ -206,6 +206,7 @@ The run's scope is exactly the approved `scope`. `state.sh in-scope <run-dir> <t
 | :- | :- | :- |
 | `run-lock.sh check [dir] [--local] [--override WHO]` | one run per repo: looks for a `runs/*/state.lock` naming a live pid in the repo's main checkout (stale locks ignored), then for a run open on another machine (below) | 0 free; 3 held, printing `<run-id> <pid>`; 4 maybe open elsewhere (below); 1 not a repo |
 | `doc-change.sh start <name>` / `finish <name>` | a chat's doc change: a short-lived `doc/<name>` branch worktree beside the repo, then a fast-forward of the main checkout (rebasing first if it moved) | the worktree path / 0; 1 when refused (dirty main, empty branch, conflict) |
+| `tidy.sh <run-dir>` | once every PR the run cut is merged on the origin: fast-forwards a clean main checkout that is only behind (never a merge; otherwise one `left alone:` line) and removes the run's integration, PR and retro worktrees and their merged branches; a worktree with uncommitted work or a branch not on origin's default branch is kept and named; with a PR open it does nothing. Called by `end-gate.sh finish` (run that again after the merges) | 0 |
 
 `run-lock.sh check`, continued (#430):
 

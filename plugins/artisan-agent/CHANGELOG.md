@@ -2,6 +2,10 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
+## Unreleased
+
+- **Tidy sweep:** once a run's PRs have merged, `tidy.sh` (called by `end-gate.sh finish`) fast-forwards a clean main checkout that is only behind, and removes the run's integration, PR and retro worktrees and their merged branches. Dirty work and unmerged branches are kept and named (#427).
+
 ## 0.14.0 (2026-11-22)
 
 A design stage before the spec, CI and merge gates that don't wait on a missing runner, workers that run the full suite before handing in, and end gates that finish every way a run can end.
