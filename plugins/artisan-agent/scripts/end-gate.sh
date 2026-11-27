@@ -74,7 +74,10 @@
 #       of the last PR carrying one of its tickets; a design no ticket names is
 #       left alone), removes the in-run label from every ticket in
 #       scope, records the run's end and prints the merge gate costs
-#       (retro.py gate-costs) and the retro offer.
+#       (retro.py gate-costs) and the retro offer. Then runs tidy.sh: with every
+#       PR merged on the origin, it fast-forwards the main checkout and removes
+#       the run's worktrees and merged branches; run finish again after the
+#       merges (and the retro's) to tidy then.
 #
 # An urgent ticket (lever.sh urgent, references/run-levers.md) ships through
 # its own end gate and PR, scoped to that one ticket and based on main, with
@@ -960,6 +963,13 @@ stop_merge() { # n url why
   die "auto-merge stopped at PR $1 ($2): $3. The PRs after it are left open and the run has not ended; fix that and run end-gate.sh finish again, or merge the rest by hand"
 }
 
+# The tidy sweep (#427): once the run's PRs have merged, fast-forward the main
+# checkout and remove the run's worktrees. Says why when it does nothing; a
+# failure never fails finish.
+tidy_run() {
+  "$SCRIPT_DIR/tidy.sh" "$RUN_DIR" || echo "end-gate.sh: the tidy sweep failed; run tidy.sh $RUN_DIR" >&2
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
@@ -970,6 +980,7 @@ cmd_finish() {
     retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
     if [ -n "$waiting" ]; then echo "Run $RUN_ID has ended; designs still waiting on their PR's merge:$waiting."
     else echo "Run $RUN_ID has ended; every design it ships is retired."; fi
+    tidy_run
     return 0
   fi
   [ "$(status_word)" = approved ] || refuse "the run ends after the end gate's approval and its PRs"
@@ -1012,6 +1023,7 @@ cmd_finish() {
   python3 -I "$SCRIPT_DIR/../skills/retro/scripts/retro.py" gate-costs "$FILE" \
     || echo "end-gate.sh: could not total the merge gates' costs" >&2
   echo
+  tidy_run
   echo "Next: offer the retro, /artisan-agent:retro."
 }
 
