@@ -4,7 +4,7 @@ How agents write prose a person reads. Code, code comments and briefs written fo
 
 ## Which level wins
 
-It depends on who reads the text (ADR 0003 in arathianevasion/artisan-agent):
+It depends on who reads the text (ADR 0003 in watsonsoft/artisan-agent):
 
 - Chat only the Artisan reads (chat turns, grill rounds, wave reports) follows the individual file first.
 - Shared text (tickets, specs, plans, comments, PR bodies, commit messages, ADRs, glossary entries) follows product, then team, then individual.

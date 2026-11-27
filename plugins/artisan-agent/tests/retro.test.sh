@@ -125,7 +125,7 @@ test_each_lesson_gets_its_home_role_and_reach_and_only_judgement_calls_are_quest
   assert_eq 'L2 L4' "$(jq -r '[.lessons[] | select(.ask == "question") | .id] | join(" ")' "$c")" questions
   assert_eq 'L1 L3 L5 L6' "$(jq -r '[.lessons[] | select(.ask == "batch") | .id] | join(" ")' "$c")" batch
   assert_eq 0 "$(jq '[.lessons[] | select((.home // "") == "" or (.role // "") == "" or (.scope // "") == "")] | length' "$c")" "home, role, reach"
-  assert_contains "$(jq -r '.lessons[] | select(.id == "L3") | .home' "$c")" "arathianevasion/artisan-agent"
+  assert_contains "$(jq -r '.lessons[] | select(.id == "L3") | .home' "$c")" "watsonsoft/artisan-agent"
   assert_contains "$(jq -r '.lessons[] | select(.id == "L5") | .home' "$c")" "upstream check"
   assert_contains "$(jq -r '.lessons[] | select(.id == "L4") | .question' "$c")" "thin evidence"
   assert_contains "$out" "L1	batch	mechanical"
@@ -219,9 +219,9 @@ test_approved_lessons_land_as_one_pr_home_commits_with_origin_and_pipeline_ticke
   assert_contains "$(cat "$wt/GLOSSARY.md")" "**Export**: a downloaded file."
   assert_eq "{}" "$(jq -c .estimate_multipliers <<<"$(bash "$PLUGIN_ROOT/scripts/config.sh" show --file "$wt/.artisan-agent/config.yml")")" "a declined lesson changed config"
   assert_eq 1 "$(grep -c '^pr create' "$FAKE_GH_DIR/calls")" "one PR"
-  # A pipeline ticket in arathianevasion/artisan-agent; no retro issue anywhere else.
+  # A pipeline ticket in watsonsoft/artisan-agent; no retro issue anywhere else.
   assert_eq 1 "$(grep -c '^issue create' "$FAKE_GH_DIR/calls")" "issues created"
-  assert_contains "$(grep '^issue create' "$FAKE_GH_DIR/calls")" "-R arathianevasion/artisan-agent"
+  assert_contains "$(grep '^issue create' "$FAKE_GH_DIR/calls")" "-R watsonsoft/artisan-agent"
   assert_contains "$(grep '^issue create' "$FAKE_GH_DIR/calls")" "--label needs-triage"
   # Individual home: the upstream note and the promoted generalising lesson, each with origin.
   assert_eq $((home0 + 2)) "$(git -C "$ARTISAN_HOME" rev-list --count HEAD)" "home commits"
@@ -292,7 +292,7 @@ EOF
   # Named chores become pipeline tickets on delivery.
   echo '{}' >"$TEST_TMPDIR/decisions.json"
   "$RETRO" deliver "$RUN_DIR" "$TEST_TMPDIR/decisions.json" >/dev/null
-  assert_eq 2 "$(grep -c '^issue create -R arathianevasion/artisan-agent' "$FAKE_GH_DIR/calls")" "chore tickets"
+  assert_eq 2 "$(grep -c '^issue create -R watsonsoft/artisan-agent' "$FAKE_GH_DIR/calls")" "chore tickets"
   assert_contains "$(cat "$FAKE_GH_DIR"/issue-*.json)" "Chore: retyping ticket numbers"
   assert_eq 'lesson' "$(tail -1 "$ARTISAN_HOME/satisfaction.jsonl" | jq -r .type)" "experience lesson kept with the record"
   # Recorded once per run.

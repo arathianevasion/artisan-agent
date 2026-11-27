@@ -7,7 +7,7 @@
     "artisan-agent": {
       "source": {
         "source": "github",
-        "repo": "arathianevasion/artisan-agent"
+        "repo": "watsonsoft/artisan-agent"
       }
     }
   },

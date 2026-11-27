@@ -8,7 +8,7 @@ The end-to-end path work takes, from a request to merged code and the lessons ke
 
 The revised-flow prototype is the reference for how the pipeline flows: seven stages (Enter, Understand, Specify, Plan, Run, Ship, Learn) plus the Decision chat lane, each step with its colour, job, focus and reason, and the levers on a running run. It lives on its own branch and is not part of `main`:
 
-[`prototypes/revised-flow/index.html` on `prototype/revised-flow`](https://github.com/arathianevasion/artisan-agent/blob/prototype/revised-flow/prototypes/revised-flow/index.html)
+[`prototypes/revised-flow/index.html` on `prototype/revised-flow`](https://github.com/watsonsoft/artisan-agent/blob/prototype/revised-flow/prototypes/revised-flow/index.html)
 
 To open it locally: `git fetch origin prototype/revised-flow && git show origin/prototype/revised-flow:prototypes/revised-flow/index.html > /tmp/revised-flow.html && open /tmp/revised-flow.html`.
 
@@ -21,7 +21,7 @@ The pipeline runs in a bare terminal with Claude Code, `git` and `gh`. **cmux an
 This repo is a private plugin marketplace serving one plugin. Install it once, at user scope; projects only enable it, and nothing is installed at project scope.
 
 ```bash
-claude plugin marketplace add arathianevasion/artisan-agent
+claude plugin marketplace add watsonsoft/artisan-agent
 claude plugin install artisan-agent@artisan-agent --scope user
 ```
 

@@ -17,7 +17,7 @@ import sys
 # name -> (desired autoUpdate, source to declare if no record of the marketplace exists)
 MARKETPLACES = [
     ("claude-plugins-official", False, {"source": "github", "repo": "anthropics/claude-plugins-official"}),
-    ("artisan-agent", True, {"source": "github", "repo": "arathianevasion/artisan-agent"}),
+    ("artisan-agent", True, {"source": "github", "repo": "watsonsoft/artisan-agent"}),
 ]
 STRAY_PLUGINS = ("artisan-agent@", "mattpocock-skills@")
 HIDING = ("off", "user-invocable-only")
