@@ -476,8 +476,8 @@ def blockers_of(tickets, n):
 def undeclared_dependency_flags(tickets):
     """Each agent criterion that cites another ticket of the plan ("#12") that
     the ticket is not blocked by, directly or through others:
-    [{"ticket", "criterion", "needs"}]. A ticket that is itself blocked by the
-    cited one's dependent is left alone: only a missing edge is flagged."""
+    [{"ticket", "criterion", "needs"}]. Only a ticket in the plan's graph is
+    checked; a citation of one outside it is not flagged."""
     out = []
     for n in sorted(tickets, key=key):
         if human_check_for(tickets, n):
@@ -885,7 +885,8 @@ def main(argv):
         save(path, plans)
     elif cmd == "flags":
         # stdin {"tickets", "human_check_overrides"?, "merge_gate_overrides"?}:
-        # the open flags, {human_check_flags, merge_gate_flags} (plan.sh build).
+        # the open flags, {human_check_flags, merge_gate_flags, running_app_flags,
+        # undeclared_dependency_flags} (plan.sh build).
         data = json.load(sys.stdin)
         tickets = {str(n).lstrip("#"): t for n, t in (data.get("tickets") or {}).items()}
         try:

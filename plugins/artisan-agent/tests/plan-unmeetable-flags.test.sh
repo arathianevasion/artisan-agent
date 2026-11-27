@@ -28,7 +28,7 @@ test_a_criterion_with_a_configured_running_app_phrase_is_flagged() {
   build_draft '.tickets["10"].acceptance = ["Mun slopes read 12 degrees with KSP running"]'
   assert_eq '[{"ticket":"10","criterion":"Mun slopes read 12 degrees with KSP running","phrase":"with KSP running"}]' \
     "$(jq -c .running_app_flags "$TEST_TMPDIR/plan.json")"
-  local out; out=$(plan render "$TEST_TMPDIR/plan.json")
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "### Criteria that may need the running app"
   assert_contains "$out" "| #10 (Ticket 10) | Mun slopes read 12 degrees with KSP running | \"with KSP running\" |"
   assert_contains "$out" "Approve as shown"
@@ -46,7 +46,7 @@ test_a_criterion_citing_a_ticket_with_no_blocking_edge_is_flagged() {
   build_draft '.tickets["20"].acceptance = ["uses the table from #10"]'
   assert_eq '[{"ticket":"20","criterion":"uses the table from #10","needs":"10"}]' \
     "$(jq -c .undeclared_dependency_flags "$TEST_TMPDIR/plan.json")"
-  local out; out=$(plan render "$TEST_TMPDIR/plan.json")
+  local out=; out=$(plan render "$TEST_TMPDIR/plan.json")
   assert_contains "$out" "| #20 (Ticket 20) | uses the table from #10 | #10 (Ticket 10) |"
   assert_contains "$out" "Approve as shown"
 }
