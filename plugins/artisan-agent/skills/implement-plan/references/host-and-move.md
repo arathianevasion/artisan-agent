@@ -20,4 +20,5 @@ The run's `location` travels with its state. `out` writes `moved` into this copy
 - Never move a run that is not idle, and never copy a run folder by hand: the lock and the location would not travel.
 - Ticket worktrees are never moved; the receiving machine makes the integration worktree (`wave.sh start`) and each ticket gets a fresh worktree when it is next dispatched.
 - A context hand-off while draining is refused like any launch; let the orchestrator finish its wave in place.
+- Every wave also ends with a snapshot push (`move.sh snapshot`, from `wave.sh report`): the state folder and integration branch go to `runs/<run-id>`, fast-forward only, without moving the run. If the machine is lost, `move.sh in <run-id>` on another clone restores the run as of its last wave (ticket branches are only pushed by `out`). A failed push is a `state-push-failed` event, never a halt; it is refused when another machine holds the branch.
 - The run's cost, events and decisions are in the state file and move with it, with `moved-out` and `moved-in` events.
