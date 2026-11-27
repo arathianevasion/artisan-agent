@@ -28,6 +28,15 @@
 #       runs/<run-id>. The push is fast-forward only, so of two machines
 #       resuming at once exactly one wins. Prints the run folder. Resume
 #       with /artisan-agent:implement-plan as for any open run.
+#   move.sh snapshot <run-dir> [--remote NAME]
+#       push the same snapshot `out` pushes, without moving the run (#429):
+#       the integration branch and a snapshot commit on runs/<run-id>, whose
+#       state has `location` {status: moved, snapshot: true} so `in` can
+#       restore it on another clone. This copy stays live and nothing in
+#       its state changes (wave.sh report logs state-pushed or
+#       state-push-failed). Fast-forward only, and refused (6) when the
+#       branch is held by another machine; 7 when there is no remote to
+#       push to. Ticket branches are not pushed: only `out` does that.
 #   move.sh where <run-dir>
 #       print "<live|draining|moved> <machine>" (live here with no move ever: "live <this machine>")
 #
@@ -273,6 +282,57 @@ cmd_out() {
   out_finish "$rd" "$id" "$ib" "$snap"
 }
 
+# cmd_snapshot: `out`'s snapshot and pushes, minus the move. Takes no lock and
+# writes no state: the caller (wave.sh report) holds the run and logs the event.
+cmd_snapshot() {
+  local rd="$1" remote=origin id= main= ib= tip= rref= prev= rstate= rmach= me= err= snap=
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --remote) [ $# -ge 2 ] || usage; remote=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  RUN_DIR=$rd
+  state_require_run_dir "$rd"
+  state_location_guard "$rd" || exit 3
+  id=$(get .run_id)
+  main=$(main_of "$rd")
+  me=$(state_machine_id)
+  ib=$(get .integration.branch)
+  if ! git -C "$main" remote get-url "$remote" >/dev/null 2>&1; then
+    echo "move.sh: no remote named $remote" >&2
+    exit 7
+  fi
+  git -C "$main" rev-parse -q --verify "refs/heads/$ib" >/dev/null || die "the integration branch $ib does not exist here"
+  tip=$(git -C "$main" rev-parse "refs/heads/$ib")
+  TMP_DIR=$(mktemp -d)
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  rref="refs/remotes/$remote/runs/$id"
+  prev="" rstate="" rmach=""
+  if git -C "$main" fetch -q "$remote" "+refs/heads/runs/$id:$rref" 2>/dev/null; then
+    prev=$(git -C "$main" rev-parse "$rref")
+    rstate=$(remote_state "$main" "$rref" "$id")
+    rmach=$(printf '%s' "$rstate" | jq -r '.location.machine // empty' 2>/dev/null || true)
+  fi
+  if [ -n "$rmach" ] && [ "$rmach" != "$me" ]; then
+    echo "move.sh: runs/$id is held by $rmach, so this copy does not push over it" >&2
+    exit 6
+  fi
+  jq --arg m "$me" --arg b "runs/$id" --argjson now "$(state_now)" '
+      .halted = (if .halted.move == true then null else .halted end)
+      | .location = {status: "moved", machine: $m, branch: $b, at: $now, snapshot: true}' "$(state_file "$rd")" >"$TMP_DIR/state.json"
+  local parents="$tip"
+  [ -z "$prev" ] || parents="$tip $prev"
+  # shellcheck disable=SC2086
+  snap=$(snapshot_commit "$main" "$id" "$rd" "$TMP_DIR/state.json" $parents)
+  err=$(git -C "$main" push -q "$remote" "refs/heads/$ib:refs/heads/$ib" 2>&1) \
+    || { printf 'move.sh: the push of %s failed: %s\n' "$ib" "$err" >&2; exit 6; }
+  err=$(git -C "$main" push -q "$remote" "$snap:refs/heads/runs/$id" 2>&1) \
+    || { printf 'move.sh: the push of runs/%s failed: %s\n' "$id" "$err" >&2; exit 6; }
+  printf '%s\n' "$snap"
+}
+
 out_finish() { # run-dir id integration-branch snapshot: the push landed; clear the pending marker
   local rd="$1"
   jq 'del(.location.pending) | .halted = (if .halted.move == true then null else .halted end)' "$(state_file "$rd")" >"$(state_tmp "$rd")"
@@ -399,6 +459,7 @@ case "${1:-}" in
   idle) [ $# -eq 2 ] || usage; cmd_idle "$2" ;;
   out) [ $# -ge 2 ] || usage; rd=$2; shift 2; cmd_out "$rd" "$@" ;;
   in) [ $# -ge 2 ] || usage; id=$2; shift 2; cmd_in "$id" "$@" ;;
+  snapshot) [ $# -ge 2 ] || usage; rd=$2; shift 2; cmd_snapshot "$rd" "$@" ;;
   where) [ $# -eq 2 ] || usage; cmd_where "$2" ;;
   *) usage ;;
 esac

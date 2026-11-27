@@ -2553,9 +2553,26 @@ cmd_close() {
 
 # ------------------------------------------------------------------ report
 
+# The wave's state snapshot goes to runs/<run-id> (move.sh snapshot, #429), so
+# a lost machine loses at most one wave. A failure is logged and never stops
+# the run; a project with no remote has nothing to push and logs nothing.
+push_state_snapshot() {
+  local out= rc=0 reason=
+  out=$("$SCRIPT_DIR/move.sh" snapshot "$RUN_DIR" 2>&1) || rc=$?
+  case "$rc" in
+    0) apply 'event({event: "state-pushed", commit: $c}; $now)' --arg c "$(printf '%s\n' "$out" | tail -n 1)" ;;
+    7) ;;
+    *)
+      reason=$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)
+      apply 'event({event: "state-push-failed", reason: $r}; $now)' --arg r "${reason:-move.sh snapshot exited $rc}" ;;
+  esac
+  return 0
+}
+
 cmd_report() {
   open_run "${1:-}"
   halt_if_wave_failed
+  push_state_snapshot
   jq "$STATE_JQ_DEFS"'{
     run_id, wave: ((.orchestrators // []) | last | .wave // null),
     integration: .integration,
