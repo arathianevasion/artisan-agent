@@ -135,19 +135,18 @@ cmd_run() {
 
 # preflight_command cmd seconds: cmd given seconds on the host, exiting 124
 # when it is stopped there. Under `timeout` where one works; a host without
-# (macOS has none) times it itself: a watcher that stops cmd and everything
-# under it (walked with pgrep -P, as job control is off without a tty) after
-# the seconds, and 124 when the watcher had already fired.
+# (macOS has none) is timed by PREFLIGHT_TIMER in perl: cmd in a process
+# group of its own, the whole group stopped after the seconds.
+PREFLIGHT_TIMER='$n = shift; setpgrp(0, 0); $p = fork; exit 125 unless defined $p;
+if (!$p) { exec @ARGV; exit 127 }
+$SIG{ALRM} = sub { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; exit 124 };
+alarm $n; waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)'
+
 preflight_command() {
   local q=""
   q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
-  printf "if timeout 1 true >/dev/null 2>&1; then exec timeout %s sh -c '%s'; fi
-stop() { for c in \$(pgrep -P \$1); do stop \$c; done; kill -TERM \$1 2>/dev/null; }
-sh -c '%s' & p=\$!
-( sleep %s; stop \$p ) >/dev/null 2>&1 & w=\$!
-wait \$p; rc=\$?
-if kill -0 \$w 2>/dev/null; then stop \$w; exit \$rc; fi
-exit 124" "$2" "$q" "$q" "$2"
+  printf "if timeout 1 true >/dev/null 2>&1; then exec timeout %s sh -c '%s'; fi\nexec perl -e '%s' %s sh -c '%s'" \
+    "$2" "$q" "$PREFLIGHT_TIMER" "$2" "$q"
 }
 
 cmd_preflight() {
