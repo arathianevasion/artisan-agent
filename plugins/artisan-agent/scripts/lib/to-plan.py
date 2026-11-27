@@ -699,6 +699,53 @@ def step_warnings(tickets, graph):
              "The plan can't be approved while this stands." ) for s in step_flags(tickets, graph)]
 
 
+def spec_rulings(body):
+    """The concrete rulings under a map's or spec's "Rulings" (or "Decisions") heading (#378):
+    each bullet `concept: value`, the concept with bold and links dropped, the
+    value the `code` spans after the colon (the whole rest when it has none).
+    A bullet with no colon or no value is no ruling. [] with no such heading."""
+    m = re.search(r"^(#{2,})\s+(?:Rulings|Decisions)\s*$", body or "", re.M | re.I)
+    if not m:
+        return []
+    rest = body[m.end():]
+    end = re.search(r"^#{1,%d}\s" % len(m.group(1)), rest, re.M)
+    out = []
+    for line in (rest[:end.start()] if end else rest).splitlines():
+        item = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.*)$", line)
+        if not item:
+            continue
+        t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", item.group(1)).replace("**", "")
+        head, sep, tail = t.partition(":")
+        concept = re.sub(r"\s*\([^)]*\)\s*$", "", head).strip()
+        values = re.findall(r"`([^`]+)`", tail) or ([tail.strip()] if tail.strip() else [])
+        if sep and concept and values and not any(r["concept"].lower() == concept.lower() for r in out):
+            out.append({"concept": concept, "values": values})
+    return out
+
+
+def ruling_flags(tickets, graph):
+    """(ticket, ruling) for each ticket whose title, body or criteria name a
+    ruled concept (a whole phrase, any case) and hold none of its ruled values."""
+    out = []
+    for n in sorted(tickets, key=key):
+        t = tickets[n]
+        text = " ".join([str(t.get("title") or ""), str(t.get("body") or "")] + [str(a) for a in t.get("acceptance") or []]).lower()
+        for r in graph.get("rulings") or []:
+            c = str(r.get("concept") or "").strip().lower()
+            vals = [str(v).strip().lower() for v in r.get("values") or [] if str(v).strip()]
+            if c and vals and re.search(r"(?<!\w)%s(?!\w)" % re.escape(c), text) and not any(v in text for v in vals):
+                out.append((n, r))
+    return out
+
+
+def ruling_warnings(tickets, graph):
+    return [(describe(tickets, n),
+             "names the ruling \"%s\" without its ruled value (%s), so a worker could choose against it. "
+             "Write the value into the ticket's body (then graph again). The plan can't be approved while this stands."
+             % (cell(r["concept"]), cell(" or ".join("`%s`" % v for v in r["values"]))))
+            for n, r in ruling_flags(tickets, graph)]
+
+
 def check(plans, graph):
     """validate, then refuse approval while an agent ticket has no criteria, or
     an agent criterion needs a person, or CI, a PR or the full suite; the flags
@@ -706,11 +753,12 @@ def check(plans, graph):
     validate(plans, graph)
     missing = criteria_missing_warnings(graph_tickets(graph))
     steps = step_warnings(graph_tickets(graph), graph)
+    rulings = ruling_warnings(graph_tickets(graph), graph)
     person = human_check_warnings(plans, graph_tickets(graph))
     gate = merge_gate_warnings(plans, graph_tickets(graph))
-    if missing or person or gate or steps:
+    if missing or person or gate or steps or rulings:
         print("\n".join(["## Needs your attention", "", "| About | Problem |", "|---|---|"]
-                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in missing + steps + person + gate]))
+                        + ["| %s | %s |" % (cell(a), cell(b)) for a, b in missing + steps + rulings + person + gate]))
         why = []
         if missing:
             why.append("%d ticket(s) with no readable acceptance criteria; add a checklist to each "
@@ -718,6 +766,9 @@ def check(plans, graph):
         if steps:
             why.append("%d changed journey step(s) no ticket cites; add each to a ticket's Steps line "
                        "and graph again, or write a ticket for it" % len(steps))
+        if rulings:
+            why.append("%d ticket(s) name a ruling without its ruled value; write the value into each "
+                       "ticket and graph again" % len(rulings))
         if person:
             why.append("%d agent criteria read as needing a person; split each into a Human check "
                        "or override it with --why" % len(person))
@@ -799,6 +850,8 @@ def main(argv):
         print(json.dumps({k: ov.get(k, []) for k in OVERRIDE_KEYS.values()}))
     elif cmd == "spec-steps":
         print(json.dumps(spec_steps(sys.stdin.read())))
+    elif cmd == "spec-rulings":
+        print(json.dumps(spec_rulings(sys.stdin.read())))
     elif cmd == "ticket-steps":
         print(json.dumps(ticket_steps(sys.stdin.read())))
     elif cmd == "split-text":
