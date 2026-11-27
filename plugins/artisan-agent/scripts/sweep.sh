@@ -113,6 +113,22 @@ stop_worker() {
 # A failed attempt for ticket $t; jq args: --arg t, --arg reason, --argjson now.
 FAIL_FILTER="$STATE_JQ_DEFS"'failed_attempt($t; $reason; $now)'
 
+# An environment failure (#423): the worker's record says the machine it
+# depends on broke (the suite host's build, a tool not on PATH there), not
+# its code. Another attempt would fail the same way, so none is queued and
+# none is counted: the ticket is blocked with an exception decision (reason
+# "environment") for the Artisan, who fixes the host and retries it
+# (gate-action.sh retry gives the attempt back). jq args as FAIL_FILTER, and
+# --arg why.
+ENV_FILTER="$STATE_JQ_DEFS"'
+  ("environment failure: " + $why) as $r
+  | .tickets[$t] |= (.status = "blocked" | .pid = null | .blocked_reason = $r
+      | .environment = {status: "open", attempt: .attempts, why: $why})
+  | .decisions += [{id: ((.decisions | length) + 1), kind: "exception", reason: "environment", ticket: $t,
+      question: "Ticket \($t) stopped on its environment, not its code: \($why). No attempt was counted. Fix it and retry, take it myself or drop; or bypass or defer its exception gate?",
+      status: "waiting", at: $now}]
+  | event({event: "environment-failure", ticket: $t, attempt: .tickets[$t].attempts, why: $why}; $now)'
+
 RESULT_FILTER="$STATE_JQ_DEFS"'
   $rs[0] as $r
   | ($r.status // "complete") as $s
@@ -218,7 +234,14 @@ sweep() {
         --argjson now "$now" --argjson session_cost "$session_cost"
       status=$result_status
       if [ "$status" = "failed" ]; then
-        step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"
+        local env_why=""
+        env_why=$(jq -r 'if (.environment | type) == "object" then (.environment.why // "no reason given") | tostring
+                         else "" end' "$result" 2>/dev/null) || env_why=""
+        if [ -n "$env_why" ]; then
+          step "$ENV_FILTER" --arg t "$t" --arg why "$env_why" --argjson now "$now"
+        else
+          step "$FAIL_FILTER" --arg t "$t" --arg reason "worker reported failed" --argjson now "$now"
+        fi
       fi
     elif [ -f "$exit_record" ]; then
       session_cost=$(jq -c '.total_cost_usd // null' "$RUN_DIR/workers/$t.$attempt/output.json" 2>/dev/null || echo null)

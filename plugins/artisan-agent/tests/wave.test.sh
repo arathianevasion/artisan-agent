@@ -1107,3 +1107,42 @@ test_the_run_status_file_says_what_status_says_through_a_fake_claude_run() {
   assert_status_json_matches "ended"
   assert_eq done "$(jq -r .next "$RUN_DIR/status.json")"
 }
+
+# #423: launch starts the recorded suite on the suite host (worker-suite.sh
+# preflight) before anything is dispatched. A host whose suite fails within
+# seconds would fail every worker the same way: launch refuses and says why.
+with_recorded_suite_and_fake_ssh() { # ssh-mode: up|down
+  printf '# Standards\n\n## Checks\n\n- `sh check.sh`: proven to fail on 2026-11-22, breaking: a BROKEN file\n' >"$PROJECT/CODING_STANDARDS.md"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "recorded checks"
+  mkdir -p "$TEST_TMPDIR/bin"
+  if [ "$1" = up ]; then
+    printf '#!/bin/sh\nfor last; do :; done\nexec sh -c "$last"\n' >"$TEST_TMPDIR/bin/ssh"
+  else
+    printf '#!/bin/sh\nexit 255\n' >"$TEST_TMPDIR/bin/ssh"
+  fi
+  chmod +x "$TEST_TMPDIR/bin/ssh"
+  PATH="$TEST_TMPDIR/bin:$PATH"
+}
+
+test_launch_refuses_when_the_suite_host_fails_its_build_within_seconds() {
+  setup_wave
+  with_recorded_suite_and_fake_ssh up
+  touch "$PROJECT/BROKEN"
+  git_quiet -C "$PROJECT" add -A
+  git_quiet -C "$PROJECT" commit -m "the host's build is broken"
+  "$SCRIPTS/wave.sh" start "$RUN_DIR" >/dev/null
+  local rc=0
+  "$SCRIPTS/wave.sh" launch "$RUN_DIR" >"$TEST_TMPDIR/launch.out" 2>"$TEST_TMPDIR/launch.err" || rc=$?
+  assert_eq 24 "$rc" "$(cat "$TEST_TMPDIR/launch.err")"
+  assert_contains "$(cat "$TEST_TMPDIR/launch.err")" "failed within 10 seconds on home-wsl"
+  assert_eq 0 "$(jq '.orchestrators // [] | length' "$RUN_DIR/state.json")" "nothing launched"
+  assert_eq "preflight-failed" "$(jq -r '.events[-1].event' "$RUN_DIR/state.json")"
+}
+
+test_launch_goes_ahead_when_the_suite_host_does_not_answer() {
+  setup_wave
+  with_recorded_suite_and_fake_ssh down
+  start_and_launch
+  assert_eq 1 "$(jq '.orchestrators | length' "$RUN_DIR/state.json")"
+}

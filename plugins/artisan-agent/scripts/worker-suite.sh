@@ -30,6 +30,22 @@
 #       clone could not be made there, or no host is set (the worker runs the
 #       guard and covering tests here), 16 no recorded checks and no --command
 #       (prints {ran: false, why}), 1 error (uncommitted work), 2 bad usage.
+#   worker-suite.sh preflight [--dir D] [--host H] [--command CMD] [--seconds N] [--log FILE]
+#       the host check wave.sh launch makes before a wave dispatches anyone
+#       (#423): start CMD (as run) on H against D's HEAD and give it N
+#       seconds (default 10). Failing within them is a host whose build is
+#       broken (a tool not on PATH for a non-interactive ssh shell, an
+#       assembly missing), which would fail every worker's suite the same
+#       way; still running after them, or done green, is a working host and
+#       is stopped there. A host without `timeout` (macOS) is timed by
+#       the preflight itself.
+#       A suite red at once on HEAD itself (a failing first test) fails it
+#       too: every worker would hand in red there as well.
+#       Uncommitted work in D is not refused: HEAD is what is checked.
+#       Prints {where: H, ok, commit, command, seconds, why?, tail?, log}
+#       (tail: the log's last 10 lines, on a failure). Exit 0 working, 7
+#       failed within N seconds, 17 nothing run (as run), 16 no recorded
+#       checks and no --command, 2 bad usage.
 #
 # Portable to bash 3.2 (macOS) and Linux. Needs git and jq.
 
@@ -117,7 +133,79 @@ cmd_run() {
   [ "$passed" = true ] || return 7
 }
 
+# preflight_command cmd seconds: cmd given seconds on the host, exiting 124
+# when it is stopped there. Under `timeout` where one works; a host without
+# (macOS has none) is timed by PREFLIGHT_TIMER in perl: cmd in a process
+# group of its own, the whole group stopped after the seconds.
+PREFLIGHT_TIMER='$n = shift; setpgrp(0, 0); $p = fork; exit 125 unless defined $p;
+if (!$p) { exec @ARGV; exit 127 }
+$SIG{ALRM} = sub { $SIG{TERM} = "IGNORE"; kill "TERM", -$$; exit 124 };
+alarm $n; waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)'
+
+preflight_command() {
+  local q=""
+  q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+  printf "if timeout 1 true >/dev/null 2>&1; then exec timeout %s sh -c '%s'; fi\nexec perl -e '%s' %s sh -c '%s'" \
+    "$2" "$q" "$PREFLIGHT_TIMER" "$2" "$q"
+}
+
+cmd_preflight() {
+  local host_set=0 host="" cmd="" log="" sha="" rc=0 why="" secs=10
+  DIR=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) [ $# -ge 2 ] || usage; DIR=$2; shift 2 ;;
+      --host) [ $# -ge 2 ] || usage; host=$2; host_set=1; shift 2 ;;
+      --command) [ $# -ge 2 ] || usage; cmd=$2; shift 2 ;;
+      --seconds) [ $# -ge 2 ] || usage; secs=$2; shift 2 ;;
+      --log) [ $# -ge 2 ] || usage; log=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  case "$secs" in ''|*[!0-9]*|0) usage ;; esac
+  [ -n "$DIR" ] || DIR=$(git rev-parse --show-toplevel 2>/dev/null) || die "not in a git checkout"
+  sha=$(git -C "$DIR" rev-parse HEAD) || die "no commit in $DIR"
+  if [ -z "$cmd" ]; then
+    if ! cmd=$(cd "$DIR" && "$SCRIPT_DIR/checks.sh" suite 2>/dev/null); then
+      jq -nc --arg s "$sha" '{where: "local", ok: null, commit: $s, why: "no recorded checks: no suite to start"}'
+      return 16
+    fi
+  fi
+  [ "$host_set" = 1 ] || host=$(fallback_host)
+  [ -n "$log" ] || log=$(mktemp "${TMPDIR:-/tmp}/artisan-preflight.XXXXXX")
+  mkdir -p "$(dirname "$log")"; : >"$log"
+
+  if [ -z "$host" ]; then
+    why="no host set (ci_gate.fallback_host is empty)"
+  elif ! remote_host_up "$host"; then
+    why="$host did not answer ssh within 10 seconds"
+  else
+    remote_suite "$host" "$DIR" "$sha" "$(preflight_command "$cmd" "$secs")" "$log" || rc=$?
+    case "$rc" in
+      255) why="the ssh link to $host failed during the preflight" ;;
+      "$REMOTE_NO_CHECKOUT") why="could not check out $sha on $host" ;;
+      "$REMOTE_NO_BUNDLE") why="could not bundle $sha here" ;;
+    esac
+  fi
+  if [ -n "$why" ]; then
+    jq -nc --arg s "$sha" --arg c "$cmd" --arg w "$why" '{where: "local", ok: null, commit: $s, command: $c, why: $w}'
+    return 17
+  fi
+  case "$rc" in
+    0|124)
+      jq -nc --arg h "$host" --arg s "$sha" --arg c "$cmd" --argjson n "$secs" --arg l "$log" \
+        '{where: $h, ok: true, commit: $s, command: $c, seconds: $n, log: $l}' ;;
+    *)
+      jq -nc --arg h "$host" --arg s "$sha" --arg c "$cmd" --argjson n "$secs" --arg l "$log" \
+        --arg w "the suite failed within $secs seconds on $host (exit $rc): its build or setup is broken there, or the checkout is red at once" \
+        --rawfile t <(tail -10 "$log") \
+        '{where: $h, ok: false, commit: $s, command: $c, seconds: $n, why: $w, tail: $t, log: $l}'
+      return 7 ;;
+  esac
+}
+
 case "${1:-}" in
   run) shift; cmd_run "$@" ;;
+  preflight) shift; cmd_preflight "$@" ;;
   *) usage ;;
 esac
