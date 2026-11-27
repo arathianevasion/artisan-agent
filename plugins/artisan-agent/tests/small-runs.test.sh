@@ -137,3 +137,26 @@ test_a_run_with_no_end_gate_keeps_its_gates() {
   merged_with_cards 1 none
   opens_as_today "no end gate to carry to"
 }
+
+test_the_end_gate_shows_the_carried_gates_cards_and_approving_it_answers_them() {
+  setup_small "$SLICE_END"
+  merged_with_cards 1 none
+  "$G" sync "$RUN_DIR" >/dev/null
+  merged_with_cards 2 none
+  merged_with_cards 3 none
+  local packet=
+  packet=$("$PLUGIN_ROOT/scripts/end-gate.sh" packet "$RUN_DIR" 2>&1)
+  assert_contains "$packet" "## Gates carried to the end gate"
+  assert_contains "$packet" "small_run_tickets"
+  assert_contains "$packet" "### slice-1: #1 (Ticket 1)"
+  assert_contains "$packet" "| 1 | #1 | Where does the export seam go? → to_csv() | firm |"
+  assert_not_contains "$packet" "## Folded risk gates"
+  printf '# Coding standards\n\n## Guardrails\n\n- `pr-boundaries`: one PR per slice\n' >"$PROJECT/CODING_STANDARDS.md"
+  git_quiet -C "$PROJECT" add CODING_STANDARDS.md
+  git_quiet -C "$PROJECT" commit -m "setup"
+  "$PLUGIN_ROOT/scripts/end-gate.sh" open "$RUN_DIR" >/dev/null
+  "$PLUGIN_ROOT/scripts/end-gate.sh" approve "$RUN_DIR" >/dev/null
+  assert_eq "approved end" "$(state_get '.review_gates[] | select(.id == "slice-1") | "\(.status) \(.answered_with)"')"
+  assert_eq '["gate-folded","gate-decision keep end","gate-approved"]' \
+    "$(state_get '[.events[] | select(.gate == "slice-1") | .event + (if .event == "gate-decision" then " \(.outcome) \(.folded_into)" else "" end)]' | jq -c .)"
+}

@@ -481,7 +481,8 @@ packet() {
   fi
   [ -z "$(unruled)" ] || sync_unruled >/dev/null
   # The risk gates folded into the end gate (#241): their slice gate had
-  # opened when they were raised. Nothing when there are none.
+  # opened when they were raised; and the gates a small clean run carried
+  # here (#407). Nothing when there are none.
   jq -n --slurpfile s "$FILE" '{gate: {id: "end", kind: "end", tickets: []}, state: $s[0]}' | PACKET folded
   echo "## Deferred gates"
   echo

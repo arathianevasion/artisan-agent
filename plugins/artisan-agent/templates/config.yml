@@ -49,6 +49,15 @@ stale_usage_minutes: 10
 # Failed attempts allowed before a ticket is blocked.
 attempts_per_ticket: 2
 
+# Small clean runs (#407): a run with at most this many tickets in scope, in
+# which no attempt has failed, no gate was redirected and no exception gate
+# was raised, doesn't wait on the Artisan at slice and risk gates. Each is
+# carried to the end gate, which shows its cards and whose approval answers
+# it. 0 turns this off. Source: the Artisan's ruling at claudia-kerman run
+# 1260's retro (2026-11-22): three clean tickets, four gates approved
+# unchanged in one burst after 80 minutes of waiting.
+small_run_tickets: 3
+
 # The orchestrator's turn budget (#175): wave.sh launch gives each wave's
 # orchestrator --max-turns base + per_ticket x T + per_ci_gate x G, where T is
 # the tickets the wave can take (the scope's tickets not yet merged or blocked,
