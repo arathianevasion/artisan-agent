@@ -896,3 +896,37 @@ test_the_design_skill_and_the_end_gate_reference_say_retire_runs_after_the_merge
   assert_contains "$(cat "$SCRIPTS/../skills/design/SKILL.md")" "Retire runs after the merge, not at the cut"
   assert_contains "$(cat "$SCRIPTS/../references/end-gate.md")" "after the merge, not at the cut"
 }
+
+# ------------------------------------------------- end_gate.auto_merge (#393)
+
+auto_merge() { # true|false: the project's end_gate.auto_merge
+  printf 'end_gate:\n  auto_merge: %s\n' "$1" >>"$PROJECT/.artisan-agent/config.yml"
+}
+
+cut_two_stacked_prs() {
+  product_boundary plan   # plan #100 (ticket 1), plan #101 (tickets 2 and 3): two stacked PRs
+  "$E" open "$RUN_DIR" >/dev/null
+  "$E" approve "$RUN_DIR" >/dev/null
+  cut_all
+  assert_eq 2 "$(state_get '.end_gate.prs | length')"
+}
+
+test_with_auto_merge_on_finish_merges_the_stack_in_order_and_retargets_before_deleting_branches() {
+  setup_end
+  auto_merge true
+  cut_two_stacked_prs
+  local out= calls=
+  out=$("$E" finish "$RUN_DIR")
+  calls=$(grep -E '^(pr merge|pr edit|api --method DELETE)' "$FAKE_GH_DIR/calls" | sed -E 's|https://github.com/local/sample/pull/||; s| -R local/sample||')
+  assert_eq "pr merge 1 --merge
+pr edit 2 --base main
+pr merge 2 --merge
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/1
+api --method DELETE repos/local/sample/git/refs/heads/pr/r1/2" "$calls"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-1.json")"
+  assert_eq MERGED "$(jq -r .state "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq main "$(jq -r .base "$FAKE_GH_DIR/pr-2.json")"
+  assert_eq ended "$("$E" status "$RUN_DIR")"
+  assert_contains "$out" "Merged the stack"
+  assert_not_contains "$out" "Merge the stack in this order"
+}

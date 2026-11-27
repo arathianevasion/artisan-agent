@@ -910,10 +910,57 @@ EOF2
   return 1
 }
 
+# auto_merge_on: the project's end_gate.auto_merge is true (#393). An invalid
+# value stops finish rather than reading as off.
+auto_merge_on() {
+  local f="$MAIN/.artisan-agent/config.yml" v=
+  [ -f "$f" ] || return 1
+  v=$("$SCRIPT_DIR/config.sh" get end_gate.auto_merge --file "$f") || die "could not read end_gate.auto_merge from $f"
+  [ "$v" = true ]
+}
+
+# merge_stack: with end_gate.auto_merge on, merges the cut PRs in stack order
+# as stack_steps prints them (#271): each PR not merged yet is retargeted to the
+# default branch (the PR under it has merged by then), then merged with a
+# merge commit and its branch kept, since deleting it would close the PR
+# stacked on it. The merged branches go once the whole stack is in, all but
+# the integration branch. The first merge that fails stops it there: an
+# auto-merge-stopped event, the PR and gh's reason, exit 1, and the PRs after
+# it left as they are. Safe to run again: merged PRs are skipped.
+merge_stack() {
+  local repo= main= ib= n= i= u= st= err= b= merged=
+  repo=$(get -r .repo); main=$(main_branch); ib=$(integration_branch)
+  n=$(get '(.end_gate.prs // []) | length')
+  for ((i = 1; i <= n; i++)); do
+    u=$(get -r --argjson n "$i" '[(.end_gate.prs // [])[] | select(.n == $n) | .url] | first // empty')
+    [ -n "$u" ] || die "PR $i of the stack has no URL recorded"
+    st=$(gh pr view "${u##*/}" -R "$repo" --json state -q .state 2>&1) || stop_merge "$i" "$u" "could not read its state: $st"
+    [ "$st" != MERGED ] || continue
+    if [ "$i" -gt 1 ]; then
+      err=$(gh pr edit "$u" -R "$repo" --base "$main" 2>&1 >/dev/null) || stop_merge "$i" "$u" "could not retarget it to $main: $err"
+    fi
+    err=$(gh pr merge "$u" -R "$repo" --merge 2>&1 >/dev/null) || stop_merge "$i" "$u" "$err"
+    merged="$merged $u"
+  done
+  for b in $(get -r '(.end_gate.prs // [])[].branch'); do
+    [ "$b" != "$ib" ] || continue
+    gh api --method DELETE "repos/$repo/git/refs/heads/$b" >/dev/null 2>&1 \
+      || echo "end-gate.sh: could not delete the merged branch $b; delete it by hand" >&2
+  done
+  apply 'event({event: "auto-merged", prs: ((.end_gate.prs // []) | map(.url))}; $now)'
+  echo "Merged the stack into $main (end_gate.auto_merge):${merged:- every PR had merged already}."
+}
+
+stop_merge() { # n url why
+  apply 'event({event: "auto-merge-stopped", n: $n, url: $url, why: $why}; $now)' \
+    --argjson n "$1" --arg url "$2" --arg why "$3"
+  die "auto-merge stopped at PR $1 ($2): $3. The PRs after it are left open and the run has not ended; fix that and run end-gate.sh finish again, or merge the rest by hand"
+}
+
 cmd_finish() {
   [ $# -eq 1 ] || usage
   open_run "$1"
-  local want= have= repo= t= bad=0 done_list= outside=0 via=
+  local want= have= repo= t= bad=0 done_list= outside=0 via= auto=0
   # A rerun after the run ended retires the designs whose PRs have merged since (#396).
   if [ "$(status_word)" = ended ]; then
     waiting=
@@ -932,6 +979,8 @@ cmd_finish() {
     elif [ "$have" -lt "$want" ]; then refuse "$have of $want PRs cut; cut the rest first (end-gate.sh prs). The integration branch is not on $OUT_REF either; merges missing from it: $OUT_MISSING"
     fi
   fi
+  auto=0
+  if [ "$outside" -eq 0 ] && [ "$have" -gt 0 ] && auto_merge_on; then merge_stack; auto=1; fi
   repo=$(get -r .repo)
   waiting=
   retire_designs || die "some designs are not retired; fix that and run end-gate.sh finish again"
@@ -953,7 +1002,7 @@ cmd_finish() {
     echo "Run $RUN_ID ended: $have PR(s) to $(main_branch); in-run removed from$done_list."
   fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
-  [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
+  [ "$outside" -eq 1 ] || [ "$auto" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
   file_kept_cards   # files it now if approving couldn't
   [ -z "$KEPT_N" ] || echo "Kept decision cards: #$KEPT_N, for review in the Decision chat."
   # For the run summary: what the merge gates cost (#199).
