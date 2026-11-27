@@ -15,8 +15,8 @@
 #   2. The run's worktrees are removed and their local branches deleted: the
 #      integration branch (run/<id>), the PR branches (pr/<id>/<n>) and the
 #      retro branch (retro/<id>). A branch counts as merged when its tip is on
-#      origin/<default>, or gh reports a merged PR whose head is that tip (a
-#      squash merge). A worktree with uncommitted work, or a branch that is not
+#      origin/<default>, or (a squash or rebase merge) is inside the head of a
+#      merged PR the run cut, or gh reports a merged PR whose head is that tip. A worktree with uncommitted work, or a branch that is not
 #      merged, is kept, and a "kept <path>: <why>" line names it. A merged
 #      branch with no worktree is deleted too.
 # Running it again changes nothing. It is called by end-gate.sh finish, and
@@ -51,8 +51,12 @@ if [ -z "$urls" ] && [ -z "$outside" ]; then
   echo "tidy: run $RUN_ID has no PR yet; nothing removed, nothing fast-forwarded"
   exit 0
 fi
+merged_heads=
 for u in $urls; do
-  st=$(gh pr view "$u" --json state -q .state 2>/dev/null || echo UNKNOWN)
+  read -r st oid <<EOF2 || true
+$(gh pr view "$u" --json state,headRefOid -q '"\(.state) \(.headRefOid)"' 2>/dev/null || echo "UNKNOWN -")
+EOF2
+  merged_heads="$merged_heads $oid"
   if [ "$st" != MERGED ]; then
     echo "tidy: $u is not merged ($st); nothing removed, nothing fast-forwarded"
     exit 0
@@ -88,9 +92,14 @@ fi
 
 # 2. the run's worktrees and branches
 merged_branch() { # branch: its tip is on the origin's default branch, or a merged PR's head
-  local tip= heads=
+  local tip= heads= h=
   tip=$(git -C "$MAIN" rev-parse -q --verify "refs/heads/$1^{commit}") || return 1
   git -C "$MAIN" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && return 0
+  # A squash or rebase merge leaves no ancestor: the integration branch is
+  # merged once it is inside the head of a merged PR the run cut.
+  for h in $merged_heads; do
+    git -C "$MAIN" merge-base --is-ancestor "$tip" "$h" 2>/dev/null && return 0
+  done
   heads=$(gh pr list -R "$repo" --head "$1" --state all --json state,headRefOid \
     -q '.[] | "\(.state) \(.headRefOid)"' 2>/dev/null || true)
   printf '%s\n' "$heads" | grep -qx "MERGED $tip"

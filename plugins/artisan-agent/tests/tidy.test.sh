@@ -38,7 +38,7 @@ setup_tidy() {
   cat >"$TEST_TMPDIR/bin/gh" <<STUB
 #!/usr/bin/env bash
 case "\$1 \$2" in
-  "pr view") cat "$TEST_TMPDIR/prs/\${3##*/}" 2>/dev/null || echo OPEN ;;
+  "pr view") cat "$TEST_TMPDIR/prs/\${3##*/}" 2>/dev/null || echo "OPEN -" ;;
   "pr list") b=; while [ \$# -gt 0 ]; do [ "\$1" = --head ] && b=\$2; shift; done
              cat "$TEST_TMPDIR/prs/head-\$(echo "\$b" | tr / _)" 2>/dev/null || true ;;
   *) exit 1 ;;
@@ -52,7 +52,7 @@ STUB
 # merge_on_origin: the run's PR lands on origin/main (the local main stays behind).
 merge_on_origin() {
   git_quiet -C "$PROJECT" push origin run/r1:main
-  echo MERGED >"$TEST_TMPDIR/prs/5"
+  echo "MERGED $(git -C "$PROJECT" rev-parse pr/r1/1)" >"$TEST_TMPDIR/prs/5"
 }
 
 branch_exists() { git -C "$PROJECT" rev-parse -q --verify "refs/heads/$1" >/dev/null; }
@@ -158,4 +158,22 @@ test_a_run_merged_as_one_pr_outside_the_gate_is_tidied_too() {
   git_quiet -C "$PROJECT" push origin run/r1:main
   "$TIDY" "$RUN_DIR" >/dev/null 2>&1
   assert_eq "no" "$([ -d "$IWT" ] && echo yes || echo no)"
+}
+
+test_a_squash_merged_run_still_loses_its_integration_worktree_and_branch() {
+  setup_tidy
+  # The PR squash-merges: main gets a new commit, so no run branch is an ancestor of it.
+  local wt="$TEST_TMPDIR/squash"
+  git_quiet clone "$ORIGIN" "$wt"
+  echo work >"$wt/w.txt"
+  git_quiet -C "$wt" add -A
+  git_quiet -C "$wt" commit -m "squash of the run"
+  git_quiet -C "$wt" push origin main
+  echo "MERGED $(git -C "$PROJECT" rev-parse pr/r1/1)" >"$TEST_TMPDIR/prs/5"
+  local out=
+  out=$("$TIDY" "$RUN_DIR" 2>&1)
+  assert_eq "no" "$([ -d "$IWT" ] && echo yes || echo no)"
+  assert_eq "no" "$([ -d "$PWT" ] && echo yes || echo no)"
+  assert_eq "no" "$(branch_exists run/r1 && echo yes || echo no)"
+  assert_eq "$(git -C "$PROJECT" rev-parse origin/main)" "$(git -C "$PROJECT" rev-parse main)"
 }
