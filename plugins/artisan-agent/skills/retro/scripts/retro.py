@@ -267,7 +267,11 @@ def merge_gate_costs(s, merged):
 
 def artisan_wait(s):
     """Minutes gates waited on the Artisan: gate-opened to the event that
-    closed it. None when the run opened no gate that was decided."""
+    closed it. None when the run opened no gate that was decided. With the
+    slice and risk gates a small clean run carried to the end gate instead of
+    waiting (#407: review_gates with carried), which never waited."""
+    carried = [g.get("id") for g in s.get("review_gates") or [] if g.get("carried")]
+    out = {"carried": len(carried), "carried_gates": carried}
     events = s.get("events") or []
     waits = []
     for i, o in enumerate(events):
@@ -278,8 +282,8 @@ def artisan_wait(s):
                 waits.append(max(0, e["at"] - o["at"]) / 60.0)
                 break
     if not waits:
-        return {"decisions": 0, "minutes": None, "longest_minutes": None}
-    return {"decisions": len(waits), "minutes": num(sum(waits)), "longest_minutes": num(max(waits))}
+        return dict(out, decisions=0, minutes=None, longest_minutes=None)
+    return dict(out, decisions=len(waits), minutes=num(sum(waits)), longest_minutes=num(max(waits)))
 
 
 def rulings(s):
@@ -693,7 +697,9 @@ def gate_costs_table(g, w):
         w["minutes"], w["decisions"], "" if w["decisions"] == 1 else "s", w["longest_minutes"])
                if w["minutes"] is not None else "-")
     rows = [("Merge gates run", run), ("Waiting on merge gates", wait), ("Red gates by cause", red),
-            ("Gates not run", not_run), ("Waiting on the Artisan", artisan)]
+            ("Gates not run", not_run), ("Waiting on the Artisan", artisan),
+            ("Gates carried to the end gate", "%d%s" % (w.get("carried") or 0, (
+                ": " + ", ".join(w["carried_gates"])) if w.get("carried_gates") else ""))]
     return "| Merge gates | This run |\n|---|---|\n" + "\n".join("| %s | %s |" % r for r in rows)
 
 

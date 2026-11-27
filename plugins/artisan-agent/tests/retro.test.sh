@@ -560,6 +560,25 @@ test_facts_show_what_the_merge_gates_cost() {
   assert_eq '2 107 76' "$(jq -r '.artisan_wait | "\(.decisions) \(.minutes) \(.longest_minutes)"' <<<"$f")" "waiting on the Artisan"
 }
 
+test_the_retro_counts_the_gates_a_small_clean_run_carried_to_the_end_gate() {
+  sample_run; gate_events; seed_lessons
+  jq '.review_gates = [
+        {id: "slice-1", kind: "slice", status: "approved", folded_into: "end", carried: true, answered_with: "end"},
+        {id: "risk-2", kind: "risk", status: "approved", folded_into: "end", carried: true, answered_with: "end"},
+        {id: "risk-3", kind: "risk", status: "approved", folded_into: "slice-1", answered_with: "slice-1"}]' \
+    "$RUN_DIR/state.json" >"$RUN_DIR/s.json" && mv "$RUN_DIR/s.json" "$RUN_DIR/state.json"
+  local f=; f=$("$RETRO" facts "$RUN_DIR")
+  assert_eq '2 ["slice-1","risk-2"]' "$(jq -c -r '.artisan_wait | "\(.carried) \(.carried_gates | tojson)"' <<<"$f")" "carried gates"
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "| Gates carried to the end gate | 2: slice-1, risk-2 |"
+}
+
+test_a_run_that_carried_no_gate_shows_0() {
+  sample_run; seed_lessons
+  "$RETRO" check "$RUN_DIR" >/dev/null
+  assert_contains "$("$RETRO" render "$RUN_DIR")" "| Gates carried to the end gate | 0 |"
+}
+
 test_a_state_file_from_before_the_gate_events_gives_null_figures() {
   sample_run
   local f=; f=$("$RETRO" facts "$RUN_DIR")
