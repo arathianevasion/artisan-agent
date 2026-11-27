@@ -2,10 +2,6 @@
 
 Every release of the `artisan-agent` plugin bumps `version` in `.claude-plugin/plugin.json` (semver) and adds an entry here, newest first. The script tests check that the two agree.
 
-## Unreleased
-
-- **Machine setup:** offers to turn off Claude Code's idle compaction (`"idleCompaction": false`), so a Run chat waiting on dispatched work isn't compacted mid-run (#260). `machine-setup.sh idle-compaction [state|yes|no]`; a decline is recorded in `host.json`, an explicit value is never changed.
-
 ## 0.14.0 (2026-11-22)
 
 A design stage before the spec, CI and merge gates that don't wait on a missing runner, workers that run the full suite before handing in, and end gates that finish every way a run can end.
