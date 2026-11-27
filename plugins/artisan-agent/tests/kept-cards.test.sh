@@ -149,3 +149,34 @@ test_the_references_and_triage_describe_the_kept_cards_ticket() {
   assert_contains "$(cat "$SCRIPTS/../references/state-file.md")" "kept-cards-filed"
   assert_contains "$(cat "$SCRIPTS/../skills/triage/SKILL.md")" "Review kept decision cards"
 }
+
+test_a_ticket_that_failed_to_file_at_approval_is_filed_at_finish() {
+  setup_end
+  kept_gates
+  product_boundary run
+  "$E" open "$RUN_DIR" >/dev/null
+  # A tracker that refuses to create the kept-cards ticket while approving.
+  mkdir -p "$TEST_TMPDIR/refuse"
+  printf '#!/usr/bin/env bash\ncase "$*" in *"Review kept decision cards"*) exit 1 ;; esac\nPATH=%q exec gh "$@"\n' "$PATH" >"$TEST_TMPDIR/refuse/gh"
+  chmod +x "$TEST_TMPDIR/refuse/gh"
+  PATH="$TEST_TMPDIR/refuse:$PATH" "$E" approve "$RUN_DIR" >/dev/null 2>&1
+  assert_eq "" "$(kept_tickets)"
+  echo body >"$TEST_TMPDIR/b.md"
+  "$E" cut "$RUN_DIR" 1 --body-file "$TEST_TMPDIR/b.md" >/dev/null
+  local out=
+  out=$("$E" finish "$RUN_DIR" 2>&1)
+  assert_eq 1 "$(kept_tickets | grep -c .)"
+  assert_contains "$out" "Kept decision cards: #$(jq -r .number "$(kept_tickets)")"
+}
+
+test_the_ticket_is_found_on_the_tracker_after_triage_relabelled_it() {
+  setup_end
+  kept_gates
+  approve
+  local f=
+  f=$(kept_tickets)
+  jq '.labels = [{name: "ready-for-agent"}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+  "$SCRIPTS/state.sh" update "$RUN_DIR" '.end_gate.status = "open" | del(.end_gate.kept_cards)'
+  "$E" approve "$RUN_DIR" >/dev/null
+  assert_eq 1 "$(kept_tickets | grep -c .)"
+}

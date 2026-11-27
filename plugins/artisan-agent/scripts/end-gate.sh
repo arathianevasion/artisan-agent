@@ -665,7 +665,7 @@ open_deferred() {
 # left_out. A card is its ticket and question, so a risk gate's card shown
 # again at its slice gate is listed once, at the first gate that showed it.
 KEPT_CARDS_JQ='
-  def key($c): "\($c.ticket)\u0000\($c.question)";
+  def key($c): "\($c.ticket | tostring)\u0000\($c.question)";
   . as $s
   | (.review_gates // []) as $gs
   | ($gs | map({key: .id, value: .}) | from_entries) as $by_id
@@ -707,7 +707,8 @@ kept_cards_body() {
 
 # file_kept_cards: files the kept-cards ticket once per run (#426) and records
 # it as end_gate.kept_cards with a kept-cards-filed event; nothing when no card
-# was kept. One already recorded, or already on the tracker (a crash between
+# was kept. Approve runs it, and finish again for one approve couldn't file.
+# One already recorded, or already on the tracker (a crash between
 # filing and recording), is reused. A failure warns and never holds approval.
 KEPT_N=
 file_kept_cards() {
@@ -720,12 +721,13 @@ file_kept_cards() {
   [ "$n" -gt 0 ] || return 0
   repo=$(get -r .repo)
   title="Review kept decision cards: run $RUN_ID"
-  KEPT_N=$(gh issue list -R "$repo" --state all --limit 10000 --label needs-triage --json number,title \
-    -q "[.[] | select(.title == \"$title\")] | first | .number // empty" 2>/dev/null) || KEPT_N=
+  # By title, whatever its labels: triage may have relabelled it already.
+  KEPT_N=$(gh issue list -R "$repo" --state all --limit 10000 --json number,title 2>/dev/null \
+    | jq -r --arg t "$title" '[.[] | select(.title == $t)] | first | .number // empty') || KEPT_N=
   if [ -z "$KEPT_N" ]; then
     url=$(kept_cards_body "$RUN_ID" <<<"$cards" \
       | "$SCRIPT_DIR/tracker.sh" new-issue --kind question -- -R "$repo" --title "$title" --label needs-triage --body-file -) \
-      || { echo "end-gate.sh: could not file the kept decision cards' ticket; file it by hand" >&2; return 0; }
+      || { echo "end-gate.sh: could not file the kept decision cards' ticket; end-gate.sh finish tries again" >&2; return 0; }
     KEPT_N=${url##*/}
   fi
   apply '.end_gate = ((.end_gate // {}) + {kept_cards: {issue: $n, cards: $c, left_out: $l, at: $now}})
@@ -952,7 +954,7 @@ cmd_finish() {
   fi
   [ -z "$waiting" ] || echo "Designs waiting on their PR's merge (run end-gate.sh finish $RUN_DIR again after it merges):$waiting."
   [ "$outside" -eq 1 ] || stack_steps "$(get -c '.end_gate.prs // []')"
-  KEPT_N=$(get -r '.end_gate.kept_cards.issue // empty')
+  file_kept_cards   # files it now if approving couldn't
   [ -z "$KEPT_N" ] || echo "Kept decision cards: #$KEPT_N, for review in the Decision chat."
   # For the run summary: what the merge gates cost (#199).
   echo
